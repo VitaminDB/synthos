@@ -1,0 +1,60 @@
+# Maintainer: Alexeyev Vitaly
+pkgname=synthos
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Synthos — локальная AI-студия: node-редактор (video/audio/music/image) + чат, редактор кода, голосовой ввод"
+license=("MIT" "Apache-2.0")
+arch=("x86_64")
+url="https://github.com/VitaminDB/synthos"
+
+# Runtime: cpal/alsa, vulkan/wgpu, font-config, libxkbcommon, gtk-портал диалогов через rfd.
+depends=(
+    "alsa-lib"
+    "fontconfig"
+    "vulkan-icd-loader"
+    "libxkbcommon"
+    "wayland"
+    "gtk3"
+)
+makedepends=(
+    "cargo"
+    "rust"
+    "git"
+    "pkgconf"
+)
+
+prepare() {
+    # Корень workspace — на уровень выше packaging/.
+    workspace_root="$(cd "$startdir/.." && pwd)"
+    export WORKSPACE_ROOT="$workspace_root"
+}
+
+build() {
+    # PKGBUILD не запускает cargo сам — компиляция тяжёлая (workspace с synaptix/
+    # tree-sitter/ffmpeg, ~10-15 мин), и makepkg без TTY часто прерывают по
+    # тайм-ауту. Сборка делается отдельно командой:
+    #   cargo build --release -p synthos
+    # Здесь только проверяем что бинарь существует.
+    if [ ! -x "$WORKSPACE_ROOT/target/release/synthos" ]; then
+        error "target/release/synthos не найден — запустите 'cargo build --release -p synthos' перед makepkg"
+        return 1
+    fi
+}
+
+package() {
+    cd "$WORKSPACE_ROOT"
+
+    install -Dm755 "$WORKSPACE_ROOT/target/release/synthos" "$pkgdir/usr/bin/synthos"
+
+    # .desktop + scalable иконка по freedesktop.org spec.
+    install -Dm644 "$startdir/synthos.desktop" \
+        "$pkgdir/usr/share/applications/synthos.desktop"
+    install -Dm644 "$startdir/synthos.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/synthos.svg"
+
+    # README в /usr/share/doc — опционально, не критично.
+    if [ -f "README.md" ]; then
+        install -Dm644 "README.md" \
+            "$pkgdir/usr/share/doc/$pkgname/README.md"
+    fi
+}

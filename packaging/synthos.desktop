@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Synthos
+GenericName=AI Assistant
+Comment=Локальный десктоп-чат с llama.cpp и голосовым вводом
+Comment[en]=Local desktop chat client with llama.cpp and voice input
+Exec=synthos
+Icon=synthos
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+Keywords=ai;llm;llama;chat;assistant;voice;asr;tts;
+StartupNotify=true
+StartupWMClass=Synthos

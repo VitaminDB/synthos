@@ -1,0 +1,9 @@
+# makepkg working dirs
+/pkg/
+/src/
+
+# built packages
+*.pkg.tar.zst
+*.pkg.tar.xz
+*.pkg.tar
+*.log

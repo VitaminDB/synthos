@@ -1,0 +1,50 @@
+use std::path::PathBuf;
+
+use syngui::prelude::*;
+use syngui::widgets::{Reactive, Row, ToolButton};
+
+use crate::icons::MI_FOLDER_OPEN;
+
+pub fn node_file_picker(
+    tooltip: &'static str,
+    sig: RwSignal<Option<PathBuf>>,
+    filters: &'static [(&'static str, &'static [&'static str])],
+    on_pick: impl Fn(&PathBuf) + Send + Sync + 'static,
+) -> Box<dyn Widget> {
+    let title = tooltip.to_string();
+    let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
+        .tooltip(tooltip)
+        .on_click(move || {
+            let mut dlg = rfd::FileDialog::new().set_title(&title);
+            for (label, exts) in filters {
+                dlg = dlg.add_filter(*label, exts);
+            }
+            if let Some(p) = dlg.pick_file() {
+                on_pick(&p);
+                sig.set(Some(p));
+            }
+        })
+        .class("node-file-picker-btn");
+
+    let filename_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let widget: Box<dyn Widget> = match sig.get() {
+            Some(p) => {
+                let name = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string());
+                Box::new(Text::new(name).class("node-file-picker-name"))
+            }
+            None => Box::new(Text::new("Файл не выбран").class("node-file-picker-empty")),
+        };
+        vec![widget]
+    });
+
+    Box::new(
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .class("node-file-picker-row")
+            .children(vec![Box::new(pick_btn) as Box<dyn Widget>, Box::new(filename_text)]),
+    )
+}

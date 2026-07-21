@@ -1,161 +1,86 @@
-# Synthos
+# synthos
 
-Frameless messenger-style приложение на `syngui`.
+A local AI desktop studio for Rust — a node-based editor for generating video, music,
+speech and images, with a chat client, a code editor and a document knowledge base, all
+running on-device on the native [synaptix](https://github.com/VitaminDB/synaptix) engine
+(no Python, no torch). The UI is built with [syngui](https://github.com/VitaminDB/syngui).
 
-## Быстрый старт
+![synthos node editor](docs/screenshots/node-editor.png)
 
-```bash
-cargo run -p synthos --features desktop
-```
+## What it is
 
-## Архитектура
+synthos turns local generative models into a visual workflow. Nodes wire models and media
+together on a canvas — text or image → video, lyrics → music, text → speech, audio →
+transcript — and run on your own GPU. Around the node editor it ships a chat client, a
+code editor and a local knowledge base, so the whole loop stays offline.
 
-### Верхний уровень
+## Features
 
-```
-titlebar
-│
-└── Row
-    ├── nav_rail (реактивный; слушает current_route)
-    └── RouterView
-        ├── chat      → Row[chats_column, chat_pane, right_panel]
-        ├── articles  → stub
-        ├── apps      → stub
-        ├── contacts  → stub
-        ├── analytics → stub
-        ├── settings  → Settings shell (отдельный вложенный RouterView)
-        └── support   → live stdout `llama-server`
-```
+### Node studio
+- **Video** — LTX-2.3: text-to-video and image-to-video, with IC-LoRA control from depth
+  (Depth Anything V2) or canny edges.
+- **Music** — ACE-Step: text- and lyrics-to-music.
+- **Speech** — VoxCPM2 and OmniVoice text-to-speech, with voice cloning.
+- **Transcription & diarization** — GigaAM / Whisper ASR, Sortformer speaker diarization.
+- **Audio** — recorder, player, mixer, equalizer, filters, gain, reverb, encode/decode.
+- **LLM** — Qwen3 / Qwen3-Next text-generation nodes inside a graph.
 
-Правый сайдбар страницы чатов (`components/right_panel/`) — два настоящих таба:
-* **Ламма** (`llama_control.rs`) — дропдаун моделей, сводка по выбранному
-  пресету (filename + ctx + кол-во активных параметров), кнопки
-  «Запустить» / «Остановить» / «Открыть консоль» и статус-пилюля,
-  реактивная на `AppCtx.llama.status_signal`.
-* **Детали** (`customer_details.rs`) — прежний customer-data блок.
+### Chat
+- Native synaptix chat — device-resident decode, CUDA-graph replay, NVFP4/FP8 quantization.
+- llama.cpp client — drive a local `llama-server` with a full parameter catalogue.
+- Tools — web search/read, knowledge-base retrieval, multimodal attachments, voice input.
 
-### Глобальный контекст (`src/context.rs`)
+### Code editor
+- Tree view with live git-status decorations, external-change watching and syntax highlighting.
 
-`AppCtx` пробрасывается через `provide_context(..)` один раз в `run_desktop`.
-Любой компонент читает его через `use_context::<AppCtx>()`.
+### Knowledge base (RAG)
+- Local document collections (files, folders, PDF, URL), hybrid BM25 + vector search and an
+  optional cross-encoder rerank — computed on-device, stored in bundled SQLite.
 
-Поля:
+### Model management
+- A Hugging Face browser for fetching models. Nothing is bundled.
 
-| Сигнал | Назначение |
-| --- | --- |
-| `theme_key: RwSignal<String>` | Ключ темы (id). Персистится в конфиг |
-| `theme_mss: RwSignal<String>` | MSS-блок активной темы, подключён через `AppBuilder::with_dynamic_theme` |
-| `router: Arc<Mutex<Router>>` | Верхний роутер (7 маршрутов) |
-| `current_route: RwSignal<String>` | Ключ активного верхнего маршрута — дубликат `router.current()` для реактивной подписки |
-| `settings_router: Arc<Mutex<Router>>` | Подроутер страницы настроек (`general`/`themes`/`skills`/`models`) |
-| `selected_settings_tab: RwSignal<String>` | Ключ активной вкладки настроек |
-| `selected_skill: RwSignal<Option<String>>` | Имя выбранного скила (`None` = приглашение-заглушка) |
-| `skill_buffer: RwSignal<String>` | Текст, отображаемый в `MultilineTextEdit` для текущего скила |
-| `general: GeneralCtx { .. }` | Сигналы раздела «Общие» — персистятся |
-| `models: RwSignal<Vec<ModelConfig>>` | Пресеты llama.cpp-моделей — персистятся |
-| `selected_model: RwSignal<Option<String>>` | Имя выбранного пресета |
-| `right_panel_tab: RwSignal<usize>` | Активный таб правого сайдбара на странице «Чаты» |
-| `llama: Arc<LlamaProcess>` | Контроль над процессом `llama-server` + реактивные сигналы логов и статуса |
+## Screenshots
 
-### Persistent-конфиг (`src/config.rs`)
+| | |
+|---|---|
+| ![node editor](docs/screenshots/node-editor.png) | ![chat](docs/screenshots/chat.png) |
+| ![code editor](docs/screenshots/code-editor.png) | ![settings](docs/screenshots/settings.png) |
 
-Конфиг хранится в `$HOME/.config/synthos/config.json` и содержит: активную тему, раздел «Общие», пресеты моделей.
+## Build
 
-* `AppConfig::load()` читает файл; при отсутствии — создаёт дефолт. Ошибки парсинга логируются (`eprintln!`), приложение не паникует.
-* `AppConfig::save()` пишет `to_string_pretty`.
-* Автосохранение: `install_config_autosave()` в `lib.rs` создаёт один `create_effect`, который подписывается на все persistent-сигналы и вызывает `save()` на каждое изменение.
-
-### Настройки (`src/pages/settings/`)
+synthos is a Cargo workspace that path-depends on its two sibling repositories. Check them
+out next to it:
 
 ```
-Row [settings-sidebar | RouterView(content) | settings-right]
+~/projects/
+├── syngui/
+├── synaptix/
+└── synthos/
 ```
 
-* `sidebar.rs` — три вкладки с анимацией выделения.
-* `general.rs` — форма с `Toggle`, `TextField`, `Dropdown`.
-* `themes.rs` — карточки тем с swatches и кнопкой «Применить».
-* `theme_data.rs` — 5 светлых + 5 тёмных тем; каждая вырабатывает `:root { --var: ... }` поверх базовых токенов из `styles/base/variables.mss`.
-* `skills.rs` — редактор markdown-инструкций (`MultilineTextEdit::show_line_numbers(true)`).
-* `skills_panel.rs` — правая колонка со списком скилов на вкладке «Скилы» (`ListView` c `SelectionMode::Single`).
-* `right_hint.rs` — подсказка-заглушка в правой колонке на вкладках «Общие» и «Темы».
-* `models/` — раздел «Модели»:
-  * `mod.rs` — редактор пресета: имя, путь к `.gguf` и к `mmproj`, активные чипы с контролами (SpinBox/Toggle/TextField/Dropdown), divider и сетка доступных чипов, сгруппированных по категориям. ctx-size — всегда первый и без крестика.
-  * `models_panel.rs` — правая колонка со списком моделей и кнопкой «+».
-  * `llama_params.rs` — полный каталог параметров `llama-server` (~150 ключей, метаданные для Tooltip).
-
-Полный справочник параметров llama-server: [`docs/llama-server-help.md`](docs/llama-server-help.md).
-
-### Запуск llama-server (`src/llama/`)
-
-`LlamaProcess::start(general, model)` запускает дочерний процесс через
-`std::process::Command`:
-
-1. Бинарь — `GeneralConfig.server_path` (пусто → просто `llama-server`
-   из `$PATH`).
-2. Пути — `--model <model_path>`, `--mmproj <mmproj_path>` (если задан).
-3. `--ctx-size <model.ctx_size>`.
-4. Каждый активный параметр → CLI-ключ из `llama_params::LLAMA_PARAMS`
-   с сериализованным значением (Int/Float/Bool/Text/Enum).
-5. `--host <general.server_host>` + `--port <general.server_port>`.
-
-Stderr и stdout читаются в двух фоновых потоках построчно. Каждая строка
-приходит в UI через `syngui::async_runtime::run_on_main_thread`, которое
-безопасно обновляет `RwSignal<Vec<String>>` из главного UI-потока.
-Буфер ограничен 5000 строками (head-drain). Статус
-(`Stopped/Starting/Running/Error`) — тоже реактивный сигнал; переход
-`Starting → Running` срабатывает по строке `"server is listening"`.
-
-Глобальные настройки `server_path`, `server_host`, `server_port` правятся
-в разделе **Настройки → Общие → Llama server** и сохраняются вместе с
-остальным конфигом (`~/.config/synthos/config.json`).
-
-Страница **Поддержка** (nav-rail footer) — живая консоль: `ListView`
-со строками лога + статус-пилюля + кнопка «Очистить».
-
-### Темизация
-
-Базовые переменные определены в `styles/base/variables.mss`. При смене темы сигнал `theme_mss` (см. `theme_data::SynthosTheme::to_mss()`) перезаписывает их в рантайме через механизм `AppBuilder::with_dynamic_theme`. Все компонентные MSS-классы ссылаются исключительно на `var(--name)` — никаких хардкод-цветов в MSS.
-
-### Логирование
-
-В `run_desktop()` инициализируются:
-
-```rust
-tracing_log::LogTracer::init();        // log → tracing мост
-tracing_subscriber::fmt().try_init();  // форматтер
+```sh
+cargo run --release              # or --profile fast-release for iteration
 ```
 
-Благодаря этому в консоли видны как собственные `tracing::info!` из `synthos`, так и `log::warn!` из `syngui`, `wgpu`, `sctk_adwaita`, `winit` и других зависимостей.
+## Requirements
 
-## Стили
+- Linux x86_64. Runtime: gtk3, wayland, libxkbcommon, fontconfig, a Vulkan driver, alsa, ffmpeg.
+- GPU (optional, recommended): NVIDIA driver + CUDA runtime, loaded at runtime; without it
+  the node engine falls back to CPU for smoke tests and debugging.
+- A Windows build is planned — the app currently depends on Linux-only components.
 
-Все `.mss` файлы лежат в `styles/` и подключаются в `src/styles.rs` через `include_str!`:
+## Models
 
-```
-styles/
-├── base/
-│   ├── reset.mss
-│   └── variables.mss
-├── layout/
-│   ├── shell.mss
-│   └── settings.mss
-└── components/
-    ├── chat_header.mss
-    ├── chats_column.mss
-    ├── …
-    ├── right_panel.mss       # контейнер правого сайдбара + customer rows
-    ├── llama_control.mss     # таб «Ламма» + общие классы `.llama-pill*`
-    ├── support_page.mss      # страница поддержки (live log)
-    ├── settings_sidebar.mss
-    ├── settings_form.mss
-    ├── settings_themes.mss
-    ├── settings_skills.mss
-    ├── settings_models.mss
-    └── stub_page.mss
-```
+No model weights are shipped. Download them yourself from Hugging Face — the same files used
+by ComfyUI / LM Studio — and you accept each model's licence. Some models (e.g. FLUX.1-dev,
+LTX-2.3, Gemma-3) are non-commercial or otherwise restricted; check the licence before use.
 
-Правила:
+## Related
 
-* Никаких inline-стилей с цветом — через `.class()` и MSS-переменные.
-* Все анимации через `transition` в MSS с токенами `--duration-*` и `--ease-standard`.
-* Material Icons — через `icons::MI_*` (codepoints).
+- [syngui](https://github.com/VitaminDB/syngui) — the GUI framework.
+- [synaptix](https://github.com/VitaminDB/synaptix) — the inference and training engine.
+
+## Licence
+
+MIT OR Apache-2.0 — see [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

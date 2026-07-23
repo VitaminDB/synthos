@@ -10,15 +10,12 @@ use syngui::core::sync::Mutex;
 use syngui::prelude::*;
 use syngui::widgets::navigation::router::Router;
 
-use crate::chat::audio::AudioCtx;
-use crate::chat::tools::PendingApproval;
-use crate::chat::ChatCtx;
-use crate::config::{AudioModelConfig, ModelConfig, SynChatQuantConfig};
-use crate::llama::LlamaProcess;
+use crate::agent::audio::AudioCtx;
+use crate::agent::tools::PendingApproval;
+use crate::config::{AudioModelConfig, SynChatQuantConfig};
 use crate::metrics::MetricsState;
 
 pub const ROUTES: &[&str] = &[
-    "chat",
     "syn_chat",
     "music",
     "code",
@@ -27,14 +24,12 @@ pub const ROUTES: &[&str] = &[
     "syn_explorer",
     "huggingface",
     "settings",
-    "support",
 ];
 
 pub const SETTINGS_ROUTES: &[&str] = &[
     "general",
     "themes",
     "skills",
-    "models",
     "audio_models",
     "ai_models",
     "knowledge_base",
@@ -50,10 +45,7 @@ pub const INITIAL_SETTINGS_ROUTE: &str = "general";
 pub struct GeneralCtx {
     pub display_name: RwSignal<String>,
     pub language: RwSignal<String>,
-    pub server_path: RwSignal<String>,
-    pub server_host: RwSignal<String>,
-    pub server_port: RwSignal<u16>,
-    /// Системный промпт для всех запросов к llama-server.
+    /// Системный промпт для всех запросов к модели (`role=system`).
     /// Редактируется в Settings → Общие; переживает рестарт через
     /// `AppConfig.general.system_prompt`.
     pub system_prompt: RwSignal<String>,
@@ -149,10 +141,10 @@ pub struct VoiceFabCtx {
     /// в окне FAB. При ошибке вызова — копия `accumulated` (fallback).
     pub refined: RwSignal<String>,
     /// Идёт ли LLM-вызов постобработки (между нажатием «обновить» и приходом
-    /// ответа от llama-server). Используется UI для блокировки кнопки и
+    /// ответа от нативной модели). Используется UI для блокировки кнопки и
     /// показа индикатора над полем «Отредактированный текст».
     pub refining: RwSignal<bool>,
-    /// Последняя ошибка постобработки (HTTP/JSON/нет соединения). При
+    /// Последняя ошибка постобработки. При
     /// `Some(_)` под полем «Отредактированный текст» показывается красная
     /// строка с сообщением.
     pub refine_error: RwSignal<Option<String>>,
@@ -219,11 +211,6 @@ impl Default for VoiceHistoryCtx {
         Self::new()
     }
 }
-
-/// Состояние переключателя табов в правом сайдбаре страницы «Чаты».
-/// 0 — «Ламма контроль», 1 — «Детали» (метрики).
-pub const RIGHT_PANEL_LLAMA: usize = 0;
-pub const RIGHT_PANEL_DETAILS: usize = 1;
 
 /// Состояние переключателя табов в правом сайдбаре страницы syn_chat.
 /// 0 — «Инструменты» (tools/skills, первая по умолчанию),
@@ -310,14 +297,6 @@ pub struct AppCtx {
     pub kb_url_dialog: RwSignal<Option<String>>,
     /// Настройки раздела «Общие».
     pub general: GeneralCtx,
-    /// Пресеты llama.cpp-моделей.
-    pub models: RwSignal<Vec<ModelConfig>>,
-    /// Имя выбранной модели (стабильный id).
-    pub selected_model: RwSignal<Option<String>>,
-    /// Активный таб правого сайдбара страницы «Чаты».
-    pub right_panel_tab: RwSignal<usize>,
-    /// Контроль над процессом chat llama-server (один на приложение).
-    pub llama: Arc<LlamaProcess>,
     /// Пресеты ASR-моделей. Каждый — конфиг для локального
     /// [`synaptix::facade::asr::Transcriber`] (Whisper / GigaAM / …).
     pub audio_models: RwSignal<Vec<AudioModelConfig>>,
@@ -331,12 +310,8 @@ pub struct AppCtx {
     /// `~/.config/synthos/voice/index.json` при старте приложения и обновляется
     /// при каждом финальном Stop в FAB-окне.
     pub voice_history: VoiceHistoryCtx,
-    /// Состояние чата (история сообщений, ввод, pending/abort).
-    /// `Copy`, можно свободно класть в замыкания.
-    pub chat: ChatCtx,
-    /// Метрики llama (timings/usage/slot) + системные (CPU/RAM/GPU/VRAM).
-    /// Фоновый поток опрашивает sysinfo/NVML раз в секунду;
-    /// источник llama-части — `chat::session`.
+    /// Системные метрики (CPU/RAM/GPU/VRAM). Фоновый поток опрашивает
+    /// sysinfo/NVML раз в секунду для вкладки «Детали».
     pub metrics: Arc<MetricsState>,
     /// Подсистема агентских инструментов (bash/web_read + диалог
     /// подтверждения + активный список).

@@ -17,18 +17,15 @@
 //! - [`time`]     — минимальные хелперы времени без `chrono`;
 //! - [`tools`]    — агентские инструменты (bash, web_read) + executor.
 
-pub mod attach;
 pub mod audio;
-pub mod blobs;
-pub mod streaming_asr;
-pub mod compact;
-pub mod registry;
-pub mod session;
+pub mod schema;
 pub mod state;
 pub mod storage;
+pub mod streaming_asr;
 pub mod think_parser;
 pub mod time;
+pub mod tool_flow;
 pub mod tools;
 pub mod voice_refine;
 
-pub use state::{ChatCtx, ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment};
+pub use state::{ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment};

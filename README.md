@@ -27,8 +27,7 @@ code editor and a local knowledge base, so the whole loop stays offline.
 
 ### Chat
 - Native synaptix chat — device-resident decode, CUDA-graph replay, NVFP4/FP8 quantization.
-- llama.cpp client — drive a local `llama-server` with a full parameter catalogue.
-- Tools — web search/read, knowledge-base retrieval, multimodal attachments, voice input.
+- Tools — web search/read, knowledge-base retrieval, subagents, voice input.
 
 ### Code editor
 - Tree view with live git-status decorations, external-change watching and syntax highlighting.

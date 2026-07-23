@@ -1,6 +1,6 @@
 //! Реактивное состояние Syn-чата.
 //!
-//! Минимальная версия [`crate::chat::state::ChatCtx`]: без tools, RAG,
+//! Минимальная версия [`crate::agent::state::ChatCtx`]: без tools, RAG,
 //! voice, attachments. Inference выполняется in-process через
 //! [`crate::syn_chat::session`], generation streaming идёт прямо в сигналы.
 
@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use syngui::prelude::*;
 
-pub use crate::chat::state::{ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole};
-pub use crate::chat::think_parser::{ThinkParser, ThinkSplit};
+pub use crate::agent::state::{ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole};
+pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
 use crate::syn_chat::params::SamplingParams;
 

@@ -11,7 +11,7 @@
 
 use serde::Deserialize;
 
-use crate::chat::tools::executor::ToolError;
+use crate::agent::tools::executor::ToolError;
 
 /// Дефолт `max_results` для action=search.
 pub(super) const DEFAULT_MAX_RESULTS: usize = 10;

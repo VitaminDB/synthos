@@ -320,7 +320,7 @@ fn start_recording(actx: AudioCtx, app: AppCtx) {
                 Some(m.language)
             }
         });
-        crate::chat::streaming_asr::start(stream, actx.clone(), language);
+        crate::agent::streaming_asr::start(stream, actx.clone(), language);
     }
 }
 
@@ -410,15 +410,16 @@ pub fn on_transcription_done(
             }
             match sink {
                 TranscriptSink::ChatInputAppend => {
-                    let prev = app.chat.input.get_untracked();
+                    let syn = use_context::<crate::syn_chat::state::SynChatCtx>();
+                    let prev = syn.input.get_untracked();
                     let merged = if prev.trim().is_empty() {
                         trimmed.to_string()
                     } else {
                         format!("{} {}", prev.trim_end(), trimmed)
                     };
-                    app.chat.input.set(merged);
+                    syn.input.set(merged);
                     // Бампаем поколение, чтобы MultilineTextEdit пересобрался с новым текстом.
-                    app.chat.input_gen.update(|n| *n = n.wrapping_add(1));
+                    syn.input_gen.update(|n| *n = n.wrapping_add(1));
                 }
                 TranscriptSink::VoicePanel { final_chunk } => {
                     let voice = app.voice;

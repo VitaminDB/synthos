@@ -10,7 +10,6 @@ pub mod ai_models;
 pub mod audio_models;
 pub mod general;
 pub mod knowledge_base;
-pub mod models;
 pub mod right_hint;
 pub mod sidebar;
 pub mod skills;
@@ -35,7 +34,6 @@ pub fn view() -> impl Widget {
         .route("general",        || Box::new(general::view()))
         .route("themes",         || Box::new(themes::view()))
         .route("skills",         || Box::new(skills::view()))
-        .route("models",         || Box::new(models::view()))
         .route("audio_models",   || Box::new(audio_models::view()))
         .route("ai_models",      || Box::new(ai_models::view()))
         .route("knowledge_base", || Box::new(knowledge_base::view()))
@@ -69,7 +67,6 @@ fn right_panel() -> impl Widget {
         let ctx = use_context::<AppCtx>();
         let child: Box<dyn Widget> = match ctx.selected_settings_tab.get().as_str() {
             "skills" => Box::new(skills_panel::view()),
-            "models" => Box::new(models::models_panel::view()),
             "audio_models" => Box::new(audio_models::audio_models_panel::view()),
             "knowledge_base" => Box::new(knowledge_base::collections_panel::view()),
             _ => Box::new(right_hint::view()),

@@ -5,7 +5,8 @@
 //! `bash find/grep`). Если такие шаги делать в основном цикле, история
 //! раздувается тулрезультатами и быстро вытесняет полезные сообщения.
 //!
-//! `subagent` запускает свой собственный `chat_completions`-цикл (без UI)
+//! `subagent` запускает свой собственный agent-цикл (без UI) поверх той же
+//! нативной Qwen3.6-модели (`SynModelRegistry`), что и основной Syn-чат,
 //! с явно ограниченным набором тулов и заданной задачей, выполняет нужные
 //! шаги и возвращает родителю **только финальный текст**. Промежуточные
 //! tool-вызовы внутри субагента в основную ленту не попадают — только в
@@ -13,7 +14,7 @@
 //!
 //! Безопасность:
 //! - Сам вызов `subagent` проходит через стандартный approval-диалог в
-//!   основном цикле (см. `chat::session::await_decision_on_tool_call`).
+//!   основном цикле (см. `agent::tool_flow::await_decision_on_tool_call`).
 //! - **Внутри** субагента вложенные тулы исполняются auto-allow — без
 //!   диалога. Это сознательный trade-off (пользователь подтверждает
 //!   только сам вызов subagent с его описанием task).
@@ -24,16 +25,20 @@
 //!   Если пользователь отключил `bash` глобально, субагент его тоже не
 //!   получит.
 
-use syngui::async_runtime::run_on_main_thread;
-use syngui::context_provider::use_context;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use syngui::async_runtime::run_on_main_thread;
+use syngui::context_provider::use_context;
+use synaptix::facade::llm::{LlmGeneration, Message};
+
+use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
-use crate::llama::api::{
-    ChatMessage as ApiChatMessage, ChatRequest, ChatRole, ChatTool, LlamaClient, SamplingParams,
-};
+use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
+use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::state::{SynChatCtx, ThinkParser};
+use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
 use super::catalog::{KEY_AUTOSKILL, KEY_SUBAGENT};
 use super::descriptor::Tool;
@@ -45,9 +50,7 @@ use super::executor::ToolError;
 // в текстовый итог. Поэтому реальный верхний предел запросов к LLM =
 // `subagent_max_turns + 1`. Дефолт — `config::default_subagent_max_turns()`.
 
-/// Sampling temperature субагента — тот же дефолт, что в main-cycle. В
-/// будущем можно занизить до 0.3 для более «дисциплинированных» подзадач,
-/// но сейчас держим консистентно с родителем.
+/// Sampling temperature субагента — тот же дефолт, что в main-cycle.
 const SUBAGENT_TEMPERATURE: f32 = 0.7;
 
 tokio::task_local! {
@@ -122,17 +125,18 @@ fn parse_args(args_json: &str) -> Result<SubagentArgs, ToolError> {
 /// Subagent живёт в tokio-таске и не имеет прямого доступа к
 /// `RwSignal`-сигналам (они привязаны к thread-local runtime syngui).
 struct SubagentSnapshot {
-    host: String,
-    port: u16,
+    /// Загруженная нативная модель — тот же handle, что у основного чата.
+    model: Arc<LoadedSynModel>,
+    /// Sampling-параметры основного Syn-чата (temperature переопределяется).
+    params: SamplingParams,
     default_system_prompt: String,
     /// Готовые ChatTool-дескрипторы всех активных в чате тулов кроме `subagent`.
-    /// Динамически собранный (см. `build_active_tools_for_subagent`).
     active_tools: Vec<ChatTool>,
     /// Лимит tool-turn'ов цикла субагента — пользовательская настройка
     /// `general.subagent_max_turns`, склампленная к `>= 1`.
     max_turns: usize,
-    /// Тот же abort, что у parent run_agent. Если пользователь нажмёт Stop —
-    /// инкрементится в `chat::session::abort()`, и мы между turn-ами это видим.
+    /// Тот же abort, что у parent run_agent_loop (`SynChatCtx.abort`). Если
+    /// пользователь нажмёт Stop — инкрементится, и мы между turn-ами это видим.
     abort: Arc<AtomicU64>,
     abort_baseline: u64,
 }
@@ -141,39 +145,38 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let app = use_context::<AppCtx>();
-        let host = app.general.server_host.get_untracked();
-        let port = app.general.server_port.get_untracked();
-        let default_system_prompt = app.chat.system_prompt.get_untracked();
-        let active_tools = build_active_tools_for_subagent(&app);
-        // Снимаем лимит turn'ов из настроек. `0` (при ручной правке
-        // конфига) приведёт к мгновенному forced-summary без шанса
-        // что-либо сделать — клампим к `>= 1`.
-        let max_turns = app.general.subagent_max_turns.get_untracked().max(1) as usize;
-        let abort = app.chat.abort.clone();
-        let abort_baseline = abort.load(Ordering::Relaxed);
-        let _ = tx.send(SubagentSnapshot {
-            host,
-            port,
-            default_system_prompt,
-            active_tools,
-            max_turns,
-            abort,
-            abort_baseline,
+        let syn = use_context::<SynChatCtx>();
+        let reg = use_context::<SynModelRegistry>();
+        // Модель может быть не загружена — тогда снимок невозможен.
+        let snap = reg.current.get_untracked().map(|model| {
+            let abort = syn.abort.clone();
+            let abort_baseline = abort.load(Ordering::Relaxed);
+            SubagentSnapshot {
+                model,
+                params: syn.params.get_untracked(),
+                default_system_prompt: syn.system_prompt.get_untracked(),
+                active_tools: build_active_tools_for_subagent(&app),
+                max_turns: app.general.subagent_max_turns.get_untracked().max(1) as usize,
+                abort,
+                abort_baseline,
+            }
         });
+        let _ = tx.send(snap);
     });
-    rx.await.map_err(|e| ToolError::Spawn(e.to_string()))
+    let snap = rx.await.map_err(|e| ToolError::Spawn(e.to_string()))?;
+    snap.ok_or_else(|| ToolError::Spawn("модель не загружена".to_string()))
 }
 
-/// Собирает дескрипторы активных тулов для субагента: те же, что в
-/// `chat::session::collect_active_tools`, но с явным исключением
-/// `subagent` (рекурсия запрещена) и с динамическим autoskill-обогащением.
+/// Собирает дескрипторы активных тулов для субагента: те же активные ключи,
+/// что в основном чате, но с явным исключением `subagent` (рекурсия
+/// запрещена) и с динамическим autoskill-обогащением.
 fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
     let keys = app.tools.active.get_untracked();
     keys.iter()
         .filter(|k| k.as_str() != KEY_SUBAGENT)
         .filter_map(|k| {
             if k == KEY_AUTOSKILL {
-                Some(crate::chat::session::build_autoskill_chat_tool(app))
+                Some(crate::agent::tool_flow::build_autoskill_chat_tool(app))
             } else {
                 Tool::by_key(k).map(|t| t.to_chat_tool())
             }
@@ -274,10 +277,14 @@ async fn run_subagent_loop(
     id: String,
 ) -> Result<String, ToolError> {
     let tools_list = select_tools(&snap.active_tools, args.tools.as_deref());
+    let tool_schemas: Vec<serde_json::Value> = tools_list
+        .iter()
+        .filter_map(|t| serde_json::to_value(t).ok())
+        .collect();
 
     // System: префикс с датой + либо пользовательский system_prompt из args,
-    // либо общий из chat config.
-    let date = crate::chat::session::today_utc_iso(crate::chat::session::now_unix_secs());
+    // либо общий из Syn-чата.
+    let date = crate::agent::tool_flow::today_utc_iso(crate::agent::tool_flow::now_unix_secs());
     let preamble = format!("Текущая дата (UTC): {date}.");
     let user_sys = args
         .system_prompt
@@ -292,16 +299,16 @@ async fn run_subagent_loop(
         format!("{preamble}\n\n{user_sys}")
     };
 
-    let max_turns = snap.max_turns;
-    let mut history: Vec<ApiChatMessage> = Vec::with_capacity(4 + max_turns * 2);
-    history.push(ApiChatMessage::system(merged_system));
-    history.push(ApiChatMessage::user(args.task.clone()));
+    let mut history: Vec<Message> = Vec::with_capacity(4 + snap.max_turns * 2);
+    history.push(Message::system(merged_system));
+    history.push(Message::user(args.task.clone()));
 
-    let base_url = format!("http://{}:{}", snap.host, snap.port);
-    let client = LlamaClient::with_base_url(base_url.clone());
-    let sampling = SamplingParams::new().with_temperature(SUBAGENT_TEMPERATURE);
+    // Субагенту reasoning-шум в summary не нужен — thinking выключаем.
+    let mut params = snap.params.clone();
+    params.temperature = SUBAGENT_TEMPERATURE;
+    params.enable_thinking = false;
 
-    for turn in 0..max_turns {
+    for turn in 0..snap.max_turns {
         if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
             tracing::info!(target: "subagent", id = %id, turn, "aborted by user");
             return Ok("Subagent прерван пользователем.".to_string());
@@ -312,81 +319,45 @@ async fn run_subagent_loop(
             id = %id,
             turn,
             history_len = history.len(),
-            tools = tools_list.len(),
+            tools = tool_schemas.len(),
             "request"
         );
 
-        let mut req = ChatRequest::new(history.clone())
-            .with_sampling(sampling.clone())
-            .with_parallel_tool_calls_disabled();
-        if !tools_list.is_empty() {
-            req = req.with_tools(tools_list.clone());
+        let out = generate_subagent_turn(
+            &snap.model,
+            &history,
+            &tool_schemas,
+            &params,
+            &snap.abort,
+            snap.abort_baseline,
+        )
+        .map_err(|e| ToolError::BadArgs(format!("LLM error: {e:#}")))?;
+
+        if out.calls.is_empty() {
+            let text = strip_thinking(&out.raw_text);
+            tracing::debug!(target: "subagent", id = %id, turn, "final text");
+            return Ok(text);
         }
-
-        let resp = client
-            .chat_completions(&req)
-            .await
-            .map_err(|e| ToolError::BadArgs(format!("LLM error: {e}")))?;
-
-        let choice = resp
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| ToolError::BadArgs("LLM вернул пустой choices".to_string()))?;
-        let msg = choice.message;
-        let finish = choice.finish_reason;
-
-        let assistant_content = msg.content.clone();
-        let assistant_tool_calls = msg.tool_calls.clone();
-
-        // Положим ассистент-сообщение в локальную историю для следующего turn.
-        history.push(ApiChatMessage {
-            role: ChatRole::Assistant,
-            content: assistant_content
-                .clone()
-                .filter(|s| !s.is_empty())
-                .map(crate::llama::api::ChatContent::Text),
-            name: None,
-            tool_call_id: None,
-            tool_calls: assistant_tool_calls.clone(),
-            reasoning_content: None,
-        });
-
-        let calls = match assistant_tool_calls {
-            Some(v) if !v.is_empty() => v,
-            _ => {
-                let text = assistant_content.unwrap_or_default();
-                tracing::debug!(
-                    target: "subagent",
-                    id = %id,
-                    turn,
-                    ?finish,
-                    "final text"
-                );
-                return Ok(text);
-            }
-        };
 
         tracing::debug!(
             target: "subagent",
             id = %id,
             turn,
-            n_tool_calls = calls.len(),
+            n_tool_calls = out.calls.len(),
             "tool_calls"
         );
 
-        for call in calls {
-            let name = call.function.name.clone().unwrap_or_default();
+        // Ассистент-сообщение с полным сырым текстом (включая `<tool_call>`) —
+        // в локальную историю для следующего turn.
+        history.push(Message::assistant(out.raw_text.clone()));
 
+        for (i, raw_call) in out.calls.iter().enumerate() {
             // Двойная защита от рекурсии: catalog уже исключает subagent из
             // дескрипторов, но модель всё равно может сгенерировать call с
-            // таким именем. Не зовём `tools::execute` (там был бы дальнейший
+            // таким именем. Не зовём executor (там был бы дальнейший
             // depth-check), сразу записываем error tool-result.
-            if name == KEY_SUBAGENT {
-                history.push(ApiChatMessage::tool(
-                    "ошибка: вложенный subagent запрещён".to_string(),
-                    call.id.clone(),
-                ));
+            if raw_call.name == KEY_SUBAGENT {
+                history.push(Message::tool("ошибка: вложенный subagent запрещён"));
                 tracing::warn!(target: "subagent", id = %id, "blocked nested subagent call");
                 continue;
             }
@@ -394,84 +365,183 @@ async fn run_subagent_loop(
             tracing::info!(
                 target: "subagent",
                 id = %id,
-                tool = %name,
-                args_len = call.function.arguments.as_deref().map(str::len).unwrap_or(0),
+                tool = %raw_call.name,
+                args_len = raw_call.arguments_json.len(),
                 "exec"
             );
 
+            let chat_call = ChatToolCall {
+                id: format!("sub_{id}_{turn}_{i}"),
+                kind: "function".to_string(),
+                function: ChatToolCallFunction {
+                    name: Some(raw_call.name.clone()),
+                    arguments: Some(raw_call.arguments_json.clone()),
+                },
+            };
+
             // Auto-allow: пропускаем approval-диалог. Пользователь подтвердил
-            // вызов сам subagent в основном цикле, дальше всё идёт без UI.
+            // сам вызов subagent в основном цикле, дальше всё идёт без UI.
             // Box::pin — `executor::execute` через KEY_SUBAGENT возвращается
             // в этот же цикл; без боксинга компилятор не может вычислить
             // размер async-future. Реальной рекурсии нет (depth-чек в `run`).
-            let outcome = Box::pin(super::executor::execute(&call)).await;
-            history.push(ApiChatMessage::tool(outcome.content, call.id));
+            let outcome = tokio::select! {
+                o = Box::pin(super::executor::execute(&chat_call)) => o,
+                _ = wait_abort(&snap.abort, snap.abort_baseline) => {
+                    return Ok("Subagent прерван пользователем.".to_string());
+                }
+            };
+            history.push(Message::tool(outcome.content));
         }
     }
 
     tracing::info!(
         target: "subagent",
         id = %id,
-        turns = max_turns,
+        turns = snap.max_turns,
         "turn limit reached, forcing final summary"
     );
 
-    // Финальный turn — без tools, без `tool_choice`. Модель обязана
-    // ответить текстом, потому что вызвать tool ей нечем. Получаем
-    // сжатую сводку накопленного прогресса вместо сухой ошибки.
-    force_final_summary_turn(&client, &sampling, &mut history, &id, &snap).await
+    // Финальный turn — без tools. Модель обязана ответить текстом.
+    force_final_summary_turn(&snap, &mut history, &id).await
 }
 
-/// Делает один финальный chat-completion БЕЗ tools, чтобы модель
-/// сжала прогресс. Если ответ всё-таки пуст — отдаём fallback-сообщение.
+/// Результат одного нативного turn'а субагента.
+struct SubagentTurn {
+    /// Полный сырой текст ответа (с `<tool_call>`/`<think>` тегами как есть).
+    raw_text: String,
+    /// Распознанные tool-вызовы этого turn'а.
+    calls: Vec<RawToolCall>,
+}
+
+/// Один turn нативной генерации субагента: prompt → generate_streaming →
+/// parse tool_calls. Блокирующая (synaptix-генерация синхронна) — вызывается
+/// из async-цикла, который её `await`-ит (нечему больше исполняться на
+/// current-thread runtime worker'а).
+fn generate_subagent_turn(
+    model: &LoadedSynModel,
+    history: &[Message],
+    tool_schemas: &[serde_json::Value],
+    params: &SamplingParams,
+    abort: &Arc<AtomicU64>,
+    abort_snapshot: u64,
+) -> anyhow::Result<SubagentTurn> {
+    let prompt = model.tokenizer.apply_chat_template_ex_tools(
+        history,
+        true,
+        params.enable_thinking,
+        if tool_schemas.is_empty() {
+            None
+        } else {
+            Some(tool_schemas)
+        },
+    )?;
+    let prompt_ids = model.tokenizer.encode(&prompt)?;
+
+    // KV-ring cap — та же математика, что в syn_chat::session::run_agent_loop.
+    let model_cap = model.model.config().max_seq_len;
+    let mut opts = params.to_options();
+    let usable_cap = model_cap.saturating_sub(1);
+    let prompt_capped = prompt_ids.len().min(usable_cap);
+    let headroom = usable_cap.saturating_sub(prompt_capped);
+    if opts.max_new_tokens > headroom {
+        opts.max_new_tokens = headroom.max(1);
+    }
+    opts.max_seq_len = (prompt_capped + opts.max_new_tokens + 128).min(usable_cap);
+
+    let mut runner = LlmGeneration::new(&model.model, opts);
+    crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
+    if !tool_schemas.is_empty() {
+        runner.add_stop_sequence(crate::syn_chat::session::TOOL_CALL_CLOSE);
+    }
+
+    let mut tool_parser = ToolCallParser::new();
+    let mut raw_text = String::new();
+    let abort_cb = abort.clone();
+    runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
+        if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
+            return false;
+        }
+        raw_text.push_str(delta);
+        let _ = tool_parser.feed(delta);
+        // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
+        // не дожидаясь, пока модель уйдёт писать прозу после блока.
+        if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
+            return false;
+        }
+        true
+    })?;
+    drop(runner);
+    #[cfg(feature = "cuda")]
+    if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
+        let _ = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
+    }
+
+    let (calls, _tail) = tool_parser.finish();
+    Ok(SubagentTurn { raw_text, calls })
+}
+
+/// Вырезает `<think>…</think>` из финального текста — родителю уходит только
+/// чистый ответ.
+fn strip_thinking(raw: &str) -> String {
+    let mut tp = ThinkParser::new();
+    let split = tp.feed(raw);
+    split.body.trim().to_string()
+}
+
+/// Поллер «дождаться abort» — оборачивается в `tokio::select!`, чтобы прервать
+/// долгие async tool'ы (например web-fetch) при Stop от пользователя.
+async fn wait_abort(abort: &Arc<AtomicU64>, snapshot: u64) {
+    loop {
+        if abort.load(Ordering::Relaxed) != snapshot {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    }
+}
+
+/// Делает один финальный turn БЕЗ tools, чтобы модель сжала прогресс.
+/// Если ответ всё-таки пуст — отдаём fallback-сообщение.
 async fn force_final_summary_turn(
-    client: &LlamaClient,
-    sampling: &SamplingParams,
-    history: &mut Vec<ApiChatMessage>,
-    id: &str,
     snap: &SubagentSnapshot,
+    history: &mut Vec<Message>,
+    id: &str,
 ) -> Result<String, ToolError> {
     if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
         return Ok("Subagent прерван пользователем.".to_string());
     }
 
-    history.push(ApiChatMessage::user(
+    history.push(Message::user(
         "Ты исчерпал лимит tool-вызовов. Не вызывай больше никаких tools. \
          Сожми накопленный прогресс в краткий итог 1-3 абзаца — что узнал, \
-         что осталось неясным, какие ещё шаги нужны. Текст без преамбулы."
-            .to_string(),
+         что осталось неясным, какие ещё шаги нужны. Текст без преамбулы.",
     ));
 
-    let req = ChatRequest::new(history.clone()).with_sampling(sampling.clone());
-    // Без `with_tools` — модель не сможет ответить tool_calls'ами.
+    let mut params = snap.params.clone();
+    params.temperature = SUBAGENT_TEMPERATURE;
+    params.enable_thinking = false;
 
-    let resp = client
-        .chat_completions(&req)
-        .await
-        .map_err(|e| ToolError::BadArgs(format!("LLM error (final summary): {e}")))?;
+    let out = generate_subagent_turn(
+        &snap.model,
+        history,
+        &[],
+        &params,
+        &snap.abort,
+        snap.abort_baseline,
+    )
+    .map_err(|e| ToolError::BadArgs(format!("LLM error (final summary): {e:#}")))?;
 
-    let summary = resp
-        .choices
-        .into_iter()
-        .next()
-        .and_then(|c| c.message.content)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
-    match summary {
-        Some(s) => {
-            tracing::info!(target: "subagent", id = %id, summary_len = s.len(), "final summary ok");
-            Ok(s)
-        }
-        None => {
-            tracing::warn!(target: "subagent", id = %id, "final summary empty");
-            let limit = snap.max_turns;
-            Ok(format!(
-                "Subagent достиг лимита в {limit} turn-ов и не сошёлся \
-                 к финальному ответу. Сформулируй задачу более узко или вызови \
-                 subagent повторно с уже имеющимся прогрессом."
-            ))
-        }
+    let summary = strip_thinking(&out.raw_text);
+    if summary.is_empty() {
+        tracing::warn!(target: "subagent", id = %id, "final summary empty");
+        let limit = snap.max_turns;
+        Ok(format!(
+            "Subagent достиг лимита в {limit} turn-ов и не сошёлся \
+             к финальному ответу. Сформулируй задачу более узко или вызови \
+             subagent повторно с уже имеющимся прогрессом."
+        ))
+    } else {
+        tracing::info!(target: "subagent", id = %id, summary_len = summary.len(), "final summary ok");
+        Ok(summary)
     }
 }
 
@@ -542,7 +612,7 @@ mod tests {
     fn dummy_chat_tool(name: &str) -> ChatTool {
         ChatTool {
             kind: "function".into(),
-            function: crate::llama::api::ToolFunctionSchema {
+            function: crate::agent::schema::ToolFunctionSchema {
                 name: name.into(),
                 description: None,
                 parameters: None,

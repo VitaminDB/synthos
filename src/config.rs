@@ -19,18 +19,14 @@ use crate::syn_chat::params::SamplingParams;
 pub struct GeneralConfig {
     pub display_name: String,
     pub language: String,
-    /// Путь к бинарю llama-server. Пусто/"llama-server" — поиск в `$PATH`.
-    pub server_path: String,
-    pub server_host: String,
-    pub server_port: u16,
-    /// Системный промпт, который добавляется первым сообщением в каждый
-    /// запрос к llama (`role=system`). Редактируется в Settings → Общие.
+    /// Системный промпт, который добавляется первым сообщением (`role=system`)
+    /// в каждый запрос к модели. Редактируется в Settings → Общие.
     pub system_prompt: String,
     /// Системный промпт постобработки распознанной речи. Применяется в
     /// FAB-окне распознавания при ручном клике по кнопке «обновить» над
-    /// полем «Отредактированный текст». Запрос уходит на тот же llama-server
-    /// non-streaming endpoint'ом. Пустая строка → постобработка no-op
-    /// (refined = raw, без сетевого вызова).
+    /// полем «Отредактированный текст». Прогоняется через ту же загруженную
+    /// нативную модель Syn-чата. Пустая строка → постобработка no-op
+    /// (refined = raw, без вызова модели).
     #[serde(default = "default_voice_refine_prompt")]
     pub voice_refine_prompt: String,
     /// Режим отображения tool-вызовов в ленте чата: `"full"` (по умолчанию),
@@ -207,9 +203,6 @@ impl Default for GeneralConfig {
         Self {
             display_name: "Dean Kowalski".into(),
             language: "ru".into(),
-            server_path: "llama-server".into(),
-            server_host: "127.0.0.1".into(),
-            server_port: 8080,
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             voice_refine_prompt: default_voice_refine_prompt(),
             tool_display_mode: default_tool_display_mode(),
@@ -227,37 +220,12 @@ impl Default for GeneralConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Модели llama.cpp
+// Legacy: активные параметры (сохранились в `AudioModelConfig` для обратной
+// совместимости старых конфигов; сам llama.cpp-слой удалён).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Пресет одной модели — содержит пути и набор активных llama.cpp-настроек.
-///
-/// `ctx_size` вынесен отдельным полем, т.к. это **неудаляемая** настройка
-/// (её нельзя убрать из списка «активные» в UI).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ModelConfig {
-    pub name: String,
-    pub model_path: String,
-    pub mmproj_path: String,
-    pub ctx_size: u32,
-    pub active_params: Vec<ActiveParam>,
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            name: "Новая модель".into(),
-            model_path: String::new(),
-            mmproj_path: String::new(),
-            ctx_size: 4096,
-            active_params: Vec::new(),
-        }
-    }
-}
-
-/// Активная (выбранная пользователем) llama.cpp-настройка.
-/// `key` — короткий id из каталога `llama_params.rs` (напр. `"gpu_layers"`).
+/// Активная (выбранная пользователем) настройка модели (legacy).
+/// `key` — короткий id параметра.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveParam {
     pub key: String,
@@ -498,11 +466,8 @@ pub struct AppConfig {
     /// Ключ темы (имя из `theme_data::builtin_themes`).
     pub theme: String,
     pub general: GeneralConfig,
-    pub models: Vec<ModelConfig>,
-    /// Имя выбранной модели (стабильный id — переживает reordering).
-    pub selected_model: Option<String>,
     /// Ключи агентских инструментов, активных по умолчанию. Передаются в
-    /// `ChatRequest.tools` на каждом запросе к llama. Дефолт — оба
+    /// каждый запрос к модели. Дефолт — оба
     /// известных инструмента, чтобы новый пользователь сразу получил
     /// работающий агентский сценарий. `#[serde(default)]` + `default_tools_active`
     /// — старые конфиги без поля не теряют функциональность.
@@ -513,8 +478,8 @@ pub struct AppConfig {
     /// `~/.config/synthos/skills/*.md` — здесь только подсветка.
     #[serde(default)]
     pub skills_active: Vec<String>,
-    /// Пресеты ASR-моделей (распознавание речи). Каждая модель — отдельный
-    /// процесс llama-server на собственном порту, параллельно с chat-моделью.
+    /// Пресеты ASR-моделей (распознавание речи). Каждая модель — локальный
+    /// synaptix::facade::asr::Transcriber (Whisper / GigaAM).
     #[serde(default)]
     pub audio_models: Vec<AudioModelConfig>,
     /// Имя выбранной ASR-модели (стабильный id).
@@ -1039,8 +1004,6 @@ impl Default for AppConfig {
         Self {
             theme: String::new(), // пусто = default_theme() из theme_data
             general: GeneralConfig::default(),
-            models: Vec::new(),
-            selected_model: None,
             tools_active: default_tools_active(),
             skills_active: Vec::new(),
             audio_models: Vec::new(),

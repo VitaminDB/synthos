@@ -50,7 +50,7 @@ fn identity_card() -> impl Widget {
                 Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
                     Text::new("Synthos").class("about-identity-name"),
                     Text::new(format!("Версия {}", env!("CARGO_PKG_VERSION"))).class("about-identity-version"),
-                    Text::new("Локальный десктоп-чат с llama.cpp и голосовым вводом").class("about-identity-tagline"),
+                    Text::new("Локальный AI-студио на нативном движке synaptix").class("about-identity-tagline"),
                 ]
             }),
         ]

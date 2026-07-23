@@ -13,7 +13,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 
-use crate::chat;
+use crate::agent;
 use crate::context::{AppCtx, FocusTarget};
 use crate::icons::{
     MI_AUTORENEW, MI_CONTENT_COPY, MI_CONTENT_PASTE, MI_HOURGLASS_TOP, MI_MIC, MI_PAUSE, MI_STOP,
@@ -93,17 +93,17 @@ fn action_button(
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn on_pause() {
-    chat::audio::voice_pause();
+    agent::audio::voice_pause();
 }
 
 fn on_stop() {
-    chat::audio::voice_stop();
+    agent::audio::voice_stop();
 }
 
 fn on_resume() {
     let app = use_context::<AppCtx>();
     app.voice.awaiting_actions.set(false);
-    chat::audio::voice_resume();
+    agent::audio::voice_resume();
 }
 
 /// «Завершить» из состояния паузы (запись не идёт, текст уже накоплен).
@@ -165,7 +165,7 @@ fn on_restart() {
     app.voice.refine_error.set(None);
     app.voice.raw_gen.update(|n| *n = n.wrapping_add(1));
     app.voice.refined_gen.update(|n| *n = n.wrapping_add(1));
-    chat::audio::voice_start();
+    agent::audio::voice_start();
 }
 
 /// Закрыть панель: остановить запись если идёт, очистить state, спрятать UI.
@@ -173,7 +173,7 @@ pub fn close_panel() {
     let app = use_context::<AppCtx>();
     if app.audio.is_recording.get_untracked() {
         // Аккуратно stop — сохранит запись как final_chunk и закроет рекордер.
-        chat::audio::voice_stop();
+        agent::audio::voice_stop();
     }
     app.voice.panel_open.set(false);
     app.voice.awaiting_actions.set(false);
@@ -214,13 +214,14 @@ pub fn paste_to_target(app: &AppCtx, text: &str) {
     paste_to_chat_input(app, text);
 }
 
-fn paste_to_chat_input(app: &AppCtx, text: &str) {
-    let prev = app.chat.input.get_untracked();
+fn paste_to_chat_input(_app: &AppCtx, text: &str) {
+    let syn = use_context::<crate::syn_chat::state::SynChatCtx>();
+    let prev = syn.input.get_untracked();
     let merged = if prev.trim().is_empty() {
         text.to_string()
     } else {
         format!("{} {}", prev.trim_end(), text)
     };
-    app.chat.input.set(merged);
-    app.chat.input_gen.update(|n| *n = n.wrapping_add(1));
+    syn.input.set(merged);
+    syn.input_gen.update(|n| *n = n.wrapping_add(1));
 }

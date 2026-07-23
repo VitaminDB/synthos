@@ -11,7 +11,7 @@
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 
-use crate::chat;
+use crate::agent;
 use crate::context::AppCtx;
 use crate::icons::MI_MIC;
 
@@ -46,13 +46,13 @@ fn toggle_central() {
     let awaiting = app.voice.awaiting_actions.get_untracked();
 
     if recording {
-        chat::audio::voice_pause();
+        agent::audio::voice_pause();
     } else if awaiting {
         app.voice.accumulated.set(String::new());
         app.voice.last_transcript.set(String::new());
         app.voice.awaiting_actions.set(false);
-        chat::audio::voice_start();
+        agent::audio::voice_start();
     } else {
-        chat::audio::voice_resume();
+        agent::audio::voice_resume();
     }
 }

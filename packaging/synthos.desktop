@@ -2,12 +2,12 @@
 Type=Application
 Name=Synthos
 GenericName=AI Assistant
-Comment=Локальный десктоп-чат с llama.cpp и голосовым вводом
-Comment[en]=Local desktop chat client with llama.cpp and voice input
+Comment=Локальный узловой AI-студио (видео/аудио/музыка/картинки + чат) на движке synaptix
+Comment[en]=Local node-based AI studio (video/audio/music/image + chat) on the synaptix engine
 Exec=synthos
 Icon=synthos
 Terminal=false
-Categories=Network;Chat;InstantMessaging;
-Keywords=ai;llm;llama;chat;assistant;voice;asr;tts;
+Categories=AudioVideo;Graphics;Development;
+Keywords=ai;llm;synaptix;chat;assistant;voice;asr;tts;video;music;image;
 StartupNotify=true
 StartupWMClass=Synthos

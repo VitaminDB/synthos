@@ -22,13 +22,9 @@
 //! активного чата живёт в `messages`; при переключении чата `registry::select`
 //! перегружает её из `storage`.
 
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
-
-use syngui::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::llama::api::ChatToolCall;
+use crate::agent::schema::ChatToolCall;
 
 use super::time::format_hm_now;
 
@@ -63,13 +59,6 @@ pub struct MsgAttachment {
     /// Размер файла в байтах — для статистики/UX.
     #[serde(default)]
     pub size_bytes: u64,
-}
-
-impl MsgAttachment {
-    /// Относительный путь от `blobs_dir()`: `"<sha256>.<ext>"`.
-    pub fn rel_path(&self) -> String {
-        format!("{}.{}", self.sha256, super::blobs::ext_from_mime(&self.mime))
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -362,139 +351,6 @@ pub struct ChatMeta {
     pub model_name: Option<String>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Контекст чата
-// ─────────────────────────────────────────────────────────────────────────────
+// (ChatCtx старого llama-чата удалён — нативный Syn-чат использует
+//  `crate::syn_chat::state::SynChatCtx`.)
 
-/// Реактивное состояние мультиконтекстного чата. Живёт внутри
-/// [`crate::context::AppCtx`], поэтому переживает переключение маршрутов:
-/// начатый стрим продолжит писать в `messages` и тогда, когда пользователь
-/// ушёл на другую страницу.
-#[derive(Clone)]
-pub struct ChatCtx {
-    /// Список метаданных всех чатов. Реактивно обновляется при create/delete.
-    /// Хранится отсортированным по `updated_at` убывающе — свежие вверху.
-    pub chats: RwSignal<Vec<ChatMeta>>,
-    /// id активного чата или `None`, если ни одного чата ещё не создано /
-    /// все удалены.
-    pub active_chat_id: RwSignal<Option<String>>,
-    /// Имя модели, привязанной к активному чату. Инициализируется из
-    /// `StoredChat.model_name` при select, пишется в `storage` при
-    /// изменении `AppCtx.selected_model`.
-    pub active_model: RwSignal<Option<String>>,
-    /// Флаг «идёт массовое обновление сигналов (подгрузка с диска)».
-    /// Подавляет автосейв в `install_chat_autosave` на время load, иначе
-    /// свежепрочитанный файл записался бы обратно почти без изменений.
-    pub loading: RwSignal<bool>,
-    /// Fingerprint последнего *сохранённого* состояния активного чата
-    /// (messages + model_name + title). Автосейв сверяет с ним свежий
-    /// снимок и пропускает запись, если ничего не изменилось — тогда
-    /// простое переключение чата не будет зря бампать `updated_at` и
-    /// пересортировывать список. Обновляется:
-    /// - в `registry::select_internal` сразу после чтения с диска;
-    /// - в `install_chat_autosave` после успешной записи.
-    pub last_saved_fp: RwSignal<u64>,
-
-    /// Лента сообщений активного чата.
-    pub messages: RwSignal<Vec<ChatMsg>>,
-    /// Inkrементальный «хвост» body последнего assistant-плейсхолдера во
-    /// время активного стрима. drive_stream пушит сюда токены на каждом
-    /// chunk'е; на финале turn'а `commit_streaming_tail` вливает значение
-    /// в `messages[last].body` и сбрасывает сигнал. UI рисует body
-    /// последнего бабла как `msg.body + streaming_body.get()`, и только
-    /// этот один bubble подписан на сигнал — остальная лента не
-    /// пересобирается на каждом токене.
-    pub streaming_body: RwSignal<String>,
-    /// То же, что и [`Self::streaming_body`], но для reasoning/thinking
-    /// блока. Бабл показывает `msg.thinking + streaming_thinking.get()`.
-    pub streaming_thinking: RwSignal<String>,
-    /// Черновик в поле ввода — двусторонняя связка с `MultilineTextEdit`.
-    pub input: RwSignal<String>,
-    /// Поколение поля ввода: монотонный счётчик, который бампается каждый
-    /// раз, когда содержимое сброшено извне (после отправки сообщения).
-    /// `MultilineTextEdit` сам не двунаправленно связан с `input` — он
-    /// забирает initial text при создании; поэтому пересоздаём editor
-    /// при смене поколения через `Reactive`-обёртку.
-    pub input_gen: RwSignal<u64>,
-    /// Оценка количества токенов в текущем `input`. Обновляется из двух
-    /// источников: мгновенно (локальная эвристика при on_change) и точнее
-    /// — debounced-запросом в `/tokenize` llama-server через 300 мс после
-    /// последнего нажатия. Когда сервер недоступен, остаётся эвристика.
-    pub input_tokens: RwSignal<usize>,
-    /// Монотонный счётчик «запросов на токенизацию». Каждый on_change
-    /// бампает его; debounced async-задача сверяется со снимком — если
-    /// значение изменилось, задача молча завершается (устаревший ввод).
-    /// Нужен Arc<AtomicU64>, потому что async-воркер tokio читает/пишет
-    /// его вне UI-потока, а `RwSignal` — thread-local.
-    pub input_tok_gen: Arc<AtomicU64>,
-    /// `true`, пока идёт генерация ответа (SSE-стрим активен).
-    pub pending: RwSignal<bool>,
-    /// Последняя человекочитаемая ошибка — для возможного snackbar’а.
-    pub error: RwSignal<Option<String>>,
-    /// Монотонный счётчик «запросов на прерывание».
-    pub abort: Arc<AtomicU64>,
-    /// Системный промпт — общий с `AppCtx::general::system_prompt`.
-    pub system_prompt: RwSignal<String>,
-    /// Состояние раскрытия thinking-блоков в ленте: ключ — индекс
-    /// сообщения в текущем чате (валиден до перехода на другой чат
-    /// или массового rebuild ленты), значение — `true` если блок
-    /// развёрнут, `false`/отсутствует — свёрнут. Эфемерное UI-состояние,
-    /// не persist'ится. Сбрасывается на каждом `select`/новом чате.
-    pub thinking_open: RwSignal<std::collections::HashMap<usize, bool>>,
-    /// Состояние раскрытия групп подряд идущих tool-вызовов в minimal-
-    /// режиме отображения. Ключ — индекс первого `ChatMsg` группы в
-    /// текущей ленте, значение — `true` если группа развёрнута. Дефолт
-    /// (отсутствие записи) — закрыто. Эфемерное UI-состояние, не
-    /// persist'ится; сбрасывается при переключении чата (та же семантика,
-    /// что у `thinking_open`).
-    pub tool_group_open: RwSignal<std::collections::HashMap<usize, bool>>,
-    /// Состояние раскрытия маркеров autocompact-итераций. Ключ — `iteration`
-    /// (стабильный u32, не индекс — иначе сдвиги при добавлении сообщений
-    /// сломают связь). Значение — `true` если маркер развёрнут (показывает
-    /// summary + свёрнутые сообщения). Эфемерное UI-состояние, не
-    /// persist'ится; сбрасывается при переключении чата.
-    pub compaction_open: RwSignal<std::collections::HashMap<u32, bool>>,
-    /// Прикреплённые пользователем файлы для следующего сообщения.
-    /// Реактивно отображаются в полосе превью над input-bar и уходят в
-    /// `ChatMsg::attachments` при `send_message`. Сбрасывается:
-    /// (1) после успешного `send_message`,
-    /// (2) при переключении чата в `registry::select`.
-    pub draft_attachments: RwSignal<Vec<MsgAttachment>>,
-    /// RAG-блок для текущего хода, сформированный `kb::augment::compute`
-    /// в `chat::session::start_agent_turn` до спавна `run_agent`. Читается
-    /// untracked'ом из `build_history` и подмешивается в system prompt
-    /// между ACTION_RULE и user_system_prompt. Per-chat: сбрасывается в
-    /// `registry::select_internal` и в начале каждого нового turn'а.
-    pub augment_text: RwSignal<String>,
-}
-
-impl ChatCtx {
-    /// Создать пустой контекст, подключив уже созданный сигнал системного
-    /// промпта из `GeneralCtx`. Это гарантирует, что правка поля в Settings
-    /// сразу влияет на следующие запросы без дополнительной синхронизации.
-    pub fn new(system_prompt: RwSignal<String>) -> Self {
-        Self {
-            chats: use_signal(Vec::new()),
-            active_chat_id: use_signal(None),
-            active_model: use_signal(None),
-            loading: use_signal(false),
-            last_saved_fp: use_signal(0),
-            messages: use_signal(Vec::new()),
-            streaming_body: use_signal(String::new()),
-            streaming_thinking: use_signal(String::new()),
-            input: use_signal(String::new()),
-            input_tokens: use_signal(0),
-            input_tok_gen: Arc::new(AtomicU64::new(0)),
-            input_gen: use_signal(0),
-            pending: use_signal(false),
-            error: use_signal(None),
-            abort: Arc::new(AtomicU64::new(0)),
-            system_prompt,
-            thinking_open: use_signal(std::collections::HashMap::new()),
-            tool_group_open: use_signal(std::collections::HashMap::new()),
-            compaction_open: use_signal(std::collections::HashMap::new()),
-            draft_attachments: use_signal(Vec::new()),
-            augment_text: use_signal(String::new()),
-        }
-    }
-}

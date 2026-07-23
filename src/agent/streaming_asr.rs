@@ -6,7 +6,7 @@
 //! 2. Drainer на каждое событие делает `run_on_main_thread` и применяет:
 //!    - [`StreamingAsrEvent::Delta`] → конкатенация в `actx.live_text`.
 //!    - [`StreamingAsrEvent::Final`] → перезапись `actx.live_text` финалом
-//!      + (если есть pending) вызов [`crate::chat::audio::on_transcription_done`].
+//!      + (если есть pending) вызов [`crate::agent::audio::on_transcription_done`].
 //!    - [`StreamingAsrEvent::Error`] → выставить ошибку в `session.error`.
 //! 3. Когда `RecordingSession::stop` отрабатывает, Sender PCM-канала дропается
 //!    → ASR-loop завершается → events_rx видит Disconnect → drainer выходит,

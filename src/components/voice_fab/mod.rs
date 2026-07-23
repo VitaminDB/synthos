@@ -7,7 +7,7 @@
 //! 2. **Окно распознавания** — `Portal::Center, modal, backdrop`. Внутри:
 //!    header (title + close) → status → aura (custom Canvas) → текст → actions.
 //!
-//! Запись/транскрипция отдана `crate::chat::audio::voice_*` — здесь только UI.
+//! Запись/транскрипция отдана `crate::agent::audio::voice_*` — здесь только UI.
 
 mod actions;
 mod aura;

@@ -12,7 +12,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::StyledWidget;
 
-use crate::chat::tools::Tool;
+use crate::agent::tools::Tool;
 use crate::context::AppCtx;
 use crate::icons::*;
 

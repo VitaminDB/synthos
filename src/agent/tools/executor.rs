@@ -14,7 +14,7 @@
 use thiserror::Error;
 use tokio::process::Command;
 
-use crate::llama::api::ChatToolCall;
+use crate::agent::schema::ChatToolCall;
 
 use super::catalog::{KEY_AUTOSKILL, KEY_BASH, KEY_KB_SEARCH, KEY_SUBAGENT, KEY_WEB};
 

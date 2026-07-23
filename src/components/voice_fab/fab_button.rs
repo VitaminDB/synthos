@@ -75,5 +75,5 @@ fn open_panel_and_record() {
     // voice_start: если ASR-модель уже загружена — стартует запись сразу;
     // иначе ставит pending_record_start=true и просит загрузить модель.
     // install_voice_auto_record (effect) дёрнет start_recording при успехе.
-    crate::chat::audio::voice_start();
+    crate::agent::audio::voice_start();
 }

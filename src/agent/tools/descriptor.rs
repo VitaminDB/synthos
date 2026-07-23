@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use serde_json::Value as Json;
 
-use crate::llama::api::{ChatTool, ToolFunctionSchema};
+use crate::agent::schema::{ChatTool, ToolFunctionSchema};
 
 /// Описание одного инструмента.
 #[derive(Debug, Clone)]

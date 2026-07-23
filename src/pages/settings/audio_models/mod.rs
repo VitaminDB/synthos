@@ -5,7 +5,7 @@
 //! язык-hint, устройство (CPU / GPU auto) и тип данных (F32 / BF16 / F16 / INT8).
 //! Запуск инференса локальный — без отдельного llama-server и без HTTP.
 //!
-//! Загрузка делегируется [`crate::chat::audio::load_selected_model`] —
+//! Загрузка делегируется [`crate::agent::audio::load_selected_model`] —
 //! она держит `Transcriber` в `AppCtx.audio.asr`, общий с `chat/audio.rs`
 //! (запись с микрофона использует тот же холдер).
 //!
@@ -17,7 +17,7 @@ pub mod audio_models_panel;
 use syngui::mgui;
 use syngui::prelude::*;
 
-use crate::chat::audio;
+use crate::agent::audio;
 use crate::config::{AsrEngineKind, AudioModelConfig};
 use crate::context::AppCtx;
 use crate::icons::*;

@@ -14,7 +14,7 @@ use syngui::widget::styled::StyledWidget;
 use syngui::widgets::overlay::portal::{Portal, PortalAnchor};
 use syngui::widgets::{MultilineTextEdit, Stack};
 
-use crate::chat;
+use crate::agent;
 use crate::context::AppCtx;
 use crate::icons::{MI_AUTORENEW, MI_HOURGLASS_TOP};
 
@@ -225,5 +225,5 @@ fn refine_error_reactive() -> impl Fn() -> StyledWidget<Text> + Send + Sync + 's
 fn trigger_refine() {
     let app = use_context::<AppCtx>();
     let raw = app.voice.accumulated.get_untracked();
-    chat::voice_refine::refine_voice_text(app, raw);
+    agent::voice_refine::refine_voice_text(app, raw);
 }

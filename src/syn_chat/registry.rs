@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use syngui::prelude::*;
 
-use crate::chat::time::{unix_nanos, unix_secs};
+use crate::agent::time::{unix_nanos, unix_secs};
 
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};

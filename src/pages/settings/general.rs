@@ -10,7 +10,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::MultilineTextEdit;
 
-use crate::chat::tools::Tool;
+use crate::agent::tools::Tool;
 use crate::config::{TOOL_APPROVAL_ALWAYS, TOOL_APPROVAL_ASK, TOOL_APPROVAL_DEFAULT};
 use crate::context::AppCtx;
 use crate::icons::*;
@@ -40,23 +40,12 @@ pub fn view() -> impl Widget {
                                 ]),
                         ]),
 
-                        section("Llama server", vec![
-                            path_row(MI_DNS, "Путь к llama-server",
-                                "Бинарь, который запускается кнопкой «Запустить». Пусто/имя — поиск в $PATH.",
-                                g.server_path),
-                            text_row(MI_LAN, "Хост",
-                                "Интерфейс, на котором слушает сервер (127.0.0.1 — только локально).",
-                                g.server_host),
-                            port_row(MI_ROUTER, "Порт",
-                                "TCP-порт llama-server.", g.server_port),
-                        ]),
-
                         section("AI-ассистент", vec![
                             textarea_row(MI_CHAT, "Системный промпт",
-                                "Первое сообщение (role=system) в каждом запросе к llama. Задаёт тон и ограничения ассистента.",
+                                "Первое сообщение (role=system) в каждом запросе к модели. Задаёт тон и ограничения ассистента.",
                                 g.system_prompt),
                             textarea_row(MI_RECORD_VOICE_OVER, "Системный промпт постобработки речи",
-                                "Применяется при распознавании голоса — кнопка ⟲ в FAB-окне отправляет сырую стенограмму на llama-server с этим промптом и заменяет ею «Отредактированный текст». Пусто = постобработка отключена.",
+                                "Применяется при распознавании голоса — кнопка ⟲ в FAB-окне прогоняет сырую стенограмму через локальную модель с этим промптом и заменяет ею «Отредактированный текст». Пусто = постобработка отключена.",
                                 g.voice_refine_prompt),
                         ]),
 
@@ -236,40 +225,7 @@ fn dropdown_row(
     row_frame(icon, title, desc, control)
 }
 
-/// Строка с текстовым полем + кнопкой «обзор». Используется для пути
-/// к бинарю llama-server. Открывает xdg-portal через `rfd::FileDialog`.
-fn path_row(
-    icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
-    value: RwSignal<String>,
-) -> Box<dyn Widget> {
-    let initial = value.get_untracked();
-    let field = TextField::with_text(initial)
-        .placeholder("llama-server")
-        .on_change(move |s| value.set(s.to_string()));
-
-    let browse = ToolButton::new(MI_FOLDER_OPEN)
-        .on_click(move || {
-            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                value.set(path.display().to_string());
-            }
-        })
-        .class("models-path-browse");
-
-    let control: Box<dyn Widget> = Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                Box::new(field) as Box<dyn Widget>,
-                Box::new(browse) as Box<dyn Widget>,
-            ]),
-    );
-    row_frame(icon, title, desc, control)
-}
-
-/// Аналог `path_row`, но «Обзор…» открывает диалог выбора папки
+/// Строка с текстовым полем + кнопкой «обзор» выбора папки
 /// (`pick_folder`) — для каталогов вроде HF-кэша.
 fn folder_row(
     icon: &'static str,
@@ -421,25 +377,6 @@ fn font_size_row(
             .step(1.0)
             .decimal_places(0)
             .on_change(move |v| value.set(v.clamp(min as f64, max as f64) as f32))
-            .width(140.0),
-    );
-    row_frame(icon, title, desc, control)
-}
-
-fn port_row(
-    icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
-    value: RwSignal<u16>,
-) -> Box<dyn Widget> {
-    let initial = value.get_untracked();
-    let control: Box<dyn Widget> = Box::new(
-        SpinBox::new()
-            .value(initial as f64)
-            .range(1.0, 65535.0)
-            .step(1.0)
-            .decimal_places(0)
-            .on_change(move |v| value.set(v.clamp(1.0, 65535.0) as u16))
             .width(140.0),
     );
     row_frame(icon, title, desc, control)

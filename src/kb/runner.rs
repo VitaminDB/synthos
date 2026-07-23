@@ -114,10 +114,10 @@ pub fn start(
                 .map_err(|e| e.to_string())?;
             let doc = runtime
                 .block_on(async {
-                    crate::chat::tools::web_fetch::fetch_url(&url).await
+                    crate::agent::tools::web_fetch::fetch_url(&url).await
                 })
                 .map_err(|e| e.to_string())?;
-            let title = crate::chat::tools::web_fetch::extract_title(&doc.body)
+            let title = crate::agent::tools::web_fetch::extract_title(&doc.body)
                 .unwrap_or_else(|| url.clone());
             Ok((doc.body, title))
         });

@@ -26,7 +26,7 @@ pub mod http;
 pub mod read;
 pub mod search;
 
-use crate::chat::tools::executor::ToolError;
+use crate::agent::tools::executor::ToolError;
 
 use self::action::{parse_args, WebArgs};
 

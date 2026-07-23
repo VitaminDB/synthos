@@ -21,7 +21,7 @@ use syngui::prelude::*;
 use syngui::widgets::overlay::PortalAnchor;
 use syngui::StyledWidget;
 
-use crate::chat::tools::{PendingApproval, ToolDecision};
+use crate::agent::tools::{PendingApproval, ToolDecision};
 use crate::context::AppCtx;
 use crate::icons::{MI_CHECK, MI_CLOSE, MI_DONE_ALL};
 

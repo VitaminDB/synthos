@@ -30,11 +30,6 @@ const FOOTER_UTILITY: &[Item] = &[
     Item { icon: MI_SETTINGS,       route: "settings",      tooltip: "Настройки" },
 ];
 
-const FOOTER_DEBUG: &[Item] = &[
-    Item { icon: MI_TERMINAL,       route: "chat",          tooltip: "Чат через llama.cpp" },
-    Item { icon: MI_BUG_REPORT,     route: "support",       tooltip: "Лог llama-server" },
-];
-
 pub fn view() -> impl Widget {
     DecoratedBox::new().class("nav-rail").child(mgui! {
         Column::new()
@@ -68,8 +63,6 @@ fn bottom_cluster() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .class("nav-rail-footer") => [
                 rail_column(FOOTER_UTILITY),
-                DecoratedBox::new().class("nav-rail-divider"),
-                rail_column(FOOTER_DEBUG),
                 avatar(),
             ]
     }

@@ -17,19 +17,11 @@ use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::overlay::context_menu::ContextMenu;
 use syngui::widgets::overlay::menu::MenuItem;
 
-use crate::chat::registry;
-use crate::chat::state::ChatMeta;
+use crate::agent::state::ChatMeta;
 use crate::icons::*;
 
-/// Рендерит карточку чата. `selected` управляет модификатором `.selected`
-/// (такая же подсветка, как у существующих `.conversation-item.selected`).
-pub fn row(meta: &ChatMeta, selected: bool) -> Box<dyn Widget> {
-    let on_select = Arc::new(|id: &str| registry::select(id));
-    let on_delete = Arc::new(|id: &str| registry::delete(id));
-    row_generic(meta, selected, on_select, on_delete)
-}
-
-/// Generic-вариант: callback'и select/delete передаются явно. Используется
+/// Рендерит карточку чата. Callback'и select/delete передаются явно —
+/// Syn-чат подставляет `syn_chat::registry::{select,delete}`. Используется
 /// в Syn-чате с `syn_chat::registry::{select,delete}`.
 pub fn row_generic(
     meta: &ChatMeta,

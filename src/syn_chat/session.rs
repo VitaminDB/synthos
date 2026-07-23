@@ -33,9 +33,9 @@ use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::*;
 use synaptix::facade::llm::{LlmGeneration, LlmTokenizer, Message};
 
-use crate::chat::tools::{self, Tool, ToolDecision};
+use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
+use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
-use crate::llama::api::{ChatToolCall, ChatToolCallFunction};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{ChatMsg, ChatMsgRole, SynChatCtx, ThinkParser};
@@ -51,7 +51,7 @@ const FLUSH_INTERVAL_MS: u64 = 16;
 const IM_END_TOKEN: &str = "<|im_end|>";
 /// Закрытие tool-call блока — stop-sequence для генерации, чтобы модель
 /// не уходила додумывать после tool-вызова.
-const TOOL_CALL_CLOSE: &str = "</tool_call>";
+pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// Лимит итераций agent-loop: модель в режиме tool-calling может зациклиться,
 /// поэтому ограничиваем общее число turn-ов. 16 — баланс между «успеть
 /// решить многошаговую задачу» и «не сжечь весь контекст».
@@ -491,7 +491,7 @@ async fn run_agent_loop(
             if abort.load(Ordering::Relaxed) != abort_snapshot {
                 return Ok(());
             }
-            let decision = crate::chat::session::await_decision_on_tool_call(
+            let decision = crate::agent::tool_flow::await_decision_on_tool_call(
                 chat_call,
                 &abort,
                 abort_snapshot,
@@ -614,12 +614,12 @@ fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, erro
 /// Qwen3 или manual prefix). Особый случай — `autoskill`, описание которого
 /// расширяется актуальным списком скилов через [`build_autoskill_chat_tool`].
 fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
-    use crate::chat::tools::catalog::KEY_AUTOSKILL;
+    use crate::agent::tools::catalog::KEY_AUTOSKILL;
     let keys = app.tools.active.get_untracked();
     keys.iter()
         .filter_map(|k| {
             let tool_json = if k == KEY_AUTOSKILL {
-                let t = crate::chat::session::build_autoskill_chat_tool(app);
+                let t = crate::agent::tool_flow::build_autoskill_chat_tool(app);
                 serde_json::to_value(&t).ok()
             } else {
                 let t = Tool::by_key(k)?.to_chat_tool();
@@ -631,7 +631,7 @@ fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
 }
 
 /// Полный набор stop-токенов для Qwen3 ChatML: EOS из конфига + `<|im_end|>`.
-fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTokenizer) {
+pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTokenizer) {
     let mut stops: Vec<u32> = tokenizer.eos_ids().to_vec();
     match tokenizer.encode(IM_END_TOKEN) {
         Ok(ids) if ids.len() == 1 => {

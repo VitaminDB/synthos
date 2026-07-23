@@ -7,7 +7,7 @@ use syngui::core::Color;
 use syngui::mgui;
 use syngui::prelude::*;
 
-use crate::chat::time::format_date_today;
+use crate::agent::time::format_date_today;
 use crate::components::date_divider;
 use crate::syn_chat::state::{ChatMsg, ChatMsgRole, SynChatCtx};
 

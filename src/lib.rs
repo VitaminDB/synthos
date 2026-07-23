@@ -13,13 +13,12 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::navigation::router::{Router, RouterView};
 
-pub mod chat;
+pub mod agent;
 pub mod components;
 pub mod config;
 pub mod context;
 pub mod icons;
 pub mod kb;
-pub mod llama;
 pub mod logging;
 pub mod metrics;
 pub mod migrate;
@@ -35,7 +34,6 @@ use context::{
     AppCtx, GeneralCtx, ToolsCtx, VoiceFabCtx, VoiceHistoryCtx, INITIAL_ROUTE,
     INITIAL_SETTINGS_ROUTE, ROUTES, SETTINGS_ROUTES,
 };
-use llama::LlamaProcess;
 use metrics::MetricsState;
 use pages::settings::theme_data;
 
@@ -89,13 +87,10 @@ pub fn run_desktop() {
             );
             pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
-            install_chat_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
-            install_model_sync(&ctx);
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
-            chat::registry::load_all();
             syn_chat::registry::load_all();
             Box::new(build_app())
         });
@@ -139,13 +134,10 @@ fn android_main(app: syngui::app::AndroidApp) {
             );
             pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
-            install_chat_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
-            install_model_sync(&ctx);
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
-            chat::registry::load_all();
             syn_chat::registry::load_all();
             Box::new(build_app())
         });
@@ -218,9 +210,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let general = GeneralCtx {
         display_name: use_signal(saved.general.display_name.clone()),
         language: use_signal(saved.general.language.clone()),
-        server_path: use_signal(saved.general.server_path.clone()),
-        server_host: use_signal(saved.general.server_host.clone()),
-        server_port: use_signal(saved.general.server_port),
         system_prompt: use_signal(saved.general.system_prompt.clone()),
         voice_refine_prompt: use_signal(saved.general.voice_refine_prompt.clone()),
         tool_display_mode: use_signal(saved.general.tool_display_mode.clone()),
@@ -236,13 +225,9 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     };
 
 
-    let models = use_signal(saved.models.clone());
-    let selected_model = use_signal(saved.selected_model.clone());
-    let right_panel_tab = use_signal(context::RIGHT_PANEL_LLAMA);
-    let llama = Arc::new(LlamaProcess::with_kind(llama::process::ProcessKind::Chat));
     let audio_models = use_signal(saved.audio_models.clone());
     let selected_audio_model = use_signal(saved.selected_audio_model.clone());
-    let audio = chat::audio::AudioCtx::new();
+    let audio = agent::audio::AudioCtx::new();
     let voice = VoiceFabCtx::new();
     let voice_history = VoiceHistoryCtx::new();
     // Загрузить индекс записей с диска (Sprint 2). Не паническая ошибка —
@@ -250,10 +235,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     voice_history
         .recordings
         .set(pages::voice_history::storage::load_index());
-    // ChatCtx использует тот же сигнал `system_prompt`, что лежит в Settings →
-    // Общие: правки поля сразу влияют на следующие запросы и автоматически
-    // попадают в `~/.config/synthos/config.json` через `install_config_autosave`.
-    let chat = chat::ChatCtx::new(general.system_prompt);
     let metrics = Arc::new(MetricsState::new());
     let tools = ToolsCtx::new(saved.tools_active.clone());
 
@@ -308,16 +289,11 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         skills_dialog,
         kb_url_dialog,
         general,
-        models,
-        selected_model,
-        right_panel_tab,
-        llama,
         audio_models,
         selected_audio_model,
         audio,
         voice,
         voice_history,
-        chat,
         metrics,
         tools,
         terminal_font_family,
@@ -383,8 +359,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
 fn install_config_autosave(ctx: &AppCtx) {
     let theme_key = ctx.theme_key;
     let g = ctx.general;
-    let models = ctx.models;
-    let selected = ctx.selected_model;
     let tools_active = ctx.tools.active;
     let skills_active = ctx.skills_active;
     let audio_models = ctx.audio_models;
@@ -458,9 +432,6 @@ fn install_config_autosave(ctx: &AppCtx) {
             general: config::GeneralConfig {
                 display_name: g.display_name.get(),
                 language: g.language.get(),
-                server_path: g.server_path.get(),
-                server_host: g.server_host.get(),
-                server_port: g.server_port.get(),
                 system_prompt: g.system_prompt.get(),
                 voice_refine_prompt: g.voice_refine_prompt.get(),
                 tool_display_mode: g.tool_display_mode.get(),
@@ -474,8 +445,6 @@ fn install_config_autosave(ctx: &AppCtx) {
                 autocompact_enabled: g.autocompact_enabled.get(),
                 autocompact_threshold_percent: g.autocompact_threshold_percent.get(),
             },
-            models: models.get(),
-            selected_model: selected.get(),
             tools_active: tools_active.get(),
             skills_active: skills_active.get(),
             audio_models: audio_models.get(),
@@ -581,54 +550,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     create_effect(move || {
         let mbps = hf.speed_limit_mbps.get();
         pages::huggingface::rate::set_limit_bps((mbps as u64) * 1024 * 1024);
-    });
-}
-
-/// Эффект автосохранения активного чата на диск.
-///
-/// Подписывается на `active_chat_id`, `messages`, `active_model` + `chats`
-/// (последний — чтобы ловить `rename_active`, которое меняет только
-/// `ChatMeta.title`). Любое dirty-срабатывание считает fingerprint из
-/// свежего состояния и сравнивает с `last_saved_fp`; запись и обновление
-/// `preview`/`updated_at` происходят только при реальном изменении.
-/// Флаг `loading` блокирует эффект целиком на время массового `set`
-/// (select с диска), но fingerprint — основная защита: даже если эффект
-/// вытек после окончания loading, он увидит равенство и промолчит.
-fn install_chat_autosave(ctx: &AppCtx) {
-    let chat = ctx.chat.clone();
-    create_effect(move || {
-        let _id = chat.active_chat_id.get();
-        let msgs = chat.messages.get();
-        let model = chat.active_model.get();
-        // Реагируем и на изменение `chats` — там лежит авто-title.
-        let chats = chat.chats.get();
-
-        if chat.loading.get_untracked() {
-            return;
-        }
-        let Some(active_id) = chat.active_chat_id.get_untracked() else {
-            return;
-        };
-
-        let title = chats
-            .iter()
-            .find(|m| m.id == active_id)
-            .map(|m| m.title.clone())
-            .unwrap_or_default();
-
-        let fp = chat::registry::fingerprint(&title, &model, &msgs);
-        if chat.last_saved_fp.get_untracked() == fp {
-            return;
-        }
-
-        // Реальная правка — обновляем preview/updated_at meta-записи и пишем.
-        chat::registry::refresh_active_preview(&msgs);
-        chat::registry::refresh_active_model(model.clone());
-
-        if let Some(stored) = chat::registry::snapshot_current() {
-            chat::storage::save(&stored);
-            chat.last_saved_fp.set(fp);
-        }
     });
 }
 
@@ -802,30 +723,6 @@ fn workspace_fingerprint(s: &str) -> u64 {
     }
 }
 
-/// Двунаправленная синхронизация `selected_model` ↔ `active_model`.
-///
-/// Правка Dropdown в правой панели пишет в `selected_model` (общий сигнал).
-/// Этот эффект отражает её в `active_model` активного чата, что триггерит
-/// `install_chat_autosave` и сохранение нового `model_name` на диск.
-/// Во время `loading` эффект молчит — чтобы select-сценарий сам поставил
-/// `active_model = stored.model_name` без эхо-обновления.
-fn install_model_sync(ctx: &AppCtx) {
-    let chat = ctx.chat.clone();
-    let selected_model = ctx.selected_model;
-    create_effect(move || {
-        let m = selected_model.get();
-        if chat.loading.get_untracked() {
-            return;
-        }
-        if chat.active_chat_id.get_untracked().is_none() {
-            return;
-        }
-        if chat.active_model.get_untracked() != m {
-            chat.active_model.set(m);
-        }
-    });
-}
-
 /// Effect, отвечающий за авто-старт записи после загрузки ASR-модели.
 ///
 /// Когда пользователь кликает FAB при выгруженной модели, `voice_start()`
@@ -854,7 +751,7 @@ fn install_voice_auto_record(ctx: &AppCtx) {
         // и при наличии модели — стартуем запись.
         voice.pending_record_start.set(false);
         if loaded_name.is_some() {
-            chat::audio::voice_start();
+            agent::audio::voice_start();
         }
     });
 }
@@ -864,15 +761,13 @@ fn build_app() -> impl Widget {
     let top_router = ctx.router.clone();
 
     let routes = RouterView::new(top_router)
-        .route("chat", || Box::new(pages::chat::view()))
         .route("syn_chat", || Box::new(pages::syn_chat::view()))
         .route("voice_history", || Box::new(pages::voice_history::view()))
         .route("code", || Box::new(pages::code_editor::view()))
         .route("nodes", || Box::new(pages::node_editor::view()))
         .route("syn_explorer", || Box::new(pages::syn_explorer::view()))
         .route("huggingface", || Box::new(pages::huggingface::view()))
-        .route("settings", || Box::new(pages::settings::view()))
-        .route("support", || Box::new(pages::support::view()));
+        .route("settings", || Box::new(pages::settings::view()));
 
     // Padding и rounded окна управляются MSS-pseudo `:window-maximized`
     // (см. styles/layout/shell.mss). В restored — `.window-backdrop` имеет

@@ -1,14 +1,14 @@
 //! Хранение Syn-чатов на диске: `~/.config/synthos/syn_chats/{id}.json`.
 //!
 //! Формат файла — общий с основным llama.cpp-чатом
-//! ([`crate::chat::storage::StoredChat`]), так что переключение между чатами
+//! ([`crate::agent::storage::StoredChat`]), так что переключение между чатами
 //! сохраняет историю как обычно. Отличается только директория, чтобы
 //! пользователь видел Syn-чаты отдельным списком.
 
 use std::path::PathBuf;
 
-pub use crate::chat::state::{ChatMeta, ChatMsg};
-pub use crate::chat::storage::{preview_from_messages, truncate_chars, StoredChat};
+pub use crate::agent::state::{ChatMeta, ChatMsg};
+pub use crate::agent::storage::{preview_from_messages, truncate_chars, StoredChat};
 
 /// Каталог, где лежат JSON-файлы Syn-чатов. Создаётся при первом save.
 pub fn syn_chats_dir() -> PathBuf {

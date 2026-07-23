@@ -24,6 +24,8 @@ pub fn all() -> Vec<Template> {
         save_to_file_template(),
         mix_two_sources_template(),
         mix_mic_and_file_template(),
+        voxcpm_voice_clone_template(),
+        omnivoice_voice_clone_template(),
         acestep_text2music_template(),
         acestep_retake_template(),
         acestep_repaint_template(),
@@ -736,6 +738,79 @@ fn mix_two_sources_template() -> Template {
 /// Конструктор ноды без полей (`fields` пустой, `enabled=true`, дефолтный
 /// `style`). Используется для большинства ACE-Step builtin'ов — у нод
 /// нет registry-fields, всё состояние живёт в `state`.
+/// Voice-clone TTS на VoxCPM2: референс-голос (Audio File) + текст (Text) →
+/// VoxCPM2 (`ref_audio`) → плеер и сохранение в файл.
+fn voxcpm_voice_clone_template() -> Template {
+    let text_state = NodeStateData::TextView(TextViewStateData {
+        output_text: "Привет! Это синтез моего голоса из короткого образца."
+            .into(),
+        width: 280.0,
+        height: 120.0,
+    });
+    Template {
+        id: "builtin-voice-clone-voxcpm".into(),
+        builtin: true,
+        name: "VoxCPM: Voice Clone".into(),
+        description:
+            "Референс-голос (Audio File) + текст (Text) → VoxCPM2 TTS (клон по ref_audio) → \
+             Audio Player и Save to File. Откройте короткий WAV с образцом голоса, впишите \
+             текст, укажите .syn-модель VoxCPM в ноде TTS и нажмите Run."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes: vec![
+            node_with_state(1, NodeKind::TextView, 60.0, 60.0, text_state),
+            node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
+            node_plain(3, NodeKind::VoxCpm2, 480.0, 140.0),
+            node_plain(4, NodeKind::AudioPlayer, 900.0, 60.0),
+            node_plain(5, NodeKind::SaveToFile, 900.0, 300.0),
+        ],
+        connections: vec![
+            ConnData { from_node: 1, from_port: "out".into(),   to_node: 3, to_port: "text".into() },
+            ConnData { from_node: 2, from_port: "out".into(),   to_node: 3, to_port: "ref_audio".into() },
+            ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
+            ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
+        ],
+        viewport: None,
+    }
+}
+
+/// Voice-clone TTS на OmniVoice: референс-голос (Audio File) + текст (Text) →
+/// OmniVoice (`ref_audio` активирует Clone-mode) → плеер и сохранение в файл.
+fn omnivoice_voice_clone_template() -> Template {
+    let text_state = NodeStateData::TextView(TextViewStateData {
+        output_text: "Привет! Это синтез моего голоса из короткого образца."
+            .into(),
+        width: 280.0,
+        height: 120.0,
+    });
+    Template {
+        id: "builtin-voice-clone-omnivoice".into(),
+        builtin: true,
+        name: "OmniVoice: Voice Clone".into(),
+        description:
+            "Референс-голос (Audio File) + текст (Text) → OmniVoice TTS (Clone-mode по ref_audio) → \
+             Audio Player и Save to File. Откройте WAV с образцом голоса, впишите текст, укажите \
+             .syn-модель OmniVoice в ноде TTS и нажмите Run. `ref text` (транскрипт образца) — \
+             опционально, для более точного клона."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes: vec![
+            node_with_state(1, NodeKind::TextView, 60.0, 60.0, text_state),
+            node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
+            node_plain(3, NodeKind::OmniVoice, 480.0, 140.0),
+            node_plain(4, NodeKind::AudioPlayer, 900.0, 60.0),
+            node_plain(5, NodeKind::SaveToFile, 900.0, 300.0),
+        ],
+        connections: vec![
+            ConnData { from_node: 1, from_port: "out".into(),   to_node: 3, to_port: "text".into() },
+            ConnData { from_node: 2, from_port: "out".into(),   to_node: 3, to_port: "ref_audio".into() },
+            ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
+            ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
+        ],
+        viewport: None,
+    }
+}
+
 fn node_with_state(id: u64, kind: NodeKind, x: f32, y: f32, state: NodeStateData) -> NodeData {
     NodeData {
         id,
@@ -1065,6 +1140,47 @@ mod tests {
                 t.connections.len(),
                 "{label}: ctx connection count after load_into_ctx"
             );
+        }
+    }
+
+    /// Оба voice-clone TTS-шаблона зарегистрированы, попадают в раздел
+    /// «Аудио» и все их связи ссылаются на валидные порты registry.
+    /// Signal-free (без `load_into_ctx`), поэтому проходит в обычном
+    /// многопоточном тест-раннере.
+    #[test]
+    fn voice_clone_templates_wired_correctly() {
+        use crate::templates::TemplateCategory;
+        let all = all();
+        let vc: Vec<&Template> = all
+            .iter()
+            .filter(|t| t.id.starts_with("builtin-voice-clone-"))
+            .collect();
+        assert_eq!(vc.len(), 2, "оба voice-clone шаблона зарегистрированы");
+        for t in &vc {
+            assert_eq!(
+                TemplateCategory::for_template(t),
+                TemplateCategory::Audio,
+                "{}: должен попадать в раздел «Аудио»",
+                t.id
+            );
+            assert!(!t.connections.is_empty(), "{}: есть связи", t.id);
+            for c in &t.connections {
+                assert!(
+                    resolve_port_name(t.kind_of(c.from_node), PortSide::Output, &c.from_port)
+                        .is_some(),
+                    "{}: неизвестный output-порт {:?} на ноде {}",
+                    t.id,
+                    c.from_port,
+                    c.from_node
+                );
+                assert!(
+                    resolve_port_name(t.kind_of(c.to_node), PortSide::Input, &c.to_port).is_some(),
+                    "{}: неизвестный input-порт {:?} на ноде {}",
+                    t.id,
+                    c.to_port,
+                    c.to_node
+                );
+            }
         }
     }
 }

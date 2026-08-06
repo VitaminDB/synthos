@@ -82,6 +82,12 @@ fn runtime_card() -> Box<dyn Widget> {
             .on_change(move |v| graph_signal.set(v)),
     );
 
+    let mtp_signal = ctx.qwen36_mtp;
+    let mtp_toggle: Box<dyn Widget> = Box::new(
+        Toggle::with_state(mtp_signal.get_untracked())
+            .on_change(move |v| mtp_signal.set(v)),
+    );
+
     let la_signal = ctx.qwen36_la_fused;
     let la_toggle: Box<dyn Widget> = Box::new(
         Toggle::with_state(la_signal.get_untracked())
@@ -172,6 +178,19 @@ fn runtime_card() -> Box<dyn Widget> {
                  сборки до Phase D — теперь делается автоматически в \
                  `model_registry`).",
                 graph_toggle,
+            ),
+            row_frame(
+                MI_BOLT,
+                "MTP (multi-token prediction)",
+                "Спекулятивный декод на встроенной nextn-голове модели: \
+                 голова предсказывает второй токен, основная модель \
+                 проверяет оба за один forward. Работает только для greedy \
+                 (temperature = 0) и только если в бандле есть тензоры \
+                 `mtp.*` (MTP-вариант GGUF). Выдача побитово совпадает с \
+                 обычным декодом. На RTX 5090 Laptop, NVFP4: 38.2 → 43.9 \
+                 tok/s при приёме черновиков 80-84%. Требует перезагрузки \
+                 модели — веса MTP-головы грузятся вместе с моделью.",
+                mtp_toggle,
             ),
             row_frame(
                 MI_BOLT,

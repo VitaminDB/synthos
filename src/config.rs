@@ -563,6 +563,8 @@ pub struct AppConfig {
     pub hf_skip_unwanted_formats: bool,
     #[serde(default = "default_hf_gguf_support")]
     pub hf_gguf_support: bool,
+    #[serde(default = "default_qwen36_mtp")]
+    pub qwen36_mtp: bool,
     /// Токен доступа HuggingFace (`hf_...`). Нужен для gated/private моделей
     /// (FLUX.1-dev, Llama и др.) и снимает rate-limit анонимных запросов.
     /// Создаётся на https://huggingface.co/settings/tokens (роль `read`).
@@ -1028,6 +1030,7 @@ impl Default for AppConfig {
             hf_speed_limit_mbps: default_hf_speed_limit_mbps(),
             hf_skip_unwanted_formats: default_hf_skip_unwanted_formats(),
             hf_gguf_support: default_hf_gguf_support(),
+            qwen36_mtp: default_qwen36_mtp(),
             hf_token: String::new(),
             syn_chat_defaults: SamplingParams::default(),
             last_syn_model: None,
@@ -1054,6 +1057,7 @@ fn default_hf_segments_per_file() -> u32 { 4 }
 fn default_hf_speed_limit_mbps() -> u32 { 0 }
 fn default_hf_skip_unwanted_formats() -> bool { true }
 fn default_hf_gguf_support() -> bool { false }
+fn default_qwen36_mtp() -> bool { true }
 
 /// Дефолт левого разделителя страницы Syn-чата. При окне 1600px даёт ~300px.
 pub fn default_syn_chat_left_split_ratio() -> f32 {

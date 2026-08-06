@@ -258,6 +258,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let syn_chat_quant = use_signal(saved.syn_chat_quant.clone());
     let qwen36_attn_mode = use_signal(saved.qwen36_attn_mode.clone());
     let qwen36_graph_decode = use_signal(saved.qwen36_graph_decode);
+    let qwen36_mtp = use_signal(saved.qwen36_mtp);
     let qwen36_la_fused = use_signal(saved.qwen36_la_fused);
     let qwen36_gdr_fused = use_signal(saved.qwen36_gdr_fused);
     let qwen36_prefill_chunk = use_signal(saved.qwen36_prefill_chunk);
@@ -271,6 +272,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     // Сигнал-driven sync с runtime — ниже в `create_effect` после `ctx`.
     synaptix::facade::llm::set_flash_attn_mode(parse_attn_mode(&saved.qwen36_attn_mode));
     synaptix::facade::llm::set_graph_decode_enabled(saved.qwen36_graph_decode);
+    synaptix::facade::llm::set_mtp_enabled(saved.qwen36_mtp);
     synaptix::facade::llm::set_la_prep_fused_disabled(!saved.qwen36_la_fused);
     synaptix::facade::llm::set_gdr_fused_disabled(!saved.qwen36_gdr_fused);
     synaptix::facade::llm::set_prefill_chunk_size(saved.qwen36_prefill_chunk);
@@ -305,6 +307,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         syn_chat_quant,
         qwen36_attn_mode,
         qwen36_graph_decode,
+        qwen36_mtp,
         qwen36_la_fused,
         qwen36_gdr_fused,
         qwen36_prefill_chunk,
@@ -371,6 +374,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let syn_chat_quant = ctx.syn_chat_quant;
     let qwen36_attn_mode = ctx.qwen36_attn_mode;
     let qwen36_graph_decode = ctx.qwen36_graph_decode;
+    let qwen36_mtp = ctx.qwen36_mtp;
     let qwen36_la_fused = ctx.qwen36_la_fused;
     let qwen36_gdr_fused = ctx.qwen36_gdr_fused;
     let qwen36_prefill_chunk = ctx.qwen36_prefill_chunk;
@@ -483,10 +487,12 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_speed_limit_mbps: hf.speed_limit_mbps.get(),
             hf_skip_unwanted_formats: hf.skip_unwanted_formats.get(),
             hf_gguf_support: hf.gguf_support.get(),
+
             hf_token: hf.token.get(),
             syn_chat_quant: syn_chat_quant.get(),
             qwen36_attn_mode: qwen36_attn_mode.get(),
             qwen36_graph_decode: qwen36_graph_decode.get(),
+            qwen36_mtp: qwen36_mtp.get(),
             qwen36_la_fused: qwen36_la_fused.get(),
             qwen36_gdr_fused: qwen36_gdr_fused.get(),
             qwen36_prefill_chunk: qwen36_prefill_chunk.get(),
@@ -519,6 +525,10 @@ fn install_config_autosave(ctx: &AppCtx) {
     create_effect(move || {
         let on = qwen36_graph_decode.get();
         synaptix::facade::llm::set_graph_decode_enabled(on);
+    });
+    create_effect(move || {
+        let on = qwen36_mtp.get();
+        synaptix::facade::llm::set_mtp_enabled(on);
     });
     // Phase B-1/B-2 fused kernels — runtime toggle для linear_attn слоёв
     // (применяется в `forward_raw_linear_attn_step`). Без reload.

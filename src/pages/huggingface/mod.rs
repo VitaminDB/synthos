@@ -23,6 +23,7 @@ pub mod actions;
 pub mod api;
 pub mod card;
 pub mod control;
+pub mod convert;
 pub mod detail_panel;
 pub mod dialogs;
 pub mod download;

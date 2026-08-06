@@ -69,8 +69,23 @@ fn sort_chips() -> impl Widget {
         ] {
             row = row.child(chip(mode, current == mode));
         }
+        if ctx.gguf_support.get() {
+            row = row.child(gguf_chip(ctx.gguf_filter.get()));
+        }
         vec![Box::new(row)]
     })
+}
+
+fn gguf_chip(selected: bool) -> impl Widget {
+    let class = if selected { "hf-chip selected" } else { "hf-chip" };
+    Button::new("GGUF")
+        .on_click(move || {
+            let ctx = use_context::<HuggingFaceCtx>();
+            let now = !ctx.gguf_filter.get_untracked();
+            ctx.gguf_filter.set(now);
+            actions::trigger_list_reload();
+        })
+        .class(class)
 }
 
 fn chip(mode: SortMode, selected: bool) -> impl Widget {

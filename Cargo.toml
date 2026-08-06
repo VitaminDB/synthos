@@ -37,7 +37,7 @@ name = "synthos"
 path = "src/main.rs"
 
 [features]
-default = ["desktop", "nvml", "cuda", "kb-sqlite-vec"]
+default = ["desktop", "nvml", "cuda", "kb-sqlite-vec", "gguf"]
 desktop = ["syngui/clipboard"]
 android = ["syngui/android"]
 testing = ["syngui/testing"]
@@ -54,6 +54,7 @@ nvml = ["dep:nvml-wrapper"]
 # Сборка для Apple Silicon: `cargo build -p synthos --features metal`.
 cuda = ["asr-cuda", "tts-cuda", "kb-cuda", "omnivoice-cuda", "voxcpm-syn-cuda", "acestep-syn-cuda", "diarization-cuda", "synaptix/llm-cuda", "ltx-cuda", "llm-syn-cuda"]
 metal = ["asr-metal", "tts-metal", "kb-metal", "omnivoice-metal", "diarization-metal"]
+gguf = ["dep:synaptix-gguf"]
 # LTX-2.3 ноды (node_editor/nodes/ltx) — CUDA-backend synaptix. Без фичи ноды
 # присутствуют, инференс идёт на synaptix-kernels-cpu (smoke/отладка).
 ltx-cuda = [
@@ -197,6 +198,7 @@ synaptix-llm-qwen3-next-hybrid = { path = "../synaptix/crates/synaptix-models/ll
 synaptix-llm-common = { path = "../synaptix/crates/synaptix-models/llm/common", default-features = false }
 synaptix-tokenizer = { path = "../synaptix/crates/synaptix-tokenizer" }
 synaptix-bundle = { path = "../synaptix/crates/synaptix-bundle" }
+synaptix-gguf = { path = "../synaptix/crates/synaptix-gguf", optional = true }
 
 # Зонтичный фасад synaptix — единые фасады AI-подсистем (facade::llm/asr/
 # embedding/rerank/diarization/tts) с детекцией архитектуры. Заменяет прежний
@@ -305,6 +307,7 @@ tokenizers = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }
+tempfile = "3.10"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"

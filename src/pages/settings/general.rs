@@ -116,6 +116,9 @@ pub fn view() -> impl Widget {
                                 switch_row(MI_FILTER_ALT, "Пропускать onnx/bin/fp32",
                                     "«Скачать всё» не тянет несовместимые/тяжёлые форматы (onnx, openvino, fp32, .bin). Кнопка «Скачать» на файле качает что угодно.",
                                     hf.skip_unwanted_formats),
+                                switch_row(MI_FOLDER_ZIP, "Поддержка GGUF",
+                                    "Включает поиск и скачивание GGUF-моделей на странице HuggingFace и конвертацию .gguf → .syn прямо из списка файлов. Выключено — GGUF не ищется и не качается.",
+                                    hf.gguf_support),
                             ]
                         }),
 

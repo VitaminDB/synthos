@@ -678,6 +678,7 @@ pub fn download_all_for_repo(
     // Тумблер «пропускать onnx/openvino/fp32/bin» применяется только к bulk —
     // кнопка «Скачать» на отдельном файле качает что угодно.
     let skip = ctx.skip_unwanted_formats.get_untracked();
+    let gguf_ok = ctx.gguf_support.get_untracked();
 
     let dir_raw = ctx.cache_dir.get_untracked();
     if dir_raw.trim().is_empty() {
@@ -685,7 +686,7 @@ pub fn download_all_for_repo(
         // Фильтр применяем уже здесь, чтобы отложенный bulk тоже его учитывал.
         ctx.pending_download.update(|v| {
             for s in &siblings {
-                if skip && super::filter::is_excluded_default(&s.rfilename) {
+                if skip && super::filter::is_excluded(&s.rfilename, gguf_ok) {
                     continue;
                 }
                 v.push((repo_id.clone(), s.rfilename.clone()));
@@ -697,7 +698,7 @@ pub fn download_all_for_repo(
 
     let downloads = ctx.downloads.get_untracked();
     for s in siblings {
-        if skip && super::filter::is_excluded_default(&s.rfilename) {
+        if skip && super::filter::is_excluded(&s.rfilename, gguf_ok) {
             continue;
         }
         let key = format!("{}/{}", repo_id, s.rfilename);

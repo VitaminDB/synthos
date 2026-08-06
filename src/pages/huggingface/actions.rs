@@ -29,12 +29,13 @@ pub fn trigger_list_reload() {
 
     let query = ctx.committed_query.get_untracked();
     let sort = ctx.sort_mode.get_untracked();
+    let gguf_only = ctx.gguf_support.get_untracked() && ctx.gguf_filter.get_untracked();
     let models_sig = ctx.models;
     let state_sig = ctx.list_state;
     let error_sig = ctx.list_error;
 
     spawn(async move {
-        let res = api::list_models(&query, sort, 50).await;
+        let res = api::list_models(&query, sort, 50, gguf_only).await;
         run_on_main_thread(move || match res {
             Ok(items) => {
                 models_sig.set(items);

@@ -185,11 +185,8 @@ mod tests {
     use super::super::types::NodeKind;
     use syngui::core::Point;
     use syngui::prelude::*;
-    use syngui::signal;
 
-    fn ensure_runtime() {
-        signal::init_main_thread();
-    }
+    fn ensure_runtime() {}
 
     fn make_inst(kind: NodeKind, id: u64) -> NodeInstance {
         NodeInstance {

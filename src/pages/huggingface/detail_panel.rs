@@ -591,8 +591,18 @@ fn action_cluster(
     match status {
         // Не качали / пусто → одна кнопка «Скачать».
         None => base.child(start_btn(repo_id, filename, expected_sha256)),
-        // Завершено → действий нет (SHA256-кнопка отдельно слева).
-        Some(DlStatus::Done) => base,
+        // Завершено → конвертация GGUF → .syn, если формат подходит.
+        Some(DlStatus::Done) => {
+            let ctx = use_context::<HuggingFaceCtx>();
+            if ctx.gguf_support.get_untracked()
+                && super::convert::is_gguf(&filename)
+                && !super::convert::is_mmproj(&filename)
+            {
+                base.child(convert_btn(repo_id, filename))
+            } else {
+                base
+            }
+        }
         // Ошибка → повторить (то же start_download) + отмена (убирает запись).
         Some(DlStatus::Error(_)) => base
             .child(start_btn(repo_id, filename, expected_sha256))
@@ -619,6 +629,27 @@ fn action_cluster(
 
 /// Чекбокс выбора файла слева в строке. Reactive на `selected_files`, чтобы
 /// отражать «Выбрать всё»/сброс. Тоггл правит множество выбранных ключей.
+fn convert_btn(repo_id: String, filename: String) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let ctx = use_context::<HuggingFaceCtx>();
+        let active = ctx.convert_active.get();
+        let busy = active.is_some();
+        let mine = active.as_deref() == Some(filename.as_str());
+        let label = if mine {
+            format!("→ .syn {:.0}%", ctx.convert_progress.get() * 100.0)
+        } else {
+            "→ .syn".to_string()
+        };
+        let (rid, fname) = (repo_id.clone(), filename.clone());
+        let btn = Button::new(label)
+            .on_click(move || {
+                super::convert::start_from_context(rid.clone(), fname.clone());
+            })
+            .class(if busy && !mine { "hf-file-action-btn disabled" } else { "hf-file-action-btn" });
+        vec![Box::new(btn)]
+    })
+}
+
 fn file_checkbox(key: String) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<HuggingFaceCtx>();

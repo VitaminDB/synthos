@@ -482,6 +482,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_segments_per_file: hf.segments_per_file.get(),
             hf_speed_limit_mbps: hf.speed_limit_mbps.get(),
             hf_skip_unwanted_formats: hf.skip_unwanted_formats.get(),
+            hf_gguf_support: hf.gguf_support.get(),
             hf_token: hf.token.get(),
             syn_chat_quant: syn_chat_quant.get(),
             qwen36_attn_mode: qwen36_attn_mode.get(),

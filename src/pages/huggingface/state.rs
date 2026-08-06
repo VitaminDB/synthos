@@ -279,6 +279,10 @@ pub struct HuggingFaceCtx {
     /// с `AppConfig.hf_skip_unwanted_formats`; переключение через тулбар Files
     /// перезаписывает config.json (autosave-эффект в `lib.rs`).
     pub skip_unwanted_formats: RwSignal<bool>,
+    pub gguf_support: RwSignal<bool>,
+    pub gguf_filter: RwSignal<bool>,
+    pub convert_active: RwSignal<Option<String>>,
+    pub convert_progress: RwSignal<f32>,
     /// Отмеченные чекбоксами файлы для выборочной закачки. Ключи —
     /// `{repo_id}/{filename}` (как в `downloads`). Сбрасывается при смене
     /// модели (`actions::select_model`). Кнопка «Скачать выбранные» enqueue'ит
@@ -353,6 +357,10 @@ impl HuggingFaceCtx {
             download_queue: use_signal(Vec::new()),
             active_downloads: use_signal(0),
             skip_unwanted_formats: use_signal(cfg.hf_skip_unwanted_formats),
+            gguf_support: use_signal(cfg.hf_gguf_support),
+            gguf_filter: use_signal(false),
+            convert_active: use_signal(None),
+            convert_progress: use_signal(0.0),
             selected_files: use_signal(HashSet::new()),
         }
     }

@@ -111,8 +111,11 @@ pub fn workspace_path() -> PathBuf {
 /// при парсинг-ошибке логируется warning и возвращается `None` (graceful —
 /// пользователь не должен видеть panic из-за битого JSON между версиями).
 pub fn load() -> Option<WorkspaceState> {
-    let path = workspace_path();
-    let raw = match fs::read_to_string(&path) {
+    load_from(&workspace_path())
+}
+
+pub fn load_from(path: &std::path::Path) -> Option<WorkspaceState> {
+    let raw = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
         Err(e) => {
@@ -168,7 +171,10 @@ fn strip_legacy_kinds(raw: &str) -> String {
 /// Файл пишется атомарно через temp-файл + rename, чтобы выключение во
 /// время записи не оставило половинный JSON.
 pub fn save(state: &WorkspaceState) -> Result<(), WorkspaceError> {
-    let path = workspace_path();
+    save_to(state, &workspace_path())
+}
+
+pub fn save_to(state: &WorkspaceState, path: &std::path::Path) -> Result<(), WorkspaceError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -850,10 +856,6 @@ mod tests {
     /// после restart'а у workspace'а та же конфигурация. Изолирует $HOME
     /// в tmpdir чтобы тест не топтал реальный конфиг пользователя.
     ///
-    /// Этот тест чувствителен к thread-local signal-runtime — внутри
-    /// одного процесса cargo-test может разделять `init_main_thread`
-    /// между тестами, поэтому при flaky-run запускайте изолированно
-    /// (`--exact pages::node_editor::persist::tests::save_load_restore_full_flow`).
     #[test]
     fn save_load_restore_full_flow() {
         use super::super::tabs::EditorWorkspace;
@@ -867,8 +869,8 @@ mod tests {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
-        std::env::set_var("HOME", &tmp);
-        let _ = fs::remove_dir_all(workspace_path().parent().unwrap());
+        let ws_path = tmp.join(".config/synthos/workspace.json");
+        let _ = fs::remove_dir_all(&tmp);
 
         let tab = TabState {
             id: 42,
@@ -891,17 +893,12 @@ mod tests {
             active: Some(42),
             next_tab_id: 43,
         };
-        save(&saved).expect("save");
+        save_to(&saved, &ws_path).expect("save");
 
         // Re-read как при перезапуске app'а.
-        let loaded = load().expect("load");
+        let loaded = load_from(&ws_path).expect("load");
         assert_eq!(loaded, saved);
 
-        // from_state восстанавливает все вкладки. Использует signal-runtime;
-        // если is_main_thread false (другой тест уже захватил main) — set()
-        // запросы поставятся в очередь и `nodes` останется пустой — это
-        // отражение flakiness syngui signal-runtime в multi-test-thread'е,
-        // не бага персиста.
         let ws = EditorWorkspace::from_state(loaded);
         let tabs = ws.tabs.get_untracked();
         assert_eq!(tabs.len(), 1);
@@ -909,19 +906,15 @@ mod tests {
         assert_eq!(tab0.id.0, 42);
         assert_eq!(tab0.title.get_untracked(), "My Workflow");
 
-        // Только если is_main_thread удалось пройти (тест на отдельном
-        // потоке без других init_main_thread caller'ов).
         let nodes = tab0.ctx.nodes.get_untracked();
-        if !nodes.is_empty() {
-            assert_eq!(nodes.len(), 1);
-            assert_eq!(nodes[0].kind, NodeKind::Gain);
-            let pos = nodes[0].pos.get_untracked();
-            assert!((pos.x - 200.0).abs() < 1e-3);
-            assert!((pos.y - 150.0).abs() < 1e-3);
-            if let Ok(rt) = nodes[0].runtime.lock() {
-                if let NodeRuntime::Gain { gain_db, .. } = &*rt {
-                    assert!((gain_db.get_untracked() - (-3.0)).abs() < 1e-3);
-                }
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeKind::Gain);
+        let pos = nodes[0].pos.get_untracked();
+        assert!((pos.x - 200.0).abs() < 1e-3);
+        assert!((pos.y - 150.0).abs() < 1e-3);
+        if let Ok(rt) = nodes[0].runtime.lock() {
+            if let NodeRuntime::Gain { gain_db, .. } = &*rt {
+                assert!((gain_db.get_untracked() - (-3.0)).abs() < 1e-3);
             }
         }
 

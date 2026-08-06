@@ -205,7 +205,12 @@ fn authed_get(url: &str) -> reqwest::RequestBuilder {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Список моделей: trending / search / sort. `limit` ≤ 100.
-pub async fn list_models(query: &str, sort: SortMode, limit: u32) -> Result<Vec<HfModel>, HfError> {
+pub async fn list_models(
+    query: &str,
+    sort: SortMode,
+    limit: u32,
+    gguf_only: bool,
+) -> Result<Vec<HfModel>, HfError> {
     let mut url = format!(
         "{API_HOST}/api/models?sort={}&direction=-1&limit={}",
         sort.api_field(),
@@ -215,6 +220,9 @@ pub async fn list_models(query: &str, sort: SortMode, limit: u32) -> Result<Vec<
     if !q.is_empty() {
         url.push_str("&search=");
         url.push_str(&urlencoding::encode(q));
+    }
+    if gguf_only {
+        url.push_str("&filter=gguf");
     }
     let resp = authed_get(&url).send().await?;
     let status = resp.status();

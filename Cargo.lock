@@ -6947,6 +6947,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-gguf"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "memmap2",
+ "rayon",
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "synaptix-infer"
 version = "0.1.1"
 dependencies = [
@@ -7079,6 +7093,7 @@ dependencies = [
  "synaptix-io",
  "synaptix-llm-common",
  "synaptix-tokenizer",
+ "synaptix-vlm-qwen3",
  "thiserror 2.0.19",
 ]
 
@@ -7219,6 +7234,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-vlm-qwen3"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-ops",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7250,7 +7279,7 @@ dependencies = [
  "hound",
  "idb",
  "image",
- "jni 0.22.4",
+ "jni 0.21.1",
  "js-sys",
  "log",
  "percent-encoding",
@@ -7360,6 +7389,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-depth-anything",
+ "synaptix-gguf",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
@@ -7374,6 +7404,7 @@ dependencies = [
  "synaptix-video-ltx23",
  "syngui",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.19",
  "tokenizers",
  "tokio",

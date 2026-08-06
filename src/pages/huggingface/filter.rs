@@ -8,7 +8,14 @@
 /// тумблер фильтра включён). Кнопка «Скачать» на отдельном файле фильтр не
 /// применяет — там качаем что угодно.
 pub fn is_excluded_default(filename: &str) -> bool {
+    is_excluded(filename, true)
+}
+
+pub fn is_excluded(filename: &str, gguf_support: bool) -> bool {
     let f = filename.to_ascii_lowercase();
+    if !gguf_support && f.ends_with(".gguf") {
+        return true;
+    }
     f.ends_with(".onnx")
         || f.ends_with(".onnx_data")
         || f.contains("onnx/")
@@ -56,6 +63,14 @@ mod tests {
     fn excludes_bin() {
         assert!(is_excluded_default("pytorch_model.bin"));
         assert!(is_excluded_default("pytorch_model-00001-of-00002.bin"));
+    }
+
+    #[test]
+    fn gguf_follows_support_flag() {
+        assert!(!is_excluded("model-Q8_0.gguf", true));
+        assert!(is_excluded("model-Q8_0.gguf", false));
+        assert!(is_excluded("mmproj-F32.gguf", false));
+        assert!(!is_excluded("model.safetensors", false));
     }
 
     #[test]

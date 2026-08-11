@@ -37,7 +37,7 @@ name = "synthos"
 path = "src/main.rs"
 
 [features]
-default = ["desktop", "nvml", "cuda", "kb-sqlite-vec", "gguf"]
+default = ["desktop", "nvml", "kb-sqlite-vec", "gguf"]
 desktop = ["syngui/clipboard"]
 android = ["syngui/android"]
 testing = ["syngui/testing"]
@@ -45,69 +45,7 @@ testing = ["syngui/testing"]
 # собранным, но `try_new_nvml()` вернёт None → панель скрывается.
 nvml = ["dep:nvml-wrapper"]
 
-# GPU-ускорение для ASR / TTS (VoxCPM2) / KB-эмбеддингов / synaptix-нод.
-# По умолчанию выключены — CUDA SDK / Metal SDK требуются для линковки.
-# Узкие фичи (`asr-*` / `tts-*` / ...) — на одну подсистему;
-# зонтичные `cuda` / `metal` — на все.
-#
-# Сборка для NVIDIA-машины:  `cargo build -p synthos --features cuda`.
-# Сборка для Apple Silicon: `cargo build -p synthos --features metal`.
-cuda = ["asr-cuda", "tts-cuda", "kb-cuda", "omnivoice-cuda", "voxcpm-syn-cuda", "acestep-syn-cuda", "diarization-cuda", "synaptix/llm-cuda", "ltx-cuda", "llm-syn-cuda"]
-metal = ["asr-metal", "tts-metal", "kb-metal", "omnivoice-metal", "diarization-metal"]
 gguf = ["dep:synaptix-gguf"]
-# LTX-2.3 ноды (node_editor/nodes/ltx) — CUDA-backend synaptix. Без фичи ноды
-# присутствуют, инференс идёт на synaptix-kernels-cpu (smoke/отладка).
-ltx-cuda = [
-    "dep:synaptix-kernels-cuda",
-    "synaptix-kernels-cuda/cuda",
-    "synaptix-core/cuda",
-    "synaptix-video-ltx23/cuda",
-    "synaptix-llm-gemma3/cuda",
-    "synaptix-depth-anything/cuda",
-]
-# LLM-нода (node_editor/nodes/llm) — нативный synaptix-LLM-стек (Qwen3 /
-# Qwen3-Next-Hybrid), CUDA-backend + device-резидентный decode/CUDA-graph.
-# Без фичи нода работает на synaptix-kernels-cpu.
-llm-syn-cuda = [
-    "dep:synaptix-kernels-cuda",
-    "synaptix-kernels-cuda/cuda",
-    "synaptix-core/cuda",
-    "synaptix-llm-qwen3/cuda",
-    "synaptix-llm-qwen3-next-hybrid/cuda",
-    "synaptix-llm-common/cuda",
-]
-asr-cuda = ["synaptix/asr-cuda"]
-# Metal-бэкенда в synaptix пока нет → *-metal = no-op (имена сохранены для UI/cfg).
-asr-metal = []
-# В ai-адаптере TTS не было (фантом); реальный GPU-TTS = omnivoice-cuda.
-tts-cuda = []
-tts-metal = []
-diarization-cuda  = ["synaptix/diar-cuda"]
-diarization-metal = []
-# OmniVoice GPU — через зонтичный synaptix/tts-cuda (synaptix-tts-omnivoice/cuda).
-omnivoice-cuda  = ["synaptix/tts-cuda"]
-omnivoice-metal = []
-# VoxCPM2-нода (node_editor/nodes/voxcpm2) — нативный synaptix-tts-voxcpm.
-# Без фичи нода работает на synaptix-kernels-cpu.
-voxcpm-syn-cuda = [
-    "dep:synaptix-kernels-cuda",
-    "synaptix-kernels-cuda/cuda",
-    "synaptix-core/cuda",
-    "synaptix-tts-voxcpm/cuda",
-]
-# ACE-Step v1.5 ноды (node_editor/nodes/acestep) — нативный synaptix-music-acestep.
-# Без фичи ноды работают на synaptix-kernels-cpu.
-acestep-syn-cuda = [
-    "dep:synaptix-kernels-cuda",
-    "synaptix-kernels-cuda/cuda",
-    "synaptix-core/cuda",
-    "synaptix-llm-common/cuda",
-]
-# RAG / knowledge base — embedding-модель + парсинг + chunking + sqlite.
-# CPU-сборка достаточна для базового использования (BGE-M3 на CPU выдаёт
-# ~5-10 чанков/сек). GPU включает synaptix CUDA/Metal — обычно 30-50× быстрее.
-kb-cuda = ["synaptix/kb-cuda"]
-kb-metal = []
 # sqlite-vec (vec0 virtual table) — KNN-индекс при коллекциях >100k чанков.
 # Подключается через `kb::store::init_sqlite_vec()` (one-shot, регистрирует
 # auto-extension). Без фичи KB продолжает работать на full-scan-cosine.
@@ -167,16 +105,12 @@ rfd = { version = "0.15", default-features = false, features = [
     "async-std",
 ] }
 
-# synaptix (соседний репозиторий, path-dep на его крейты): LTX-2.3 ноды
-# node_editor. core — Tensor/Device/DType/cuda_pool,
-# video-ltx23 — DiT/VAE/vocoder/denoise, llm-gemma3 — текст-энкодер,
-# kernels-cpu — CPU-backend (регистрация обязательна), kernels-cuda — CUDA
-# (опционально, фича `ltx-cuda`).
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
 synaptix-video-ltx23 = { path = "../synaptix/crates/synaptix-models/video/ltx23" }
+synaptix-video-minimax-h3 = { path = "../synaptix/crates/synaptix-models/video/minimax_h3" }
 synaptix-llm-gemma3 = { path = "../synaptix/crates/synaptix-models/llm/gemma3" }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
-synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda", optional = true, default-features = false }
+synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
 # synaptix-io (feature image) — load_image/resize_bilinear для LTX Image ноды
 # (image→video conditioning), canny_rgb для IC-LoRA control.
 synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = false, features = ["image"] }

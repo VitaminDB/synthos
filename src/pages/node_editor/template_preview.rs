@@ -90,6 +90,14 @@ fn endpoints(nodes: &[NodeData], c: &ConnData) -> Option<(PointData, PointData)>
 
 fn node_color(kind: NodeKind) -> Color {
     match kind {
+        NodeKind::H3Checkpoint => Color::new(0.55, 0.42, 0.92, 1.0),
+        NodeKind::H3TextEncoder => Color::new(0.48, 0.55, 0.95, 1.0),
+        NodeKind::H3EmptyLatentAv => Color::new(0.40, 0.62, 0.88, 1.0),
+        NodeKind::H3Keyframe => Color::new(0.92, 0.58, 0.36, 1.0),
+        NodeKind::H3Sampler => Color::new(0.86, 0.36, 0.62, 1.0),
+        NodeKind::H3VaeDecode => Color::new(0.28, 0.76, 0.62, 1.0),
+        NodeKind::H3AudioDecode => Color::new(0.34, 0.72, 0.86, 1.0),
+        NodeKind::H3VideoSave => Color::new(0.18, 0.70, 0.52, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald

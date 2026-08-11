@@ -299,6 +299,62 @@ fn subscribe_node_signals(node: &NodeInstance) {
 fn subscribe_runtime_signals(rt: &NodeRuntime) {
     match rt {
         NodeRuntime::None => {}
+        NodeRuntime::H3Checkpoint {
+            model_dir,
+            encoder_dir,
+            lora_path,
+            lora_strength,
+            variant_idx,
+            device_idx,
+            quant_dit_idx,
+            quant_enc_idx,
+            compute_idx,
+            memory_mode_idx,
+            ..
+        } => {
+            let _ = model_dir.get();
+            let _ = encoder_dir.get();
+            let _ = lora_path.get();
+            let _ = lora_strength.get();
+            let _ = variant_idx.get();
+            let _ = device_idx.get();
+            let _ = quant_dit_idx.get();
+            let _ = quant_enc_idx.get();
+            let _ = compute_idx.get();
+            let _ = memory_mode_idx.get();
+        }
+        NodeRuntime::H3TextEncoder { error, loaded_name, .. } => {
+            let _ = error.get();
+            let _ = loaded_name.get();
+        }
+        NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds } => {
+            let _ = width.get();
+            let _ = height.get();
+            let _ = duration_seconds.get();
+        }
+        NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, error, .. } => {
+            let _ = path.get();
+            let _ = frame_slot_idx.get();
+            let _ = resize_idx.get();
+            let _ = error.get();
+        }
+        NodeRuntime::H3Sampler { steps, cfg_scale, seed, error, .. } => {
+            let _ = steps.get();
+            let _ = cfg_scale.get();
+            let _ = seed.get();
+            let _ = error.get();
+        }
+        NodeRuntime::H3VaeDecode { error, .. } => {
+            let _ = error.get();
+        }
+        NodeRuntime::H3AudioDecode { error, .. } => {
+            let _ = error.get();
+        }
+        NodeRuntime::H3VideoSave { path, error, saved, .. } => {
+            let _ = path.get();
+            let _ = error.get();
+            let _ = saved.get();
+        }
         NodeRuntime::AudioFile {
             loaded_path,
             load_error,

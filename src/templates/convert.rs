@@ -197,6 +197,14 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
 fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
     match rt {
         NodeRuntime::None => None,
+        NodeRuntime::H3Checkpoint { .. }
+        | NodeRuntime::H3TextEncoder { .. }
+        | NodeRuntime::H3EmptyLatentAv { .. }
+        | NodeRuntime::H3Keyframe { .. }
+        | NodeRuntime::H3Sampler { .. }
+        | NodeRuntime::H3VaeDecode { .. }
+        | NodeRuntime::H3AudioDecode { .. }
+        | NodeRuntime::H3VideoSave { .. } => None,
         NodeRuntime::AudioFile { loaded_path, .. } => {
             Some(NodeStateData::AudioFile(AudioFileStateData {
                 loaded_path: loaded_path

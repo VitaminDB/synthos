@@ -15,14 +15,14 @@ use crate::icons::{
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
     MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
-    MI_SMART_TOY, MI_TRANSLATE, MI_TUNE,
+    MI_CROP_SQUARE, MI_SMART_TOY, MI_TRANSLATE, MI_TUNE,
 };
 
 use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, llm, ltx, markdown_view,
-    omnivoice, scalar, sortformer_diarizer, text_view, voxcpm2,
+    minimax_h3, omnivoice, scalar, sortformer_diarizer, text_view, voxcpm2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
@@ -160,6 +160,14 @@ static ACESTEP_CHECKPOINT_EXEC: acestep::checkpoint::CheckpointExec =
 static ACESTEP_GENERATE_EXEC: acestep::generate::GenerateExec = acestep::generate::GenerateExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
 static LTX_CHECKPOINT_EXEC: ltx::checkpoint::CheckpointExec = ltx::checkpoint::CheckpointExec;
+static H3_CHECKPOINT_EXEC: minimax_h3::checkpoint::CheckpointExec = minimax_h3::checkpoint::CheckpointExec;
+static H3_TEXT_ENCODER_EXEC: minimax_h3::text_encoder::TextEncoderExec = minimax_h3::text_encoder::TextEncoderExec;
+static H3_EMPTY_LATENT_EXEC: minimax_h3::latent::EmptyLatentExec = minimax_h3::latent::EmptyLatentExec;
+static H3_KEYFRAME_EXEC: minimax_h3::latent::KeyframeExec = minimax_h3::latent::KeyframeExec;
+static H3_SAMPLER_EXEC: minimax_h3::sampler::SamplerExec = minimax_h3::sampler::SamplerExec;
+static H3_VAE_DECODE_EXEC: minimax_h3::decode::VaeDecodeExec = minimax_h3::decode::VaeDecodeExec;
+static H3_AUDIO_DECODE_EXEC: minimax_h3::decode::AudioDecodeExec = minimax_h3::decode::AudioDecodeExec;
+static H3_VIDEO_SAVE_EXEC: minimax_h3::save::VideoSaveExec = minimax_h3::save::VideoSaveExec;
 static LTX_TEXT_ENCODER_EXEC: ltx::text_encoder::TextEncoderExec =
     ltx::text_encoder::TextEncoderExec;
 static LTX_NAG_PROMPT_EXEC: ltx::nag::NagPromptExec = ltx::nag::NagPromptExec;
@@ -320,6 +328,57 @@ const FFMPEG_PLAYER_OUTPUTS: &[PortSchema] = &[
 
 const LTX_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "model", label: "model", kind: PortKind::Data },
+];
+
+const H3_MODEL_OUT: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+];
+const H3_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
+    PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
+    PortSchema { name: "keyframe_last", label: "keyframe 2", kind: PortKind::Data },
+];
+const H3_TEXT_ENCODER_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+];
+const H3_EMPTY_LATENT_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "av_latent", label: "av latent", kind: PortKind::Data },
+];
+const H3_KEYFRAME_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
+];
+const H3_SAMPLER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+    PortSchema { name: "av_latent", label: "av latent", kind: PortKind::Data },
+    PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
+    PortSchema { name: "keyframe_last", label: "keyframe 2", kind: PortKind::Data },
+];
+const H3_SAMPLER_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
+    PortSchema { name: "audio_latent", label: "audio latent", kind: PortKind::Data },
+];
+const H3_VAE_DECODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
+];
+const H3_VAE_DECODE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "frames", label: "frames", kind: PortKind::Video },
+];
+const H3_AUDIO_DECODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "audio_latent", label: "audio latent", kind: PortKind::Data },
+];
+const H3_AUDIO_DECODE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
+];
+const H3_VIDEO_SAVE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "frames", label: "frames", kind: PortKind::Video },
+    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
+];
+const H3_VIDEO_SAVE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "path", label: "path", kind: PortKind::Text },
 ];
 
 const LTX_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
@@ -957,6 +1016,144 @@ const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
 
 const LTX_SUBCATEGORY: &str = "LTX Video";
 
+const H3_SUBCATEGORY: &str = "MiniMax H3";
+
+const H3_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3Checkpoint,
+    icon: MI_INVENTORY_2,
+    title: "H3 Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(H3_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const H3_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3TextEncoder,
+    icon: MI_TRANSLATE,
+    title: "H3 Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(H3_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_TEXT_ENCODER_EXEC,
+    on_run: Some(minimax_h3::text_encoder::on_run),
+    busy_signal: Some(minimax_h3::text_encoder::busy_signal),
+};
+
+const H3_EMPTY_LATENT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3EmptyLatentAv,
+    icon: MI_CROP_SQUARE,
+    title: "H3 Empty AV Latent",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(H3_EMPTY_LATENT_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::latent::empty_latent_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_EMPTY_LATENT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const H3_KEYFRAME: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3Keyframe,
+    icon: MI_IMAGE_ICON,
+    title: "H3 Keyframe",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(H3_KEYFRAME_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::latent::keyframe_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_KEYFRAME_EXEC,
+    on_run: Some(minimax_h3::latent::keyframe_on_run),
+    busy_signal: None,
+};
+
+const H3_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3Sampler,
+    icon: MI_AUTO_AWESOME,
+    title: "H3 Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(H3_SAMPLER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_SAMPLER_EXEC,
+    on_run: Some(minimax_h3::sampler::on_run),
+    busy_signal: Some(minimax_h3::sampler::busy_signal),
+};
+
+const H3_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3VaeDecode,
+    icon: MI_MOVIE,
+    title: "H3 VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(H3_VAE_DECODE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::decode::vae_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_VAE_DECODE_EXEC,
+    on_run: Some(minimax_h3::decode::vae_on_run),
+    busy_signal: Some(minimax_h3::decode::vae_busy_signal),
+};
+
+const H3_AUDIO_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3AudioDecode,
+    icon: MI_GRAPHIC_EQ,
+    title: "H3 Audio Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_AUDIO_DECODE_INPUTS),
+    outputs: PortsSpec::Static(H3_AUDIO_DECODE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::decode::audio_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_AUDIO_DECODE_EXEC,
+    on_run: Some(minimax_h3::decode::audio_on_run),
+    busy_signal: Some(minimax_h3::decode::audio_busy_signal),
+};
+
+const H3_VIDEO_SAVE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3VideoSave,
+    icon: MI_SAVE,
+    title: "H3 Video Save",
+    category: NodeCategory::Output,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_VIDEO_SAVE_INPUTS),
+    outputs: PortsSpec::Static(H3_VIDEO_SAVE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::save::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_VIDEO_SAVE_EXEC,
+    on_run: Some(minimax_h3::save::on_run),
+    busy_signal: Some(minimax_h3::save::busy_signal),
+};
+
 const LTX_CHECKPOINT: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::LtxCheckpoint,
     icon: MI_INVENTORY_2,
@@ -1273,6 +1470,14 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     LTX_AUDIO_INPUT,
     LTX_LIPDUB,
     LTX_A2V,
+    H3_CHECKPOINT,
+    H3_TEXT_ENCODER,
+    H3_EMPTY_LATENT,
+    H3_KEYFRAME,
+    H3_SAMPLER,
+    H3_VAE_DECODE,
+    H3_AUDIO_DECODE,
+    H3_VIDEO_SAVE,
 ];
 
 // ── Equalizer helper'ы ───────────────────────────────────────────────────
@@ -1633,6 +1838,70 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             audio_in: Arc::new(Mutex::new(None)),
             mem_audio: Arc::new(Mutex::new(None)),
             preview_version: use_signal(0_u32),
+        },
+        NodeKind::H3Checkpoint => NodeRuntime::H3Checkpoint {
+            model_dir: use_signal(None),
+            encoder_dir: use_signal(None),
+            lora_path: use_signal(None),
+            lora_strength: use_signal(1.0_f32),
+            variant_idx: use_signal(0_usize),
+            device_idx: use_signal(0_usize),
+            quant_dit_idx: use_signal(0_usize),
+            quant_enc_idx: use_signal(0_usize),
+            compute_idx: use_signal(0_usize),
+            memory_mode_idx: use_signal(0_usize),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::H3TextEncoder => NodeRuntime::H3TextEncoder {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3EmptyLatentAv => NodeRuntime::H3EmptyLatentAv {
+            width: use_signal(1344_u32),
+            height: use_signal(768_u32),
+            duration_seconds: use_signal(5.0_f32),
+        },
+        NodeKind::H3Keyframe => NodeRuntime::H3Keyframe {
+            path: use_signal(None),
+            frame_slot_idx: use_signal(0_usize),
+            resize_idx: use_signal(0_usize),
+            image: Arc::new(Mutex::new(None)),
+            error: use_signal(None),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3Sampler => NodeRuntime::H3Sampler {
+            steps: use_signal(6_u32),
+            cfg_scale: use_signal(1.0_f32),
+            seed: use_signal(0_u64),
+            running: use_signal(false),
+            error: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            v_out: Arc::new(Mutex::new(None)),
+            a_out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3VaeDecode => NodeRuntime::H3VaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            frames: Arc::new(Mutex::new(None)),
+            preview_version: use_signal(0_u32),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3AudioDecode => NodeRuntime::H3AudioDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            buffer: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3VideoSave => NodeRuntime::H3VideoSave {
+            path: use_signal(None),
+            running: use_signal(false),
+            error: use_signal(None),
+            saved: use_signal(None),
         },
         NodeKind::LtxCheckpoint => NodeRuntime::LtxCheckpoint {
             model_path: use_signal(None),

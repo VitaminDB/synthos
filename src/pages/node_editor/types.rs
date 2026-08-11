@@ -408,6 +408,22 @@ pub enum NodeKind {
     /// `(model, v_enc, a_enc, audio) → (video_latent, audio_tokens)` —
     /// audio→video (видео под фиксированное входное аудио).
     LtxA2V,
+    /// MiniMax-H3: конфиг чекпойнта (DiT + VAE + audio VAE + энкодер + LoRA).
+    H3Checkpoint,
+    /// MiniMax-H3: промпт + ключевые кадры → кондиционирование Qwen3-VL.
+    H3TextEncoder,
+    /// MiniMax-H3: пустой AV-латент (ширина/высота/кадры со снапом 17k+5).
+    H3EmptyLatentAv,
+    /// MiniMax-H3: изображение → ключевой кадр (первый/последний).
+    H3Keyframe,
+    /// MiniMax-H3: совместный денойзинг видео и звука.
+    H3Sampler,
+    /// MiniMax-H3: видео-латент → RGB-кадры (ViT-декодер VAE).
+    H3VaeDecode,
+    /// MiniMax-H3: аудио-латент → стерео 32 кГц (DAC + BigVGAN).
+    H3AudioDecode,
+    /// MiniMax-H3: кадры + звук → mp4 через ffmpeg.
+    H3VideoSave,
 }
 
 impl NodeKind {
@@ -454,6 +470,14 @@ impl NodeKind {
         NodeKind::LtxAudioInput,
         NodeKind::LtxLipdub,
         NodeKind::LtxA2V,
+        NodeKind::H3Checkpoint,
+        NodeKind::H3TextEncoder,
+        NodeKind::H3EmptyLatentAv,
+        NodeKind::H3Keyframe,
+        NodeKind::H3Sampler,
+        NodeKind::H3VaeDecode,
+        NodeKind::H3AudioDecode,
+        NodeKind::H3VideoSave,
     ];
 }
 
@@ -580,6 +604,79 @@ pub enum DataBlob {
     AceStep(AceStepBlob),
     /// Хэндлы и тензоры пайплайна LTX-2.3 (synaptix).
     Ltx(LtxBlob),
+    /// Хэндлы и тензоры пайплайна MiniMax-H3 (synaptix).
+    H3(H3Blob),
+}
+
+/// Типизированный payload одной из стадий MiniMax-H3.
+#[derive(Debug)]
+pub enum H3Blob {
+    /// Конфиг чекпойнта от H3Checkpoint-ноды.
+    Model(Arc<H3ModelHandle>),
+    /// Кондиционирование: hidden `[1, L, 5120]` + adaLN-теги токенов.
+    Conditioning(Arc<H3Conditioning>),
+    /// Пустой AV-латент: только геометрия, шум генерит семплер по seed.
+    AvLatent(H3Geometry),
+    /// Видео-латент `[1, 24, T', H', W']` + геометрия.
+    VideoLatent(Arc<H3VideoLatent>),
+    /// Аудио-латент `[1, 32, 2, T]` (40 Гц, стерео).
+    AudioLatent(synaptix_core::tensor::Tensor),
+    /// Ключевой кадр: RGB `[3,H,W]` в [0,1] + индекс пиксель-кадра.
+    Keyframe(Arc<H3Keyframe>),
+    /// Декодированные кадры для превью и сохранения.
+    Frames(Arc<LtxFrames>),
+}
+
+/// Конфиг H3-чекпойнта: каталог модели + энкодер + LoRA + device/quant.
+/// Дешёвый POD — веса грузят потребители через `nodes::minimax_h3::shared`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct H3ModelHandle {
+    pub model_dir: PathBuf,
+    pub encoder_dir: Option<PathBuf>,
+    pub lora_path: Option<PathBuf>,
+    pub lora_strength: f32,
+    pub variant_idx: usize,
+    pub device_idx: usize,
+    pub quant_dit_idx: usize,
+    pub quant_enc_idx: usize,
+    pub compute_idx: usize,
+    pub memory_mode_idx: usize,
+}
+
+/// Геометрия генерации: снапнутое число кадров + латентная сетка.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct H3Geometry {
+    pub width: usize,
+    pub height: usize,
+    pub frame_count: usize,
+    pub latent_t: usize,
+    pub latent_h: usize,
+    pub latent_w: usize,
+    pub audio_t: usize,
+}
+
+/// Выход энкодера Qwen3-VL: hidden-состояния слоя 50 + теги модальности.
+pub struct H3Conditioning {
+    pub hidden: synaptix_core::tensor::Tensor,
+    pub tags: Vec<u8>,
+}
+
+impl std::fmt::Debug for H3Conditioning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "H3Conditioning({:?})", self.hidden.dims())
+    }
+}
+
+#[derive(Debug)]
+pub struct H3VideoLatent {
+    pub tensor: synaptix_core::tensor::Tensor,
+    pub geometry: H3Geometry,
+}
+
+#[derive(Debug)]
+pub struct H3Keyframe {
+    pub image: synaptix_core::tensor::Tensor,
+    pub frame_index: usize,
 }
 
 /// Типизированный payload одной из стадий LTX-2.3. Тензоры —
@@ -749,6 +846,7 @@ impl std::fmt::Debug for PortValue {
                 write!(f, "VideoStream({}x{}, {:.1}fps)", s.width, s.height, s.fps_estimate)
             }
             PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(blob) => write!(f, "Data(H3::{blob:?})"),
                 DataBlob::AceStep(AceStepBlob::Model(h)) => {
                     write!(f, "Data(AceStep::Model(dir={:?}))", h.models_dir.as_ref().and_then(|p| p.file_name()).unwrap_or_default())
                 }
@@ -940,6 +1038,83 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::Ltx(LtxBlob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь хэндл H3-чекпойнта.
+    pub fn as_h3_model(&self) -> Option<Arc<H3ModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь H3-кондиционирование.
+    pub fn as_h3_conditioning(&self) -> Option<Arc<H3Conditioning>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь геометрию пустого AV-латента.
+    pub fn as_h3_av_latent(&self) -> Option<H3Geometry> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::AvLatent(g)) => Some(*g),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь H3 видео-латент.
+    pub fn as_h3_video_latent(&self) -> Option<Arc<H3VideoLatent>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::VideoLatent(t)) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь H3 аудио-латент.
+    pub fn as_h3_audio_latent(&self) -> Option<synaptix_core::tensor::Tensor> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::AudioLatent(t)) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь ключевой кадр H3.
+    pub fn as_h3_keyframe(&self) -> Option<Arc<H3Keyframe>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::Keyframe(k)) => Some(k.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь кадры H3 (после VAE-декода).
+    pub fn as_h3_frames(&self) -> Option<Arc<LtxFrames>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::Frames(f)) => Some(f.clone()),
                 _ => None,
             },
             _ => None,
@@ -1811,6 +1986,70 @@ pub enum NodeRuntime {
         a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
         output_version: RwSignal<u32>,
     },
+    H3Checkpoint {
+        model_dir: RwSignal<Option<PathBuf>>,
+        encoder_dir: RwSignal<Option<PathBuf>>,
+        lora_path: RwSignal<Option<PathBuf>>,
+        lora_strength: RwSignal<f32>,
+        variant_idx: RwSignal<usize>,
+        device_idx: RwSignal<usize>,
+        quant_dit_idx: RwSignal<usize>,
+        quant_enc_idx: RwSignal<usize>,
+        compute_idx: RwSignal<usize>,
+        memory_mode_idx: RwSignal<usize>,
+        handle_cache: Arc<Mutex<Option<Arc<H3ModelHandle>>>>,
+    },
+    H3TextEncoder {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<H3Conditioning>>>>,
+        output_version: RwSignal<u32>,
+    },
+    H3EmptyLatentAv {
+        width: RwSignal<u32>,
+        height: RwSignal<u32>,
+        duration_seconds: RwSignal<f32>,
+    },
+    H3Keyframe {
+        path: RwSignal<Option<PathBuf>>,
+        frame_slot_idx: RwSignal<usize>,
+        resize_idx: RwSignal<usize>,
+        image: Arc<Mutex<Option<Arc<H3Keyframe>>>>,
+        error: RwSignal<Option<String>>,
+        output_version: RwSignal<u32>,
+    },
+    H3Sampler {
+        steps: RwSignal<u32>,
+        cfg_scale: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        v_out: Arc<Mutex<Option<Arc<H3VideoLatent>>>>,
+        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
+        output_version: RwSignal<u32>,
+    },
+    H3VaeDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        frames: Arc<Mutex<Option<Arc<LtxFrames>>>>,
+        preview_version: RwSignal<u32>,
+        output_version: RwSignal<u32>,
+    },
+    H3AudioDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        buffer: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
+        output_version: RwSignal<u32>,
+    },
+    H3VideoSave {
+        path: RwSignal<Option<PathBuf>>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        saved: RwSignal<Option<String>>,
+    },
     LtxA2V {
         width: RwSignal<u32>,
         height: RwSignal<u32>,
@@ -2005,6 +2244,43 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::LtxA2V { running, .. } => {
                 write!(f, "NodeRuntime::LtxA2V{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::H3Checkpoint { model_dir, .. } => {
+                let p = model_dir.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
+                write!(f, "NodeRuntime::H3Checkpoint{{dir={p}}}")
+            }
+            NodeRuntime::H3TextEncoder { running, .. } => {
+                write!(f, "NodeRuntime::H3TextEncoder{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds } => {
+                write!(
+                    f,
+                    "NodeRuntime::H3EmptyLatentAv{{{}x{}, {:.1}s}}",
+                    width.get_untracked(),
+                    height.get_untracked(),
+                    duration_seconds.get_untracked()
+                )
+            }
+            NodeRuntime::H3Keyframe { path, .. } => {
+                let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
+                write!(f, "NodeRuntime::H3Keyframe{{path={p}}}")
+            }
+            NodeRuntime::H3Sampler { running, steps, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::H3Sampler{{running={}, steps={}}}",
+                    running.get_untracked(),
+                    steps.get_untracked()
+                )
+            }
+            NodeRuntime::H3VaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::H3VaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::H3AudioDecode { running, .. } => {
+                write!(f, "NodeRuntime::H3AudioDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::H3VideoSave { saved, .. } => {
+                write!(f, "NodeRuntime::H3VideoSave{{saved={:?}}}", saved.get_untracked())
             }
             NodeRuntime::AceStepCheckpoint { models_dir, .. } => {
                 let p = models_dir.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());

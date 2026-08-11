@@ -23,6 +23,7 @@ pub mod ffmpeg_player;
 pub mod llm;
 pub mod ltx;
 pub mod markdown_view;
+pub mod minimax_h3;
 pub mod omnivoice;
 pub mod scalar;
 pub mod sortformer_diarizer;

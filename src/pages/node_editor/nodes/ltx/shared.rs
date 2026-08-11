@@ -89,7 +89,6 @@ pub fn ensure_kernels_registered() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
         synaptix_kernels_cpu::ensure_registered();
-        #[cfg(feature = "ltx-cuda")]
         synaptix_kernels_cuda::ensure_registered();
     });
 }

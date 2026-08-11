@@ -82,15 +82,10 @@ fn device_from_idx(i: usize) -> Device {
     }
 }
 
-#[cfg(feature = "cuda")]
 fn best_gpu_device() -> Device {
     Device::Cuda(0)
 }
 
-#[cfg(not(feature = "cuda"))]
-fn best_gpu_device() -> Device {
-    Device::Cpu
-}
 
 // ── Executor ──────────────────────────────────────────────────────────────
 

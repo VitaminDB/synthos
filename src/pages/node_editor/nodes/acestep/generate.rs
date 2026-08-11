@@ -720,7 +720,6 @@ fn worker(
     output_version: RwSignal<u32>,
 ) {
     synaptix_kernels_cpu::ensure_registered();
-    #[cfg(feature = "acestep-syn-cuda")]
     synaptix_kernels_cuda::ensure_registered();
 
     let (lm, te, dit, vae) = match resolve_paths(&p.handle) {

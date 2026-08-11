@@ -489,20 +489,8 @@ fn config_device_to_synaptix(s: &str) -> synaptix::facade::asr::Device {
     }
 }
 
-#[cfg(feature = "asr-cuda")]
 fn audio_gpu_device() -> synaptix::facade::asr::Device {
     synaptix::facade::asr::Device::Cuda(0)
-}
-
-#[cfg(all(feature = "asr-metal", not(feature = "asr-cuda")))]
-fn audio_gpu_device() -> synaptix::facade::asr::Device {
-    synaptix::facade::asr::Device::Metal(0)
-}
-
-#[cfg(not(any(feature = "asr-cuda", feature = "asr-metal")))]
-fn audio_gpu_device() -> synaptix::facade::asr::Device {
-    eprintln!("[synthos/audio] GPU backend не собран, fallback на CPU");
-    synaptix::facade::asr::Device::Cpu
 }
 
 /// Маппит строковый `compute_dtype` из `AudioModelConfig` в [`ComputeDType`].

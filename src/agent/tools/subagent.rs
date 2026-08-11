@@ -471,7 +471,6 @@ fn generate_subagent_turn(
         true
     })?;
     drop(runner);
-    #[cfg(feature = "cuda")]
     if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
         let _ = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
     }

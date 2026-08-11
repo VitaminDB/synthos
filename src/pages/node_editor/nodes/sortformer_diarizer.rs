@@ -60,19 +60,8 @@ fn device_from_idx(i: usize) -> Device {
     }
 }
 
-#[cfg(feature = "diarization-cuda")]
 fn diarizer_gpu_device() -> Device {
     Device::Cuda(0)
-}
-
-#[cfg(all(feature = "diarization-metal", not(feature = "diarization-cuda")))]
-fn diarizer_gpu_device() -> Device {
-    Device::Metal(0)
-}
-
-#[cfg(not(any(feature = "diarization-cuda", feature = "diarization-metal")))]
-fn diarizer_gpu_device() -> Device {
-    Device::Cpu
 }
 
 // ── Executor ──────────────────────────────────────────────────────────────

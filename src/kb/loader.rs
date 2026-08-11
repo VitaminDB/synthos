@@ -166,19 +166,9 @@ fn parse_device(s: &str) -> embeddings::Device {
     }
 }
 
-/// Возвращает GPU-устройство только если собрано с соответствующей KB-фичей
-/// (`kb-cuda` / `kb-metal`); иначе warn + fallback на CPU. `embeddings::Device`
-/// и `rerank::Device` — один и тот же `synaptix_core::device::Device`.
-#[cfg(any(feature = "kb-cuda", feature = "kb-metal"))]
 fn gpu_or_cpu_device(gpu: embeddings::Device, who: &str, backend: &str) -> embeddings::Device {
     let _ = (who, backend);
     gpu
-}
-
-#[cfg(not(any(feature = "kb-cuda", feature = "kb-metal")))]
-fn gpu_or_cpu_device(_gpu: embeddings::Device, who: &str, backend: &str) -> embeddings::Device {
-    log::warn!("{who}: {backend} backend не собран, fallback на CPU");
-    embeddings::Device::Cpu
 }
 
 fn parse_dtype(s: &str) -> embeddings::DType {

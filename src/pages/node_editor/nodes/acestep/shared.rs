@@ -61,7 +61,6 @@ where
 
 fn ensure_kernels() {
     synaptix_kernels_cpu::ensure_registered();
-    #[cfg(feature = "acestep-syn-cuda")]
     synaptix_kernels_cuda::ensure_registered();
 }
 

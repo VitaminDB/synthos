@@ -117,14 +117,11 @@ impl LlmPipeline {
     }
 }
 
-/// Регистрация backend-ядер synaptix (идемпотентно). CPU всегда; CUDA — под
-/// `llm-syn-cuda`/`ltx-cuda` (общий `synaptix-kernels-cuda`).
 fn ensure_kernels_registered() {
     use std::sync::OnceLock;
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
         synaptix_kernels_cpu::ensure_registered();
-        #[cfg(any(feature = "llm-syn-cuda", feature = "ltx-cuda"))]
         synaptix_kernels_cuda::ensure_registered();
     });
 }

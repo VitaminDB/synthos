@@ -41,6 +41,16 @@
     color: #e0a458;
 }
 
+.h3-stereo-wave {
+    width: 360px;
+    height: 96px;
+    background: #0d0a12;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #3a2f4a;
+    accent-color: #e0a458;
+}
+
 .h3-progress {
     height: 6px;
     border-radius: 3px;

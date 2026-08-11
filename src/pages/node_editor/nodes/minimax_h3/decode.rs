@@ -15,6 +15,7 @@ use super::super::super::types::{
     DataBlob, H3Blob, H3ModelHandle, H3VideoLatent, LtxFrames, NodeInstance, NodeRuntime, PortValue,
 };
 use super::super::acestep::{field_row, status_row};
+use crate::pages::node_editor::controls::stereo_waveform::node_stereo_waveform;
 use super::super::ltx::vae_decode::tensor_frames_to_rgba;
 use super::{current_input_audio_latent, current_input_model, current_input_video_latent, shared};
 
@@ -254,22 +255,32 @@ fn audio_worker(
 pub fn audio_body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
-            NodeRuntime::H3AudioDecode { running, error, .. } => Some((*running, *error)),
+            NodeRuntime::H3AudioDecode { running, error, buffer, output_version } => {
+                Some((*running, *error, buffer.clone(), *output_version))
+            }
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((running, error)) = snapshot else {
+    let Some((running, error, buffer, output_version)) = snapshot else {
         return Box::new(Column::new());
     };
     let loaded_name = use_signal(None::<String>);
+    let wave = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = output_version.get();
+        let buf = buffer.lock().ok().and_then(|g| g.clone());
+        vec![node_stereo_waveform(buf, "h3-stereo-wave")]
+    });
     Box::new(
         Column::new()
             .gap(3.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .children(vec![field_row(
-                "Статус",
-                status_row(running, error, loaded_name, "декодирование звука…", "h3-node-running"),
-            )]),
+            .children(vec![
+                Box::new(wave),
+                field_row(
+                    "Статус",
+                    status_row(running, error, loaded_name, "декодирование звука…", "h3-node-running"),
+                ),
+            ]),
     )
 }

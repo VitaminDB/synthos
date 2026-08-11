@@ -7155,6 +7155,7 @@ dependencies = [
 name = "synaptix-runtime"
 version = "0.1.1"
 dependencies = [
+ "cudarc",
  "metrics",
  "metrics-exporter-prometheus",
  "once_cell",
@@ -7234,6 +7235,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-video-minimax-h3"
+version = "0.1.1"
+dependencies = [
+ "cudarc",
+ "serde",
+ "serde_json",
+ "synaptix-audio",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "synaptix-vlm-qwen3",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-vlm-qwen3"
 version = "0.1.1"
 dependencies = [
@@ -7243,6 +7262,7 @@ dependencies = [
  "synaptix-core",
  "synaptix-io",
  "synaptix-ops",
+ "synaptix-tokenizer",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -7402,6 +7422,7 @@ dependencies = [
  "synaptix-tokenizer",
  "synaptix-tts-voxcpm",
  "synaptix-video-ltx23",
+ "synaptix-video-minimax-h3",
  "syngui",
  "sysinfo",
  "tempfile",

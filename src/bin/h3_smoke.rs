@@ -239,6 +239,7 @@ fn run() -> std::result::Result<(), String> {
 }
 
 fn main() {
+    syngui::signal::init_main_thread();
     if let Err(e) = run() {
         eprintln!("error: {e}");
         std::process::exit(1);

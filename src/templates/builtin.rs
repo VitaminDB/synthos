@@ -33,6 +33,10 @@ pub fn all() -> Vec<Template> {
         acestep_edit_template(),
         acestep_cover_template(),
         acestep_extract_template(),
+        h3_text_to_video_template(),
+        h3_turbo_template(),
+        h3_first_frame_template(),
+        h3_first_last_template(),
         ltx_text_to_video_template(),
         ltx_image_to_video_template(),
         ltx_retake_template(),
@@ -807,6 +811,161 @@ fn omnivoice_voice_clone_template() -> Template {
             ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
             ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
         ],
+        viewport: None,
+    }
+}
+
+
+fn h3_prompt_state(text: &str) -> NodeStateData {
+    NodeStateData::TextView(TextViewStateData {
+        output_text: text.into(),
+        width: 300.0,
+        height: 140.0,
+    })
+}
+
+fn h3_base_nodes(prompt: &str) -> Vec<NodeData> {
+    vec![
+        node_plain(1, NodeKind::H3Checkpoint, 60.0, 60.0),
+        node_with_state(2, NodeKind::TextView, 60.0, 620.0, h3_prompt_state(prompt)),
+        node_plain(3, NodeKind::H3TextEncoder, 520.0, 560.0),
+        node_plain(4, NodeKind::H3EmptyLatentAv, 520.0, 780.0),
+        node_plain(5, NodeKind::H3Sampler, 940.0, 560.0),
+        node_plain(6, NodeKind::H3VaeDecode, 1360.0, 420.0),
+        node_plain(7, NodeKind::H3AudioDecode, 1360.0, 800.0),
+        node_plain(8, NodeKind::H3VideoSave, 1800.0, 480.0),
+        node_plain(9, NodeKind::FfmpegPlayer, 1800.0, 760.0),
+    ]
+}
+
+fn h3_base_connections() -> Vec<ConnData> {
+    vec![
+        ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
+        ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
+        ConnData { from_node: 1, from_port: "model".into(), to_node: 6, to_port: "model".into() },
+        ConnData { from_node: 1, from_port: "model".into(), to_node: 7, to_port: "model".into() },
+        ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
+        ConnData { from_node: 3, from_port: "conditioning".into(), to_node: 5, to_port: "conditioning".into() },
+        ConnData { from_node: 4, from_port: "av_latent".into(), to_node: 5, to_port: "av_latent".into() },
+        ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 6, to_port: "video_latent".into() },
+        ConnData { from_node: 5, from_port: "audio_latent".into(), to_node: 7, to_port: "audio_latent".into() },
+        ConnData { from_node: 6, from_port: "frames".into(), to_node: 8, to_port: "frames".into() },
+        ConnData { from_node: 7, from_port: "audio".into(), to_node: 8, to_port: "audio".into() },
+        ConnData { from_node: 6, from_port: "frames".into(), to_node: 9, to_port: "frames".into() },
+        ConnData { from_node: 7, from_port: "audio".into(), to_node: 9, to_port: "audio".into() },
+    ]
+}
+
+fn h3_text_to_video_template() -> Template {
+    Template {
+        id: "builtin-h3-text-to-video".into(),
+        builtin: true,
+        name: "H3: Text to Video + Audio".into(),
+        description:
+            "Промпт → Qwen3-VL Text Encoder → Sampler (совместный денойзинг видео и звука) → \
+             VAE Decode + Audio Decode → mp4 и плеер. В Checkpoint укажите каталог MiniMax-H3; \
+             энкодер подхватится из text_encoder. Базовый режим: 20 шагов, CFG 5 — поднимите \
+             их в ноде Sampler, если не используете Turbo LoRA."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes: h3_base_nodes(
+            "a woman in a cozy cafe, talking warmly to the camera, soft daylight, \
+             gentle background chatter and the clink of cups",
+        ),
+        connections: h3_base_connections(),
+        viewport: None,
+    }
+}
+
+fn h3_turbo_template() -> Template {
+    Template {
+        id: "builtin-h3-turbo".into(),
+        builtin: true,
+        name: "H3: Turbo (6 шагов)".into(),
+        description:
+            "Тот же граф, что и Text to Video, но под Turbo LoRA: 6 шагов без CFG. Укажите \
+             minimax_h3_turbo_v4_step600_ema.safetensors в поле LoRA у Checkpoint — дефолты \
+             Sampler (6 шагов, CFG 1.0) уже настроены под неё."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes: h3_base_nodes(
+            "close-up of rain hitting a neon-lit window at night, droplets sliding down, \
+             distant thunder and soft synth pads",
+        ),
+        connections: h3_base_connections(),
+        viewport: None,
+    }
+}
+
+fn h3_first_frame_template() -> Template {
+    let mut nodes = h3_base_nodes(
+        "the person in the photo turns to the camera and smiles, hair moving in a light breeze, \
+         ambient street sound",
+    );
+    nodes.push(node_plain(10, NodeKind::H3Keyframe, 60.0, 900.0));
+    let mut connections = h3_base_connections();
+    connections.push(ConnData {
+        from_node: 10,
+        from_port: "keyframe".into(),
+        to_node: 3,
+        to_port: "keyframe".into(),
+    });
+    connections.push(ConnData {
+        from_node: 10,
+        from_port: "keyframe".into(),
+        to_node: 5,
+        to_port: "keyframe".into(),
+    });
+    Template {
+        id: "builtin-h3-first-frame".into(),
+        builtin: true,
+        name: "H3: First Frame to Video".into(),
+        description:
+            "Оживление изображения: Keyframe (слот «первый кадр») уходит и в Text Encoder \
+             (как <Picture 1> в презентации промпта), и в Sampler (VAE-энкод в cond-строки). \
+             Разрешение AV-латента задайте под пропорции исходника."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+fn h3_first_last_template() -> Template {
+    let mut nodes = h3_base_nodes(
+        "a smooth cinematic transition between the two frames, steady camera, \
+         evolving ambient soundscape",
+    );
+    nodes.push(node_plain(10, NodeKind::H3Keyframe, 60.0, 900.0));
+    nodes.push(node_plain(11, NodeKind::H3Keyframe, 60.0, 1120.0));
+    let mut connections = h3_base_connections();
+    for (from, port) in [(10u64, "keyframe"), (11u64, "keyframe_last")] {
+        connections.push(ConnData {
+            from_node: from,
+            from_port: "keyframe".into(),
+            to_node: 3,
+            to_port: port.into(),
+        });
+        connections.push(ConnData {
+            from_node: from,
+            from_port: "keyframe".into(),
+            to_node: 5,
+            to_port: port.into(),
+        });
+    }
+    Template {
+        id: "builtin-h3-first-last".into(),
+        builtin: true,
+        name: "H3: First+Last Frame".into(),
+        description:
+            "Переход между двумя кадрами. У второй Keyframe-ноды выберите слот «последний \
+             кадр» — модель поддерживает якоря только на первом и последнем кадрах, середина \
+             отвергается на этапе сборки layout."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
         viewport: None,
     }
 }

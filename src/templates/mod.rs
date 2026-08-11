@@ -55,7 +55,7 @@ impl TemplateCategory {
     /// Категория builtin-шаблона по префиксу его `id`.
     pub fn for_template(t: &Template) -> Self {
         let id = t.id.as_str();
-        if id.starts_with("builtin-ltx-") {
+        if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
             TemplateCategory::Video
         } else if id.starts_with("builtin-acestep-") {
             TemplateCategory::Music

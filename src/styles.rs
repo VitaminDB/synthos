@@ -110,6 +110,7 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/acestep_nodes.mss"),
         "\n",
+        include_str!("../styles/components/h3_nodes.mss"),
         include_str!("../styles/components/ltx_nodes.mss"),
         "\n",
         include_str!("../styles/components/sortformer_node.mss"),

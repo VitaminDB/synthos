@@ -13,6 +13,7 @@ use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{LtxFrames, NodeInstance, NodeRuntime, PortValue};
 use super::super::acestep::field_row;
 use super::{current_input_audio, current_input_frames};
+use crate::pages::node_editor::controls::av_scrubber::node_av_scrubber;
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
 
 pub struct VideoSaveExec;
@@ -28,14 +29,19 @@ impl NodeExecutor for VideoSaveExec {
 pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
-            NodeRuntime::H3VideoSave { path, running, error, saved } => {
-                Some((*path, *running, *error, *saved))
-            }
+            NodeRuntime::H3VideoSave {
+                path,
+                running,
+                error,
+                saved,
+                preview,
+                preview_version,
+            } => Some((*path, *running, *error, *saved, preview.clone(), *preview_version)),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((path, running, error, saved)) = snapshot else {
+    let Some((path, running, error, saved, preview, preview_version)) = snapshot else {
         return;
     };
     if running.get_untracked() {
@@ -47,6 +53,11 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
     let audio = current_input_audio(ctx, node.id, "audio");
     let out = path.get_untracked().unwrap_or_else(|| PathBuf::from("h3.mp4"));
+
+    if let Ok(mut g) = preview.lock() {
+        *g = Some((frames.clone(), audio.clone()));
+    }
+    preview_version.update(|v| *v = v.wrapping_add(1));
 
     running.set(true);
     error.set(None);
@@ -158,16 +169,28 @@ fn write_mp4(
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
-            NodeRuntime::H3VideoSave { path, running, error, saved } => {
-                Some((*path, *running, *error, *saved))
-            }
+            NodeRuntime::H3VideoSave {
+                path,
+                running,
+                error,
+                saved,
+                preview,
+                preview_version,
+            } => Some((*path, *running, *error, *saved, preview.clone(), *preview_version)),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((path, running, error, saved)) = snapshot else {
+    let Some((path, running, error, saved, preview, preview_version)) = snapshot else {
         return Box::new(Column::new());
     };
+    let scrubber = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = preview_version.get();
+        match preview.lock().ok().and_then(|g| g.clone()) {
+            Some((frames, audio)) => vec![node_av_scrubber(Some(frames), audio)],
+            None => vec![],
+        }
+    });
     let status = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error.get() {
             return vec![Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))];
@@ -185,6 +208,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             .gap(3.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(vec![
+                Box::new(scrubber),
                 field_row(
                     "Файл",
                     node_file_picker("Куда сохранить mp4", path, &[("MP4", &["mp4"])], |_| {}),

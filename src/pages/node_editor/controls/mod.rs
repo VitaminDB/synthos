@@ -1,3 +1,4 @@
+pub mod av_scrubber;
 pub mod dropdown_field;
 pub mod field_row;
 pub mod file_picker;
@@ -9,6 +10,7 @@ pub mod timecode;
 pub mod transport;
 pub mod utils;
 
+pub use av_scrubber::{node_av_scrubber, AvScrubber};
 pub use dropdown_field::node_dropdown_field;
 pub use field_row::node_field_row;
 pub use file_picker::node_file_picker;

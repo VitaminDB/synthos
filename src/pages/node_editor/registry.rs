@@ -1902,6 +1902,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             running: use_signal(false),
             error: use_signal(None),
             saved: use_signal(None),
+            preview: Arc::new(Mutex::new(None)),
+            preview_version: use_signal(0_u32),
         },
         NodeKind::LtxCheckpoint => NodeRuntime::LtxCheckpoint {
             model_path: use_signal(None),

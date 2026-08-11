@@ -2049,6 +2049,8 @@ pub enum NodeRuntime {
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,
         saved: RwSignal<Option<String>>,
+        preview: Arc<Mutex<Option<(Arc<LtxFrames>, Option<Arc<AudioBuffer>>)>>>,
+        preview_version: RwSignal<u32>,
     },
     LtxA2V {
         width: RwSignal<u32>,

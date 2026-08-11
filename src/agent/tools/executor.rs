@@ -58,9 +58,34 @@ pub struct ToolOutcome {
 ///
 /// Никогда не паникует — все ошибки конвертируются в `ToolOutcome` с
 /// `error=true`.
+fn trim_json_strings(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::String(s) => {
+            let t = s.trim().to_string();
+            *s = t;
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(trim_json_strings),
+        serde_json::Value::Object(o) => o.values_mut().for_each(trim_json_strings),
+        _ => {}
+    }
+}
+
+pub fn normalize_args(raw: &str) -> String {
+    let trimmed = raw.trim();
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(mut v) => {
+            trim_json_strings(&mut v);
+            serde_json::to_string(&v).unwrap_or_else(|_| trimmed.to_string())
+        }
+        Err(_) => trimmed.to_string(),
+    }
+}
+
 pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     let name = call.function.name.clone().unwrap_or_default();
-    let args = call.function.arguments.as_deref().unwrap_or("");
+    let raw_args = call.function.arguments.as_deref().unwrap_or("");
+    let normalized = normalize_args(raw_args);
+    let args = normalized.as_str();
 
     let result = match name.as_str() {
         KEY_BASH => run_bash(args).await,

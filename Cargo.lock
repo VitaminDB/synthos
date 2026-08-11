@@ -7261,6 +7261,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-io",
+ "synaptix-nn",
  "synaptix-ops",
  "synaptix-tokenizer",
  "thiserror 2.0.19",

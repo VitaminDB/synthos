@@ -114,7 +114,7 @@ pub fn load_encoder(handle: &H3ModelHandle) -> std::result::Result<Arc<EncoderSh
             .encoder_dir
             .clone()
             .unwrap_or_else(|| paths.text_encoder_dir());
-        let encoder = h3::text_encoder::EncoderHandle::load(&dir, device, quant)
+        let encoder = h3::text_encoder::EncoderHandle::load(&dir, device, compute, quant)
             .map_err(|e| e.to_string())?;
         Ok(EncoderShared { encoder })
     })

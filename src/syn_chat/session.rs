@@ -285,15 +285,7 @@ async fn run_agent_loop(
             tool_schemas.len()
         );
 
-        // KV-ring (Phase C) аллоцируется ровно на opts.max_seq_len. Берём
-        // realistic размер `prompt + max_new + 128`, capped по `model_cap`.
-        // НЕ ориентируемся на `params.max_seq_len` (UI-setting "context size")
-        // как на floor — это просто роняло бы прежний default 32K в ring
-        // даже на 5K-промпте и съедало ~2 GB VRAM вхолостую.
-        //
-        // Также: rope/embed таблицы имеют размер ровно `max_seq_len`, поэтому
-        // позиция `model_cap` (включительно) — out of bounds. Резервируем
-        // минимум 1 позицию: prompt + decode token < model_cap.
+        const KV_RESERVE_MB: usize = 2048;
         let prefill_start = Instant::now();
         let mut opts = params.to_options();
         let usable_cap = model_cap.saturating_sub(1);
@@ -303,8 +295,31 @@ async fn run_agent_loop(
             opts.max_new_tokens = headroom.max(1);
         }
         let realistic = prompt_capped + opts.max_new_tokens + 128;
-        opts.max_seq_len = realistic.min(usable_cap);
+        let vram_pre_kv = crate::syn_chat::model_registry::vram_free_mb();
+        let kv_per_token = model.model.kv_bytes_per_token();
+        let ring_by_mem = if kv_per_token > 0 {
+            let budget = vram_pre_kv.saturating_sub(KV_RESERVE_MB) * 1024 * 1024;
+            (budget / kv_per_token).max(prompt_capped + 256)
+        } else {
+            usable_cap
+        };
+        opts.max_seq_len = realistic.min(usable_cap).min(ring_by_mem);
+        if opts.max_seq_len < prompt_capped + opts.max_new_tokens + 128 {
+            opts.max_new_tokens = opts
+                .max_seq_len
+                .saturating_sub(prompt_capped + 128)
+                .max(1);
+        }
+        let ring_len = opts.max_seq_len;
+        let ring_max_new = opts.max_new_tokens;
         let mut runner = LlmGeneration::new(&model.model, opts);
+        let vram_post_kv = crate::syn_chat::model_registry::vram_free_mb();
+        eprintln!(
+            "[syn_chat] KV-ring: max_seq_len={ring_len} (prompt={prompt_capped} + \
+             max_new={ring_max_new} + 128, cap={usable_cap}, по памяти={ring_by_mem}, \
+             {kv_per_token} B/ток); VRAM: KV {} MB, свободно {vram_post_kv} MB",
+            vram_pre_kv.saturating_sub(vram_post_kv)
+        );
         set_qwen3_stops(&mut runner, &model.tokenizer);
         // На случай если парсер callback'а не успеет отработать перед
         // следующей итерацией — добавим явный text-level stop на закрытии
@@ -404,9 +419,6 @@ async fn run_agent_loop(
         // при alloc нового ring. Trim форсит возврат всей свободной
         // памяти ОС → следующая итерация стартует с полным free VRAM.
         drop(runner);
-        // TODO: stub — мигрировать на нативный synaptix (cudaMallocAsync trim
-        // mempool после Drop KV-ring). Без CUDA-backend trim не нужен.
-        #[cfg(feature = "cuda")]
         if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
             let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
             eprintln!("[syn_chat] trim mempool: +{freed} MB free");

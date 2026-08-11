@@ -1,9 +1,3 @@
-//! Глобальный handle загруженной Qwen3.6-модели.
-//!
-//! Модель грузится один раз (5-15 секунд + ~12 GB VRAM), потом используется
-//! всеми чатами. Загрузка спавнится в фоновый std::thread, состояние выставляется
-//! через `RwSignal::set()` — он сам маршализуется в main thread.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,14 +11,23 @@ pub struct LoadedSynModel {
     pub path: PathBuf,
 }
 
-#[cfg(feature = "cuda")]
 fn select_device() -> Device {
     Device::Cuda(0)
 }
 
-#[cfg(not(feature = "cuda"))]
-fn select_device() -> Device {
-    Device::Cpu
+pub(crate) fn vram_free_mb() -> usize {
+    synaptix_core::device::cuda::mem_info(0)
+        .map(|(free, _total)| free / (1024 * 1024))
+        .unwrap_or(0)
+}
+
+fn ensure_kernels_registered() {
+    use std::sync::OnceLock;
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        synaptix_kernels_cpu::ensure_registered();
+        synaptix_kernels_cuda::ensure_registered();
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -32,9 +35,6 @@ pub struct SynModelRegistry {
     pub current: RwSignal<Option<Arc<LoadedSynModel>>>,
     pub loading: RwSignal<bool>,
     pub error: RwSignal<Option<String>>,
-    /// Был ли уже сделан lazy auto-load `AppConfig.last_syn_model` за сессию.
-    /// Проверяется в `view()` страницы syn_chat; меняется на `true` после
-    /// первой попытки (успех/ошибка — не важно).
     pub auto_load_attempted: RwSignal<bool>,
 }
 
@@ -48,19 +48,10 @@ impl SynModelRegistry {
         }
     }
 
-    /// Асинхронно загружает модель из `.syn`-bundle с указанной `policy`
-    /// квантования. Идемпотентен: повторный вызов во время идущей загрузки
-    /// игнорируется. По окончании `current` получает `Some(Arc<...>)` либо
-    /// `error` — текст ошибки.
-    ///
-    /// `policy` обычно приходит из `AppCtx.syn_chat_quant.get_untracked().to_policy()`.
-    /// Caller сам читает signal (signal-runtime thread-local, в spawn thread
-    /// недоступен).
     pub fn load(&self, path: PathBuf, policy: QuantPolicy) {
         if self.loading.get_untracked() {
             return;
         }
-        // Тот же путь уже загружен — нечего делать.
         if let Some(loaded) = self.current.get_untracked() {
             if loaded.path == path {
                 return;
@@ -72,21 +63,31 @@ impl SynModelRegistry {
         registry.error.set(None);
 
         std::thread::spawn(move || {
+            ensure_kernels_registered();
             let device = select_device();
-            eprintln!(
-                "[syn_chat] загрузка модели {:?} (device={:?}, preset={})",
-                path, device, policy.preset_name
+            let vram_before = vram_free_mb();
+            log::info!(
+                "[syn_chat] загрузка модели {:?} (device={:?}, preset={}, VRAM свободно {} MB)",
+                path, device, policy.preset_name, vram_before
             );
             let t0 = std::time::Instant::now();
 
             match load_llm_with_policy(&path, policy, &device) {
                 Ok((model, tokenizer)) => {
-                    eprintln!(
-                        "[syn_chat] модель загружена за {:?}, vocab={}",
+                    if let Device::Cuda(ord) = device {
+                        let freed = synaptix::facade::llm::cuda_trim_pool(ord as i32);
+                        log::info!("[syn_chat] trim после загрузки: +{freed} MB");
+                    }
+                    let vram_after = vram_free_mb();
+                    log::info!(
+                        "[syn_chat] модель загружена за {:?}, vocab={}, max_seq_len={}; \
+                         VRAM: веса {} MB, свободно {} MB",
                         t0.elapsed(),
-                        model.vocab_size()
+                        model.vocab_size(),
+                        model.config().max_seq_len,
+                        vram_before.saturating_sub(vram_after),
+                        vram_after
                     );
-                    // Persist путь в config — для lazy auto-load в следующей сессии.
                     let mut cfg = crate::config::AppConfig::load();
                     let new_path_str = path.display().to_string();
                     if cfg.last_syn_model.as_deref() != Some(&new_path_str) {
@@ -105,21 +106,32 @@ impl SynModelRegistry {
         });
     }
 
-    /// Выгружает текущую модель и стирает `last_syn_model` из конфига,
-    /// чтобы при следующем запуске приложения auto-load не сработал.
-    /// Сам `Arc<LoadedSynModel>` может оставаться живым во worker-thread
-    /// до завершения генерации; вызывающий обязан вызвать `abort` перед
-    /// `unload()`, если `pending == true` (см. right_panel.rs).
     pub fn unload(&self) {
+        let held = self.current.get_untracked();
+        let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);
+        drop(held);
         self.current.set_always(None);
         self.error.set(None);
+        let before = vram_free_mb();
+        let freed = synaptix::facade::llm::cuda_trim_pool(0);
+        let after = vram_free_mb();
+        let mb = |(r, u): (u64, u64)| (r / (1024 * 1024), u / (1024 * 1024));
+        let (dres, dused) = synaptix_core::memory::cuda_pool::cuda_mempool_stats(0)
+            .map(mb)
+            .unwrap_or((0, 0));
+        let (wres, wused) = synaptix_core::device::cuda::weights_pool_stats(0)
+            .map(mb)
+            .unwrap_or((0, 0));
+        log::info!(
+            "[syn_chat] выгрузка модели: ссылок было {strong}, trim +{freed} MB, \
+             VRAM свободно {before} -> {after} MB; default-пул {dres}/{dused} MB, \
+             weights-пул {wres}/{wused} MB (reserved/used)"
+        );
         let mut cfg = crate::config::AppConfig::load();
         if cfg.last_syn_model.is_some() {
             cfg.last_syn_model = None;
             cfg.save();
         }
-        // Сбрасываем guard — пользователь сможет выбрать новый .syn
-        // без перезапуска приложения, и lazy-auto-load не сработает.
         self.auto_load_attempted.set_always(true);
     }
 }

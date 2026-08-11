@@ -21,7 +21,7 @@ use super::super::types::{
 pub const VARIANT_OPTIONS: &[&str] = &["FL2VA (t2va + first/last)", "Ref2VA (референсы)"];
 pub const DEVICE_OPTIONS: &[&str] = &["CUDA", "CPU"];
 pub const QUANT_DIT_OPTIONS: &[&str] = &["nvfp4", "mxfp8", "dense (compute)"];
-pub const QUANT_ENC_OPTIONS: &[&str] = &["mxfp8", "nvfp4", "dense (compute)"];
+pub const QUANT_ENC_OPTIONS: &[&str] = &["nvfp4", "mxfp8", "dense (compute)"];
 pub const COMPUTE_OPTIONS: &[&str] = &["bf16", "f16", "f32"];
 pub const MEMORY_MODE_OPTIONS: &[&str] =
     &["auto", "предвычисленный adaLN", "блочный оффлоад"];
@@ -51,8 +51,8 @@ pub fn quant_dit_of(idx: usize, compute: DType) -> DType {
 
 pub fn quant_enc_of(idx: usize, compute: DType) -> DType {
     match idx {
-        0 => DType::MXFP8,
-        1 => DType::NVFP4,
+        0 => DType::NVFP4,
+        1 => DType::MXFP8,
         _ => compute,
     }
 }

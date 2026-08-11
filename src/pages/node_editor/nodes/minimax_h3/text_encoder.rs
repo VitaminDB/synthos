@@ -110,21 +110,23 @@ fn worker(
     prompt: &str,
     keyframes: &[Arc<H3Keyframe>],
 ) -> std::result::Result<H3Conditioning, String> {
-    let enc = shared::load_encoder(handle)?;
-    let e = &enc.encoder;
+    let cond = {
+        let enc = shared::load_encoder(handle)?;
+        let e = &enc.encoder;
 
-    let mut images = Vec::with_capacity(keyframes.len());
-    for kf in keyframes {
-        let prepared = e.prepare_image(&kf.image).map_err(|x| x.to_string())?;
-        images.push(prepared);
-    }
-    let grids: Vec<_> = images.iter().map(|(_, g)| *g).collect();
-    let presentation = if grids.is_empty() {
-        h3::text_encoder::presentation_t2va(prompt)
-    } else {
-        h3::text_encoder::presentation_fl2va(prompt, &grids, e.merge_size())
+        let mut images = Vec::with_capacity(keyframes.len());
+        for kf in keyframes {
+            let prepared = e.prepare_image(&kf.image).map_err(|x| x.to_string())?;
+            images.push(prepared);
+        }
+        let grids: Vec<_> = images.iter().map(|(_, g)| *g).collect();
+        let presentation = if grids.is_empty() {
+            h3::text_encoder::presentation_t2va(prompt)
+        } else {
+            h3::text_encoder::presentation_fl2va(prompt, &grids, e.merge_size())
+        };
+        e.encode(&presentation, &images).map_err(|x| x.to_string())?
     };
-    let cond = e.encode(&presentation, &images).map_err(|x| x.to_string())?;
     shared::trim_pool(handle);
     Ok(H3Conditioning { hidden: cond.hidden, tags: cond.tags })
 }

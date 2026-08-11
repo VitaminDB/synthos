@@ -1,13 +1,16 @@
 # Maintainer: Alexeyev Vitaly
 pkgname=synthos
 pkgver=0.1.0
-pkgrel=2
+pkgrel=21
 pkgdesc="Synthos — локальная AI-студия: node-редактор (video/audio/music/image) + чат, редактор кода, голосовой ввод"
 license=("MIT" "Apache-2.0")
 arch=("x86_64")
 url="https://github.com/VitaminDB/synthos"
 
 # Runtime: cpal/alsa, vulkan/wgpu, font-config, libxkbcommon, gtk-портал диалогов через rfd.
+# ffmpeg — динамическая линковка через ffmpeg-next (libav*/libsw*). Мажорный
+# апдейт ffmpeg меняет soname, поэтому пакет надо пересобирать вслед за ним;
+# зависимость указана по soname, чтобы pacman ловил рассинхрон при обновлении.
 depends=(
     "alsa-lib"
     "fontconfig"
@@ -15,6 +18,11 @@ depends=(
     "libxkbcommon"
     "wayland"
     "gtk3"
+    "libavutil.so=61-64"
+    "libavcodec.so=63-64"
+    "libavformat.so=63-64"
+    "libswscale.so=10-64"
+    "libswresample.so=7-64"
 )
 makedepends=(
     "cargo"

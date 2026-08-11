@@ -25,8 +25,6 @@ pub const QUANT_ENC_OPTIONS: &[&str] = &["mxfp8", "nvfp4", "dense (compute)"];
 pub const COMPUTE_OPTIONS: &[&str] = &["bf16", "f16", "f32"];
 pub const MEMORY_MODE_OPTIONS: &[&str] =
     &["auto", "предвычисленный adaLN", "блочный оффлоад"];
-pub const FRAME_SLOT_OPTIONS: &[&str] = &["первый кадр", "последний кадр"];
-pub const RESIZE_OPTIONS: &[&str] = &["растянуть", "кроп по центру"];
 
 pub fn device_of(idx: usize) -> Device {
     match idx {

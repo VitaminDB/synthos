@@ -51,6 +51,28 @@
     accent-color: #e0a458;
 }
 
+.h3-keyframe-thumb {
+    width: 360px;
+    height: 200px;
+    border-radius: 6px;
+    background: #0d0a12;
+}
+
+.h3-keyframe-badge {
+    font-size: 11px;
+    color: #e0a458;
+    padding: 2px 6px 2px 6px;
+    background: #221a2c;
+    border-radius: 4px;
+}
+
+.h3-ref-thumb {
+    width: 96px;
+    height: 96px;
+    border-radius: 4px;
+    background: #0d0a12;
+}
+
 .h3-progress {
     height: 6px;
     border-radius: 3px;

@@ -9,9 +9,8 @@ use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::types::{
     DataBlob, H3Blob, H3Geometry, H3Keyframe, NodeInstance, NodeRuntime, PortValue,
 };
-use super::super::acestep::{field_row, make_dropdown, make_int_slider_row, make_slider_row};
-use super::{FRAME_SLOT_OPTIONS, RESIZE_OPTIONS};
-use crate::pages::node_editor::controls::file_picker::node_file_picker;
+use super::super::acestep::{field_row, make_int_slider_row, make_slider_row};
+use crate::pages::node_editor::controls::keyframe_slot::KeyframeSlot;
 
 pub fn geometry_of(width: u32, height: u32, seconds: f32) -> H3Geometry {
     let g = h3::pipeline::Geometry::from_duration(width as usize, height as usize, seconds as f64);
@@ -161,29 +160,7 @@ pub fn keyframe_body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some((path, frame_slot_idx, resize_idx, error)) = snapshot else {
         return Box::new(Column::new());
     };
-    let status = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        match error.get() {
-            Some(msg) => vec![Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))],
-            None => vec![],
-        }
-    });
-    Box::new(
-        Column::new()
-            .gap(3.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .children(vec![
-                field_row(
-                    "Изображение",
-                    node_file_picker(
-                        "Кадр-якорь (PNG/JPEG)",
-                        path,
-                        &[("Изображения", &["png", "jpg", "jpeg"])],
-                        |_| {},
-                    ),
-                ),
-                field_row("Слот", make_dropdown(FRAME_SLOT_OPTIONS, frame_slot_idx)),
-                field_row("Ресайз", make_dropdown(RESIZE_OPTIONS, resize_idx)),
-                Box::new(status),
-            ]),
-    )
+    KeyframeSlot::new(path, frame_slot_idx, resize_idx)
+        .error(error)
+        .build()
 }

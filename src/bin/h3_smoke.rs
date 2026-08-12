@@ -130,6 +130,20 @@ fn run() -> std::result::Result<(), String> {
     let image = std::env::var("H3_IMAGE").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
 
     minimax_h3::shared::ensure_kernels_registered();
+    if std::env::var("H3_PROF").is_ok_and(|v| v != "0") {
+        synaptix_video_minimax_h3::runtime::set_h3_prof(true);
+        synaptix_video_minimax_h3::runtime::set_h3_vae_prof(true);
+        synaptix_video_minimax_h3::runtime::set_h3_blk_prof(true);
+        synaptix_video_minimax_h3::runtime::set_h3_adaln_prof(true);
+        synaptix_video_minimax_h3::runtime::set_h3_attn_prof(true);
+        synaptix_video_minimax_h3::runtime::set_h3_mlp_prof(true);
+    }
+    if let Some(b) = std::env::var("H3_PROF_BLOCK").ok().and_then(|v| v.parse::<usize>().ok()) {
+        synaptix_video_minimax_h3::runtime::set_prof_block(b);
+    }
+    if let Some(n) = std::env::var("H3_NBLOCKS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        synaptix_video_minimax_h3::runtime::set_nblocks_cap(Some(n));
+    }
 
     let ctx = NodeEditorCtx::new();
     let zero = syngui::core::Point::new(0.0, 0.0);
@@ -159,9 +173,16 @@ fn run() -> std::result::Result<(), String> {
     }
 
     match &*node(&ctx, n_ckpt).runtime.lock().unwrap() {
-        NodeRuntime::H3Checkpoint { model_dir: md, lora_path, .. } => {
+        NodeRuntime::H3Checkpoint { model_dir: md, lora_path, quant_dit_idx, .. } => {
             md.set(Some(model_dir.clone()));
             lora_path.set(lora.clone());
+            if let Ok(q) = std::env::var("H3_QUANT_DIT") {
+                quant_dit_idx.set(match q.as_str() {
+                    "mxfp8" => 1,
+                    "dense" => 2,
+                    _ => 0,
+                });
+            }
         }
         _ => return Err("H3Checkpoint runtime".into()),
     }

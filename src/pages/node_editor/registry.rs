@@ -351,6 +351,7 @@ const H3_KEYFRAME_OUTPUTS: &[PortSchema] = &[
 const H3_SAMPLER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+    PortSchema { name: "negative", label: "negative", kind: PortKind::Data },
     PortSchema { name: "av_latent", label: "av latent", kind: PortKind::Data },
     PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
     PortSchema { name: "keyframe_last", label: "keyframe 2", kind: PortKind::Data },

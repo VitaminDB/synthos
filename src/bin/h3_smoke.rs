@@ -133,10 +133,19 @@ fn run() -> std::result::Result<(), String> {
     if std::env::var("H3_PROF").is_ok_and(|v| v != "0") {
         synaptix_video_minimax_h3::runtime::set_h3_prof(true);
         synaptix_video_minimax_h3::runtime::set_h3_vae_prof(true);
+    }
+    if std::env::var("H3_PROF_BLK").is_ok_and(|v| v != "0") {
         synaptix_video_minimax_h3::runtime::set_h3_blk_prof(true);
         synaptix_video_minimax_h3::runtime::set_h3_adaln_prof(true);
         synaptix_video_minimax_h3::runtime::set_h3_attn_prof(true);
         synaptix_video_minimax_h3::runtime::set_h3_mlp_prof(true);
+    }
+    {
+        let g = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
+        let (sv, sa) = (g("H3_SHIFT_V"), g("H3_SHIFT_A"));
+        if sv.is_some() || sa.is_some() {
+            synaptix_video_minimax_h3::runtime::set_sigma_shift(sv, sa);
+        }
     }
     if let Some(b) = std::env::var("H3_PROF_BLOCK").ok().and_then(|v| v.parse::<usize>().ok()) {
         synaptix_video_minimax_h3::runtime::set_prof_block(b);
@@ -156,6 +165,10 @@ fn run() -> std::result::Result<(), String> {
     let n_aud = ctx.add_node(NodeKind::H3AudioDecode, zero);
     let n_save = ctx.add_node(NodeKind::H3VideoSave, zero);
     let n_kf = image.as_ref().map(|_| ctx.add_node(NodeKind::H3Keyframe, zero));
+    let negative = std::env::var("H3_NEGATIVE").ok();
+    let n_neg = negative.as_ref().map(|_| {
+        (ctx.add_node(NodeKind::TextView, zero), ctx.add_node(NodeKind::H3TextEncoder, zero))
+    });
 
     for t in [n_enc, n_smp, n_vae, n_aud] {
         connect(&ctx, n_ckpt, "model", t, "model");
@@ -167,6 +180,11 @@ fn run() -> std::result::Result<(), String> {
     connect(&ctx, n_smp, "audio_latent", n_aud, "audio_latent");
     connect(&ctx, n_vae, "frames", n_save, "frames");
     connect(&ctx, n_aud, "audio", n_save, "audio");
+    if let Some((tv, te)) = n_neg {
+        connect(&ctx, n_ckpt, "model", te, "model");
+        connect(&ctx, tv, "out", te, "prompt");
+        connect(&ctx, te, "conditioning", n_smp, "negative");
+    }
     if let Some(kf) = n_kf {
         connect(&ctx, kf, "keyframe", n_enc, "keyframe");
         connect(&ctx, kf, "keyframe", n_smp, "keyframe");
@@ -190,6 +208,12 @@ fn run() -> std::result::Result<(), String> {
         NodeRuntime::TextView { output_text, .. } => output_text.set(prompt.clone()),
         _ => return Err("TextView runtime".into()),
     }
+    if let (Some((tv, _)), Some(text)) = (n_neg, negative.as_ref()) {
+        match &*node(&ctx, tv).runtime.lock().unwrap() {
+            NodeRuntime::TextView { output_text, .. } => output_text.set(text.clone()),
+            _ => return Err("TextView (negative) runtime".into()),
+        }
+    }
     match &*node(&ctx, n_lat).runtime.lock().unwrap() {
         NodeRuntime::H3EmptyLatentAv { width: w, height: h, duration_seconds } => {
             w.set(width);
@@ -201,7 +225,12 @@ fn run() -> std::result::Result<(), String> {
     match &*node(&ctx, n_smp).runtime.lock().unwrap() {
         NodeRuntime::H3Sampler { steps: s, cfg_scale, .. } => {
             s.set(steps);
-            cfg_scale.set(if lora.is_some() { 1.0 } else { 5.0 });
+            cfg_scale.set(
+                std::env::var("H3_CFG")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(if lora.is_some() { 1.0 } else { 5.0 }),
+            );
         }
         _ => return Err("H3Sampler runtime".into()),
     }
@@ -227,6 +256,14 @@ fn run() -> std::result::Result<(), String> {
     let (r, e) = signals_encoder(&n);
     wait_done("text-encoder", r, e, None)?;
     refresh(&ctx);
+
+    if let Some((_, te)) = n_neg {
+        let n = node(&ctx, te);
+        minimax_h3::text_encoder::on_run(&n, &ctx);
+        let (r, e) = signals_encoder(&n);
+        wait_done("text-encoder (negative)", r, e, None)?;
+        refresh(&ctx);
+    }
 
     let n = node(&ctx, n_smp);
     minimax_h3::sampler::on_run(&n, &ctx);

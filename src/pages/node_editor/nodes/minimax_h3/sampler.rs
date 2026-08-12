@@ -26,6 +26,7 @@ impl NodeExecutor for SamplerExec {
     fn evaluate(&self, ctx: &mut EvalContext<'_>) {
         let _ = ctx.read_input("model");
         let _ = ctx.read_input("conditioning");
+        let _ = ctx.read_input("negative");
         let _ = ctx.read_input("av_latent");
         let _ = ctx.read_input("keyframe");
         let track = ctx.track;
@@ -130,6 +131,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         error.set(Some("подключите H3 Text Encoder на вход conditioning".into()));
         return;
     };
+    let negative = current_input_conditioning(ctx, node.id, "negative");
     let Some(geometry) = current_input_av_latent(ctx, node.id, "av_latent") else {
         error.set(Some("подключите H3 Empty AV Latent на вход av_latent".into()));
         return;
@@ -154,6 +156,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
             let res = worker(
                 &handle,
                 &cond,
+                negative.as_deref(),
                 geometry,
                 &keyframes,
                 n_steps,
@@ -183,6 +186,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
 fn worker(
     handle: &H3ModelHandle,
     cond: &H3Conditioning,
+    negative: Option<&H3Conditioning>,
     geometry: H3Geometry,
     keyframes: &[Arc<H3Keyframe>],
     steps: usize,
@@ -206,10 +210,17 @@ fn worker(
         context: cond.hidden.clone(),
         text_tags: cond.tags.clone(),
     };
+    let negative_cond = negative.map(|n| h3::pipeline::Conditioning {
+        context: n.hidden.clone(),
+        text_tags: n.tags.clone(),
+    });
     let mut req = h3::pipeline::DenoiseRequest::new(g, &conditioning);
     req.seed = Some(seed);
     if cfg_scale > 1.0 {
-        req.guider = h3::guider::GuiderParams::cfg(cfg_scale);
+        if let Some(n) = negative_cond.as_ref() {
+            req.guider = h3::guider::GuiderParams::cfg(cfg_scale);
+            req.negative = Some(n);
+        }
     }
     req.keyframes = keyframes
         .iter()

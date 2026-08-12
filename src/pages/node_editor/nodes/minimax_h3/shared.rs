@@ -86,6 +86,7 @@ pub fn load_dit(handle: &H3ModelHandle) -> std::result::Result<Arc<DitShared>, S
     let key = cache_key(handle);
     get_or_load(&DIT, &key, move || {
         let device = device_of(handle.device_idx);
+        h3::memory::trim_pool(device);
         let compute = compute_of(handle.compute_idx);
         let quant = quant_dit_of(handle.quant_dit_idx, compute);
         memory_mode_of(handle.memory_mode_idx).install();
@@ -168,4 +169,16 @@ pub fn release_dit_hold() {
 
 pub fn trim_pool(handle: &H3ModelHandle) {
     h3::memory::trim_pool(device_of(handle.device_idx));
+}
+
+pub fn activation_anchor(
+    handle: &H3ModelHandle,
+    bytes: usize,
+) -> Option<synaptix_core::tensor::Tensor> {
+    synaptix_core::tensor::Tensor::empty_uninit(
+        vec![bytes],
+        synaptix_core::dtype::DType::U8,
+        device_of(handle.device_idx),
+    )
+    .ok()
 }

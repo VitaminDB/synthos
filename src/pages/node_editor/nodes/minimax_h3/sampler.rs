@@ -195,7 +195,7 @@ fn worker(
     progress_pct: RwSignal<f32>,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> std::result::Result<(H3VideoLatent, synaptix_core::tensor::Tensor), String> {
-    let anchor = shared::activation_anchor(handle, 6 << 30);
+    let anchor = shared::activation_anchor(handle, 13 << 29);
     let shared_dit = shared::load_dit(handle)?;
     let dit = &shared_dit.dit;
     let ckpt = &shared_dit.ckpt;

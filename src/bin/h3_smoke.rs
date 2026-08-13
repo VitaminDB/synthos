@@ -298,6 +298,9 @@ fn run() -> std::result::Result<(), String> {
 
 fn main() {
     syngui::signal::init_main_thread();
+    if let Some(n) = std::env::var("H3_NBLOCKS").ok().and_then(|v| v.parse().ok()) {
+        synaptix_video_minimax_h3::runtime::set_nblocks_cap(Some(n));
+    }
     if let Err(e) = run() {
         eprintln!("error: {e}");
         std::process::exit(1);

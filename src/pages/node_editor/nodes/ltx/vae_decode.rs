@@ -217,11 +217,48 @@ fn worker(
     Ok(frames)
 }
 
-/// RGB `[1,3,F,H,W]` (≈[−1,1]) → `LtxFrames` (RGBA u8). Покадрово через
-/// `rgb_to_frames` (clamp [0,1]) + interleave на CPU.
 pub fn tensor_frames_to_rgba(
     rgb: &synaptix_core::tensor::Tensor,
     fps: f64,
+    on_progress: impl FnMut(usize, usize),
+) -> std::result::Result<LtxFrames, String> {
+    frames_to_rgba_impl(rgb, fps, true, on_progress)
+}
+
+pub fn tensor_frames_to_rgba_unit(
+    rgb: &synaptix_core::tensor::Tensor,
+    fps: f64,
+    on_progress: impl FnMut(usize, usize),
+) -> std::result::Result<LtxFrames, String> {
+    frames_to_rgba_impl(rgb, fps, false, on_progress)
+}
+
+fn unit_frames(
+    rgb: &synaptix_core::tensor::Tensor,
+) -> std::result::Result<Vec<synaptix_core::tensor::Tensor>, String> {
+    let d = rgb.dims().to_vec();
+    let scaled = rgb
+        .to_dtype(synaptix_core::dtype::DType::F32)
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(d[2]);
+    for f in 0..d[2] {
+        out.push(
+            scaled
+                .narrow(2, f, 1)
+                .and_then(|t| t.contiguous())
+                .and_then(|t| t.reshape(vec![d[1], d[3], d[4]]))
+                .and_then(|t| t.clamp(0.0, 1.0))
+                .and_then(|t| t.contiguous())
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(out)
+}
+
+fn frames_to_rgba_impl(
+    rgb: &synaptix_core::tensor::Tensor,
+    fps: f64,
+    signed: bool,
     mut on_progress: impl FnMut(usize, usize),
 ) -> std::result::Result<LtxFrames, String> {
     let dims = rgb.dims().to_vec();
@@ -229,8 +266,11 @@ pub fn tensor_frames_to_rgba(
         return Err(format!("ожидался RGB [1,3,F,H,W], получено {dims:?}"));
     }
     let (h, w) = (dims[3], dims[4]);
-    let planes =
-        rgb_to_frames(rgb).map_err(|e| format!("rgb_to_frames: {e}"))?;
+    let planes = if signed {
+        rgb_to_frames(rgb).map_err(|e| format!("rgb_to_frames: {e}"))?
+    } else {
+        unit_frames(rgb)?
+    };
     let total = planes.len();
     let mut frames: Vec<Arc<VideoFrame>> = Vec::with_capacity(total);
     for (i, fr) in planes.into_iter().enumerate() {

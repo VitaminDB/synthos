@@ -16,7 +16,7 @@ use super::super::super::types::{
 };
 use super::super::acestep::{field_row, status_row};
 use crate::pages::node_editor::controls::stereo_waveform::node_stereo_waveform;
-use super::super::ltx::vae_decode::tensor_frames_to_rgba;
+use super::super::ltx::vae_decode::tensor_frames_to_rgba_unit;
 use super::{current_input_audio_latent, current_input_model, current_input_video_latent, shared};
 
 pub struct VaeDecodeExec;
@@ -108,7 +108,7 @@ fn vae_worker(handle: &H3ModelHandle, latent: &H3VideoLatent) -> std::result::Re
     shared::trim_pool(handle);
     let vae = shared::load_vae(handle)?;
     let rgb = vae.decoder.decode(&latent.tensor).map_err(|e| e.to_string())?;
-    let frames = tensor_frames_to_rgba(&rgb, h3::config::FPS, |_, _| {})?;
+    let frames = tensor_frames_to_rgba_unit(&rgb, h3::config::FPS, |_, _| {})?;
     shared::trim_pool(handle);
     Ok(frames)
 }

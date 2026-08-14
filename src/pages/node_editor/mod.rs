@@ -27,6 +27,7 @@ pub mod style_dialog;
 pub mod tabs;
 pub mod tabs_bar;
 pub mod template_preview;
+pub mod timing;
 pub mod types;
 pub mod wires;
 

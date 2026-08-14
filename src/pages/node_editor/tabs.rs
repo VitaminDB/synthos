@@ -12,6 +12,7 @@ use syngui::prelude::*;
 
 use super::persist::{self, TabState, WorkspaceState};
 use super::state::NodeEditorCtx;
+use super::timing::Stopwatch;
 use crate::templates::Template;
 use crate::templates::convert::{apply_to_ctx, load_into_ctx};
 use crate::templates::model::TemplateKind;
@@ -70,6 +71,13 @@ pub struct EditorWorkspace {
     pub active: RwSignal<Option<TabId>>,
     /// Run/Pause/Stop pill справа сверху на canvas.
     pub run_state: RwSignal<RunState>,
+    /// Секундомер всего прогона: стартует по Run, финиширует когда очередь
+    /// опустела (или по Stop). Показывается в Run-pill рядом с кнопками.
+    pub run_timer: Stopwatch,
+    /// Сколько on_run-нод текущего прогона уже завершились.
+    pub run_done: RwSignal<usize>,
+    /// Сколько on_run-нод всего в текущем прогоне. `0` — прогонов не было.
+    pub run_total: RwSignal<usize>,
     /// Открыто ли всплывающее окно выбора шаблонов (см.
     /// [`crate::components::template_picker`]). Всегда стартует закрытым —
     /// не персистится.
@@ -84,6 +92,9 @@ impl EditorWorkspace {
             tabs: use_signal(Vec::<OpenTab>::new()),
             active: use_signal(None::<TabId>),
             run_state: use_signal(RunState::default()),
+            run_timer: Stopwatch::new(),
+            run_done: use_signal(0_usize),
+            run_total: use_signal(0_usize),
             template_picker_open: use_signal(false),
             next_tab_id: use_signal(1_u64),
         };
@@ -110,6 +121,9 @@ impl EditorWorkspace {
             tabs: use_signal(Vec::<OpenTab>::new()),
             active: use_signal(None::<TabId>),
             run_state: use_signal(RunState::default()),
+            run_timer: Stopwatch::new(),
+            run_done: use_signal(0_usize),
+            run_total: use_signal(0_usize),
             template_picker_open: use_signal(false),
             next_tab_id: use_signal(state.next_tab_id.max(1)),
         };

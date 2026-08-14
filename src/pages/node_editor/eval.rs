@@ -198,6 +198,7 @@ mod tests {
             runtime: registry::default_runtime(kind),
             style: use_signal(crate::pages::node_editor::types::NodeStyle::default()),
             enabled: use_signal(true),
+            timing: crate::pages::node_editor::timing::Stopwatch::new(),
         }
     }
 

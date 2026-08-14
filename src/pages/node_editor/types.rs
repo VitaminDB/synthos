@@ -2354,6 +2354,12 @@ pub struct NodeInstance {
     /// Включена ли нода в граф. `false` → executor пропускается в
     /// `evaluate_graph`, карточка рендерится с классом `.disabled`.
     pub enabled: RwSignal<bool>,
+    /// Секундомер ноды. Стартует/останавливается эффектом в
+    /// `state::NodeEditorCtx::new` по флипу `busy_signal` этой ноды —
+    /// значит меряет и глобальный Run, и per-node Play. Показывается
+    /// бейджем в шапке карточки (`timing::node_timer_badge`). Не
+    /// персистится: измерение принадлежит сессии, а не графу.
+    pub timing: super::timing::Stopwatch,
 }
 
 impl PartialEq for NodeInstance {

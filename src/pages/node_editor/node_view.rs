@@ -168,7 +168,12 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
         let body = Column::new()
             .gap(0.0)
             .children(vec![
-                Box::new(header_widget(id, meta, node_for_body.pos)) as Box<dyn Widget>,
+                Box::new(header_widget(
+                    id,
+                    meta,
+                    node_for_body.pos,
+                    node_for_body.timing,
+                )) as Box<dyn Widget>,
                 ports_and_fields(node_for_body.clone(), meta),
             ]);
 
@@ -295,6 +300,7 @@ fn header_widget(
     id: NodeId,
     meta: &'static NodeKindMeta,
     pos_signal: RwSignal<Point>,
+    timing: super::timing::Stopwatch,
 ) -> impl Widget {
     let title = meta.title.to_string();
     let icon = meta.icon;
@@ -319,13 +325,27 @@ fn header_widget(
         })
         .class("node-card-close");
 
+    // Правая группа шапки: [таймер] ×. Бейдж таймера ставится только у
+    // нод с явным запуском (у них есть `busy_signal` — по нему и меряется
+    // длительность); у реактивных Number/Add мерить нечего. Сам бейдж
+    // прячется, пока у ноды не было ни одного прогона.
+    let mut tail: Vec<Box<dyn Widget>> = Vec::new();
+    if meta.busy_signal.is_some() {
+        tail.push(super::timing::node_timer_badge(timing));
+    }
+    tail.push(Box::new(close_btn) as Box<dyn Widget>);
+    let tail_group = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .children(tail);
+
     let inner_row = Row::new()
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .children(vec![
             Box::new(title_group) as Box<dyn Widget>,
-            Box::new(close_btn) as Box<dyn Widget>,
+            Box::new(tail_group) as Box<dyn Widget>,
         ]);
     let inner_padded = Padding::symmetric(NODE_PADDING_H, 0.0).child(inner_row);
     DragHandle::new(pos_signal, HEADER_HEIGHT, inner_padded)

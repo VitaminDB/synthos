@@ -92,6 +92,8 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/node_editor_run_controls.mss"),
         "\n",
+        include_str!("../styles/components/node_editor_timers.mss"),
+        "\n",
         include_str!("../styles/components/markdown_node.mss"),
         "\n",
         include_str!("../styles/components/node_style_dialog.mss"),
@@ -131,4 +133,15 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/hf_dialog.mss"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    /// Один сломанный селектор роняет весь stylesheet в рантайме, а не в
+    /// сборке — держим парсинг под тестом.
+    #[test]
+    fn stylesheet_parses() {
+        syngui::mss::parse_stylesheet_str(super::styles())
+            .expect("styles.mss должен парситься");
+    }
 }

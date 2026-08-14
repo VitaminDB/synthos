@@ -88,7 +88,39 @@ impl NodeEditorCtx {
             values.set(map);
         });
 
+        ctx.install_node_timers();
+
         ctx
+    }
+
+    /// Секундомеры нод. Эффект подписан на `busy_signal` каждой ноды графа:
+    /// флип `false → true` запускает отсчёт, обратный — фиксирует
+    /// длительность в `timing.last_ms`. Точка наблюдения выбрана именно
+    /// здесь (а не в `run_controls`), потому что busy флипают и per-node
+    /// Play-кнопки, и эффект должен жить вместе с вкладкой, а не с её
+    /// отрисованным canvas'ом — иначе таймеры замирали бы на неактивной
+    /// вкладке.
+    ///
+    /// Свои `timing`-сигналы эффект читает untracked — иначе `start()`
+    /// перезапускал бы сам эффект.
+    fn install_node_timers(&self) {
+        let nodes_sig = self.nodes;
+        create_effect(move || {
+            let nodes = nodes_sig.get();
+            for n in &nodes {
+                let Some(hook) = registry::meta(n.kind).busy_signal else {
+                    continue;
+                };
+                let Some(busy_sig) = hook(n) else { continue };
+                let busy = busy_sig.get();
+                let running = n.timing.is_running_untracked();
+                if busy && !running {
+                    n.timing.start();
+                } else if !busy && running {
+                    n.timing.finish();
+                }
+            }
+        });
     }
 
     /// Добавить ноду указанного типа в указанной world-позиции.
@@ -105,6 +137,7 @@ impl NodeEditorCtx {
             runtime: registry::default_runtime(kind),
             style: use_signal(crate::pages::node_editor::types::NodeStyle::default()),
             enabled: use_signal(true),
+            timing: super::timing::Stopwatch::new(),
         };
         let mut v = self.nodes.get_untracked();
         v.push(inst);

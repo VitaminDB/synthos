@@ -147,6 +147,7 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
             runtime: crate::pages::node_editor::registry::default_runtime(nd.kind),
             style: use_signal(style),
             enabled: use_signal(nd.enabled),
+            timing: crate::pages::node_editor::timing::Stopwatch::new(),
         };
         // Per-kind state из шаблона → бампаем сигналы свежесозданного runtime'а.
         // Тяжёлые объекты (Transcriber/Pipeline) остаются дефолтными — модели

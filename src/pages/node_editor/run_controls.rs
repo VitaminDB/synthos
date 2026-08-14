@@ -19,7 +19,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use syngui::core::sync::Mutex;
-use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, ToolButton};
 
@@ -185,6 +184,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 if !busy.values().any(|b| *b)
                     && ws_init.run_state.get_untracked() == RunState::Running
                 {
+                    ws_init.run_timer.finish();
                     ws_init.run_state.set(RunState::Stopped);
                 }
                 return;
@@ -199,6 +199,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
             if just_finished.is_empty() {
                 return;
             }
+            let finished_now = just_finished.len();
 
             // Свежий evaluate, чтобы output_text / output_buf завершившихся
             // нод попали в values до того, как downstream `current_input_*`
@@ -219,10 +220,16 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 }
                 q.remaining.remove(id);
             }
+            // Счётчик «сделано/всего» в Run-pill. Считаем здесь, а не по
+            // busy-снимку: снимок не различает «ещё не стартовала» и
+            // «уже отработала».
+            let done_before = ws_init.run_done.get_untracked();
+            ws_init.run_done.set(done_before + finished_now);
 
             if q.is_done() {
                 *guard = None;
                 drop(guard);
+                ws_init.run_timer.finish();
                 ws_init.run_state.set(RunState::Stopped);
             }
         });
@@ -274,6 +281,13 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                     return;
                 }
 
+                // Глобальный секундомер: отсчёт от нажатия Run до опустошения
+                // очереди. `run_total` — все on_run-ноды прогона, включая те,
+                // что ещё ждут своих upstream-предков.
+                ws.run_total.set(q.remaining.len());
+                ws.run_done.set(0);
+                ws.run_timer.start();
+
                 if let Ok(mut g) = run_queue_cell.lock() {
                     *g = Some(q);
                 }
@@ -302,22 +316,32 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 if let Ok(mut g) = stop_queue_cell.lock() {
                     *g = None;
                 }
+                // Фиксируем то, что успело натикать: уже запущенные worker'ы
+                // доработают, но прогон как таковой закончился здесь.
+                ws.run_timer.finish();
                 ws.run_state.set(RunState::Stopped);
                 app_stop.notifications.info("Stopped");
             })
             .class(button_class("ne-run-btn ne-run-btn--stop", state, RunState::Stopped));
 
+        // Секундомер прогона справа от кнопок, за тонким разделителем
+        // (разделитель — часть бейджа, поэтому исчезает вместе с ним).
+        // До первого Run бейдж пуст — pill остаётся компактным.
+        let timer = super::timing::run_timer_badge(ws.run_timer, (ws.run_done, ws.run_total));
+
         let pill = DecoratedBox::new()
-            .child(Padding::symmetric(8.0, 4.0).child(mgui! {
+            .child(Padding::symmetric(8.0, 4.0).child(
                 Row::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .main_axis_alignment(MainAxisAlignment::Center) => [
-                        run_btn,
-                        pause_btn,
-                        stop_btn,
-                    ]
-            }))
+                    .main_axis_alignment(MainAxisAlignment::Center)
+                    .children(vec![
+                        Box::new(run_btn) as Box<dyn Widget>,
+                        Box::new(pause_btn) as Box<dyn Widget>,
+                        Box::new(stop_btn) as Box<dyn Widget>,
+                        timer,
+                    ]),
+            ))
             .class(format!(
                 "ne-run-controls ne-run-controls--{}",
                 state.label().to_lowercase()

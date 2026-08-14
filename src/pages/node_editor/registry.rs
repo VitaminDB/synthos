@@ -1874,6 +1874,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::H3Sampler => NodeRuntime::H3Sampler {
+            two_stage: use_signal(false),
+            refine_steps: use_signal(4_u32),
             steps: use_signal(6_u32),
             cfg_scale: use_signal(1.0_f32),
             seed: use_signal(0_u64),

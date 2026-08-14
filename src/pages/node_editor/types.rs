@@ -2023,6 +2023,8 @@ pub enum NodeRuntime {
         steps: RwSignal<u32>,
         cfg_scale: RwSignal<f32>,
         seed: RwSignal<u64>,
+        two_stage: RwSignal<bool>,
+        refine_steps: RwSignal<u32>,
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,
         progress_pct: RwSignal<f32>,

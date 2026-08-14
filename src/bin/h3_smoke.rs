@@ -223,7 +223,15 @@ fn run() -> std::result::Result<(), String> {
         _ => return Err("H3EmptyLatentAv runtime".into()),
     }
     match &*node(&ctx, n_smp).runtime.lock().unwrap() {
-        NodeRuntime::H3Sampler { steps: s, cfg_scale, .. } => {
+        NodeRuntime::H3Sampler { steps: s, cfg_scale, two_stage, refine_steps, .. } => {
+            if matches!(std::env::var("H3_TWO_STAGE").as_deref(), Ok("1")) {
+                two_stage.set(true);
+            }
+            if let Ok(v) = std::env::var("H3_REFINE_STEPS") {
+                if let Ok(n) = v.parse() {
+                    refine_steps.set(n);
+                }
+            }
             s.set(steps);
             cfg_scale.set(
                 std::env::var("H3_CFG")

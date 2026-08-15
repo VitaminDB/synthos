@@ -193,7 +193,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
                         .add_filter("Syn bundle", &["syn"])
-                        .set_title("Выберите .syn с моделью Qwen3.6")
+                        .set_title("Выберите .syn с моделью Qwen3.6/3.8")
                         .pick_file();
                     if let Some(p) = path {
                         load_from_any_thread(p);

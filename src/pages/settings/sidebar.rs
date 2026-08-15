@@ -26,7 +26,7 @@ const TABS: &[Tab] = &[
     Tab { key: "themes",       icon: MI_PALETTE,      title: "Темы",         subtitle: "Светлые и тёмные оформления" },
     Tab { key: "skills",       icon: MI_PSYCHOLOGY,   title: "Скилы",        subtitle: "Инструкции и подсказки" },
     Tab { key: "audio_models",   icon: MI_HEADSET_MIC,  title: "Аудио модели", subtitle: "Распознавание речи" },
-    Tab { key: "ai_models",      icon: MI_SMART_TOY,    title: "AI модели",    subtitle: "Квантование Qwen3.6 (Syn-чат)" },
+    Tab { key: "ai_models",      icon: MI_SMART_TOY,    title: "AI модели",    subtitle: "Квантование Qwen3.6/3.8 (Syn-чат)" },
     Tab { key: "knowledge_base", icon: MI_MENU_BOOK,    title: "Базы знаний",  subtitle: "RAG-коллекции для агента" },
     Tab { key: "terminal",       icon: MI_TERMINAL,     title: "Терминал",     subtitle: "Шрифт встроенного VTE" },
     Tab { key: "about",          icon: MI_INFO,         title: "О программе",  subtitle: "Версия, авторы, лицензия" },

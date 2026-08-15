@@ -34,7 +34,7 @@ pub fn view() -> impl Widget {
         let header = Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Start)
-            .child(Text::new("Квантование Qwen3.6 (Syn-чат)").class("settings-section-title"))
+            .child(Text::new("Квантование Qwen3.6/3.8 (Syn-чат)").class("settings-section-title"))
             .child(Text::new("Политика хранения весов и кэшей модели. NVFP4 — главная экономия (~12 GB из 30 GB весов). FP8 KV-cache даёт −2 GB при длинном контексте. Изменения применяются после нажатия «Применить и перезагрузить модель».")
                 .class("settings-row-desc"));
 

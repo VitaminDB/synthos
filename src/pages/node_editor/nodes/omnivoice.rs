@@ -98,6 +98,17 @@ fn compute_from_idx(i: usize) -> DType {
     }
 }
 
+/// Backend-kernels обязаны быть зарегистрированы до первого тензорного опа
+/// (cast весов при загрузке) — иначе `backend not registered for device`.
+fn ensure_kernels_registered() {
+    use std::sync::OnceLock;
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        synaptix_kernels_cpu::ensure_registered();
+        synaptix_kernels_cuda::ensure_registered();
+    });
+}
+
 
 // ── Executor ──────────────────────────────────────────────────────────────
 
@@ -335,6 +346,7 @@ fn synth_worker(
         Err(_) => true,
     };
     if needs_load {
+        ensure_kernels_registered();
         if let Ok(mut g) = pipeline.lock() {
             *g = None;
         }

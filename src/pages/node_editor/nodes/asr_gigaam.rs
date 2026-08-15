@@ -86,6 +86,17 @@ fn best_gpu_device() -> Device {
     Device::Cuda(0)
 }
 
+/// Backend-kernels обязаны быть зарегистрированы до первого тензорного опа
+/// (cast весов при загрузке) — иначе `backend not registered for device`.
+fn ensure_kernels_registered() {
+    use std::sync::OnceLock;
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        synaptix_kernels_cpu::ensure_registered();
+        synaptix_kernels_cuda::ensure_registered();
+    });
+}
+
 
 // ── Executor ──────────────────────────────────────────────────────────────
 
@@ -416,6 +427,7 @@ fn play_worker(
         Err(_) => true,
     };
     if needs_load {
+        ensure_kernels_registered();
         if let Ok(mut g) = transcriber.lock() {
             *g = None;
         }

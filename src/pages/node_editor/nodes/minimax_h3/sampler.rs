@@ -295,9 +295,12 @@ fn worker(
 
     if !keyframes.is_empty() {
         let vae_cfg = ckpt.vae_config().map_err(|e| e.to_string())?;
-        let paths = shared::paths_of(handle)?;
-        let w = h3::loader::ComponentLoader::open_file(paths.video_vae_file(), shared_dit.device)
-            .map_err(|e| e.to_string())?;
+        let w = h3::loader::ComponentLoader::open_component(
+            ckpt.source(),
+            h3::H3Component::VideoVae,
+            shared_dit.device,
+        )
+        .map_err(|e| e.to_string())?;
         let enc = h3::vae::VaeEncoder::load(&w, vae_cfg, shared_dit.device, shared_dit.compute)
             .map_err(|e| e.to_string())?;
         let mut latents = Vec::with_capacity(keyframes.len());

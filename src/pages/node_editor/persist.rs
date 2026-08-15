@@ -300,8 +300,8 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
     match rt {
         NodeRuntime::None => {}
         NodeRuntime::H3Checkpoint {
-            model_dir,
-            encoder_dir,
+            model_path,
+            encoder_path,
             lora_path,
             lora_strength,
             variant_idx,
@@ -312,8 +312,8 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             memory_mode_idx,
             ..
         } => {
-            let _ = model_dir.get();
-            let _ = encoder_dir.get();
+            let _ = model_path.get();
+            let _ = encoder_path.get();
             let _ = lora_path.get();
             let _ = lora_strength.get();
             let _ = variant_idx.get();

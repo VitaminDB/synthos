@@ -34,7 +34,8 @@ impl NodeExecutor for FfmpegPlayerExec {
             PortValue::Text(s) if !s.trim().is_empty() => Some(PathBuf::from(s.trim())),
             _ => None,
         };
-        let new_frames = ctx.read_input("frames").as_ltx_frames();
+        let frames_pv = ctx.read_input("frames");
+        let new_frames = frames_pv.as_ltx_frames().or_else(|| frames_pv.as_h3_frames());
         let new_audio = ctx.read_input("audio").as_audio();
 
         let Ok(g) = ctx.runtime().lock() else { return };
@@ -206,7 +207,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         let widget: Box<dyn Widget> = match (mem, p, err) {
             (_, _, Some(e)) => Box::new(Text::new(format!("Ошибка: {e}")).class("audio-node-error")),
             (true, _, _) => {
-                Box::new(Text::new("Из памяти (LTX)").class("audio-node-filename"))
+                Box::new(Text::new("Из памяти").class("audio-node-filename"))
             }
             (false, Some(path), _) => Box::new(
                 Text::new(

@@ -1841,8 +1841,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             preview_version: use_signal(0_u32),
         },
         NodeKind::H3Checkpoint => NodeRuntime::H3Checkpoint {
-            model_dir: use_signal(None),
-            encoder_dir: use_signal(None),
+            model_path: use_signal(None),
+            encoder_path: use_signal(None),
             lora_path: use_signal(None),
             lora_strength: use_signal(1.0_f32),
             variant_idx: use_signal(0_usize),

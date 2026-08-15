@@ -627,12 +627,15 @@ pub enum H3Blob {
     Frames(Arc<LtxFrames>),
 }
 
-/// Конфиг H3-чекпойнта: каталог модели + энкодер + LoRA + device/quant.
-/// Дешёвый POD — веса грузят потребители через `nodes::minimax_h3::shared`.
+/// Конфиг H3-чекпойнта: модель (`.syn`-бандл либо HF-каталог) + энкодер +
+/// LoRA + device/quant. Дешёвый POD — веса грузят потребители через
+/// `nodes::minimax_h3::shared`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct H3ModelHandle {
-    pub model_dir: PathBuf,
-    pub encoder_dir: Option<PathBuf>,
+    /// `.syn`-бандл MiniMax-H3 или каталог варианта (FL2VA/Ref2VA).
+    pub model_path: PathBuf,
+    /// Отдельный `.syn`/каталог энкодера. `None` — энкодер берётся из модели.
+    pub encoder_path: Option<PathBuf>,
     pub lora_path: Option<PathBuf>,
     pub lora_strength: f32,
     pub variant_idx: usize,
@@ -1987,8 +1990,8 @@ pub enum NodeRuntime {
         output_version: RwSignal<u32>,
     },
     H3Checkpoint {
-        model_dir: RwSignal<Option<PathBuf>>,
-        encoder_dir: RwSignal<Option<PathBuf>>,
+        model_path: RwSignal<Option<PathBuf>>,
+        encoder_path: RwSignal<Option<PathBuf>>,
         lora_path: RwSignal<Option<PathBuf>>,
         lora_strength: RwSignal<f32>,
         variant_idx: RwSignal<usize>,
@@ -2249,9 +2252,9 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::LtxA2V { running, .. } => {
                 write!(f, "NodeRuntime::LtxA2V{{running={}}}", running.get_untracked())
             }
-            NodeRuntime::H3Checkpoint { model_dir, .. } => {
-                let p = model_dir.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::H3Checkpoint{{dir={p}}}")
+            NodeRuntime::H3Checkpoint { model_path, .. } => {
+                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
+                write!(f, "NodeRuntime::H3Checkpoint{{model={p}}}")
             }
             NodeRuntime::H3TextEncoder { running, .. } => {
                 write!(f, "NodeRuntime::H3TextEncoder{{running={}}}", running.get_untracked())

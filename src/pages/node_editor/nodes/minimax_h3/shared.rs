@@ -41,8 +41,8 @@ type Cache<T> = OnceLock<Mutex<HashMap<String, Weak<T>>>>;
 fn cache_key(h: &H3ModelHandle) -> String {
     format!(
         "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        h.model_dir.display(),
-        h.encoder_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
+        h.model_path.display(),
+        h.encoder_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
         h.lora_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
         h.lora_strength.to_bits(),
         h.variant_idx,
@@ -76,9 +76,27 @@ fn get_or_load<T>(
     Ok(arc)
 }
 
-pub fn paths_of(handle: &H3ModelHandle) -> std::result::Result<h3::H3Paths, String> {
-    h3::H3Paths::open_variant(&handle.model_dir, variant_of(handle.variant_idx))
+/// Источник весов: `.syn`-бандл или HF-каталог варианта. Открытие бандла —
+/// это только mmap + разбор central directory, веса не читаются.
+pub fn source_of(handle: &H3ModelHandle) -> std::result::Result<h3::H3Source, String> {
+    h3::H3Source::open(&handle.model_path, variant_of(handle.variant_idx))
         .map_err(|e| e.to_string())
+}
+
+/// Источник энкодера: явно выбранный `.syn`/каталог либо энкодер из модели.
+pub fn encoder_source_of(
+    handle: &H3ModelHandle,
+    model: &h3::H3Source,
+) -> std::result::Result<h3::H3EncoderSource, String> {
+    match &handle.encoder_path {
+        Some(p) => h3::H3EncoderSource::open(p).map_err(|e| e.to_string()),
+        None => h3::H3EncoderSource::from_model(model).ok_or_else(|| {
+            format!(
+                "в {} нет text_encoder — выберите отдельный .syn энкодера",
+                model.path().display()
+            )
+        }),
+    }
 }
 
 pub fn load_dit(handle: &H3ModelHandle) -> std::result::Result<Arc<DitShared>, String> {
@@ -91,8 +109,9 @@ pub fn load_dit(handle: &H3ModelHandle) -> std::result::Result<Arc<DitShared>, S
         let quant = quant_dit_of(handle.quant_dit_idx, compute);
         memory_mode_of(handle.memory_mode_idx).install();
 
-        let paths = paths_of(handle)?;
-        let mut ckpt = h3::H3Checkpoint::open(paths, device, compute).map_err(|e| e.to_string())?;
+        let source = source_of(handle)?;
+        let mut ckpt =
+            h3::H3Checkpoint::open_source(source, device, compute).map_err(|e| e.to_string())?;
         if let Some(lp) = &handle.lora_path {
             let lw = h3::LoraWeights::open(lp, device, handle.lora_strength)
                 .map_err(|e| e.to_string())?;
@@ -110,12 +129,9 @@ pub fn load_encoder(handle: &H3ModelHandle) -> std::result::Result<Arc<EncoderSh
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
         let quant = quant_enc_of(handle.quant_enc_idx, compute);
-        let paths = paths_of(handle)?;
-        let dir = handle
-            .encoder_dir
-            .clone()
-            .unwrap_or_else(|| paths.text_encoder_dir());
-        let encoder = h3::text_encoder::EncoderHandle::load(&dir, device, compute, quant)
+        let source = source_of(handle)?;
+        let enc_src = encoder_source_of(handle, &source)?;
+        let encoder = h3::text_encoder::EncoderHandle::load_source(&enc_src, device, compute, quant)
             .map_err(|e| e.to_string())?;
         Ok(EncoderShared { encoder })
     })
@@ -127,9 +143,9 @@ pub fn load_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<VaeShared>, S
     get_or_load(&VAE, &key, move || {
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
-        let paths = paths_of(handle)?;
-        let cfg = h3::config::VaeConfig::from_dir(&paths.root).map_err(|e| e.to_string())?;
-        let w = h3::loader::ComponentLoader::open_file(paths.video_vae_file(), device)
+        let source = source_of(handle)?;
+        let cfg = h3::config::VaeConfig::from_source(&source).map_err(|e| e.to_string())?;
+        let w = h3::loader::ComponentLoader::open_component(&source, h3::H3Component::VideoVae, device)
             .map_err(|e| e.to_string())?;
         let decoder =
             h3::vae::VaeDecoder::load(&w, cfg, device, compute).map_err(|e| e.to_string())?;
@@ -143,9 +159,9 @@ pub fn load_audio_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<AudioVa
     get_or_load(&AUDIO_VAE, &key, move || {
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
-        let paths = paths_of(handle)?;
-        let cfg = h3::config::AudioVaeConfig::from_dir(&paths.root).map_err(|e| e.to_string())?;
-        let w = h3::loader::ComponentLoader::open_file(paths.audio_vae_file(), device)
+        let source = source_of(handle)?;
+        let cfg = h3::config::AudioVaeConfig::from_source(&source).map_err(|e| e.to_string())?;
+        let w = h3::loader::ComponentLoader::open_component(&source, h3::H3Component::AudioVae, device)
             .map_err(|e| e.to_string())?;
         let decoder = h3::audio_vae::AudioVae::load_decoder(&w, cfg, device, compute)
             .map_err(|e| e.to_string())?;

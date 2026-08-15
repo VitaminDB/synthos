@@ -109,20 +109,22 @@ fn run() -> std::result::Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         return Err(format!(
-            "использование: {} <model_dir> <out.mp4> [width height duration_sec steps] \
-             (env: H3_LORA=<turbo.safetensors>, H3_PROMPT=..., H3_IMAGE=<first_frame>)",
+            "использование: {} <model.syn|model_dir> <out.mp4> [width height duration_sec steps] \
+             (env: H3_ENCODER=<encoder.syn|dir>, H3_LORA=<turbo.safetensors>, \
+             H3_PROMPT=..., H3_IMAGE=<first_frame>)",
             args[0]
         ));
     }
-    let model_dir = PathBuf::from(&args[1]);
+    let model_path = PathBuf::from(&args[1]);
     let out = PathBuf::from(&args[2]);
     let width: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(640);
     let height: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(384);
     let dur: f32 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(2.0);
     let steps: u32 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(6);
-    if !model_dir.exists() {
-        return Err(format!("нет каталога: {}", model_dir.display()));
+    if !model_path.exists() {
+        return Err(format!("нет пути: {}", model_path.display()));
     }
+    let encoder = std::env::var("H3_ENCODER").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
     let prompt = std::env::var("H3_PROMPT").unwrap_or_else(|_| {
         "a calm sunlit room, dust motes drifting in the light, soft ambient hum".into()
     });
@@ -191,8 +193,15 @@ fn run() -> std::result::Result<(), String> {
     }
 
     match &*node(&ctx, n_ckpt).runtime.lock().unwrap() {
-        NodeRuntime::H3Checkpoint { model_dir: md, lora_path, quant_dit_idx, .. } => {
-            md.set(Some(model_dir.clone()));
+        NodeRuntime::H3Checkpoint {
+            model_path: mp,
+            encoder_path,
+            lora_path,
+            quant_dit_idx,
+            ..
+        } => {
+            mp.set(Some(model_path.clone()));
+            encoder_path.set(encoder.clone());
             lora_path.set(lora.clone());
             if let Ok(q) = std::env::var("H3_QUANT_DIT") {
                 quant_dit_idx.set(match q.as_str() {

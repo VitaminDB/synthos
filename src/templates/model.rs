@@ -253,6 +253,7 @@ pub enum NodeStateData {
     LtxAudioInput(LtxAudioInputStateData),
     LtxLipdub(LtxLipdubStateData),
     LtxA2V(LtxA2VStateData),
+    H3Checkpoint(H3CheckpointStateData),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -454,6 +455,36 @@ pub struct LtxCheckpointStateData {
 }
 
 fn default_ltx_lora_strength() -> f32 {
+    1.0
+}
+
+/// State Checkpoint-ноды MiniMax-H3: `.syn`-бандлы модели и энкодера
+/// (или каталоги — путь хранится как есть) + LoRA и device/quant/compute.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct H3CheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub encoder_path: Option<String>,
+    #[serde(default)]
+    pub lora_path: Option<String>,
+    #[serde(default = "default_h3_lora_strength")]
+    pub lora_strength: f32,
+    #[serde(default)]
+    pub variant_idx: usize,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default)]
+    pub quant_dit_idx: usize,
+    #[serde(default)]
+    pub quant_enc_idx: usize,
+    #[serde(default)]
+    pub compute_idx: usize,
+    #[serde(default)]
+    pub memory_mode_idx: usize,
+}
+
+fn default_h3_lora_strength() -> f32 {
     1.0
 }
 

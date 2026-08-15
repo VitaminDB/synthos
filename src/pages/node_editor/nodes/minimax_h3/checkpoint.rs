@@ -8,10 +8,13 @@ use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::types::{DataBlob, H3Blob, H3ModelHandle, NodeInstance, NodeRuntime, PortValue};
 use super::super::acestep::{field_row, make_dropdown, make_slider_row};
 use super::{
-    dir_picker_row, COMPUTE_OPTIONS, DEVICE_OPTIONS, MEMORY_MODE_OPTIONS, QUANT_DIT_OPTIONS,
-    QUANT_ENC_OPTIONS, VARIANT_OPTIONS,
+    COMPUTE_OPTIONS, DEVICE_OPTIONS, MEMORY_MODE_OPTIONS, QUANT_DIT_OPTIONS, QUANT_ENC_OPTIONS,
+    VARIANT_OPTIONS,
 };
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
+
+/// Модель и энкодер выбираются одним файлом — `.syn`-бандлом.
+const SYN_FILTER: &[(&str, &[&str])] = &[("Syn bundle", &["syn"])];
 
 pub struct CheckpointExec;
 
@@ -21,8 +24,8 @@ impl NodeExecutor for CheckpointExec {
         let pv = match ctx.runtime().lock() {
             Ok(g) => match &*g {
                 NodeRuntime::H3Checkpoint {
-                    model_dir,
-                    encoder_dir,
+                    model_path,
+                    encoder_path,
                     lora_path,
                     lora_strength,
                     variant_idx,
@@ -33,10 +36,14 @@ impl NodeExecutor for CheckpointExec {
                     memory_mode_idx,
                     handle_cache,
                 } => {
-                    let md = if track { model_dir.get() } else { model_dir.get_untracked() };
-                    let handle = md.map(|model_dir| H3ModelHandle {
-                        model_dir,
-                        encoder_dir: if track { encoder_dir.get() } else { encoder_dir.get_untracked() },
+                    let md = if track { model_path.get() } else { model_path.get_untracked() };
+                    let handle = md.map(|model_path| H3ModelHandle {
+                        model_path,
+                        encoder_path: if track {
+                            encoder_path.get()
+                        } else {
+                            encoder_path.get_untracked()
+                        },
                         lora_path: if track { lora_path.get() } else { lora_path.get_untracked() },
                         lora_strength: if track {
                             lora_strength.get()
@@ -92,8 +99,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::H3Checkpoint {
-                model_dir,
-                encoder_dir,
+                model_path,
+                encoder_path,
                 lora_path,
                 lora_strength,
                 variant_idx,
@@ -104,8 +111,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 memory_mode_idx,
                 ..
             } => Some((
-                *model_dir,
-                *encoder_dir,
+                *model_path,
+                *encoder_path,
                 *lora_path,
                 *lora_strength,
                 *variant_idx,
@@ -120,8 +127,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((
-        model_dir,
-        encoder_dir,
+        model_path,
+        encoder_path,
         lora_path,
         lora_strength,
         variant_idx,
@@ -137,13 +144,23 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Каталог модели",
-            dir_picker_row("Корень MiniMax-H3 или каталог FL2VA/Ref2VA", model_dir),
+            "Модель",
+            node_file_picker(
+                "Бандл MiniMax-H3 (.syn): DiT + video/audio VAE + конфиги",
+                model_path,
+                SYN_FILTER,
+                |_| {},
+            ),
         ),
         field_row("Вариант", make_dropdown(VARIANT_OPTIONS, variant_idx)),
         field_row(
             "Энкодер",
-            dir_picker_row("Каталог Qwen3-VL-32B (по умолчанию text_encoder)", encoder_dir),
+            node_file_picker(
+                "Бандл Qwen3-VL (.syn) — опц., иначе энкодер из бандла модели",
+                encoder_path,
+                SYN_FILTER,
+                |_| {},
+            ),
         ),
         field_row(
             "LoRA",

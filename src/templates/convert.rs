@@ -20,7 +20,8 @@ use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData,
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
-    FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, LlmStateData,
+    FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, H3CheckpointStateData,
+    LlmStateData,
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
     LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
     LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
@@ -198,8 +199,31 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
 fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
     match rt {
         NodeRuntime::None => None,
-        NodeRuntime::H3Checkpoint { .. }
-        | NodeRuntime::H3TextEncoder { .. }
+        NodeRuntime::H3Checkpoint {
+            model_path,
+            encoder_path,
+            lora_path,
+            lora_strength,
+            variant_idx,
+            device_idx,
+            quant_dit_idx,
+            quant_enc_idx,
+            compute_idx,
+            memory_mode_idx,
+            ..
+        } => Some(NodeStateData::H3Checkpoint(H3CheckpointStateData {
+            model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            encoder_path: encoder_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            lora_path: lora_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            lora_strength: lora_strength.get_untracked(),
+            variant_idx: variant_idx.get_untracked(),
+            device_idx: device_idx.get_untracked(),
+            quant_dit_idx: quant_dit_idx.get_untracked(),
+            quant_enc_idx: quant_enc_idx.get_untracked(),
+            compute_idx: compute_idx.get_untracked(),
+            memory_mode_idx: memory_mode_idx.get_untracked(),
+        })),
+        NodeRuntime::H3TextEncoder { .. }
         | NodeRuntime::H3EmptyLatentAv { .. }
         | NodeRuntime::H3Keyframe { .. }
         | NodeRuntime::H3Sampler { .. }
@@ -1028,6 +1052,33 @@ fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             hwaccel_idx.set(data.hwaccel_idx);
         }
         (
+            NodeRuntime::H3Checkpoint {
+                model_path,
+                encoder_path,
+                lora_path,
+                lora_strength,
+                variant_idx,
+                device_idx,
+                quant_dit_idx,
+                quant_enc_idx,
+                compute_idx,
+                memory_mode_idx,
+                ..
+            },
+            NodeStateData::H3Checkpoint(data),
+        ) => {
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            encoder_path.set(data.encoder_path.as_ref().map(PathBuf::from));
+            lora_path.set(data.lora_path.as_ref().map(PathBuf::from));
+            lora_strength.set(data.lora_strength);
+            variant_idx.set(data.variant_idx);
+            device_idx.set(data.device_idx);
+            quant_dit_idx.set(data.quant_dit_idx);
+            quant_enc_idx.set(data.quant_enc_idx);
+            compute_idx.set(data.compute_idx);
+            memory_mode_idx.set(data.memory_mode_idx);
+        }
+        (
             NodeRuntime::LtxCheckpoint {
                 model_path,
                 gemma_dir,
@@ -1624,6 +1675,70 @@ mod tests {
                 assert_eq!(seed.get_untracked(), 7);
             }
             other => panic!("Expected Llm runtime, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_h3_checkpoint_state() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::H3Checkpoint,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::H3Checkpoint(H3CheckpointStateData {
+                model_path: Some("/models/minimax-h3-fl2va.syn".into()),
+                encoder_path: Some("/models/minimax-h3-qwen3vl-encoder.syn".into()),
+                lora_path: Some("/models/turbo.safetensors".into()),
+                lora_strength: 0.85,
+                variant_idx: 1,
+                device_idx: 0,
+                quant_dit_idx: 1,
+                quant_enc_idx: 2,
+                compute_idx: 1,
+                memory_mode_idx: 2,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        match &*rt {
+            NodeRuntime::H3Checkpoint {
+                model_path,
+                encoder_path,
+                lora_path,
+                lora_strength,
+                variant_idx,
+                device_idx,
+                quant_dit_idx,
+                quant_enc_idx,
+                compute_idx,
+                memory_mode_idx,
+                ..
+            } => {
+                let path = |s: Option<PathBuf>| s.map(|p| p.to_string_lossy().to_string());
+                assert_eq!(
+                    path(model_path.get_untracked()),
+                    Some("/models/minimax-h3-fl2va.syn".into())
+                );
+                assert_eq!(
+                    path(encoder_path.get_untracked()),
+                    Some("/models/minimax-h3-qwen3vl-encoder.syn".into())
+                );
+                assert_eq!(
+                    path(lora_path.get_untracked()),
+                    Some("/models/turbo.safetensors".into())
+                );
+                assert!((lora_strength.get_untracked() - 0.85).abs() < 1e-6);
+                assert_eq!(variant_idx.get_untracked(), 1);
+                assert_eq!(device_idx.get_untracked(), 0);
+                assert_eq!(quant_dit_idx.get_untracked(), 1);
+                assert_eq!(quant_enc_idx.get_untracked(), 2);
+                assert_eq!(compute_idx.get_untracked(), 1);
+                assert_eq!(memory_mode_idx.get_untracked(), 2);
+            }
+            other => panic!("Expected H3Checkpoint runtime, got {other:?}"),
         }
     }
 

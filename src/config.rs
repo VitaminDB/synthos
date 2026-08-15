@@ -624,9 +624,9 @@ pub struct AppConfig {
     /// `true`. Применяется через [`synaptix::facade::llm::set_gdr_fused_disabled`].
     #[serde(default = "default_true")]
     pub qwen36_gdr_fused: bool,
-    /// Размер chunk'а для prefill (`prefill_chunked` в `generation.rs`).
-    /// Default = 1024. На 24 GB GPU + 23K context придётся уменьшить до 64-256,
-    /// иначе пиковый KV-allocation `(B,nh,1024,T) F32 ≈ 660 MB` приводит к OOM.
+    /// Размер chunk'а для prefill. Default = 256 (лимит пика VRAM активаций на
+    /// 24 GB GPU при ~1.5k ток/с). Движок принудительно округляет к кратному
+    /// 64 — границы чанков на некратных позициях ломают состояние GDN-скана.
     /// Применяется через [`synaptix::facade::llm::set_prefill_chunk_size`].
     #[serde(default = "default_qwen36_prefill_chunk")]
     pub qwen36_prefill_chunk: usize,
@@ -659,7 +659,10 @@ pub struct AppConfig {
 }
 
 fn default_true() -> bool { true }
-fn default_qwen36_prefill_chunk() -> usize { 1024 }
+// 256: единственный размер, безопасный на 24 ГБ (single-shot/1024 упирается в
+// VRAM поверх ~18 ГБ весов 27B) при prefill ~1.5-1.6k ток/с; движок сам
+// округляет к кратному 64 (границы GDN-скана).
+fn default_qwen36_prefill_chunk() -> usize { 256 }
 
 fn default_qwen36_attn_mode() -> String { "fa4".into() }
 

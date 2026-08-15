@@ -778,8 +778,10 @@ fn voxcpm_voice_clone_template() -> Template {
     }
 }
 
-/// Voice-clone TTS на OmniVoice: референс-голос (Audio File) + текст (Text) →
-/// OmniVoice (`ref_audio` активирует Clone-mode) → плеер и сохранение в файл.
+/// Voice-clone TTS на OmniVoice с авто-транскрипцией референса через GigaAM:
+/// Audio File → GigaAM ASR → Text View (транскрипт, можно поправить) →
+/// `ref_text` OmniVoice; тот же Audio File → `ref_audio` (активирует
+/// Clone-mode). RunQueue сам дождётся GigaAM перед стартом OmniVoice.
 fn omnivoice_voice_clone_template() -> Template {
     let text_state = NodeStateData::TextView(TextViewStateData {
         output_text: "Привет! Это синтез моего голоса из короткого образца."
@@ -792,22 +794,28 @@ fn omnivoice_voice_clone_template() -> Template {
         builtin: true,
         name: "OmniVoice: Voice Clone".into(),
         description:
-            "Референс-голос (Audio File) + текст (Text) → OmniVoice TTS (Clone-mode по ref_audio) → \
-             Audio Player и Save to File. Откройте WAV с образцом голоса, впишите текст, укажите \
-             .syn-модель OmniVoice в ноде TTS и нажмите Run. `ref text` (транскрипт образца) — \
-             опционально, для более точного клона."
+            "Референс-голос (Audio File) → GigaAM ASR (авто-транскрипт → ref text) + текст (Text) → \
+             OmniVoice TTS (Clone-mode по ref_audio) → Audio Player и Save to File. Откройте WAV с \
+             образцом голоса, впишите текст, укажите .syn-модели: GigaAM (gigaam-v3.syn) в ноде ASR \
+             и OmniVoice (omnivoice.syn) в ноде TTS, нажмите Run. Транскрипт в Text View можно \
+             поправить перед синтезом."
                 .into(),
         kind: TemplateKind::Full,
         nodes: vec![
             node_with_state(1, NodeKind::TextView, 60.0, 60.0, text_state),
             node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
-            node_plain(3, NodeKind::OmniVoice, 480.0, 140.0),
-            node_plain(4, NodeKind::AudioPlayer, 900.0, 60.0),
-            node_plain(5, NodeKind::SaveToFile, 900.0, 300.0),
+            node_plain(6, NodeKind::AsrGigaam, 420.0, 320.0),
+            node_plain(7, NodeKind::TextView, 420.0, 580.0),
+            node_plain(3, NodeKind::OmniVoice, 840.0, 140.0),
+            node_plain(4, NodeKind::AudioPlayer, 1280.0, 60.0),
+            node_plain(5, NodeKind::SaveToFile, 1280.0, 300.0),
         ],
         connections: vec![
             ConnData { from_node: 1, from_port: "out".into(),   to_node: 3, to_port: "text".into() },
             ConnData { from_node: 2, from_port: "out".into(),   to_node: 3, to_port: "ref_audio".into() },
+            ConnData { from_node: 2, from_port: "out".into(),   to_node: 6, to_port: "in".into() },
+            ConnData { from_node: 6, from_port: "out".into(),   to_node: 7, to_port: "in".into() },
+            ConnData { from_node: 7, from_port: "out".into(),   to_node: 3, to_port: "ref_text".into() },
             ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
             ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
         ],

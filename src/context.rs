@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use syngui::core::sync::Mutex;
+use syngui::appearance::SystemAppearance;
 use syngui::prelude::*;
+use syngui::window::{BackdropConfig, WindowState};
 use syngui::widgets::navigation::router::Router;
 
 use crate::agent::audio::AudioCtx;
@@ -264,6 +266,38 @@ pub enum SkillDialogKind {
     Delete { id: String, name: String },
 }
 
+/// Всё, что связано с оформлением окна: системная тема, акцент рабочего стола,
+/// вид кнопок титлбара и «стекло» за окном.
+///
+/// Сигнал `system` наполняет сам фреймворк
+/// (`AppBuilder::with_system_appearance`), остальные поля — пользовательские
+/// настройки из раздела «Темы».
+#[derive(Clone, Copy)]
+pub struct AppearanceCtx {
+    /// Текущее системное оформление: светлая/тёмная схема, акцент DE.
+    pub system: RwSignal<SystemAppearance>,
+    /// Следовать системной светлой/тёмной схеме.
+    pub follow_system: RwSignal<bool>,
+    /// Ключ темы для системной светлой схемы.
+    pub theme_light: RwSignal<String>,
+    /// Ключ темы для системной тёмной схемы.
+    pub theme_dark: RwSignal<String>,
+    /// Подмешивать системный акцент поверх палитры темы.
+    pub use_system_accent: RwSignal<bool>,
+    /// Рисовать кнопки окна темой декораций рабочего стола.
+    pub system_window_controls: RwSignal<bool>,
+    /// Просить композитор размывать фон за окном.
+    pub window_blur: RwSignal<bool>,
+    /// Непрозрачность фоновых поверхностей (1.0 — сплошной фон).
+    pub window_opacity: RwSignal<f32>,
+    /// То, что уходит в `AppBuilder::with_backdrop` — пересобирается из
+    /// `window_blur` и состояния окна.
+    pub backdrop: RwSignal<BackdropConfig>,
+    /// Развёрнутость/фокус окна; наполняет фреймворк. От неё зависят форма
+    /// области размытия и вид кнопок титлбара.
+    pub window_state: RwSignal<WindowState>,
+}
+
 #[derive(Clone)]
 pub struct AppCtx {
     /// Ключ темы — стабильный id для persistence (имя темы из `theme_data`).
@@ -271,6 +305,8 @@ pub struct AppCtx {
     /// Подпись темы — MSS-блок `:root { --var: ... }`.
     /// Обновляется синхронно с `theme_key`; нужен для `.with_dynamic_theme`.
     pub theme_mss: RwSignal<String>,
+    /// Системное оформление и настройки окна (раздел «Темы»).
+    pub appearance: AppearanceCtx,
     /// Роутер верхнего уровня (между основными страницами).
     pub router: Arc<Mutex<Router>>,
     /// Текущий ключ маршрута верхнего уровня — дублирует router.current(),

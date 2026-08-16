@@ -166,7 +166,7 @@ fn section(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
         .child(card)
 }
 
-fn row_frame(
+pub(super) fn row_frame(
     icon: &'static str,
     title: &'static str,
     desc: &'static str,
@@ -388,7 +388,7 @@ fn font_size_row(
 /// SpinBox-строка для целочисленного лимита turn'ов агента/субагента.
 /// Разделена от `font_size_row` (там f32, дробей мы не хотим) и `port_row`
 /// (тот ограничен u16 1..=65535 — для нас бессмысленно).
-fn switch_row(
+pub(super) fn switch_row(
     icon: &'static str,
     title: &'static str,
     desc: &'static str,

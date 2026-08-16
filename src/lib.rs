@@ -67,6 +67,9 @@ pub fn run_desktop() {
         .with_icon_font(syngui::text::icon_fonts::material::FONT_DATA)
         .with_styles_str(styles::styles())
         .with_dynamic_theme(theme_mss)
+        .with_system_appearance(ctx.appearance.system)
+        .with_backdrop(ctx.appearance.backdrop)
+        .with_window_state(ctx.appearance.window_state)
         .run(move |_| {
             provide_context(ctx.clone());
             provide_context(build_code_editor_ctx());
@@ -171,6 +174,37 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
     pages::code_editor::state::CodeEditorCtx::new(sessions_cfg, active_idx)
 }
 
+/// Активная тема: в режиме «следовать системе» её выбирает светлота системной
+/// схемы, иначе — ручной выбор пользователя.
+fn active_theme(
+    appearance: context::AppearanceCtx,
+    theme_key: RwSignal<String>,
+) -> theme_data::SynthosTheme {
+    if appearance.follow_system.get() {
+        let dark = appearance.system.get().is_dark();
+        let key = if dark { appearance.theme_dark.get() } else { appearance.theme_light.get() };
+        theme_data::find_or_default(&key, dark)
+    } else {
+        theme_data::find(&theme_key.get()).unwrap_or_else(theme_data::default_theme)
+    }
+}
+
+/// Настройка «стекла» для фреймворка. Контраст просим вместе с размытием —
+/// иначе на светлом рабочем столе полупрозрачные панели теряют читаемость.
+///
+/// Область эффекта повторяет `.shell` из `styles/layout/shell.mss`: в
+/// восстановленном окне вокруг него 30px прозрачного воздуха под тень и
+/// resize-захват, углы скруглены на `--radius-shell`; в развёрнутом и то и
+/// другое обнуляется. Без этого композитор размывает всю поверхность, и вокруг
+/// окна повисает мутный прямоугольник.
+fn backdrop_config(blur: bool, maximized: bool) -> syngui::window::BackdropConfig {
+    if !blur {
+        return syngui::window::BackdropConfig::disabled();
+    }
+    let (inset, radius) = if maximized { (0.0, 0.0) } else { (30.0, 20.0) };
+    syngui::window::BackdropConfig::frosted().with_shell(inset, radius)
+}
+
 fn build_context() -> (RwSignal<String>, AppCtx) {
     let saved = AppConfig::load();
 
@@ -185,6 +219,22 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
 
     let theme_key = use_signal(theme_id);
     let theme_mss = use_signal(theme_mss_value);
+
+    // Системное оформление читаем до первого кадра: с `follow_system_theme`
+    // приложение должно стартовать уже в системной схеме, а не мигать светлой
+    // темой, пока фреймворк донесёт первое обновление сигнала.
+    let appearance = context::AppearanceCtx {
+        system: use_signal(syngui::appearance::read_system_appearance()),
+        follow_system: use_signal(saved.follow_system_theme),
+        theme_light: use_signal(saved.theme_light.clone()),
+        theme_dark: use_signal(saved.theme_dark.clone()),
+        use_system_accent: use_signal(saved.use_system_accent),
+        system_window_controls: use_signal(saved.system_window_controls),
+        window_blur: use_signal(saved.window_blur),
+        window_opacity: use_signal(saved.window_opacity),
+        backdrop: use_signal(backdrop_config(saved.window_blur, false)),
+        window_state: use_signal(syngui::window::WindowState::default()),
+    };
 
     let current_route = use_signal(INITIAL_ROUTE.to_string());
     let selected_settings_tab = use_signal(INITIAL_SETTINGS_ROUTE.to_string());
@@ -283,6 +333,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let ctx = AppCtx {
         theme_key,
         theme_mss,
+        appearance,
         router,
         current_route,
         settings_router,
@@ -335,10 +386,22 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         let editor_family = code_editor_font_family;
         let editor_size = code_editor_font_size;
         create_effect(move || {
-            let base = match theme_data::find(&theme_key.get()) {
-                Some(t) => t.to_mss(),
-                None => theme_data::default_theme().to_mss(),
-            };
+            let theme = active_theme(appearance, theme_key);
+            let base = theme.to_mss();
+
+            // Порядок блоков = приоритет: переменные из последнего `:root`
+            // перекрывают предыдущие (StyleSheet держит их в HashMap).
+            let mut extra = String::new();
+            if appearance.use_system_accent.get() {
+                if let Some(accent) = appearance.system.get().accent {
+                    extra.push_str(&theme_data::accent_override_mss(accent, theme.is_dark));
+                }
+            }
+            let opacity = appearance.window_opacity.get();
+            if opacity < 0.999 {
+                extra.push_str(&theme_data::surface_alpha_mss(&theme, opacity));
+            }
+
             let vf = voice_family.get();
             let vf = if vf.trim().is_empty() { "sans-serif".to_string() } else { vf };
             let vs = voice_size.get();
@@ -346,8 +409,19 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
             let ef = if ef.trim().is_empty() { "monospace".to_string() } else { ef };
             let es = editor_size.get();
             theme_mss.set(format!(
-                "{base}\n:root {{\n  --voice-font-family: {vf};\n  --voice-font-size: {vs:.0}px;\n  --code-editor-font-family: {ef};\n  --code-editor-font-size: {es:.0}px;\n}}\n"
+                "{base}\n{extra}\n:root {{\n  --voice-font-family: {vf};\n  --voice-font-size: {vs:.0}px;\n  --code-editor-font-family: {ef};\n  --code-editor-font-size: {es:.0}px;\n}}\n"
             ));
+        });
+    }
+
+    // Размытие фона композитором включается/выключается на лету; форма области
+    // пересобирается при разворачивании окна.
+    {
+        let blur = appearance.window_blur;
+        let window_state = appearance.window_state;
+        let backdrop = appearance.backdrop;
+        create_effect(move || {
+            backdrop.set(backdrop_config(blur.get(), window_state.get().maximized))
         });
     }
 
@@ -364,6 +438,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
 /// сессии: правка любого из них триггерит save.
 fn install_config_autosave(ctx: &AppCtx) {
     let theme_key = ctx.theme_key;
+    let a = ctx.appearance;
     let g = ctx.general;
     let tools_active = ctx.tools.active;
     let skills_active = ctx.skills_active;
@@ -440,6 +515,13 @@ fn install_config_autosave(ctx: &AppCtx) {
 
         let cfg = AppConfig {
             theme: theme_key.get(),
+            follow_system_theme: a.follow_system.get(),
+            theme_light: a.theme_light.get(),
+            theme_dark: a.theme_dark.get(),
+            use_system_accent: a.use_system_accent.get(),
+            system_window_controls: a.system_window_controls.get(),
+            window_blur: a.window_blur.get(),
+            window_opacity: a.window_opacity.get(),
             general: config::GeneralConfig {
                 display_name: g.display_name.get(),
                 language: g.language.get(),

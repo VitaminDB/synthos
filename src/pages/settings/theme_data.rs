@@ -14,6 +14,8 @@
 
 use std::fmt::Write;
 
+use syngui::core::Color;
+
 pub struct SynthosTheme {
     pub id: &'static str,
     pub name: &'static str,
@@ -159,6 +161,64 @@ impl SynthosTheme {
 }
 
 pub fn default_theme() -> SynthosTheme { coral_light() }
+
+/// Тема для системной тёмной схемы по умолчанию.
+pub fn default_dark_theme() -> SynthosTheme { one_dark() }
+
+/// Тема по ключу с откатом на дефолт нужной светлоты — используется в режиме
+/// «следовать системе», где ключи светлой и тёмной темы хранятся отдельно.
+pub fn find_or_default(id: &str, dark: bool) -> SynthosTheme {
+    match find(id) {
+        Some(t) if t.is_dark == dark => t,
+        _ => if dark { default_dark_theme() } else { default_theme() },
+    }
+}
+
+/// Блок `:root`, переопределяющий акцент темы системным цветом рабочего стола.
+///
+/// Производные (hover, мягкая заливка, цвет текста на акценте) считаются от
+/// него же: DE отдаёт только базовый цвет, а палитре нужен весь набор.
+pub fn accent_override_mss(accent: Color, is_dark: bool) -> String {
+    let hover = if is_dark { accent.lighten(0.14) } else { accent.darken(0.14) };
+    let soft = if is_dark { accent.darken(0.74) } else { accent.lighten(0.86) };
+    let selected = if is_dark { accent.darken(0.66) } else { accent.lighten(0.80) };
+
+    let mut s = String::with_capacity(256);
+    let _ = writeln!(s, ":root {{");
+    let _ = writeln!(s, "    --primary:          {};", accent.to_hex());
+    let _ = writeln!(s, "    --primary-hover:    {};", hover.to_hex());
+    let _ = writeln!(s, "    --primary-soft:     {};", soft.to_hex());
+    let _ = writeln!(s, "    --surface-selected: {};", selected.to_hex());
+    let _ = writeln!(s, "    --on-primary:       {};", accent.readable_on().to_hex());
+    let _ = writeln!(s, "}}");
+    s
+}
+
+/// Блок `:root`, делающий фоновые поверхности полупрозрачными — нужен, чтобы
+/// сквозь окно был виден размытый композитором рабочий стол.
+///
+/// Прозрачными становятся только фоны панелей: текст, границы и акценты
+/// остаются плотными, иначе интерфейс теряет читаемость поверх чужих окон.
+pub fn surface_alpha_mss(theme: &SynthosTheme, alpha: f32) -> String {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let mut s = String::with_capacity(320);
+    let _ = writeln!(s, ":root {{");
+    for (var, hex) in [
+        ("--bg-window", theme.bg_window),
+        ("--bg-shell", theme.bg_shell),
+        ("--bg-rail", theme.bg_rail),
+        ("--bg-chats", theme.bg_chats),
+        ("--bg-chat", theme.bg_chat),
+        ("--bg-panel", theme.bg_panel),
+        ("--bg-search", theme.bg_search),
+    ] {
+        let [r, g, b] = Color::from_hex(hex).to_srgb_u8();
+        // MSS не раскрывает var() внутри rgba(), поэтому пишем готовый литерал.
+        let _ = writeln!(s, "    {var}: rgba({r}, {g}, {b}, {alpha:.3});");
+    }
+    let _ = writeln!(s, "}}");
+    s
+}
 
 pub fn builtin_themes() -> Vec<SynthosTheme> {
     vec![
@@ -570,5 +630,56 @@ fn monokai_dark() -> SynthosTheme {
         token_punctuation: "#F8F8F2", token_variable: "#F8F8F2",
         token_property: "#A6E22E", token_attribute: "#FD971F",
         token_namespace: "#FD971F", token_tag: "#F92672",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_or_default_keeps_lightness() {
+        // Ключ существует, но не той светлоты — берём дефолт нужной половины.
+        assert_eq!(find_or_default("coral_light", true).id, default_dark_theme().id);
+        assert_eq!(find_or_default("one_dark", false).id, default_theme().id);
+        assert_eq!(find_or_default("nord_dark", true).id, "nord_dark");
+        assert_eq!(find_or_default("", false).id, default_theme().id);
+    }
+
+    #[test]
+    fn accent_override_covers_primary_tokens() {
+        let mss = accent_override_mss(Color::from_hex("#A0B4F8"), true);
+        assert!(mss.contains("--primary:          #A0B4F8;"));
+        for token in ["--primary-hover", "--primary-soft", "--surface-selected", "--on-primary"] {
+            assert!(mss.contains(token), "нет {token} в:\n{mss}");
+        }
+        // На светлом акценте текст поверх него должен быть тёмным.
+        assert!(mss.contains("--on-primary:       #000000;"));
+    }
+
+    #[test]
+    fn surface_alpha_makes_backgrounds_translucent() {
+        let theme = default_theme();
+        let mss = surface_alpha_mss(&theme, 0.85);
+        assert!(mss.contains("--bg-window: rgba(238, 236, 242, 0.850);"), "{mss}");
+        assert!(mss.contains("--bg-shell: rgba(255, 255, 255, 0.850);"), "{mss}");
+        // Токены текста и границ прозрачными не становятся.
+        assert!(!mss.contains("--text"));
+        assert!(!mss.contains("--border"));
+    }
+
+    /// Блоки склеиваются в порядке «база → акцент → прозрачность», и MSS-парсер
+    /// должен принимать результат целиком: значения из последнего `:root`
+    /// перекрывают предыдущие.
+    #[test]
+    fn combined_blocks_parse_as_stylesheet() {
+        let theme = default_theme();
+        let combined = format!(
+            "{}\n{}\n{}",
+            theme.to_mss(),
+            accent_override_mss(Color::from_hex("#A0B4F8"), theme.is_dark),
+            surface_alpha_mss(&theme, 0.8),
+        );
+        assert!(syngui::parse_stylesheet_str(&combined).is_ok());
     }
 }

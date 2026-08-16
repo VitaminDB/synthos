@@ -465,6 +465,30 @@ pub struct EditorStateConfig {
 pub struct AppConfig {
     /// Ключ темы (имя из `theme_data::builtin_themes`).
     pub theme: String,
+    /// Следовать светлой/тёмной схеме рабочего стола. В этом режиме активная
+    /// тема выбирается из пары `theme_light`/`theme_dark`, а `theme` хранит
+    /// последний ручной выбор.
+    #[serde(default)]
+    pub follow_system_theme: bool,
+    /// Тема для системной светлой схемы. Пусто — дефолтная светлая.
+    #[serde(default)]
+    pub theme_light: String,
+    /// Тема для системной тёмной схемы. Пусто — дефолтная тёмная.
+    #[serde(default)]
+    pub theme_dark: String,
+    /// Подмешивать акцентный цвет рабочего стола вместо акцента темы.
+    #[serde(default)]
+    pub use_system_accent: bool,
+    /// Рисовать кнопки окна так, как их рисует тема декораций рабочего стола.
+    #[serde(default)]
+    pub system_window_controls: bool,
+    /// Просить композитор размывать фон за окном (KWin blur + contrast).
+    #[serde(default)]
+    pub window_blur: bool,
+    /// Непрозрачность фоновых поверхностей: 1.0 — сплошной фон, меньше —
+    /// сквозь окно виден рабочий стол (осмысленно вместе с `window_blur`).
+    #[serde(default = "default_window_opacity")]
+    pub window_opacity: f32,
     pub general: GeneralConfig,
     /// Ключи агентских инструментов, активных по умолчанию. Передаются в
     /// каждый запрос к модели. Дефолт — оба
@@ -1003,6 +1027,12 @@ pub fn default_code_editor_font_size() -> f32 {
     13.0
 }
 
+/// Дефолт для `AppConfig.window_opacity` — сплошной фон, как было до
+/// появления настройки «стекло».
+pub fn default_window_opacity() -> f32 {
+    1.0
+}
+
 /// Стартовый набор активных инструментов — используется и как `Default`,
 /// и как fallback для конфигов без поля.
 pub fn default_tools_active() -> Vec<String> {
@@ -1013,6 +1043,13 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             theme: String::new(), // пусто = default_theme() из theme_data
+            follow_system_theme: false,
+            theme_light: String::new(),
+            theme_dark: String::new(),
+            use_system_accent: false,
+            system_window_controls: false,
+            window_blur: false,
+            window_opacity: default_window_opacity(),
             general: GeneralConfig::default(),
             tools_active: default_tools_active(),
             skills_active: Vec::new(),

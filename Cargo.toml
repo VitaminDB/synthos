@@ -62,6 +62,10 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "effects",
     "winit",
     "wayland-dnd",
+    # Системное оформление: light/dark и акцент из XDG-портала, кнопки окна из
+    # темы декораций, размытие фона композитором.
+    "system-theme",
+    "system-blur",
     "material-icons",
     "tokio",
     "markdown",

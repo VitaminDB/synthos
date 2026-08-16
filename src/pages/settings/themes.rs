@@ -10,7 +10,9 @@ use syngui::mgui;
 use syngui::prelude::*;
 
 use crate::context::AppCtx;
+use crate::icons::{MI_BLUR_ON, MI_DESKTOP_WINDOWS, MI_PALETTE, MI_TUNE};
 
+use super::general::{row_frame, switch_row};
 use super::theme_data::{self, SynthosTheme};
 
 pub fn view() -> impl Widget {
@@ -24,6 +26,7 @@ pub fn view() -> impl Widget {
             Text::new("Выберите оформление приложения. Изменения применяются сразу.")
                 .class("settings-page-subtitle"),
         )
+        .child(system_section())
         .child(section("Светлые", &themes, false))
         .child(section("Тёмные", &themes, true));
 
@@ -34,6 +37,87 @@ pub fn view() -> impl Widget {
             ]
         ]
     }
+}
+
+
+/// Настройки, привязывающие оформление приложения к рабочему столу.
+///
+/// Светлая/тёмная схема и акцент приходят из XDG-портала, вид кнопок — из темы
+/// декораций, размытие — от композитора. Всё, что система не сообщает, просто
+/// остаётся за приложением.
+fn system_section() -> impl Widget {
+    let ctx = use_context::<AppCtx>();
+    let a = ctx.appearance;
+
+    let rows: Vec<Box<dyn Widget>> = vec![
+        switch_row(
+            MI_PALETTE,
+            "Следовать системной теме",
+            "Светлая или тёмная выбирается по схеме рабочего стола",
+            a.follow_system,
+        ),
+        switch_row(
+            MI_TUNE,
+            "Системный акцент",
+            "Использовать акцентный цвет рабочего стола вместо цвета темы",
+            a.use_system_accent,
+        ),
+        switch_row(
+            MI_DESKTOP_WINDOWS,
+            "Системные кнопки окна",
+            "Рисовать кнопки титлбара темой декораций рабочего стола",
+            a.system_window_controls,
+        ),
+        blur_row(a.window_blur, a.window_opacity),
+        opacity_row(a.window_opacity),
+    ];
+
+    mgui! {
+        Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            Text::new("Системное оформление").class("settings-section-title"),
+            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(rows),
+        ]
+    }
+}
+
+/// Размытие само по себе не видно, пока панели непрозрачны: размывать нечего.
+/// Поэтому при включении подтягиваем непрозрачность к «стеклянной», если
+/// пользователь её ещё не трогал.
+fn blur_row(blur: RwSignal<bool>, opacity: RwSignal<f32>) -> Box<dyn Widget> {
+    let control: Box<dyn Widget> = Box::new(
+        Toggle::with_state(blur.get_untracked()).on_change(move |on| {
+            if on && opacity.get_untracked() > 0.95 {
+                opacity.set(0.8);
+            }
+            blur.set(on);
+        }),
+    );
+    row_frame(
+        MI_BLUR_ON,
+        "Размытие фона",
+        "Композитор размывает то, что видно сквозь полупрозрачные панели",
+        control,
+    )
+}
+
+/// Прозрачность фоновых поверхностей. Ниже 0.6 интерфейс перестаёт читаться
+/// поверх пёстрых обоев, поэтому диапазон ограничен.
+fn opacity_row(value: RwSignal<f32>) -> Box<dyn Widget> {
+    let control: Box<dyn Widget> = Box::new(
+        Slider::new()
+            .range(0.6, 1.0)
+            .step(0.01)
+            .value(value.get_untracked())
+            .on_change(move |v| value.set((v * 100.0).round() / 100.0))
+            .width(180.0),
+    );
+    row_frame(
+        MI_TUNE,
+        "Непрозрачность панелей",
+        "1.0 — сплошной фон; меньше — сквозь окно виден рабочий стол",
+        control,
+    )
 }
 
 /// Одна секция — «Светлые» или «Тёмные». Карточки строятся inline:
@@ -50,7 +134,15 @@ fn section(title: &'static str, themes: &[SynthosTheme], dark: bool) -> impl Wid
 
         row = row.child(DecoratedBox::new().class("grow").child(move || {
             let ctx = use_context::<AppCtx>();
-            let is_active = ctx.theme_key.get() == id;
+            let a = ctx.appearance;
+            // В системном режиме карточки задают пару: светлая тема — для
+            // светлой схемы, тёмная — для тёмной.
+            let is_active = if a.follow_system.get() {
+                let key = if dark { a.theme_dark.get() } else { a.theme_light.get() };
+                theme_data::find_or_default(&key, dark).id == id
+            } else {
+                ctx.theme_key.get() == id
+            };
             let class = if is_active { "theme-card active" } else { "theme-card" };
 
             let swatches: Vec<Box<dyn Widget>> = swatch_hexes
@@ -79,8 +171,19 @@ fn section(title: &'static str, themes: &[SynthosTheme], dark: bool) -> impl Wid
                     Button::new("Применить")
                         .on_click(move || {
                             let ctx = use_context::<AppCtx>();
-                            ctx.theme_key.set(id_click.clone());
-                            ctx.theme_mss.set(mss_click.clone());
+                            let a = ctx.appearance;
+                            if a.follow_system.get() {
+                                // Эффект в build_context сам пересоберёт MSS,
+                                // когда сменится ключ нужной половины пары.
+                                if dark {
+                                    a.theme_dark.set(id_click.clone());
+                                } else {
+                                    a.theme_light.set(id_click.clone());
+                                }
+                            } else {
+                                ctx.theme_key.set(id_click.clone());
+                                ctx.theme_mss.set(mss_click.clone());
+                            }
                         })
                         .class("theme-apply-btn"),
                 )

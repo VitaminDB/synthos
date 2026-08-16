@@ -7342,12 +7342,16 @@ dependencies = [
  "wasm-bindgen-futures",
  "wayland-backend",
  "wayland-client",
+ "wayland-protocols-plasma",
+ "wayland-scanner",
  "web-sys",
  "web-time",
  "webbrowser",
  "wgpu",
  "wide",
  "winit",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]

@@ -6792,6 +6792,7 @@ dependencies = [
  "synaptix-llm-common",
  "synaptix-llm-gemma3",
  "synaptix-llm-llama",
+ "synaptix-llm-muse-glimmer",
  "synaptix-llm-qwen3",
  "synaptix-llm-qwen3-next-hybrid",
  "synaptix-nn",
@@ -7058,6 +7059,21 @@ dependencies = [
  "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-llm-muse-glimmer"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-llm-common",
  "synaptix-ops",
  "synaptix-tokenizer",
  "thiserror 2.0.19",

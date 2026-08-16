@@ -43,10 +43,29 @@ Terminal {
  * для `.tool-confirm-args-scroll`. Это значение совпадает с глобальным,
  * поэтому отдельных правил здесь не нужно. */
 
-/* Code editor / Terminal — слегка ярче thumb (контент тёмный, нужен
- * заметный контраст). */
-CodeEditor,
-Terminal {
+/* Code editor — слегка ярче thumb (контент тёмный, нужен заметный
+ * контраст). */
+CodeEditor {
     scrollbar-color: rgba(156, 163, 175, 0.50);
     scrollbar-thumb-hover-color: rgba(156, 163, 175, 0.85);
+}
+
+/* Терминал — единственное место, где scrollbar постоянный.
+ *
+ * В прокручиваемых списках автоскрытие уместно: положение видно по самому
+ * контенту. В терминале контент — поток вывода, и без полосы непонятно ни
+ * что scrollback вообще есть, ни где ты в нём находишься; ухватить её
+ * мышью тоже нельзя, пока она не проявится от колеса. Поэтому `always`.
+ *
+ * Полоса рисуется только когда scrollback непустой, и не рисуется в
+ * alt-screen (vim, htop, less) — там прокрутка своя, и чужой индикатор
+ * врал бы. Ширину полосы компенсирует `padding-right` в
+ * `code_editor_terminal.mss`, иначе thumb лёг бы на последнюю колонку. */
+Terminal {
+    scrollbar-policy: always;
+    scrollbar-width: 10px;
+    scrollbar-radius: 5px;
+    scrollbar-color: rgba(156, 163, 175, 0.62);
+    scrollbar-thumb-hover-color: rgba(156, 163, 175, 0.95);
+    scrollbar-track-color: rgba(148, 163, 184, 0.14);
 }

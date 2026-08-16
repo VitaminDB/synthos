@@ -306,6 +306,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let code_editor_font_family = use_signal(saved.code_editor_font_family.clone());
     let code_editor_font_size = use_signal(saved.code_editor_font_size);
     let syn_chat_quant = use_signal(saved.syn_chat_quant.clone());
+    let syn_chat_max_image_tokens = use_signal(saved.syn_chat_max_image_tokens);
     let qwen36_attn_mode = use_signal(saved.qwen36_attn_mode.clone());
     let qwen36_graph_decode = use_signal(saved.qwen36_graph_decode);
     let qwen36_mtp = use_signal(saved.qwen36_mtp);
@@ -358,6 +359,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         kb,
         notifications,
         syn_chat_quant,
+        syn_chat_max_image_tokens,
         qwen36_attn_mode,
         qwen36_graph_decode,
         qwen36_mtp,
@@ -450,6 +452,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let code_editor_font_size = ctx.code_editor_font_size;
     let kb_auto_augment = ctx.kb.auto_augment;
     let syn_chat_quant = ctx.syn_chat_quant;
+    let syn_chat_max_image_tokens = ctx.syn_chat_max_image_tokens;
     let qwen36_attn_mode = ctx.qwen36_attn_mode;
     let qwen36_graph_decode = ctx.qwen36_graph_decode;
     let qwen36_mtp = ctx.qwen36_mtp;
@@ -579,6 +582,7 @@ fn install_config_autosave(ctx: &AppCtx) {
 
             hf_token: hf.token.get(),
             syn_chat_quant: syn_chat_quant.get(),
+            syn_chat_max_image_tokens: syn_chat_max_image_tokens.get(),
             qwen36_attn_mode: qwen36_attn_mode.get(),
             qwen36_graph_decode: qwen36_graph_decode.get(),
             qwen36_mtp: qwen36_mtp.get(),

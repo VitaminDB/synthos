@@ -5,6 +5,7 @@
 //! это второй, независимый чат с собственным storage'ом
 //! (`~/.config/synthos/syn_chats/`).
 
+pub mod attach;
 pub mod model_registry;
 pub mod params;
 pub mod registry;

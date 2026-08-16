@@ -57,6 +57,7 @@ pub fn create_new() -> String {
     ctx.last_saved_fp.set(fingerprint(&stored.title, &[]));
     ctx.messages.set(Vec::new());
     ctx.input.set(String::new());
+    ctx.pending_attachments.set(Vec::new());
     ctx.error.set(None);
     ctx.loading.set(false);
     id
@@ -90,6 +91,10 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     ctx.params.set_always(params);
     ctx.input.set(String::new());
     ctx.input_tokens.set_always(0);
+    // Черновик вложений принадлежал прошлому чату — сами blob'ы остаются
+    // в CAS, но к новому чату они не прикрепляются.
+    ctx.pending_attachments.set(Vec::new());
+    ctx.viewer.set(None);
     ctx.error.set(None);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
@@ -102,6 +107,9 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
 pub fn delete(id: &str) {
     let ctx = use_context::<SynChatCtx>();
     storage::delete(id);
+    // Blob'ы удалённого чата больше никому не нужны — но только если на
+    // них не ссылается другой чат (CAS дедуплицирует по содержимому).
+    crate::syn_chat::attach::gc_after_delete();
     let was_active = ctx.active_chat_id.get_untracked().as_deref() == Some(id);
     ctx.chats.update(|list| list.retain(|m| m.id != id));
     if was_active {
@@ -113,6 +121,7 @@ pub fn delete(id: &str) {
                 ctx.active_chat_id.set(None);
                 ctx.messages.set(Vec::new());
                 ctx.input.set(String::new());
+                ctx.pending_attachments.set(Vec::new());
                 ctx.loading.set(false);
             }
         }

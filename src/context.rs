@@ -382,6 +382,12 @@ pub struct AppCtx {
     /// `SynModelRegistry::load(path)`: `cfg.to_policy()` → `load_qwen36`.
     /// Изменения требуют ручного reload модели через Settings → AI Models.
     pub syn_chat_quant: RwSignal<SynChatQuantConfig>,
+    /// Потолок vision-токенов на одну картинку-вложение в чате.
+    /// `0` — снять ограничение и довериться конфигу модели (у Muse Glimmer
+    /// это 4096 токенов на картинку). Сохраняется в
+    /// `AppConfig.syn_chat_max_image_tokens`, применяется к следующей
+    /// отправке — перезагрузка модели не нужна.
+    pub syn_chat_max_image_tokens: RwSignal<usize>,
     /// Режим CUDA attention для `full_attention` слоёв Qwen3.6:
     /// - `"off"` — reference softmax (без CUDA flash);
     /// - `"fa2"` — FA-2 + Split-K без WMMA Tensor Cores;

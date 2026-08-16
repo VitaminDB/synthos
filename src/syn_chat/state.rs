@@ -1,8 +1,11 @@
 //! Реактивное состояние Syn-чата.
 //!
-//! Минимальная версия [`crate::agent::state::ChatCtx`]: без tools, RAG,
-//! voice, attachments. Inference выполняется in-process через
-//! [`crate::syn_chat::session`], generation streaming идёт прямо в сигналы.
+//! Inference выполняется in-process через [`crate::syn_chat::session`],
+//! generation streaming идёт прямо в сигналы.
+//!
+//! Вложения живут в трёх местах: черновик текущего сообщения —
+//! `pending_attachments`, отправленные — в `ChatMsg.attachments` внутри
+//! ленты, байты — в CAS на диске ([`crate::syn_chat::attach::blobs`]).
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -10,7 +13,9 @@ use std::sync::Arc;
 
 use syngui::prelude::*;
 
-pub use crate::agent::state::{ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole};
+pub use crate::agent::state::{
+    AttachmentKind, ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment,
+};
 pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
 use crate::syn_chat::params::SamplingParams;
@@ -36,6 +41,14 @@ pub struct SynChatCtx {
     pub streaming_thinking: RwSignal<String>,
     /// Черновик ввода.
     pub input: RwSignal<String>,
+    /// Вложения, прикреплённые к ещё не отправленному сообщению. Уезжают в
+    /// `ChatMsg.attachments` при send и очищаются.
+    pub pending_attachments: RwSignal<Vec<MsgAttachment>>,
+    /// Сколько файлов сейчас обрабатывается (хеширование, ffmpeg, превью).
+    /// Ненулевое значение показывает в strip'е плашку «готовим файлы…».
+    pub attach_busy: RwSignal<usize>,
+    /// Открытый полноэкранный просмотр вложения. `None` — просмотрщик закрыт.
+    pub viewer: RwSignal<Option<ViewerState>>,
     /// Поколение поля ввода — для пересоздания editor после очистки.
     pub input_gen: RwSignal<u64>,
     /// Кол-во токенов в `input` (вычисляется debounced'но в фоне).
@@ -99,6 +112,9 @@ impl SynChatCtx {
             streaming_body: use_signal(String::new()),
             streaming_thinking: use_signal(String::new()),
             input: use_signal(String::new()),
+            pending_attachments: use_signal(Vec::new()),
+            attach_busy: use_signal(0),
+            viewer: use_signal(None),
             input_gen: use_signal(0),
             input_tokens: use_signal(0),
             input_tok_gen: Arc::new(AtomicU64::new(0)),
@@ -146,5 +162,33 @@ impl SynChatCtx {
 impl Default for SynChatCtx {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+/// Состояние полноэкранного просмотрщика вложений.
+///
+/// Хранит копию списка вложений сообщения, а не индексы в ленту: лента
+/// живёт своей жизнью (стриминг дописывает сообщения), а просмотрщик должен
+/// уметь листать ровно то, что было открыто.
+#[derive(Clone, PartialEq)]
+pub struct ViewerState {
+    pub items: Vec<MsgAttachment>,
+    pub index: usize,
+}
+
+impl ViewerState {
+    pub fn current(&self) -> Option<&MsgAttachment> {
+        self.items.get(self.index)
+    }
+
+    /// Листание по кругу — стрелками и колёсиком в просмотрщике.
+    pub fn step(&mut self, delta: isize) {
+        if self.items.len() < 2 {
+            return;
+        }
+        let len = self.items.len() as isize;
+        let next = (self.index as isize + delta).rem_euclid(len);
+        self.index = next as usize;
     }
 }

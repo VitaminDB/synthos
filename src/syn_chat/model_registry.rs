@@ -61,6 +61,9 @@ impl SynModelRegistry {
         let registry = *self;
         registry.loading.set(true);
         registry.error.set(None);
+        // Эмбеддинги вложений привязаны к vision-башне прежней модели —
+        // при смене модели они больше не валидны (и держат её VRAM).
+        crate::syn_chat::attach::media_cache::clear();
 
         std::thread::spawn(move || {
             ensure_kernels_registered();
@@ -107,6 +110,7 @@ impl SynModelRegistry {
     }
 
     pub fn unload(&self) {
+        crate::syn_chat::attach::media_cache::clear();
         let held = self.current.get_untracked();
         let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);
         drop(held);

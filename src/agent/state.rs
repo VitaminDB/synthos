@@ -32,26 +32,60 @@ use super::time::format_hm_now;
 // Multimodal attachments
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Прикреплённый к сообщению файл. Сейчас поддерживаются только картинки —
-/// рендерятся в bubble и уходят в multipart `content` к llama-server как
-/// `image_url` с data: URL.
+/// Модальность вложения. Определяет и рендер в UI, и то, как вложение
+/// попадает в промпт: картинки/видео уходят в vision-башню модели,
+/// документы разворачиваются в текст, аудио — в транскрипт (если загружена
+/// ASR-модель).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    #[default]
+    Image,
+    Video,
+    Audio,
+    /// Текстовый документ (md/txt/html/код/json) — инлайнится в промпт.
+    Document,
+    /// Всё остальное: в промпт уходит только имя и размер файла.
+    Other,
+}
+
+impl AttachmentKind {
+    /// Человекочитаемое имя для UI-подписей.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Image => "Изображение",
+            Self::Video => "Видео",
+            Self::Audio => "Аудио",
+            Self::Document => "Документ",
+            Self::Other => "Файл",
+        }
+    }
+
+    /// Показывать ли для вложения картинку-превью (иначе — иконка).
+    pub fn has_thumbnail(self) -> bool {
+        matches!(self, Self::Image | Self::Video)
+    }
+}
+
+/// Прикреплённый к сообщению файл.
 ///
-/// Сами байты живут в CAS на диске
-/// ([`super::blobs::full_path`]); JSON чата хранит только метаданные.
-/// Поля `width`/`height` декодируются один раз при `attach`-операции и
-/// нужны для компактного thumbnail-layout без дополнительного декода.
+/// Сами байты живут в CAS на диске (`~/.config/synthos/blobs/`, см.
+/// [`crate::syn_chat::attach::blobs`]); JSON чата хранит только метаданные,
+/// поэтому один и тот же файл, прикреплённый в десяти чатах, лежит на диске
+/// один раз.
+///
+/// `width`/`height`/`duration_ms` вычисляются один раз при прикреплении и
+/// нужны для layout превью без повторного декода.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MsgAttachment {
     /// Hex sha256 содержимого файла (64 символа). Имя blob'а на диске.
     pub sha256: String,
-    /// MIME-тип, например `"image/png"`. Определяет расширение файла и
-    /// префикс data: URL при отправке в API.
+    /// MIME-тип, например `"image/png"`.
     pub mime: String,
-    /// Имя файла, выбранного пользователем — для tooltip'а в превью.
-    /// Не обязательное, может быть пустым (например, drag&drop без имени).
+    /// Имя файла, выбранного пользователем — заголовок карточки и tooltip.
     #[serde(default)]
     pub original_name: String,
-    /// Натуральные размеры в пикселях. `0/0` — не удалось декодировать.
+    /// Натуральные размеры в пикселях. `0/0` — не картинка/не удалось прочесть.
     #[serde(default)]
     pub width: u32,
     #[serde(default)]
@@ -59,6 +93,30 @@ pub struct MsgAttachment {
     /// Размер файла в байтах — для статистики/UX.
     #[serde(default)]
     pub size_bytes: u64,
+    /// Модальность. Старые JSON без поля читаются как `Image` — ровно то,
+    /// что там и лежало (прежняя версия умела только картинки).
+    #[serde(default)]
+    pub kind: AttachmentKind,
+    /// Расширение blob'а на диске (без точки, lowercase). Пустое — blob
+    /// лежит без расширения.
+    #[serde(default)]
+    pub ext: String,
+    /// Длительность в миллисекундах для видео/аудио. `0` — неизвестно.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Расширение конвертированной «под модель» копии в `blobs/derived/`.
+    /// Пустое — модель читает оригинальный blob (формат уже подходит).
+    #[serde(default)]
+    pub model_ext: String,
+    /// Расширение полноразмерной копии для показа в UI. Нужно там, где
+    /// декодер syngui не знает исходный формат (WebP, HEIC, TIFF…): в
+    /// `blobs/derived/` лежит PNG, а оригинал остаётся нетронутым.
+    /// Пустое — рисуем сам blob.
+    #[serde(default)]
+    pub ui_ext: String,
+    /// Сгенерирован ли thumbnail в `blobs/thumbs/<sha>.png`.
+    #[serde(default)]
+    pub has_thumb: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

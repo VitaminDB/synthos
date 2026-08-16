@@ -31,14 +31,15 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::*;
-use synaptix::facade::llm::{LlmGeneration, LlmTokenizer, Message};
+use synaptix::facade::llm::{LlmGeneration, LlmTokenizer, MediaEmbedding, Message};
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
+use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
-use crate::syn_chat::state::{ChatMsg, ChatMsgRole, SynChatCtx, ThinkParser};
+use crate::syn_chat::state::{ChatMsg, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser};
 use crate::syn_chat::tool_parser::ToolCallParser;
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
@@ -60,12 +61,16 @@ const MAX_AGENT_TURNS: usize = 16;
 /// Отправляет сообщение от пользователя и запускает генерацию ответа.
 /// Вызывается с main thread (использует use_context).
 pub fn send_message(text: String) {
+    let ctx = use_context::<SynChatCtx>();
+    let attachments = ctx.pending_attachments.get_untracked();
     let text = text.trim().to_string();
-    if text.is_empty() {
+    // Сообщение из одних вложений — валидный сценарий («что на картинке?»
+    // можно и не писать), поэтому пустой текст блокирует отправку только
+    // когда прикреплять тоже нечего.
+    if text.is_empty() && attachments.is_empty() {
         return;
     }
 
-    let ctx = use_context::<SynChatCtx>();
     let registry = use_context::<SynModelRegistry>();
 
     let Some(model) = registry.current.get_untracked() else {
@@ -75,12 +80,17 @@ pub fn send_message(text: String) {
     if ctx.pending.get_untracked() {
         return;
     }
+    if ctx.attach_busy.get_untracked() > 0 {
+        ctx.error.set(Some("Дождитесь обработки вложений".into()));
+        return;
+    }
 
     // 1. Append user-message + плейсхолдер ассистента.
     ctx.messages.update(|m| {
-        m.push(ChatMsg::user(text.clone()));
+        m.push(ChatMsg::user_with_attachments(text.clone(), attachments.clone()));
         m.push(ChatMsg::assistant_empty());
     });
+    ctx.pending_attachments.set(Vec::new());
     ctx.input.set(String::new());
     ctx.input_gen.update(|v| *v += 1);
     ctx.input_tokens.set_always(0);
@@ -154,7 +164,8 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     // 2. Snapshot params + история + tool-схемы (всё на main thread!).
     let params = ctx.params.get_untracked();
     let system_prompt = ctx.system_prompt.get_untracked();
-    let history: Vec<Message> = build_history(&ctx, &system_prompt);
+    let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt);
+    let caps = snapshot_media_caps(&app_ctx, &model);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
     let ctx_for_worker = ctx.clone();
@@ -183,6 +194,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         let result = rt.block_on(run_agent_loop(
             model,
             history,
+            caps,
             tool_schemas,
             params,
             abort,
@@ -250,7 +262,8 @@ pub fn schedule_tokenize() {
 /// tool_calls) или по достижении `MAX_AGENT_TURNS`.
 async fn run_agent_loop(
     model: Arc<LoadedSynModel>,
-    mut history: Vec<Message>,
+    items: Vec<HistoryItem>,
+    caps: MediaCaps,
     tool_schemas: Vec<serde_json::Value>,
     params: SamplingParams,
     abort: Arc<AtomicU64>,
@@ -260,6 +273,21 @@ async fn run_agent_loop(
     let model_cap = model.model.config().max_seq_len;
     let mut total_gen_tokens: u32 = 0;
     let t_overall = Instant::now();
+
+    // Вложения кодируются один раз на весь agent-loop: тексты сообщений с
+    // блоками-заполнителями и эмбеддинги дальше переиспользуются на каждом
+    // turn'е. Vision-башня нужна только здесь — сразу после кодирования её
+    // выгружаем, чтобы KV-ring получил свободную VRAM.
+    let (mut history, media) = prepare_history(&items, &model, &caps);
+    let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
+    if !media.is_empty() {
+        let tokens: usize = media.iter().map(|m| m.tokens).sum();
+        eprintln!(
+            "[syn_chat] медиа-вложений: {} ({} vision-токенов)",
+            media.len(),
+            tokens
+        );
+    }
 
     for turn in 0..MAX_AGENT_TURNS {
         if abort.load(Ordering::Relaxed) != abort_snapshot {
@@ -367,7 +395,7 @@ async fn run_agent_loop(
         let t_turn = Instant::now();
         let abort_for_cb = abort.clone();
         let ctx_for_cb = ctx.clone();
-        let _ = runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
+        let on_token = |_id: u32, delta: &str| {
             // Abort: сбросить накопленные буферы и выйти.
             if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
                 flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, None);
@@ -405,7 +433,21 @@ async fn run_agent_loop(
                 return false;
             }
             true
-        })?;
+        };
+
+        // Медиа-промпт идёт своим путём: prefill по готовым эмбеддингам
+        // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
+        // lookup / CUDA-graph) на нём не применяются.
+        if media_refs.is_empty() {
+            runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)?;
+        } else {
+            runner.generate_streaming_media(
+                &prompt_ids,
+                &model.tokenizer,
+                &media_refs,
+                on_token,
+            )?;
+        }
 
         // Финальный flush — гарантированно сбрасываем хвост буферов.
         flush_streaming(&ctx, &mut buf_body, &mut buf_think, Some(tokens_this_turn));
@@ -657,6 +699,25 @@ pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTok
     runner.set_stop_tokens(stops);
 }
 
+/// Реплика ленты в форме, пригодной для сборки промпта на worker-потоке:
+/// сигналы уже прочитаны, вложения — по значению.
+struct HistoryItem {
+    role: ChatMsgRole,
+    body: String,
+    attachments: Vec<MsgAttachment>,
+}
+
+/// Снимок возможностей модели и окружения по части вложений. Читает
+/// сигналы, поэтому вызывается только с main thread.
+fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
+    let max = app.syn_chat_max_image_tokens.get_untracked();
+    MediaCaps {
+        vision: model.model.supports_media(),
+        max_image_tokens: (max > 0).then_some(max),
+        asr: Some(app.audio.asr.clone()),
+    }
+}
+
 /// Строит prompt-историю для chat-template. Пустой плейсхолдер ассистента
 /// в конце ленты исключается (он добавлен в `send_message` только для UI).
 /// При непустом `system_prompt` префиксует историю system-сообщением.
@@ -664,11 +725,15 @@ pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTok
 /// предыдущих сессиях, ПОКА не переэкспортируются в prompt — это требует
 /// рекувырки структуры. Сейчас в `regenerate_last` мы режем всё после
 /// последнего user, так что несовпадения не возникает.
-fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<Message> {
+fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
     let msgs = ctx.messages.get_untracked();
-    let mut out: Vec<Message> = Vec::with_capacity(msgs.len() + 1);
+    let mut out: Vec<HistoryItem> = Vec::with_capacity(msgs.len() + 1);
     if !system_prompt.trim().is_empty() {
-        out.push(Message::system(system_prompt));
+        out.push(HistoryItem {
+            role: ChatMsgRole::System,
+            body: system_prompt.to_string(),
+            attachments: Vec::new(),
+        });
     }
     for (i, m) in msgs.iter().enumerate() {
         // Skip последний assistant-плейсхолдер с пустым body.
@@ -680,12 +745,61 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<Message> {
         if m.compacted_iter.is_some() {
             continue;
         }
-        match m.role {
-            ChatMsgRole::User => out.push(Message::user(&m.body)),
-            ChatMsgRole::Assistant => out.push(Message::assistant(&m.body)),
-            ChatMsgRole::System => out.push(Message::system(&m.body)),
-        }
+        out.push(HistoryItem {
+            role: m.role,
+            body: m.body.clone(),
+            attachments: m.attachments.clone(),
+        });
     }
     out
+}
+
+/// Раскрывает вложения в промпт: картинки и видео — в vision-эмбеддинги
+/// плюс блок токенов-заполнителей, документы и аудио — в текст.
+///
+/// Vision-башня грузится один раз на весь вызов и сразу выгружается: её
+/// VRAM нужна KV-рингу, а эмбеддинги вложений живут отдельными тензорами
+/// и переживают выгрузку.
+fn prepare_history(
+    items: &[HistoryItem],
+    model: &Arc<LoadedSynModel>,
+    caps: &MediaCaps,
+) -> (Vec<Message>, Vec<MediaEmbedding>) {
+    let needs_vision = caps.vision
+        && items.iter().any(|i| {
+            i.attachments
+                .iter()
+                .any(|a| a.kind.has_thumbnail())
+        });
+    let vision_ready = attach_prompt::ensure_tower(&model.model, needs_vision);
+    let caps = MediaCaps { vision: vision_ready, ..caps.clone() };
+
+    let mut out: Vec<Message> = Vec::with_capacity(items.len());
+    let mut media: Vec<MediaEmbedding> = Vec::new();
+    for item in items {
+        match item.role {
+            ChatMsgRole::User if !item.attachments.is_empty() => {
+                let prepared = attach_prompt::prepare_user_message(
+                    &item.body,
+                    &item.attachments,
+                    &model.model,
+                    &caps,
+                );
+                media.extend(prepared.media);
+                out.push(Message::user(prepared.text));
+            }
+            ChatMsgRole::User => out.push(Message::user(&item.body)),
+            ChatMsgRole::Assistant => out.push(Message::assistant(&item.body)),
+            ChatMsgRole::System => out.push(Message::system(&item.body)),
+        }
+    }
+    if vision_ready {
+        model.model.release_media_tower();
+        if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
+            let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
+            eprintln!("[syn_chat] vision-башня выгружена, trim: +{freed} MB");
+        }
+    }
+    (out, media)
 }
 

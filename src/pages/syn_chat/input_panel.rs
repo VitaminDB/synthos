@@ -1,35 +1,84 @@
-//! Поле ввода Syn-чата: editor + token counter + regen + send/stop +
-//! pending-hint. Без attach/mic/kb_chip/tools/audio.
+//! Поле ввода Syn-чата: полоса вложений + editor + token counter + regen +
+//! send/stop + pending-hint. Без mic/kb_chip/tools/audio.
+//!
+//! Вложения добавляются кнопкой-скрепкой (системный диалог) или
+//! перетаскиванием файлов на панель: вся панель обёрнута в [`DropArea`] с
+//! `accept_types=["file"]`, winit шлёт по событию на каждый файл.
 
+use std::path::PathBuf;
+
+use syngui::input::DragData;
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::MultilineTextEdit;
 
 use crate::icons::*;
+use crate::syn_chat::attach;
 use crate::syn_chat::state::{ChatMsgRole, SynChatCtx};
 use crate::syn_chat::{session, SynModelRegistry};
 
+use super::attachments;
+
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("input-panel-wrap").child(mgui! {
-        DecoratedBox::new().class("input-panel").child(mgui! {
-            Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                editor_reactive(),
-                DecoratedBox::new().class("input-divider"),
-                Row::new()
-                    .gap(10.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+    DecoratedBox::new().class("input-panel-wrap").child(
+        DropArea::new()
+            .accept_types(vec![DragData::TYPE_FILE.to_string()])
+            .on_drop(|data| {
+                // winit отдаёт по одному пути на событие; ingest сам
+                // отфильтрует каталоги и нечитаемые файлы.
+                attach::attach_paths(vec![PathBuf::from(data.payload)]);
+            })
+            .child(panel_body()),
+    )
+}
+
+fn panel_body() -> impl Widget {
+    DecoratedBox::new().class("input-panel").child(mgui! {
+        Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            attachments::strip(),
+            editor_reactive(),
+            DecoratedBox::new().class("input-divider"),
+            Row::new()
+                .gap(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                    Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                        attach_button(),
                         pending_hint_reactive(),
-                        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            token_counter_reactive(),
-                            regen_button_reactive(),
-                            send_or_stop_reactive(),
-                        ],
                     ],
-            ]
-        })
+                    Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                        token_counter_reactive(),
+                        regen_button_reactive(),
+                        send_or_stop_reactive(),
+                    ],
+                ],
+        ]
     })
+}
+
+/// Скрепка: открывает системный диалог выбора файлов. Подсказка меняется
+/// в зависимости от того, видит ли загруженная модель картинки.
+fn attach_button() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+    || {
+        let registry = use_context::<SynModelRegistry>();
+        let vision = registry
+            .current
+            .get()
+            .map(|m| m.model.supports_media())
+            .unwrap_or(false);
+        let tooltip = if vision {
+            "Прикрепить файлы (картинки, видео, документы)"
+        } else {
+            "Прикрепить файлы — модель без vision прочтёт только документы"
+        };
+        DecoratedBox::new().class("input-attach-wrap").child(
+            ToolButton::new(MI_ATTACH_FILE)
+                .tooltip(tooltip)
+                .on_click(attach::pick_and_attach)
+                .class("input-attach"),
+        )
+    }
 }
 
 fn editor_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
@@ -50,10 +99,10 @@ fn editor_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 
                 session::schedule_tokenize();
             })
             .on_submit(move |s| {
-                let text = s.to_string();
-                if !text.trim().is_empty() {
-                    session::send_message(text);
-                }
+                // Пустой текст при наличии вложений — валидная отправка
+                // («что на картинке?» можно и не писать), эту проверку
+                // делает сам `send_message`.
+                session::send_message(s.to_string());
             })
             .class("chat-input-edit");
         DecoratedBox::new().class("chat-input-field").child(editor)
@@ -124,10 +173,7 @@ fn send_or_stop_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                             return;
                         }
                         let ctx = use_context::<SynChatCtx>();
-                        let text = ctx.input.get_untracked();
-                        if !text.trim().is_empty() {
-                            session::send_message(text);
-                        }
+                        session::send_message(ctx.input.get_untracked());
                     })
                     .class(class),
             )

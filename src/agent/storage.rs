@@ -191,17 +191,43 @@ pub fn delete(id: &str) {
 
 /// Превью из последнего непустого user/assistant-сообщения — до 80 символов.
 /// System-плашки в превью не попадают: они бесполезны для идентификации чата.
+///
+/// Сообщение из одних вложений (текст пустой) описывается их количеством —
+/// иначе такой чат выглядел бы в списке пустым.
 pub fn preview_from_messages(messages: &[ChatMsg]) -> String {
     use super::state::ChatMsgRole;
     for m in messages.iter().rev() {
-        if m.body.trim().is_empty() {
+        if !matches!(m.role, ChatMsgRole::User | ChatMsgRole::Assistant) {
             continue;
         }
-        if matches!(m.role, ChatMsgRole::User | ChatMsgRole::Assistant) {
-            return truncate_chars(m.body.trim(), 80);
+        let text = m.body.trim();
+        if !text.is_empty() {
+            return truncate_chars(text, 80);
+        }
+        if !m.attachments.is_empty() {
+            return attachments_preview(&m.attachments);
         }
     }
     String::new()
+}
+
+/// «📎 3 вложения» — компактная подпись для чата без текста.
+fn attachments_preview(attachments: &[super::state::MsgAttachment]) -> String {
+    if attachments.len() == 1 {
+        let a = &attachments[0];
+        if !a.original_name.is_empty() {
+            return truncate_chars(&a.original_name, 80);
+        }
+        return a.kind.label().to_string();
+    }
+    let n = attachments.len();
+    // 2–4 «вложения», 5+ «вложений»: русская форма множественного числа.
+    let tail = match (n % 10, n % 100) {
+        (_, 11..=14) => "вложений",
+        (2..=4, _) => "вложения",
+        _ => "вложений",
+    };
+    format!("{n} {tail}")
 }
 
 /// Обрезка строки до `max` **символов** (а не байтов) с сохранением

@@ -191,3 +191,14 @@ pub const MI_GRID_OFF: &str            = "\u{E3EB}";
 /// «content_copy» уже есть выше; для дублирования ноды.
 /// «settings_input_component» — иконка для портов / схемы данных.
 pub const MI_SETTINGS_INPUT_COMPONENT: &str = "\u{E16A}";
+
+// --- Вложения чата
+/// «chevron_left» / «chevron_right» — листание вложений в просмотрщике.
+pub const MI_CHEVRON_LEFT: &str        = "\u{E5CB}";
+pub const MI_CHEVRON_RIGHT: &str       = "\u{E5CC}";
+/// «open_in_new» — открыть вложение системным приложением.
+pub const MI_OPEN_IN_NEW: &str         = "\u{E89E}";
+/// «insert_drive_file» — универсальная иконка файла-вложения.
+pub const MI_INSERT_DRIVE_FILE: &str   = "\u{E24D}";
+/// «visibility» уже есть выше; «fullscreen» — раскрыть превью на всё окно.
+pub const MI_FULLSCREEN: &str          = "\u{E5D0}";

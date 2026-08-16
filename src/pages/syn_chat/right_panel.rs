@@ -128,6 +128,17 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             )
         };
 
+        // Бейдж мультимодальности: есть ли в бандле vision-башня. Отвечает
+        // на вопрос «поймёт ли эта модель прикреплённую картинку» до того,
+        // как пользователь потратит время на отправку.
+        let media_badge = current.as_ref().map(|loaded| {
+            if loaded.model.supports_media() {
+                "Мультимодальная · картинки и видео".to_string()
+            } else {
+                "Текстовая · вложения уйдут описанием".to_string()
+            }
+        });
+
         // Quant-бейдж: подпись с текущей политикой квантования. Формат:
         //   "Balance · NVFP4 / FP8 KV / F16 lm_head"
         // Показывается только когда модель загружена (иначе политика
@@ -166,6 +177,12 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                             Text::new(subtitle).max_lines(2).class("model-status-subtitle"),
                             Reactive::new(move || -> Vec<Box<dyn Widget>> {
                                 match quant_badge.as_ref() {
+                                    Some(s) => vec![Box::new(Text::new(s.clone()).class("model-status-quant"))],
+                                    None => vec![],
+                                }
+                            }),
+                            Reactive::new(move || -> Vec<Box<dyn Widget>> {
+                                match media_badge.as_ref() {
                                     Some(s) => vec![Box::new(Text::new(s.clone()).class("model-status-quant"))],
                                     None => vec![],
                                 }

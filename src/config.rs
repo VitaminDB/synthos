@@ -617,6 +617,15 @@ pub struct AppConfig {
     /// добавляется. Редактируется в правой панели → Параметры → «Система».
     #[serde(default)]
     pub syn_chat_system_prompt: String,
+    /// Потолок vision-токенов на одну картинку-вложение в Syn-чате.
+    ///
+    /// У Muse Glimmer `processor_config.json` разрешает до 4096 токенов на
+    /// картинку — это заметный кусок контекста и долгий prefill на каждое
+    /// вложение. 1024 токена ≈ 896×896 px после smart-resize: хватает,
+    /// чтобы читать текст на скриншоте, и не съедает чат. `0` — снять
+    /// ограничение и отдать решение конфигу модели.
+    #[serde(default = "default_syn_chat_max_image_tokens")]
+    pub syn_chat_max_image_tokens: usize,
     /// Политика квантования модели Syn-чата (Qwen3.6). Конвертируется в
     /// [`synaptix::facade::llm::QuantPolicy`] через [`SynChatQuantConfig::to_policy`].
     /// Редактируется на странице Settings → AI Models.
@@ -1081,6 +1090,7 @@ impl Default for AppConfig {
             syn_chat_left_split_ratio: default_syn_chat_left_split_ratio(),
             syn_chat_right_split_ratio: default_syn_chat_right_split_ratio(),
             syn_chat_system_prompt: String::new(),
+            syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             syn_chat_quant: SynChatQuantConfig::default(),
             qwen36_attn_mode: default_qwen36_attn_mode(),
             qwen36_graph_decode: false,
@@ -1103,6 +1113,11 @@ fn default_hf_skip_unwanted_formats() -> bool { true }
 fn default_hf_gguf_support() -> bool { false }
 fn default_qwen36_mtp() -> bool { true }
 fn default_muse_dflash() -> bool { true }
+
+/// Дефолт потолка vision-токенов на картинку — см. `syn_chat_max_image_tokens`.
+pub fn default_syn_chat_max_image_tokens() -> usize {
+    1024
+}
 
 /// Дефолт левого разделителя страницы Syn-чата. При окне 1600px даёт ~300px.
 pub fn default_syn_chat_left_split_ratio() -> f32 {

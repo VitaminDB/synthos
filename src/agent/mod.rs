@@ -28,4 +28,4 @@ pub mod tool_flow;
 pub mod tools;
 pub mod voice_refine;
 
-pub use state::{ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment};
+pub use state::{AttachmentKind, ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment};

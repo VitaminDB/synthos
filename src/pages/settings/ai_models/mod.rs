@@ -139,6 +139,30 @@ fn runtime_card() -> Box<dyn Widget> {
             .class("models-active-dropdown"),
     );
 
+    // Потолок vision-токенов на картинку-вложение. Влияет и на длину
+    // промпта, и на время prefill: 4096 токенов с одной картинки — это
+    // как приложить к сообщению небольшую статью.
+    let img_signal = ctx.syn_chat_max_image_tokens;
+    let img_items = vec![
+        DropdownItem::new("256", "256 — эскиз: общий вид, крупные объекты"),
+        DropdownItem::new("512", "512 — экономно, крупный текст читается"),
+        DropdownItem::new("1024", "1024 — default: скриншоты и документы"),
+        DropdownItem::new("2048", "2048 — мелкий текст, схемы"),
+        DropdownItem::new("4096", "4096 — максимум качества, длинный prefill"),
+        DropdownItem::new("0", "Без ограничения — как в конфиге модели"),
+    ];
+    let img_current = img_signal.get_untracked().to_string();
+    let img_dropdown: Box<dyn Widget> = Box::new(
+        Dropdown::with_items(img_items)
+            .selected(img_current)
+            .on_change(move |s| {
+                if let Ok(n) = s.parse::<usize>() {
+                    img_signal.set(n);
+                }
+            })
+            .class("models-active-dropdown"),
+    );
+
     let sync_signal = ctx.qwen36_layer_sync;
     let sync_items = vec![
         DropdownItem::new("auto", "Auto — sync только на prefill (default)"),
@@ -264,6 +288,12 @@ fn runtime_card() -> Box<dyn Widget> {
                 "Scalar NVFP4 GEMV (Phase E.2 fallback)",
                 "Scalar GEMV-путь для decode M=1 на проекциях NVFP4 (без Tensor Cores). По умолчанию off — cuBLASLt-NVFP4 + Tensor Cores даёт лучшую пропускную. Включайте только для bug-bisect.",
                 gemv_toggle,
+            ),
+            row_frame(
+                MI_IMAGE_ICON,
+                "Детализация картинок-вложений",
+                "Сколько vision-токенов тратить на одну картинку в чате.                  Токен покрывает участок 28×28 px, поэтому 1024 токена — это                  примерно 896×896 px после smart-resize: скриншот с обычным                  интерфейсным текстом читается целиком. Больше токенов —                  виден мелкий шрифт и детали схем, но каждая картинка                  съедает контекст и удлиняет prefill (4096 токенов с одной                  фотографии сопоставимы с приложенной статьёй). Работает                  только на мультимодальных бандлах (с vision-башней),                  применяется к следующей отправке — без перезагрузки модели.",
+                img_dropdown,
             ),
         ],
     )

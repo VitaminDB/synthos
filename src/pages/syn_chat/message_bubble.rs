@@ -134,6 +134,11 @@ fn chat_row(
     };
 
     let mut bubble_children: Vec<Box<dyn Widget>> = Vec::new();
+    // Вложения идут первой строкой пузырька — так же, как их видит модель
+    // (блоки-заполнители в промпте стоят перед текстом реплики).
+    if !msg.attachments.is_empty() {
+        bubble_children.push(super::attachments::bubble_grid(&msg.attachments));
+    }
     if !outgoing {
         let default_open = msg.body.is_empty();
         let initial_thinking = msg.thinking.clone();
@@ -151,7 +156,10 @@ fn chat_row(
             )));
         }
     }
-    bubble_children.push(bubble_child);
+    let text_is_redundant = outgoing && body.trim().is_empty() && !msg.attachments.is_empty();
+    if !text_is_redundant {
+        bubble_children.push(bubble_child);
+    }
 
     let bubble = DecoratedBox::new().class(bubble_class).child(
         Column::new()

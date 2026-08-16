@@ -14,6 +14,7 @@
 //!     ]
 //!   ]
 //!   tool_confirm                          // Portal с диалогом подтверждения
+//!   media_viewer                          // Portal полноэкранного просмотра
 //! ]
 //! ```
 //!
@@ -25,10 +26,12 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::{SplitDirection, SplitView};
 
+pub mod attachments;
 pub mod chat_header;
 pub mod chat_pane;
 pub mod chats_column;
 pub mod input_panel;
+pub mod media_viewer;
 pub mod message_area;
 pub mod message_bubble;
 pub mod right_panel;
@@ -65,6 +68,9 @@ pub fn view() -> impl Widget {
             // Portal-диалог подтверждения tool-call'ов
             // (источник — AppCtx.tools.pending_approval).
             crate::components::tool_confirm::view(),
+            // Portal полноэкранного просмотра вложений
+            // (источник — SynChatCtx.viewer).
+            media_viewer::view(),
         ]
     }
 }

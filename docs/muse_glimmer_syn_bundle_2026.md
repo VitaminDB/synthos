@@ -61,6 +61,23 @@ SYN_MUSE_BUNDLE=$OUT cargo test -p synaptix --release --test muse_glimmer_facade
 target/release/synaptix run "$OUT" "Столица Франции?" --quant nvfp4 --max-tokens 32 --temperature 0
 ```
 
+## Мультимодальный CLI
+
+```sh
+# изображение (плейсхолдер <|patch|>, до 4096 merged-токенов)
+target/release/synaptix run "$OUT" "Что на картинке?" --image photo.jpg --quant nvfp4 --temperature 0
+
+# видео (fps 2, ≤96 кадров, пары кадров, ≤144 merged-токенов на группу;
+# декод кадров — ffmpeg/ffprobe сабпроцессом, промпт: Time: N.Ns + <|video|>×K на группу)
+target/release/synaptix run "$OUT" "Что в видео?" --video clip.mp4 --quant nvfp4 --temperature 0 --max-tokens 200
+```
+
+Vision-башня выгружается из VRAM после энкода (`release_vision`), префилл LM чанкуется
+по 512 токенов, full-attention башни чанкует запросы по 1024 — иначе большая картинка
+(1376 vision-токенов) не помещалась поверх резидентной NVFP4-модели на 24 ГБ.
+Проверено на реальных данных: скриншоты UI описываются с чтением текста интерфейса,
+видео (Том Харди с котом, Веном на пляже) — с корректным сюжетом и деталями фона.
+
 Паритет vision выверен постадийно: план окон и rope-таблицы бит-в-бит
 (включая эмуляцию bf16-квантования `inv_freq`, как в `from_pretrained(dtype=bf16)`),
 адаптер на эталонном входе — cosine 0.999997; расхождение выхода башни

@@ -367,6 +367,7 @@ pub struct AppCtx {
     /// в effect-handler'е `lib.rs`.
     pub qwen36_graph_decode: RwSignal<bool>,
     pub qwen36_mtp: RwSignal<bool>,
+    pub muse_dflash: RwSignal<bool>,
     /// Phase B-1 fused `linear_attn` prep kernel (5 → 1 launch).
     /// Bit-exact; default = `true`. Сохраняется в `AppConfig.qwen36_la_fused`,
     /// применяется через [`synaptix::facade::llm::set_la_prep_fused_disabled`].

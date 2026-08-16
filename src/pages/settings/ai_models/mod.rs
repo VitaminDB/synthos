@@ -88,6 +88,12 @@ fn runtime_card() -> Box<dyn Widget> {
             .on_change(move |v| mtp_signal.set(v)),
     );
 
+    let dflash_signal = ctx.muse_dflash;
+    let dflash_toggle: Box<dyn Widget> = Box::new(
+        Toggle::with_state(dflash_signal.get_untracked())
+            .on_change(move |v| dflash_signal.set(v)),
+    );
+
     let la_signal = ctx.qwen36_la_fused;
     let la_toggle: Box<dyn Widget> = Box::new(
         Toggle::with_state(la_signal.get_untracked())
@@ -191,6 +197,12 @@ fn runtime_card() -> Box<dyn Widget> {
                  tok/s при приёме черновиков 80-84%. Требует перезагрузки \
                  модели — веса MTP-головы грузятся вместе с моделью.",
                 mtp_toggle,
+            ),
+            row_frame(
+                MI_BOLT,
+                "DFlash (блочная спекуляция, Muse Glimmer)",
+                "Спекулятивный декод на драфтере-ассистенте (2.3B, 5 слоёв):                  драфтер видит hidden-состояния 5 слоёв основной модели и за                  один forward предлагает блок из 15 токенов, основная модель                  проверяет весь блок одним проходом. Работает только для                  greedy (temperature = 0) и только если в бандле есть                  компонент `dflash`. Выдача совпадает с обычным декодом —                  принимаются лишь токены, подтверждённые основной моделью.                  Требует перезагрузки модели: веса драфтера грузятся вместе                  с ней (+1.2 GB в NVFP4). Выключите, чтобы освободить VRAM                  или для сравнения скорости.",
+                dflash_toggle,
             ),
             row_frame(
                 MI_BOLT,

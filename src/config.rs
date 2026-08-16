@@ -565,6 +565,9 @@ pub struct AppConfig {
     pub hf_gguf_support: bool,
     #[serde(default = "default_qwen36_mtp")]
     pub qwen36_mtp: bool,
+    /// DFlash — блочная спекуляция Muse Glimmer на драфтере-ассистенте.
+    #[serde(default = "default_muse_dflash")]
+    pub muse_dflash: bool,
     /// Токен доступа HuggingFace (`hf_...`). Нужен для gated/private моделей
     /// (FLUX.1-dev, Llama и др.) и снимает rate-limit анонимных запросов.
     /// Создаётся на https://huggingface.co/settings/tokens (роль `read`).
@@ -1034,6 +1037,7 @@ impl Default for AppConfig {
             hf_skip_unwanted_formats: default_hf_skip_unwanted_formats(),
             hf_gguf_support: default_hf_gguf_support(),
             qwen36_mtp: default_qwen36_mtp(),
+            muse_dflash: default_muse_dflash(),
             hf_token: String::new(),
             syn_chat_defaults: SamplingParams::default(),
             last_syn_model: None,
@@ -1061,6 +1065,7 @@ fn default_hf_speed_limit_mbps() -> u32 { 0 }
 fn default_hf_skip_unwanted_formats() -> bool { true }
 fn default_hf_gguf_support() -> bool { false }
 fn default_qwen36_mtp() -> bool { true }
+fn default_muse_dflash() -> bool { true }
 
 /// Дефолт левого разделителя страницы Syn-чата. При окне 1600px даёт ~300px.
 pub fn default_syn_chat_left_split_ratio() -> f32 {

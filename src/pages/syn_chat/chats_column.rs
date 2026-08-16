@@ -30,9 +30,9 @@ fn header_row() -> impl Widget {
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                Text::new("Syn-чаты").class("chats-column-title"),
+                Text::new("Чаты").class("chats-column-title"),
                 ToolButton::new(MI_ADD)
-                    .tooltip("Новый Syn-чат")
+                    .tooltip("Новый чат")
                     .on_click(|| { registry::create_new(); })
                     .class("chats-header-add"),
             ]

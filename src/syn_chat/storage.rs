@@ -22,6 +22,23 @@ fn chat_path(id: &str) -> PathBuf {
     syn_chats_dir().join(format!("{}.json", id))
 }
 
+/// Прежний дефолтный заголовок чата. Раздел назывался «Syn-чаты», сейчас —
+/// просто «Чаты», поэтому старые файлы приводим к новому имени.
+const LEGACY_DEFAULT_TITLE: &str = "Новый Syn-чат";
+/// Текущий дефолтный заголовок (см. `registry::create_new`).
+const DEFAULT_TITLE: &str = "Новый чат";
+
+/// Одноразовая миграция заголовка: `true`, если чат был переименован и его
+/// нужно перезаписать на диск. Пользовательские названия не трогаем —
+/// только точное совпадение со старым дефолтом.
+fn migrate_legacy_title(chat: &mut StoredChat) -> bool {
+    if chat.title != LEGACY_DEFAULT_TITLE {
+        return false;
+    }
+    chat.title = DEFAULT_TITLE.to_string();
+    true
+}
+
 pub fn list_meta() -> Vec<ChatMeta> {
     let dir = syn_chats_dir();
     let entries = match std::fs::read_dir(&dir) {
@@ -41,7 +58,14 @@ pub fn list_meta() -> Vec<ChatMeta> {
         }
         match std::fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<StoredChat>(&text) {
-                Ok(chat) => out.push(chat.to_meta()),
+                Ok(mut chat) => {
+                    // Список чатов читается на старте — удобная точка для
+                    // одноразового переименования старого дефолта.
+                    if migrate_legacy_title(&mut chat) {
+                        save(&chat);
+                    }
+                    out.push(chat.to_meta())
+                }
                 Err(e) => eprintln!("[synthos/syn_chat] пропускаю битый файл {:?}: {e}", path),
             },
             Err(e) => eprintln!("[synthos/syn_chat] не смог прочитать {:?}: {e}", path),
@@ -56,7 +80,10 @@ pub fn load(id: &str) -> Option<StoredChat> {
     let path = chat_path(id);
     match std::fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<StoredChat>(&text) {
-            Ok(chat) => Some(chat),
+            Ok(mut chat) => {
+                migrate_legacy_title(&mut chat);
+                Some(chat)
+            }
             Err(e) => {
                 eprintln!("[synthos/syn_chat] битый JSON {:?}: {e}", path);
                 None

@@ -19,7 +19,7 @@ struct Item {
 }
 
 const PRIMARY: &[Item] = &[
-    Item { icon: MI_CHAT,             route: "syn_chat",  tooltip: "Syn-чат" },
+    Item { icon: MI_CHAT,             route: "syn_chat",  tooltip: "Чат"     },
     Item { icon: MI_HUB,              route: "nodes",     tooltip: "Ноды" },
 ];
 

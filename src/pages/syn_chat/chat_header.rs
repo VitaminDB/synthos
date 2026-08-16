@@ -44,7 +44,7 @@ fn empty_header() -> StyledWidget<DecoratedBox> {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::Start) => [
                 Icon::new(MI_PSYCHOLOGY).class("chat-header-empty-icon"),
-                Text::new("Выберите или создайте Syn-чат").class("chat-header-empty-text"),
+                Text::new("Выберите или создайте чат").class("chat-header-empty-text"),
             ]
     })
 }

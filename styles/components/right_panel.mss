@@ -1,11 +1,10 @@
 /* Правый сайдбар страницы «Чаты» — контейнер + таб-бар + customer details. */
 
 .right-panel {
-    width: 320px;
+    /* Ширину задаёт SplitView (`right_split_ratio`), поэтому фиксированного
+     * `width` нет; левая граница рисуется полоской дивайдера. */
     height: 100%;
     background-color: var(--bg-panel);
-    border-left-width: 1px;
-    border-color: var(--border-soft);
 }
 
 .right-panel-tabbar {

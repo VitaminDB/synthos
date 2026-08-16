@@ -5,10 +5,21 @@
 /* ─────────────── Правая панель ─────────────── */
 
 .syn-chat-right {
-  width: 320px;
-  min-width: 280px;
+  /* Ширина — от правого SplitView (`SynChatCtx.right_split_ratio`);
+     минимальная ширина гарантируется `min_size(240)` в Rust. */
   background-color: var(--bg-panel);
-  border-left: 1px solid var(--border-soft);
+}
+
+/* ─────────────── Drag-разделители (IDE-стиль) ─────────────── */
+
+/* Hit-area 6px задаётся `divider_width(6.0)` в Rust, визуальная полоска —
+   1px: выглядит как обычный border между панелями, но тянется мышью.
+   Hover/drag подсветка — встроенная логика SplitView (`accent-color`).
+   Единый стиль с `.code-editor-h-split` / `.syn-explorer-h-split`. */
+.syn-chat-h-split {
+  border-color: var(--border-soft);
+  accent-color: var(--primary);
+  divider-thickness: 1px;
 }
 
 .right-panel-section-title {

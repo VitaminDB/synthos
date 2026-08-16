@@ -34,7 +34,7 @@ pub fn view() -> impl Widget {
         let header = Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Start)
-            .child(Text::new("Квантование LLM: Qwen3.6/3.8, Muse Glimmer (Syn-чат)").class("settings-section-title"))
+            .child(Text::new("Квантование LLM: Qwen3.6/3.8, Muse Glimmer (чат)").class("settings-section-title"))
             .child(Text::new("Политика хранения весов и кэшей модели. NVFP4 — главная экономия (~12 GB из 30 GB весов). FP8 KV-cache даёт −2 GB при длинном контексте. Изменения применяются после нажатия «Применить и перезагрузить модель».")
                 .class("settings-row-desc"));
 
@@ -451,7 +451,7 @@ fn apply_card() -> Box<dyn Widget> {
                 let cfg = crate::config::AppConfig::load();
                 let Some(path_str) = cfg.last_syn_model.clone() else {
                     ctx.notifications.warning(
-                        "Сначала откройте `.syn`-bundle в Syn-чате (правая панель → Загрузить модель).",
+                        "Сначала откройте `.syn`-bundle в чате (правая панель → Загрузить модель).",
                     );
                     return;
                 };
@@ -474,8 +474,8 @@ fn apply_card() -> Box<dyn Widget> {
         "Применение",
         vec![row_frame(
             MI_PLAY_ARROW,
-            "Перезагрузить модель Syn-чата",
-            "Изменения dtype применяются только при следующей загрузке модели. Нажмите, чтобы выгрузить текущую модель и поднять её заново с актуальной политикой. Если `.syn`-bundle ещё не выбран — откройте Syn-чат и нажмите «Загрузить модель».",
+            "Перезагрузить модель чата",
+            "Изменения dtype применяются только при следующей загрузке модели. Нажмите, чтобы выгрузить текущую модель и поднять её заново с актуальной политикой. Если `.syn`-bundle ещё не выбран — откройте Чат и нажмите «Загрузить модель».",
             apply_control,
         )],
     )

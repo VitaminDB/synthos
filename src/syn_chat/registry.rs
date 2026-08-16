@@ -43,7 +43,7 @@ pub fn create_new() -> String {
     let id = format!("{:016x}", unix_nanos());
     let stored = StoredChat {
         id: id.clone(),
-        title: "Новый Syn-чат".to_string(),
+        title: "Новый чат".to_string(),
         created_at: now,
         updated_at: now,
         model_name: None,

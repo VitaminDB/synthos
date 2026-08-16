@@ -39,6 +39,20 @@
     color: var(--text-subtle);
 }
 
+/* Chevron в шапке компактной карточки (`minimal`-режим): шапка работает
+ * как кнопка разворота тела. */
+.tool-call-chevron,
+.tool-result-chevron {
+    icon-size: 18px;
+    color: var(--text-muted);
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.tool-call-card:hover .tool-call-chevron,
+.tool-result-card:hover .tool-result-chevron {
+    color: var(--primary);
+}
+
 .tool-call-args-wrap {
     background-color: var(--bg-search);
     border-radius: 10px;
@@ -160,6 +174,41 @@
 
 .tool-result-body-error {
     color: var(--error);
+}
+
+/* Счётчик строк в шапке усечённого результата — подсказывает объём
+ * вывода до разворота. */
+.tool-result-lines {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-subtle);
+    background-color: var(--bg-search);
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+/* Кликабельная строка «Показать всё / Свернуть» под превью длинного
+ * tool-результата (>12 строк, см. `TOOL_RESULT_PREVIEW_LINES`). */
+.tool-result-more {
+    padding: 4px 2px;
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.tool-result-more-icon {
+    icon-size: 16px;
+    color: var(--text-muted);
+}
+
+.tool-result-more-text {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.tool-result-more:hover .tool-result-more-text,
+.tool-result-more:hover .tool-result-more-icon {
+    color: var(--primary);
 }
 
 /* ───────────────────────── Confirm-overlay ─────────────────────────── */

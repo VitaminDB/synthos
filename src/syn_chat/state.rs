@@ -55,9 +55,26 @@ pub struct SynChatCtx {
     pub system_prompt: RwSignal<String>,
     /// Состояние раскрытия thinking-блоков по индексу сообщения.
     pub thinking_open: RwSignal<HashMap<usize, bool>>,
+    /// Состояние раскрытия свёрнутых групп tool-вызовов (`minimal`-режим).
+    /// Ключ — индекс первого `ChatMsg` группы в ленте. Эфемерно, не
+    /// persist'ится, сбрасывается при переключении чата.
+    pub tool_group_open: RwSignal<HashMap<usize, bool>>,
+    /// Раскрытие тела tool-карточки (аргументы вызова / вывод результата).
+    /// Ключ — индекс `ChatMsg` в ленте. В `minimal`-режиме управляет
+    /// показом тела целиком, в `full` — доразворотом длинного вывода
+    /// (см. `pages::syn_chat::message_bubble::TOOL_RESULT_PREVIEW_LINES`).
+    pub tool_body_open: RwSignal<HashMap<usize, bool>>,
     /// Активный таб правой панели: 0=Инструменты, 1=Параметры, 2=Детали.
     /// См. `context::SYN_RIGHT_PANEL_*`.
     pub right_panel_tab: RwSignal<usize>,
+
+    /// Положение левого разделителя (список чатов ↔ центр). Биндится к
+    /// `SplitView::ratio_signal`; drag пишет в сигнал, а
+    /// `install_config_autosave` переливает его в
+    /// `AppConfig.syn_chat_left_split_ratio`.
+    pub left_split_ratio: RwSignal<f32>,
+    /// Положение правого разделителя (центр ↔ панель инструментов).
+    pub right_split_ratio: RwSignal<f32>,
 
     // ── статистика последней генерации (для таба «Детали») ──
     pub last_prompt_tokens: RwSignal<u32>,
@@ -69,6 +86,10 @@ pub struct SynChatCtx {
 
 impl SynChatCtx {
     pub fn new() -> Self {
+        // Layout-разделители восстанавливаются из persisted-конфига: чтение
+        // один раз на создание контекста (сам контекст — синглтон на
+        // приложение, см. `crate::run_desktop`).
+        let cfg = crate::config::AppConfig::load();
         Self {
             chats: use_signal(Vec::new()),
             active_chat_id: use_signal(None),
@@ -87,7 +108,11 @@ impl SynChatCtx {
             params: use_signal(SamplingParams::default()),
             system_prompt: use_signal(String::new()),
             thinking_open: use_signal(HashMap::new()),
+            tool_group_open: use_signal(HashMap::new()),
+            tool_body_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
+            left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
+            right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),
             last_prompt_tokens: use_signal(0),
             last_gen_tokens: use_signal(0),
             last_prefill_ms: use_signal(0),

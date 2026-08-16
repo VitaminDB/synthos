@@ -1,12 +1,13 @@
 .chats-column {
     background-color: var(--bg-chats);
-    border-right-width: 1px;
-    border-color: var(--border-soft);
+    /* Ширина задаётся drag-разделителем `.syn-chat-h-split` (ratio живёт в
+     * `SynChatCtx.left_split_ratio` и persist'ится в config.json), поэтому
+     * фиксированного `width` здесь нет — колонка занимает весь свой слот.
+     * Border тоже убран: его роль играет визуальная полоска дивайдера. */
     /* Сверху уменьшено: header_row уже даёт свой padding-top=4px,
-     * двойной отступ (20+4) визуально разрывал заголовок «Chats»
+     * двойной отступ (20+4) визуально разрывал заголовок
      * от верхнего края панели. */
     padding: 8px 0 16px 0;
-    width: 300px;
 }
 
 .chats-column-title {

@@ -1,25 +1,63 @@
-//! Рендер одного сообщения в Syn-ленте: упрощённая копия
-//! `components::message_bubble`. Только Text-варианты, без tool-calls
-//! и attachments.
+//! Рендер одного сообщения в Syn-ленте: текстовые пузырьки ассистента и
+//! пользователя + карточки tool-call / tool-result (работа агента).
+//!
+//! Tool-сообщения (`ChatMsgKind::ToolCall` / `ToolResult`) рендерятся не
+//! plaintext'ом, а карточками `.tool-call-card` / `.tool-result-card` —
+//! иконка инструмента, имя, время, статус и тело в моноширинной плашке.
+//! Режим отображения задаётся `GeneralCtx.tool_display_mode`
+//! (`full` / `minimal` / `hidden`), см. Settings → Общие.
 
+use syngui::animation::Easing;
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::visual::MarkdownView;
+use syngui::widgets::{AnimatedSize, AnimationAxis, Reactive};
 
+use crate::agent::tools::Tool;
 use crate::icons::{
-    MI_AUTORENEW, MI_CONTENT_COPY, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY,
+    MI_AUTORENEW, MI_CHECK, MI_CONTENT_COPY, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY,
+    MI_REPORT, MI_TERMINAL,
 };
 use crate::syn_chat::session;
-use crate::syn_chat::state::{ChatMsg, ChatMsgRole, SynChatCtx};
+use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, SynChatCtx};
 
-pub fn view(msg: &ChatMsg, msg_idx: usize, is_typing: bool, is_last_assistant: bool) -> Box<dyn Widget> {
-    match msg.role {
-        ChatMsgRole::System => Box::new(system_line(&msg.body, msg.error)),
-        ChatMsgRole::User => Box::new(chat_row(msg, msg_idx, true, false, false)),
-        ChatMsgRole::Assistant => {
-            Box::new(chat_row(msg, msg_idx, false, is_typing, is_last_assistant))
-        }
+/// Сколько строк tool-результата показывать в свёрнутом виде. Длинный
+/// stdout (web-поиск отдаёт 10 результатов ≈ 60 строк) иначе выдавливает
+/// ответ ассистента далеко вниз по ленте.
+pub const TOOL_RESULT_PREVIEW_LINES: usize = 12;
+
+pub fn view(
+    msg: &ChatMsg,
+    msg_idx: usize,
+    is_typing: bool,
+    is_last_assistant: bool,
+    tool_mode: &str,
+) -> Box<dyn Widget> {
+    match &msg.kind {
+        ChatMsgKind::ToolCall { tool_name } => match tool_mode {
+            "hidden" => Box::new(DecoratedBox::new()),
+            "minimal" => Box::new(tool_call_row(msg, msg_idx, tool_name, is_typing, true)),
+            // `full` и любой неизвестный ключ → полный рендер.
+            _ => Box::new(tool_call_row(msg, msg_idx, tool_name, is_typing, false)),
+        },
+        ChatMsgKind::ToolResult {
+            tool_name, error, ..
+        } => match tool_mode {
+            "hidden" => Box::new(DecoratedBox::new()),
+            "minimal" => Box::new(tool_result_row(msg, msg_idx, tool_name, *error, true)),
+            _ => Box::new(tool_result_row(msg, msg_idx, tool_name, *error, false)),
+        },
+        ChatMsgKind::Text => match msg.role {
+            ChatMsgRole::System => Box::new(system_line(&msg.body, msg.error)),
+            ChatMsgRole::User => Box::new(chat_row(msg, msg_idx, true, false, false)),
+            ChatMsgRole::Assistant => {
+                Box::new(chat_row(msg, msg_idx, false, is_typing, is_last_assistant))
+            }
+        },
+        // У Syn-чата autocompact'а нет — маркер в ленту не попадает.
+        // Защитный fallback, чтобы не падать на чужих JSON'ах.
+        ChatMsgKind::CompactionMarker { .. } => Box::new(DecoratedBox::new()),
     }
 }
 
@@ -364,4 +402,415 @@ fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_op
             body_reactive,
         ]
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool-карточки — работа агента (вызов инструмента и его результат)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Иконка + человекочитаемое имя инструмента по его ключу. Неизвестный
+/// ключ (скил или tool из будущей версии) деградирует до терминала.
+fn tool_visuals(tool_name: &str) -> (String, String) {
+    let icon = Tool::by_key(tool_name)
+        .map(|t| t.icon.to_string())
+        .unwrap_or_else(|| MI_TERMINAL.to_string());
+    let label = Tool::by_key(tool_name)
+        .map(|t| t.label.to_string())
+        .unwrap_or_else(|| tool_name.to_string());
+    (icon, label)
+}
+
+/// Раскрыто ли тело карточки `msg_idx` (`SynChatCtx.tool_body_open`).
+fn body_open(msg_idx: usize) -> bool {
+    use_context::<SynChatCtx>()
+        .tool_body_open
+        .get()
+        .get(&msg_idx)
+        .copied()
+        .unwrap_or(false)
+}
+
+/// Переключает раскрытие тела карточки `msg_idx`.
+fn toggle_body(msg_idx: usize) {
+    let ctx = use_context::<SynChatCtx>();
+    ctx.tool_body_open.update(|m| {
+        let cur = m.get(&msg_idx).copied().unwrap_or(false);
+        m.insert(msg_idx, !cur);
+    });
+}
+
+/// Chevron, отражающий состояние раскрытия карточки. Показывается только
+/// в compact-режиме, где шапка работает как кнопка.
+fn body_chevron(msg_idx: usize, class: &'static str) -> Box<dyn Widget> {
+    syngui::widgets::containers::reactive::IntoWidget::into_widget(move || {
+        let icon = if body_open(msg_idx) {
+            MI_EXPAND_LESS
+        } else {
+            MI_EXPAND_MORE
+        };
+        Icon::new(icon).class(class)
+    })
+}
+
+/// Оборачивает шапку карточки в клик-зону разворота (compact-режим).
+fn clickable_header(msg_idx: usize, header: impl Widget + 'static) -> Box<dyn Widget> {
+    Box::new(
+        GestureDetector::new()
+            .on_click(move || toggle_body(msg_idx))
+            .child(header),
+    )
+}
+
+/// Только карточка `.tool-call-card`, без обрамляющего avatar/meta-row.
+/// Используется и в [`tool_call_row`], и из [`super::tool_group::view`],
+/// где аватар с заголовком дублировать не нужно.
+///
+/// `compact` (режим `minimal`) прячет аргументы под клик по шапке —
+/// цепочка из 5–7 вызовов не превращается в простыню, но содержимое
+/// остаётся в одном клике.
+pub(super) fn tool_call_card_only(
+    msg: &ChatMsg,
+    msg_idx: usize,
+    tool_name: &str,
+    is_typing: bool,
+    compact: bool,
+) -> impl Widget {
+    let (tool_icon, tool_label) = tool_visuals(tool_name);
+
+    let mut header_children: Vec<Box<dyn Widget>> = Vec::with_capacity(5);
+    header_children.push(Box::new(Icon::new(tool_icon).class("tool-call-icon")));
+    header_children.push(Box::new(Text::new(tool_label).class("tool-call-name")));
+    header_children.push(Box::new(DecoratedBox::new().class("grow")));
+    header_children.push(Box::new(Text::new(msg.time.clone()).class("msg-time")));
+    if compact {
+        header_children.push(body_chevron(msg_idx, "tool-call-chevron"));
+    }
+    let header = Row::new()
+        .gap(10.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .children(header_children);
+
+    // Аргументы: pretty-JSON в ```json-fence. Fence нужен, потому что модель
+    // часто пакует в аргумент многострочный текст с `#`-комментариями и
+    // **bold** — без него MarkdownView трактовал бы это как разметку.
+    let args_body = msg.body.clone();
+    let typing_placeholder = is_typing && args_body.trim().is_empty();
+    let args_widget = move || -> Box<dyn Widget> {
+        if typing_placeholder {
+            return Box::new(Text::new("•••").class("msg-typing"));
+        }
+        let md = if args_body.trim().is_empty() {
+            "(без аргументов)".to_string()
+        } else {
+            format!("```json\n{}\n```", unescape_persisted_json_newlines(&args_body))
+        };
+        Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
+            MarkdownView::new(md)
+                .selectable(true)
+                .with_copy_code(false)
+                .with_syntax_theme("InspiredGitHub")
+                .class("tool-call-args"),
+        ))
+    };
+
+    let card_children: Vec<Box<dyn Widget>> = if compact {
+        vec![
+            clickable_header(msg_idx, header),
+            collapsible(msg_idx, args_widget),
+        ]
+    } else {
+        vec![Box::new(header), args_widget()]
+    };
+
+    DecoratedBox::new().class("tool-call-card").child(
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(card_children),
+    )
+}
+
+/// Тело карточки, живущее под chevron'ом: пусто пока свёрнуто, содержимое
+/// `build` — когда раскрыто. `AnimatedSize` сглаживает смену высоты.
+fn collapsible<F>(msg_idx: usize, build: F) -> Box<dyn Widget>
+where
+    F: Fn() -> Box<dyn Widget> + Send + Sync + 'static,
+{
+    let reactive = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if body_open(msg_idx) {
+            vec![build()]
+        } else {
+            vec![Box::new(DecoratedBox::new())]
+        }
+    });
+    Box::new(
+        AnimatedSize::new(reactive)
+            .axis(AnimationAxis::Height)
+            .duration_ms(200)
+            .easing(Easing::EaseOutCubic),
+    )
+}
+
+fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool, compact: bool) -> impl Widget {
+    let avatar = Avatar::new()
+        .text(msg.initials.clone())
+        .size(32.0)
+        .class(msg.tone_class.clone());
+
+    let card = tool_call_card_only(msg, msg_idx, tool_name, is_typing, compact);
+
+    let author_row = mgui! {
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Text::new(msg.author.clone()).class("msg-author"),
+            Text::new("→ вызов инструмента").class("tool-call-hint"),
+        ]
+    };
+
+    // Copy-кнопка справа от карточки — забирает аргументы вызова как есть.
+    // Во время стрима (`is_typing`) прячем: копировать нечего.
+    let card_with_actions: Box<dyn Widget> = if is_typing {
+        Box::new(card)
+    } else {
+        Box::new(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::End)
+                .main_axis_alignment(MainAxisAlignment::Start)
+                .children(vec![
+                    Box::new(card) as Box<dyn Widget>,
+                    actions_widget(msg.body.clone(), false),
+                ]),
+        )
+    };
+
+    let meta = Column::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .children(vec![Box::new(author_row) as Box<dyn Widget>, card_with_actions]);
+
+    mgui! {
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start).main_axis_alignment(MainAxisAlignment::Start) => [
+            avatar,
+            meta,
+        ]
+    }
+}
+
+/// Парный к [`tool_call_card_only`] helper: карточка результата без
+/// avatar/meta-row.
+///
+/// - `compact` (`minimal`-режим) — тело под клик по шапке;
+/// - `full` — тело видно сразу, а вывод длиннее
+///   [`TOOL_RESULT_PREVIEW_LINES`] усекается до превью со строкой-разворотом.
+pub(super) fn tool_result_card_only(
+    msg: &ChatMsg,
+    msg_idx: usize,
+    tool_name: &str,
+    error: bool,
+    compact: bool,
+) -> impl Widget {
+    let (tool_icon, tool_label) = tool_visuals(tool_name);
+
+    let (card_class, status_icon, status_class) = if error {
+        (
+            "tool-result-card tool-result-card-error",
+            MI_REPORT,
+            "tool-result-status-icon tool-result-status-icon-error",
+        )
+    } else {
+        ("tool-result-card", MI_CHECK, "tool-result-status-icon")
+    };
+
+    let display_body = unescape_persisted_json_newlines(&msg.body);
+    let total_lines = display_body.lines().count();
+    // В full-режиме длинный вывод показываем превью'шкой; в compact тело и
+    // так скрыто целиком, поэтому по клику разворачиваем его полностью.
+    let truncatable = !compact && total_lines > TOOL_RESULT_PREVIEW_LINES;
+
+    let mut header_children: Vec<Box<dyn Widget>> = Vec::with_capacity(7);
+    header_children.push(Box::new(Icon::new(tool_icon).class("tool-result-icon")));
+    header_children.push(Box::new(Text::new(tool_label).class("tool-result-name")));
+    if truncatable || (compact && total_lines > 1) {
+        header_children.push(Box::new(
+            Text::new(format!("{total_lines} строк")).class("tool-result-lines"),
+        ));
+    }
+    header_children.push(Box::new(DecoratedBox::new().class("grow")));
+    header_children.push(Box::new(Icon::new(status_icon).class(status_class)));
+    header_children.push(Box::new(Text::new(msg.time.clone()).class("msg-time")));
+    if compact {
+        header_children.push(body_chevron(msg_idx, "tool-result-chevron"));
+    }
+
+    let header = Row::new()
+        .gap(10.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .children(header_children);
+
+    let body_class = if error {
+        "tool-result-body tool-result-body-error"
+    } else {
+        "tool-result-body"
+    };
+
+    let body_wrap = move |text: String| -> Box<dyn Widget> {
+        Box::new(DecoratedBox::new().class("tool-result-body-wrap").child(
+            MarkdownView::new(text)
+                .selectable(true)
+                .with_copy_code(false)
+                .class(body_class),
+        ))
+    };
+
+    let card_children: Vec<Box<dyn Widget>> = if compact {
+        let full_body = display_body.clone();
+        vec![
+            clickable_header(msg_idx, header),
+            collapsible(msg_idx, move || body_wrap(full_body.clone())),
+        ]
+    } else if truncatable {
+        let body_for_reactive = display_body.clone();
+        let preview_reactive = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            let shown = if body_open(msg_idx) {
+                body_for_reactive.clone()
+            } else {
+                let head: Vec<&str> = body_for_reactive
+                    .lines()
+                    .take(TOOL_RESULT_PREVIEW_LINES)
+                    .collect();
+                format!("{}\n…", head.join("\n"))
+            };
+            vec![body_wrap(shown)]
+        });
+        vec![
+            Box::new(header),
+            Box::new(
+                AnimatedSize::new(preview_reactive)
+                    .axis(AnimationAxis::Height)
+                    .duration_ms(200)
+                    .easing(Easing::EaseOutCubic),
+            ),
+            Box::new(tool_result_toggle(msg_idx, total_lines)),
+        ]
+    } else {
+        vec![Box::new(header), body_wrap(display_body)]
+    };
+
+    DecoratedBox::new().class(card_class).child(
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(card_children),
+    )
+}
+
+/// Кликабельная строка «Показать всё / Свернуть» под усечённым результатом.
+fn tool_result_toggle(msg_idx: usize, total_lines: usize) -> impl Widget {
+    let label_reactive = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let (icon, text) = if body_open(msg_idx) {
+            (MI_EXPAND_LESS, "Свернуть".to_string())
+        } else {
+            (MI_EXPAND_MORE, format!("Показать всё ({total_lines} строк)"))
+        };
+        vec![Box::new(DecoratedBox::new().class("tool-result-more").child(mgui! {
+            Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Icon::new(icon).class("tool-result-more-icon"),
+                Text::new(text).class("tool-result-more-text"),
+            ]
+        }))]
+    });
+
+    GestureDetector::new()
+        .on_click(move || toggle_body(msg_idx))
+        .child(label_reactive)
+}
+
+fn tool_result_row(
+    msg: &ChatMsg,
+    msg_idx: usize,
+    tool_name: &str,
+    error: bool,
+    compact: bool,
+) -> impl Widget {
+    let card = tool_result_card_only(msg, msg_idx, tool_name, error, compact);
+
+    // Layout идентичен assistant-row (avatar + meta-column): так карточка
+    // наследует bounded-width от внешнего Row и `max-width: 90%` реально
+    // ограничивает ширину. Плашка «✓» вместо аватара подсказывает, что это
+    // не ответ ассистента, а вывод инструмента.
+    let avatar_placeholder = DecoratedBox::new()
+        .class("tool-result-avatar")
+        .child(Center::new().child(Icon::new(MI_CHECK).class("tool-result-avatar-icon")));
+
+    let card_with_actions: Box<dyn Widget> = Box::new(
+        Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::End)
+            .main_axis_alignment(MainAxisAlignment::Start)
+            .children(vec![
+                Box::new(card) as Box<dyn Widget>,
+                actions_widget(msg.body.clone(), false),
+            ]),
+    );
+
+    let header_row = mgui! {
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Text::new("Результат").class("msg-author"),
+            Text::new(msg.time.clone()).class("msg-time"),
+        ]
+    };
+
+    let meta = Column::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .children(vec![Box::new(header_row) as Box<dyn Widget>, card_with_actions]);
+
+    mgui! {
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start).main_axis_alignment(MainAxisAlignment::Start) => [
+            avatar_placeholder,
+            meta,
+        ]
+    }
+}
+
+/// Tool-результаты, сохранённые как pretty-JSON, содержат `\n` в виде двух
+/// символов `\` + `n`. Разворачиваем обратно, чтобы старые чаты не
+/// показывались одной бесконечной строкой. Новые (plain-text) проходят
+/// без изменений: реальный перевод строки — это `U+000A`, не пара ASCII.
+fn unescape_persisted_json_newlines(s: &str) -> String {
+    if !s.contains("\\n") && !s.contains("\\t") {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('n') => { chars.next(); out.push('\n'); continue; }
+                Some('t') => { chars.next(); out.push('\t'); continue; }
+                Some('r') => { chars.next(); out.push('\r'); continue; }
+                Some('\\') => { chars.next(); out.push('\\'); continue; }
+                Some('"') => { chars.next(); out.push('"'); continue; }
+                _ => {}
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unescape_restores_newlines_and_tabs() {
+        assert_eq!(unescape_persisted_json_newlines("a\\nb\\tc"), "a\nb\tc");
+    }
+
+    #[test]
+    fn unescape_is_noop_for_plain_text() {
+        let s = "WEB_SEARCH query=\"rust\"\nresults-count: 10";
+        assert_eq!(unescape_persisted_json_newlines(s), s);
+    }
 }

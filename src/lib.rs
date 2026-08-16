@@ -390,6 +390,9 @@ fn install_config_autosave(ctx: &AppCtx) {
     let code = use_context::<pages::code_editor::state::CodeEditorCtx>();
     let syn = use_context::<pages::syn_explorer::state::SynExplorerCtx>();
     let hf = use_context::<pages::huggingface::HuggingFaceCtx>();
+    let syn_chat_ctx = use_context::<syn_chat::SynChatCtx>();
+    let syn_chat_left_split = syn_chat_ctx.left_split_ratio;
+    let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
 
     create_effect(move || {
         let sessions = code.sessions.get();
@@ -506,6 +509,11 @@ fn install_config_autosave(ctx: &AppCtx) {
             qwen36_nvfp4_gemv: qwen36_nvfp4_gemv.get(),
             acestep_xl_bundle_path: acestep_xl_bundle_path.get(),
             acestep_vae_bundle_path: acestep_vae_bundle_path.get(),
+            // Layout-разделители страницы Syn-чата. `.get()` подписывает
+            // effect: drag дивайдера → set() сигнала → autosave пишет новые
+            // ширины в config.json.
+            syn_chat_left_split_ratio: syn_chat_left_split.get(),
+            syn_chat_right_split_ratio: syn_chat_right_split.get(),
             // Syn-чат поля. Они автосохраняются отдельным
             // `install_syn_chat_autosave` (per-chat params), но дефолты для
             // новых чатов и last_syn_model — здесь, через AppConfig.

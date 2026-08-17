@@ -6,6 +6,7 @@
 //! (`~/.config/synthos/syn_chats/`).
 
 pub mod attach;
+pub mod channel_parser;
 pub mod model_registry;
 pub mod params;
 pub mod registry;

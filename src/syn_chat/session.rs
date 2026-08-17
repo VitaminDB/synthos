@@ -37,10 +37,11 @@ use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
+use crate::syn_chat::channel_parser::{self, ChannelIds, ChannelParser, ATEM_CLOSE};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{ChatMsg, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser};
-use crate::syn_chat::tool_parser::ToolCallParser;
+use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
 /// ≈ 60 fps — UI получает свежий хвост, не задыхаясь от 100+ updates/s.
@@ -257,6 +258,77 @@ pub fn schedule_tokenize() {
     });
 }
 
+/// Разбор потока генерации: у моделей разный «протокол хода».
+///
+/// - [`Self::ChatML`] — Qwen3 и прочие: reasoning в `<think>…</think>`,
+///   вызовы в `<tool_call>…</tool_call>`, всё внутри одного текста.
+/// - [`Self::Channel`] — Muse Glimmer: ход состоит из нескольких сообщений
+///   со своими адресатами (`to=self` / `to=user` / `to=<функция>`), а
+///   разделители — спецтокены, невидимые в декодированном тексте
+///   (см. [`crate::syn_chat::channel_parser`]).
+enum StreamParser {
+    ChatML { think: ThinkParser, tools: ToolCallParser },
+    Channel(ChannelParser),
+}
+
+impl StreamParser {
+    /// Канальный разбор — если словарь модели знает `<|start|>`/`<|message|>`.
+    fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool) -> Self {
+        match ChannelIds::detect(tokenizer) {
+            Some(ids) => Self::Channel(ChannelParser::new(ids)),
+            None => Self::ChatML {
+                // Qwen3-VL / Qwen3-Thinking chat-template подаёт открывающий
+                // `<think>` прямо в prompt — модель не пишет open-тег сама,
+                // только закрывающий.
+                think: if enable_thinking {
+                    ThinkParser::new_implicit_open()
+                } else {
+                    ThinkParser::new()
+                },
+                tools: ToolCallParser::new(),
+            },
+        }
+    }
+
+    fn is_channel(&self) -> bool {
+        matches!(self, Self::Channel(_))
+    }
+
+    /// Очередной токен → (текст ответа, текст размышлений).
+    fn feed(&mut self, id: u32, delta: &str) -> (String, String) {
+        match self {
+            Self::ChatML { think, tools } => {
+                let feed = tools.feed(delta);
+                if feed.clean_delta.is_empty() {
+                    return (String::new(), String::new());
+                }
+                let split = think.feed(&feed.clean_delta);
+                (split.body, split.thinking)
+            }
+            Self::Channel(p) => {
+                let split = p.feed(id, delta);
+                (split.body, split.thinking)
+            }
+        }
+    }
+
+    /// Модель дописала tool-вызов — стрим можно рвать, не дожидаясь, пока
+    /// она уйдёт писать прозу после блока.
+    fn tool_call_ready(&self) -> bool {
+        match self {
+            Self::ChatML { tools, .. } => tools.calls_count() > 0 && tools.is_outside(),
+            Self::Channel(p) => p.has_closed_call(),
+        }
+    }
+
+    fn finish(self) -> Vec<RawToolCall> {
+        match self {
+            Self::ChatML { tools, .. } => tools.finish().0,
+            Self::Channel(p) => p.finish(),
+        }
+    }
+}
+
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
 /// append history → next turn. Прерывается по abort, EOS-only ответу (no
 /// tool_calls) или по достижении `MAX_AGENT_TURNS`.
@@ -348,13 +420,21 @@ async fn run_agent_loop(
              {kv_per_token} B/ток); VRAM: KV {} MB, свободно {vram_post_kv} MB",
             vram_pre_kv.saturating_sub(vram_post_kv)
         );
-        set_qwen3_stops(&mut runner, &model.tokenizer);
+        let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
+        if channel_mode {
+            // Канальный протокол завершает ход `<|eot|>`, а он уже в eos_ids
+            // бандла — своих стопов добавлять не нужно (и `<|im_end|>` в
+            // этом словаре всё равно нет).
+            runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
+        } else {
+            set_qwen3_stops(&mut runner, &model.tokenizer);
+        }
         // На случай если парсер callback'а не успеет отработать перед
         // следующей итерацией — добавим явный text-level stop на закрытии
         // tool-call (encoder в LlmGeneration сравнивает накопленный
         // decoded-text).
         if !tool_schemas.is_empty() {
-            runner.add_stop_sequence(TOOL_CALL_CLOSE);
+            runner.add_stop_sequence(if channel_mode { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
         }
 
         // Только для первого turn'а отчитываем prefill_ms; в следующих
@@ -370,22 +450,14 @@ async fn run_agent_loop(
             });
         }
 
-        // Парсеры: think (<think>...</think>) — на «чистом» тексте после
-        // удаления tool_call-блоков. tool_call — на сырых дельтах.
-        //
-        // Qwen3-VL / Qwen3-Thinking chat-template подаёт открывающий
-        // `<think>` прямо в prompt — модель не пишет open-тег сама, только
-        // закрывающий. Поэтому в режиме `enable_thinking` стартуем парсер
-        // в `implicit_open` состоянии (см. ThinkParser::new_implicit_open).
-        let mut think_parser = if params.enable_thinking {
-            ThinkParser::new_implicit_open()
-        } else {
-            ThinkParser::new()
-        };
-        let mut tool_parser = ToolCallParser::new();
+        // Разбор потока — по протоколу модели (ChatML или канальный).
+        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
         // Полный текст ответа модели за этот turn — нужен для канонического
-        // assistant-msg в history (с `<tool_call>` тегами как-есть).
+        // assistant-msg в history (с `<tool_call>` тегами как-есть). В
+        // канальном режиме сырой текст непригоден: в нём заголовки каналов
+        // (` to=user`), поэтому там историю собираем из разобранного тела.
         let mut raw_text: String = String::new();
+        let mut clean_text: String = String::new();
         let mut buf_body = String::new();
         let mut buf_think = String::new();
         let mut last_flush = Instant::now();
@@ -395,7 +467,7 @@ async fn run_agent_loop(
         let t_turn = Instant::now();
         let abort_for_cb = abort.clone();
         let ctx_for_cb = ctx.clone();
-        let on_token = |_id: u32, delta: &str| {
+        let on_token = |id: u32, delta: &str| {
             // Abort: сбросить накопленные буферы и выйти.
             if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
                 flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, None);
@@ -404,13 +476,10 @@ async fn run_agent_loop(
             raw_text.push_str(delta);
             tokens_this_turn += 1;
 
-            // Сырая дельта → tool-parser → clean-delta → think-parser.
-            let feed = tool_parser.feed(delta);
-            if !feed.clean_delta.is_empty() {
-                let split = think_parser.feed(&feed.clean_delta);
-                buf_body.push_str(&split.body);
-                buf_think.push_str(&split.thinking);
-            }
+            let (body, thinking) = parser.feed(id, delta);
+            clean_text.push_str(&body);
+            buf_body.push_str(&body);
+            buf_think.push_str(&thinking);
 
             // Throttled flush в UI.
             let now = Instant::now();
@@ -426,10 +495,10 @@ async fn run_agent_loop(
 
             // Если парсер уже зафиксировал tool_call — останавливаемся,
             // не дожидаясь, пока модель уйдёт писать прозу после блока.
-            // (Stop-sequence на `</tool_call>` дублирует эту защиту, но
+            // (Stop-sequence на закрытии блока дублирует эту защиту, но
             // text-level stop срабатывает только когда decoded-tail совпадает,
             // что зависит от tokenizer-decode таймингов.)
-            if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
+            if parser.tool_call_ready() {
                 return false;
             }
             true
@@ -452,7 +521,8 @@ async fn run_agent_loop(
         // Финальный flush — гарантированно сбрасываем хвост буферов.
         flush_streaming(&ctx, &mut buf_body, &mut buf_think, Some(tokens_this_turn));
 
-        let (raw_calls, _tail_clean) = tool_parser.finish();
+        let channel_mode = parser.is_channel();
+        let raw_calls = parser.finish();
 
         // Явно освобождаем runner + trim mempool. cudaMallocAsync держит
         // освобождённые chunks в pool с release threshold ≥ 2 GB по
@@ -498,7 +568,14 @@ async fn run_agent_loop(
         run_on_main_thread(move || ctx_commit.commit_streaming_tail());
 
         // History: assistant с полным сырым текстом (включая `<tool_call>`).
-        history.push(Message::assistant(raw_text.clone()));
+        // В канальном режиме сырой текст содержит заголовки каналов, которые
+        // chat-шаблон припишет заново, — поэтому пересобираем реплику из
+        // разобранного тела и ATEM-блока вызовов.
+        history.push(Message::assistant(if channel_mode {
+            channel_parser::rebuild_turn_text(&clean_text, &raw_calls)
+        } else {
+            raw_text.clone()
+        }));
 
         // Конвертируем RawToolCall → ChatToolCall (для UI и executor'а).
         let chat_calls: Vec<ChatToolCall> = raw_calls
@@ -559,7 +636,10 @@ async fn run_agent_loop(
                         "Отменено пользователем".to_string(),
                         true,
                     );
-                    history.push(Message::tool("Отменено пользователем"));
+                    history.push(Message::tool_named(
+                        tool_name(chat_call),
+                        "Отменено пользователем",
+                    ));
                     // После Cancel прерываем весь loop — пользователь явно
                     // отказал, нет смысла продолжать.
                     return Ok(());
@@ -581,7 +661,7 @@ async fn run_agent_loop(
             };
 
             push_tool_result(&ctx, chat_call, outcome.content.clone(), outcome.error);
-            history.push(Message::tool(outcome.content));
+            history.push(Message::tool_named(tool_name(chat_call), outcome.content));
         }
 
         // Готовим placeholder для следующего turn (UI bubble — пустой
@@ -650,6 +730,11 @@ async fn wait_abort(abort: &Arc<AtomicU64>, snapshot: u64) {
         }
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
+}
+
+/// Имя вызванной функции — им подписывается блок результата в prompt'е.
+fn tool_name(call: &ChatToolCall) -> String {
+    call.function.name.clone().unwrap_or_default()
 }
 
 /// Пушит tool_result-бабл в ленту.

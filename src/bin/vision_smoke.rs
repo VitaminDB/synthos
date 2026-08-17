@@ -22,6 +22,7 @@ use synaptix::facade::llm::{
 use synaptix_core::device::Device;
 
 use synthos::syn_chat::attach::prompt::{prepare_user_message, MediaCaps};
+use synthos::syn_chat::channel_parser::{ChannelIds, ChannelParser};
 use synthos::syn_chat::attach::{blobs, ingest};
 
 fn main() -> Result<(), String> {
@@ -142,14 +143,31 @@ fn main() -> Result<(), String> {
     runner.set_stop_tokens(tokenizer.eos_ids().to_vec());
 
     let media_refs: Vec<_> = prepared.media.iter().collect();
+    // Ровно тот же разбор, что и в чате: у канальных моделей заголовки
+    // сообщений (` to=self`) не должны попадать в ответ.
+    let mut channel = ChannelIds::detect(&tokenizer).map(ChannelParser::new);
+    println!(
+        "протокол хода: {}",
+        if channel.is_some() { "канальный (to=self/to=user)" } else { "ChatML" }
+    );
     let mut out = String::new();
+    let mut body = String::new();
+    let mut thinking = String::new();
     let t0 = Instant::now();
     runner
-        .generate_streaming_media(&prompt_ids, &tokenizer, &media_refs, |_id, delta| {
+        .generate_streaming_media(&prompt_ids, &tokenizer, &media_refs, |id, delta| {
             print!("{delta}");
             use std::io::Write;
             let _ = std::io::stdout().flush();
             out.push_str(delta);
+            match channel.as_mut() {
+                Some(p) => {
+                    let split = p.feed(id, delta);
+                    body.push_str(&split.body);
+                    thinking.push_str(&split.thinking);
+                }
+                None => body.push_str(delta),
+            }
             true
         })
         .map_err(|e| format!("generate: {e}"))?;
@@ -158,6 +176,13 @@ fn main() -> Result<(), String> {
 
     if out.trim().is_empty() {
         return Err("модель не выдала ни одного токена".into());
+    }
+    if channel.is_some() {
+        println!("--- размышления ({} симв.) ---\n{}", thinking.len(), thinking.trim());
+        println!("--- ответ ({} симв.) ---\n{}", body.len(), body.trim());
+        if body.contains("to=user") || body.contains("to=self") {
+            return Err("заголовок канала утёк в текст ответа".into());
+        }
     }
     println!("OK");
     Ok(())

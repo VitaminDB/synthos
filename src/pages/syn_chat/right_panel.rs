@@ -134,7 +134,9 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         // на вопрос «поймёт ли эта модель прикреплённую картинку» до того,
         // как пользователь потратит время на отправку.
         let media_badge = current.as_ref().map(|loaded| {
-            if loaded.model.supports_media() {
+            // Кэш из LoadedSynModel, а не Llm::supports_media(): последний
+            // берёт мьютекс пайплайна, занятый на всё время генерации.
+            if loaded.supports_media {
                 "Мультимодальная · картинки и видео".to_string()
             } else {
                 "Текстовая · вложения уйдут описанием".to_string()
@@ -517,6 +519,7 @@ fn stats_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Syn
         let ring_mb = ctx.kv_cache_bytes.get() / (1024 * 1024);
         let ctx_budget = ctx.ctx_budget_tokens.get();
         let vram_free = ctx.last_vram_free_mb.get();
+        let reused = ctx.last_reused_tokens.get();
 
         DecoratedBox::new().class("details-card").child(mgui! {
             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
@@ -525,6 +528,9 @@ fn stats_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Syn
                 // tool-вызовов он в разы больше первого, и именно он определяет
                 // размер KV-ринга.
                 metric_row("prompt_tokens", prompt_t.to_string()),
+                // Сколько из промпта взято из кэша прошлого хода (префикс-KV):
+                // столько токенов не пришлось префиллить заново.
+                metric_row("из них из кэша", reused.to_string()),
                 metric_row("gen_tokens", gen_t.to_string()),
                 metric_row("prefill_ms", prefill_ms.to_string()),
                 metric_row("decode_tps", format!("{tps:.1}")),

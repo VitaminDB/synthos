@@ -9,6 +9,15 @@ pub struct LoadedSynModel {
     pub model: Llm,
     pub tokenizer: LlmTokenizer,
     pub path: PathBuf,
+    /// Кэш `Llm::supports_media()`, снятый один раз при загрузке.
+    ///
+    /// Спрашивать сам пайплайн из UI нельзя: `supports_media` берёт тот же
+    /// `Mutex`, что и `generate_streaming`, а генерация держит его на весь
+    /// ход. Реактивный блок статуса модели упирался в этот мьютекс прямо в
+    /// `rebuild_if_needed` и вешал main thread на всё время генерации — окно
+    /// переставало перерисовываться, композитор помечал его «не отвечает».
+    /// Для загруженного бандла флаг неизменен, поэтому кэш честный.
+    pub supports_media: bool,
 }
 
 fn select_device() -> Device {
@@ -117,6 +126,7 @@ impl SynModelRegistry {
 
         let registry = *self;
         crate::syn_chat::session::reset_kernel_cache_warm();
+        crate::syn_chat::session::drop_kv_session();
         registry.loading.set(true);
         registry.error.set(None);
         // Эмбеддинги вложений привязаны к vision-башне прежней модели —
@@ -170,7 +180,13 @@ impl SynModelRegistry {
                         cfg.save();
                     }
                     registry.last_path.set_always(Some(path.clone()));
-                    let loaded = Arc::new(LoadedSynModel { model, tokenizer, path });
+                    let supports_media = model.supports_media();
+                    let loaded = Arc::new(LoadedSynModel {
+                        model,
+                        tokenizer,
+                        path,
+                        supports_media,
+                    });
                     registry.current.set_always(Some(loaded));
                 }
                 Err(e) => {
@@ -184,6 +200,7 @@ impl SynModelRegistry {
 
     pub fn unload(&self) {
         crate::syn_chat::session::reset_kernel_cache_warm();
+        crate::syn_chat::session::drop_kv_session();
         crate::syn_chat::attach::media_cache::clear();
         let held = self.current.get_untracked();
         let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);

@@ -660,6 +660,14 @@ pub struct AppConfig {
     /// `true`. Применяется через [`synaptix::facade::llm::set_gdr_fused_disabled`].
     #[serde(default = "default_true")]
     pub qwen36_gdr_fused: bool,
+    /// Префикс-KV: держать посчитанный контекст диалога между ходами, чтобы
+    /// ход дописывал в KV только новый хвост промпта, а не считал историю
+    /// заново. Стоит VRAM (кэш живёт между ходами, ёмкость кратна 16384
+    /// токенам) и выключается, когда в сообщении есть вложения — медиа-путь
+    /// префилла идёт по эмбеддингам, а vision-башне нужна та же память.
+    /// Default = `true`.
+    #[serde(default = "default_true")]
+    pub syn_chat_prefix_kv: bool,
     /// Размер chunk'а для prefill. Default = 256 (лимит пика VRAM активаций на
     /// 24 GB GPU при ~1.5k ток/с). Движок принудительно округляет к кратному
     /// 64 — границы чанков на некратных позициях ломают состояние GDN-скана.
@@ -1096,6 +1104,7 @@ impl Default for AppConfig {
             qwen36_graph_decode: false,
             qwen36_la_fused: true,
             qwen36_gdr_fused: true,
+            syn_chat_prefix_kv: true,
             qwen36_prefill_chunk: default_qwen36_prefill_chunk(),
             qwen36_layer_sync: default_qwen36_layer_sync(),
             qwen36_nvfp4_mma: false,

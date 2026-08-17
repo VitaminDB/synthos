@@ -31,7 +31,9 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::*;
-use synaptix::facade::llm::{LlmGeneration, LlmTokenizer, MediaEmbedding, Message};
+use synaptix::facade::llm::{
+    LlmGeneration, LlmKvSession, LlmTokenizer, MediaEmbedding, Message,
+};
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
 use crate::agent::tools::{self, Tool, ToolDecision};
@@ -58,6 +60,88 @@ pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// поэтому ограничиваем общее число turn-ов. 16 — баланс между «успеть
 /// решить многошаговую задачу» и «не сжечь весь контекст».
 const MAX_AGENT_TURNS: usize = 16;
+
+/// Шаг ёмкости кэша префикс-KV. Сессия живёт между ходами, а пересоздание
+/// стирает префикс — значит расти надо редко и с запасом, а не «в притык» под
+/// каждый ход. 16384 токена ≈ 1 ГБ при F16-KV гибрида 27B и ≈0,5 ГБ при MXFP8.
+const SESSION_CTX_STEP: usize = 16384;
+
+/// Слот префикс-KV: посчитанный контекст диалога живёт между ходами и между
+/// сообщениями, пока это тот же чат на той же модели.
+///
+/// Ход дописывает в кэш только новый хвост промпта, поэтому agent-loop с
+/// инструментами больше не префиллит историю заново на каждом вызове (а это
+/// было до 16 полных префиллов на одно сообщение пользователя).
+struct KvSlot {
+    session: LlmKvSession,
+    model: std::path::PathBuf,
+    chat: Option<String>,
+}
+
+static KV_SLOT: std::sync::Mutex<Option<KvSlot>> = std::sync::Mutex::new(None);
+
+/// Забыть посчитанный контекст (смена/выгрузка модели, переключение чата,
+/// освобождение VRAM под vision-башню).
+pub fn drop_kv_session() {
+    let mut g = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_some() {
+        log::info!("[syn_chat] префикс-KV: кэш диалога освобождён");
+    }
+    *g = None;
+}
+
+/// Взять сессию под этот чат/модель, создав или пересоздав при необходимости.
+/// `None` — префикс-KV недоступен (архитектура или нехватка VRAM), вызывающий
+/// работает как раньше.
+fn ensure_kv_slot<'a>(
+    slot: &'a mut Option<KvSlot>,
+    model: &LoadedSynModel,
+    chat: &Option<String>,
+    want_ctx: usize,
+    max_new: usize,
+) -> Option<&'a mut LlmKvSession> {
+    let fits = slot.as_ref().is_some_and(|s| {
+        s.model == model.path && &s.chat == chat && s.session.ctx_tokens() >= want_ctx
+    });
+    if !fits {
+        if let Some(old) = slot.take() {
+            log::info!(
+                "[syn_chat] префикс-KV: пересоздаём кэш (было {} ток, нужно ≥{want_ctx})",
+                old.session.ctx_tokens()
+            );
+            drop(old);
+            // Старый ринг должен вернуться в пул до аллокации нового, иначе на
+            // границе роста в VRAM живут оба.
+            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+        }
+        match model.model.new_kv_session(want_ctx, max_new) {
+            Ok(Some(session)) => {
+                log::info!(
+                    "[syn_chat] префикс-KV: кэш на {} ток ({} MB)",
+                    session.ctx_tokens(),
+                    (session.ctx_tokens() as u64 * model.model.kv_bytes_per_token() as u64)
+                        / (1024 * 1024)
+                );
+                *slot = Some(KvSlot {
+                    session,
+                    model: model.path.clone(),
+                    chat: chat.clone(),
+                });
+            }
+            Ok(None) => {
+                log::info!(
+                    "[syn_chat] префикс-KV недоступен для этой модели — префилл как раньше"
+                );
+                return None;
+            }
+            Err(e) => {
+                log::warn!("[syn_chat] префикс-KV: кэш не создан ({e}) — префилл как раньше");
+                return None;
+            }
+        }
+    }
+    slot.as_mut().map(|s| &mut s.session)
+}
 
 /// Запас VRAM, который планировщик ринга НЕ отдаёт под KV, пока кэши ядер не
 /// прогреты.
@@ -92,42 +176,61 @@ pub fn reset_kernel_cache_warm() {
 /// стоит выше. Ринг живёт ровно один ход; планировать его на 130k «про запас»
 /// значит впустую занять гигабайты (у гибрида 27B это 64 КБ на токен). 8k
 /// токенов ответа — это ~6k слов, для чата с запасом.
-const RING_ANSWER_TOKENS: usize = 8192;
+pub(crate) const RING_ANSWER_TOKENS: usize = 8192;
 /// Гранулярность длины ринга. Промпт растёт от хода к ходу, и ринг «в притык»
 /// каждый раз просил бы блоки чуть большего размера — освободившиеся от
 /// прошлого ринга пул отдать под них не может. Кратность 4096 делает ринг
 /// одинаковым на серии ходов, и блоки переиспользуются.
 const RING_GRANULARITY: usize = 4096;
 /// Сколько раз пересобирать ход с меньшим рингом после OOM.
-const MAX_OOM_RETRIES: usize = 3;
+pub(crate) const MAX_OOM_RETRIES: usize = 3;
 /// Бюджет ответа, ниже которого ретраить уже нечем.
-const MIN_ANSWER_TOKENS: usize = 512;
+pub(crate) const MIN_ANSWER_TOKENS: usize = 512;
 
 /// Расчёт KV-ринга на один ход: сколько токенов сажаем в кэш и сколько из них
 /// остаётся под ответ.
-struct RingPlan {
-    prompt_tokens: usize,
-    ring_tokens: usize,
-    max_new: usize,
+pub(crate) struct RingPlan {
+    pub(crate) prompt_tokens: usize,
+    pub(crate) ring_tokens: usize,
+    /// Ёмкость кэша префикс-KV (крупный шаг — см. [`SESSION_CTX_STEP`]).
+    pub(crate) session_ctx: usize,
+    pub(crate) max_new: usize,
     /// Сколько токенов контекста вообще влезает в свободную VRAM.
-    by_mem: usize,
-    cap: usize,
-    kv_per_token: usize,
-    vram_available_mb: usize,
+    pub(crate) by_mem: usize,
+    pub(crate) cap: usize,
+    pub(crate) kv_per_token: usize,
+    pub(crate) vram_available_mb: usize,
     /// Промпт не влезает в ринг — движок обрежет контекст.
-    truncated_prompt: bool,
+    pub(crate) truncated_prompt: bool,
 }
 
 impl RingPlan {
-    fn new(
+    pub(crate) fn new(
         model: &LoadedSynModel,
         prompt_tokens: usize,
         answer_tokens: usize,
         model_cap: usize,
     ) -> Self {
+        Self::with_session(model, prompt_tokens, answer_tokens, model_cap, 0)
+    }
+
+    /// Как [`Self::new`], но с поправкой на VRAM, которую держит кэш
+    /// префикс-KV: он освобождается ДО аллокации нового, поэтому в бюджет
+    /// входит.
+    pub(crate) fn with_session(
+        model: &LoadedSynModel,
+        prompt_tokens: usize,
+        answer_tokens: usize,
+        model_cap: usize,
+        session_held_mb: usize,
+    ) -> Self {
         let cap = model_cap.saturating_sub(1);
         let kv_per_token = model.model.kv_bytes_per_token();
-        let vram_available_mb = crate::syn_chat::model_registry::vram_available_mb();
+        // Кэш префикс-KV держит VRAM прямо сейчас, но при пересоздании
+        // освобождается ДО новой аллокации — иначе бюджет занижался бы ровно на
+        // размер уже живущего кэша и контекст перестал бы расти.
+        let vram_available_mb =
+            crate::syn_chat::model_registry::vram_available_mb() + session_held_mb;
         let by_mem = if kv_per_token > 0 {
             let budget = vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024;
             budget / kv_per_token
@@ -143,11 +246,18 @@ impl RingPlan {
         let want = prompt_tokens.min(cap) + answer_tokens + 128;
         let ring_tokens = want.div_ceil(RING_GRANULARITY) * RING_GRANULARITY;
         let ring_tokens = ring_tokens.min(hard_cap).max(1);
+        let session_ctx = want
+            .div_ceil(SESSION_CTX_STEP)
+            .max(1)
+            .saturating_mul(SESSION_CTX_STEP)
+            .min(hard_cap)
+            .max(ring_tokens);
         let prompt_capped = prompt_tokens.min(ring_tokens.saturating_sub(1));
         let max_new = ring_tokens.saturating_sub(prompt_capped + 128).max(1);
         Self {
             prompt_tokens,
             ring_tokens,
+            session_ctx,
             max_new,
             by_mem,
             cap,
@@ -157,11 +267,11 @@ impl RingPlan {
         }
     }
 
-    fn ring_bytes(&self) -> u64 {
+    pub(crate) fn ring_bytes(&self) -> u64 {
         (self.ring_tokens as u64) * (self.kv_per_token as u64)
     }
 
-    fn ring_mb(&self) -> u64 {
+    pub(crate) fn ring_mb(&self) -> u64 {
         self.ring_bytes() / (1024 * 1024)
     }
 }
@@ -170,6 +280,8 @@ impl RingPlan {
 /// пакетом переливаются в сигналы на main thread.
 struct TurnStats {
     prompt_tokens: u32,
+    /// Сколько токенов промпта не пришлось считать заново (префикс-KV).
+    reused_tokens: u32,
     gen_tokens: u32,
     prefill_ms: u32,
     turns: u32,
@@ -182,6 +294,7 @@ struct TurnStats {
 impl TurnStats {
     fn apply(&self, ctx: &SynChatCtx) {
         ctx.last_prompt_tokens.set_always(self.prompt_tokens);
+        ctx.last_reused_tokens.set_always(self.reused_tokens);
         ctx.last_gen_tokens.set_always(self.gen_tokens);
         ctx.last_prefill_ms.set_always(self.prefill_ms);
         ctx.last_turns.set_always(self.turns);
@@ -194,7 +307,7 @@ impl TurnStats {
 
 /// Ошибка — это исчерпание VRAM? Драйвер отдаёт `CUDA_ERROR_OUT_OF_MEMORY`,
 /// наши аллокаторы добавляют свои формулировки («after trim+retries: OOM»).
-fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
+pub(crate) fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
     let s = e.to_string();
     s.contains("OUT_OF_MEMORY") || s.contains("out of memory") || s.contains(": OOM")
 }
@@ -309,6 +422,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     let caps = snapshot_media_caps(&app_ctx, &model);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
+    let chat_id = ctx.active_chat_id.get_untracked();
     let ctx_for_worker = ctx.clone();
     let abort = ctx.abort.clone();
 
@@ -340,6 +454,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             params,
             abort,
             abort_snapshot,
+            chat_id,
             ctx_for_worker.clone(),
         ));
         if let Err(e) = result {
@@ -472,6 +587,7 @@ impl StreamParser {
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
 /// append history → next turn. Прерывается по abort, EOS-only ответу (no
 /// tool_calls) или по достижении `MAX_AGENT_TURNS`.
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_loop(
     model: Arc<LoadedSynModel>,
     items: Vec<HistoryItem>,
@@ -480,6 +596,7 @@ async fn run_agent_loop(
     params: SamplingParams,
     abort: Arc<AtomicU64>,
     abort_snapshot: u64,
+    chat_id: Option<String>,
     ctx: SynChatCtx,
 ) -> anyhow::Result<()> {
     let model_cap = model.model.config().max_seq_len;
@@ -490,6 +607,12 @@ async fn run_agent_loop(
     // блоками-заполнителями и эмбеддинги дальше переиспользуются на каждом
     // turn'е. Vision-башня нужна только здесь — сразу после кодирования её
     // выгружаем, чтобы KV-ring получил свободную VRAM.
+    // Медиа-путь идёт по готовым эмбеддингам и префикс-KV не поддерживает, а
+    // vision-башне нужна та же VRAM, что держит кэш диалога, — освобождаем ДО
+    // кодирования вложений.
+    if items.iter().any(HistoryItem::has_media) {
+        drop_kv_session();
+    }
     let (mut history, media) = prepare_history(&items, &model, &caps, &ctx);
     let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
     if !media.is_empty() {
@@ -500,6 +623,16 @@ async fn run_agent_loop(
             tokens
         );
     }
+
+    // Слот держим на весь agent-loop: ходы внутри одного сообщения — главные
+    // потребители префикса (каждый tool-вызов раньше требовал полного
+    // префилла выросшей истории).
+    let mut kv_slot = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    let prefix_kv_on = media.is_empty() && crate::config::AppConfig::load().syn_chat_prefix_kv;
+    if !prefix_kv_on {
+        *kv_slot = None;
+    }
+    let mut reused_total: u32 = 0;
 
     for turn in 0..MAX_AGENT_TURNS {
         if abort.load(Ordering::Relaxed) != abort_snapshot {
@@ -529,7 +662,19 @@ async fn run_agent_loop(
         let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
         let mut oom_attempt = 0usize;
         let turn_result = loop {
-            let plan = RingPlan::new(&model, prompt_ids.len(), answer_budget, model_cap);
+            let session_held_mb = kv_slot
+                .as_ref()
+                .map(|s| {
+                    (s.session.ctx_tokens() * model.model.kv_bytes_per_token()) / (1024 * 1024)
+                })
+                .unwrap_or(0);
+            let plan = RingPlan::with_session(
+                &model,
+                prompt_ids.len(),
+                answer_budget,
+                model_cap,
+                session_held_mb,
+            );
             let mut opts = params.to_options();
             opts.max_seq_len = plan.ring_tokens;
             opts.max_new_tokens = plan.max_new;
@@ -636,15 +781,37 @@ async fn run_agent_loop(
             // Медиа-промпт идёт своим путём: prefill по готовым эмбеддингам
             // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
             // lookup / CUDA-graph) на нём не применяются.
-            let stream_res = if media_refs.is_empty() {
-                runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)
-            } else {
+            let mut reused = 0usize;
+            let stream_res = if !media_refs.is_empty() {
                 runner.generate_streaming_media(
                     &prompt_ids,
                     &model.tokenizer,
                     &media_refs,
                     on_token,
                 )
+            } else {
+                let session = if prefix_kv_on {
+                    ensure_kv_slot(
+                        &mut kv_slot,
+                        &model,
+                        &chat_id,
+                        plan.session_ctx,
+                        plan.max_new,
+                    )
+                } else {
+                    None
+                };
+                match session {
+                    Some(session) => runner
+                        .generate_streaming_cached(
+                            session,
+                            &prompt_ids,
+                            &model.tokenizer,
+                            on_token,
+                        )
+                        .map(|n| reused = n),
+                    None => runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token),
+                }
             };
 
             // Финальный flush — гарантированно сбрасываем хвост буферов.
@@ -706,14 +873,17 @@ async fn run_agent_loop(
                 0.0
             };
             let raw_calls = parser.finish();
+            reused_total = reused_total.max(reused as u32);
             log::info!(
-                "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), prefill {} ms, \
-                 tool_calls={}",
+                "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), prefill {} ms \
+                 (префикс-KV переиспользовал {} из {} ток промпта), tool_calls={}",
                 turn,
                 tokens_this_turn,
                 dt,
                 tok_per_s,
                 ttft_ms.unwrap_or(0),
+                reused,
+                prompt_ids.len(),
                 raw_calls.len()
             );
 
@@ -723,6 +893,7 @@ async fn run_agent_loop(
             let ctx_stat = ctx.clone();
             let stat = TurnStats {
                 prompt_tokens: prompt_ids.len() as u32,
+                reused_tokens: reused as u32,
                 gen_tokens: total_gen_tokens + tokens_this_turn,
                 prefill_ms: ttft_ms.unwrap_or(0),
                 turns: turn as u32 + 1,
@@ -980,12 +1151,20 @@ struct HistoryItem {
     attachments: Vec<MsgAttachment>,
 }
 
+impl HistoryItem {
+    fn has_media(&self) -> bool {
+        !self.attachments.is_empty()
+    }
+}
+
 /// Снимок возможностей модели и окружения по части вложений. Читает
 /// сигналы, поэтому вызывается только с main thread.
 fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
     let max = app.syn_chat_max_image_tokens.get_untracked();
     MediaCaps {
-        vision: model.model.supports_media(),
+        // Кэш, а не Llm::supports_media(): функция зовётся с main thread, а
+        // мьютекс пайплайна занят на всё время идущей генерации.
+        vision: model.supports_media,
         vision_error: None,
         max_image_tokens: (max > 0).then_some(max),
         asr: Some(app.audio.asr.clone()),

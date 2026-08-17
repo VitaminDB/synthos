@@ -104,6 +104,8 @@ pub struct SynChatCtx {
     pub ctx_budget_tokens: RwSignal<u32>,
     /// Свободная VRAM после хода, МБ.
     pub last_vram_free_mb: RwSignal<u32>,
+    /// Сколько токенов промпта взято из префикс-KV (не считалось заново).
+    pub last_reused_tokens: RwSignal<u32>,
 }
 
 impl SynChatCtx {
@@ -147,6 +149,7 @@ impl SynChatCtx {
             last_turns: use_signal(0),
             ctx_budget_tokens: use_signal(0),
             last_vram_free_mb: use_signal(0),
+            last_reused_tokens: use_signal(0),
         }
     }
 

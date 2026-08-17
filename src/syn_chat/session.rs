@@ -25,7 +25,7 @@
 //! сбрасывает их в сигналы раз в ~16 мс (или при detected stop). Без этого
 //! при 50 tok/s × ~3 char/token = ~150 update/s main thread задушивается.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -59,15 +59,35 @@ pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// решить многошаговую задачу» и «не сжечь весь контекст».
 const MAX_AGENT_TURNS: usize = 16;
 
-/// Сколько VRAM планировщик ринга НЕ отдаёт под KV.
+/// Запас VRAM, который планировщик ринга НЕ отдаёт под KV, пока кэши ядер не
+/// прогреты.
 ///
-/// Префилл держит в пуле активаций ~0.8 ГБ при чанке 256 — и это не зависит
-/// от длины промпта (пул активаций в synaptix отделён от пула весов, поэтому
-/// его резервация выходит на плато с первого чанка). Плюс на первом forward'е
-/// модель лениво собирает кэши ядер: у nvfp4 это shuffled-копии весов, ~2 ГБ.
-/// Меньше трёх гигабайт запаса оставлять нельзя — ринг займёт память, которая
-/// понадобится первому же прогону, и OOM случится уже на префилле.
-const KV_RESERVE_MB: usize = 3072;
+/// На первом forward'е модель лениво собирает их сама: у nvfp4 это
+/// shuffled-копии весов, ≈1.1 ГБ. Плюс активации префилла — ≈0.15…0.8 ГБ при
+/// чанке 256 (от длины промпта они не зависят: пул активаций в synaptix
+/// отделён от пула весов и выходит на плато с первого чанка).
+const KV_RESERVE_COLD_MB: usize = 3072;
+/// То же после первой удачной генерации: кэши ядер уже стоят, и держать под них
+/// запас — значит отнимать у контекста десятки тысяч токенов (при MXFP8-KV
+/// гигабайт запаса ≈ 30k токенов).
+const KV_RESERVE_WARM_MB: usize = 1280;
+
+/// Прогреты ли ленивые кэши ядер текущей модели (см. [`KV_RESERVE_COLD_MB`]).
+static KERNEL_CACHES_WARM: AtomicBool = AtomicBool::new(false);
+
+fn kv_reserve_mb() -> usize {
+    if KERNEL_CACHES_WARM.load(Ordering::Relaxed) {
+        KV_RESERVE_WARM_MB
+    } else {
+        KV_RESERVE_COLD_MB
+    }
+}
+
+/// Сбросить признак прогретости — при загрузке/выгрузке модели кэши ядер
+/// собираются заново (`release_device_caches` их и чистит).
+pub fn reset_kernel_cache_warm() {
+    KERNEL_CACHES_WARM.store(false, Ordering::Relaxed);
+}
 /// На сколько токенов ответа планируется ринг, если слайдер `max_new_tokens`
 /// стоит выше. Ринг живёт ровно один ход; планировать его на 130k «про запас»
 /// значит впустую занять гигабайты (у гибрида 27B это 64 КБ на токен). 8k
@@ -109,7 +129,7 @@ impl RingPlan {
         let kv_per_token = model.model.kv_bytes_per_token();
         let vram_available_mb = crate::syn_chat::model_registry::vram_available_mb();
         let by_mem = if kv_per_token > 0 {
-            let budget = vram_available_mb.saturating_sub(KV_RESERVE_MB) * 1024 * 1024;
+            let budget = vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024;
             budget / kv_per_token
         } else {
             cap
@@ -678,6 +698,7 @@ async fn run_agent_loop(
                 return Err(e.into());
             }
 
+            KERNEL_CACHES_WARM.store(true, Ordering::Relaxed);
             let dt = t_turn.elapsed();
             let tok_per_s = if dt.as_secs_f64() > 0.0 {
                 tokens_this_turn as f64 / dt.as_secs_f64()

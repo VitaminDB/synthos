@@ -116,6 +116,7 @@ impl SynModelRegistry {
         }
 
         let registry = *self;
+        crate::syn_chat::session::reset_kernel_cache_warm();
         registry.loading.set(true);
         registry.error.set(None);
         // Эмбеддинги вложений привязаны к vision-башне прежней модели —
@@ -145,14 +146,14 @@ impl SynModelRegistry {
                     // обманывает на размер активаций префилла.
                     let kv_per_token = model.kv_bytes_per_token();
                     let ctx_ceiling = if kv_per_token > 0 {
-                        (vram_available_mb().saturating_sub(3072) * 1024 * 1024) / kv_per_token
+                        (vram_available_mb().saturating_sub(1280) * 1024 * 1024) / kv_per_token
                     } else {
                         model.config().max_seq_len
                     };
                     log::info!(
                         "[syn_chat] модель загружена за {:?}, vocab={}, max_seq_len={}; \
                          VRAM: веса {} MB, свободно {} MB; KV {} B/ток → контекст по \
-                         памяти ≈{} ток (cap модели {})",
+                         памяти ≈{} ток после прогрева кэшей ядер (cap модели {})",
                         t0.elapsed(),
                         model.vocab_size(),
                         model.config().max_seq_len,
@@ -182,6 +183,7 @@ impl SynModelRegistry {
     }
 
     pub fn unload(&self) {
+        crate::syn_chat::session::reset_kernel_cache_warm();
         crate::syn_chat::attach::media_cache::clear();
         let held = self.current.get_untracked();
         let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);

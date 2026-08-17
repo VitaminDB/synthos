@@ -82,12 +82,31 @@ static KV_SLOT: std::sync::Mutex<Option<KvSlot>> = std::sync::Mutex::new(None);
 
 /// Забыть посчитанный контекст (смена/выгрузка модели, переключение чата,
 /// освобождение VRAM под vision-башню).
+///
+/// Зовётся с main thread, поэтому блокироваться нельзя: слот держит worker на
+/// всё время хода, а ждать его — это подвесить окно на минуты. Если занято,
+/// освобождение уходит в отдельный поток и случится сразу по окончании хода.
 pub fn drop_kv_session() {
-    let mut g = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_some() {
-        log::info!("[syn_chat] префикс-KV: кэш диалога освобождён");
+    match KV_SLOT.try_lock() {
+        Ok(mut g) => {
+            if g.is_some() {
+                log::info!("[syn_chat] префикс-KV: кэш диалога освобождён");
+            }
+            *g = None;
+        }
+        Err(std::sync::TryLockError::Poisoned(e)) => {
+            *e.into_inner() = None;
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {
+            // Занят генерацией: ждать здесь нельзя, поэтому освобождаем в
+            // отдельном потоке — он проснётся, как только ход закончится.
+            std::thread::spawn(|| {
+                let mut g = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
+                *g = None;
+                log::info!("[syn_chat] префикс-KV: кэш диалога освобождён после хода");
+            });
+        }
     }
-    *g = None;
 }
 
 /// Взять сессию под этот чат/модель, создав или пересоздав при необходимости.

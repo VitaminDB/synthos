@@ -512,14 +512,26 @@ fn stats_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Syn
         let gen_t = ctx.last_gen_tokens.get();
         let prefill_ms = ctx.last_prefill_ms.get();
         let tps = ctx.last_decode_tps.get();
+        let turns = ctx.last_turns.get();
+        let ring_tokens = ctx.last_ring_tokens.get();
+        let ring_mb = ctx.kv_cache_bytes.get() / (1024 * 1024);
+        let ctx_budget = ctx.ctx_budget_tokens.get();
+        let vram_free = ctx.last_vram_free_mb.get();
 
         DecoratedBox::new().class("details-card").child(mgui! {
             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 section_title("Последняя генерация"),
+                // prompt_tokens — промпт ПОСЛЕДНЕГО хода agent-loop'а: после
+                // tool-вызовов он в разы больше первого, и именно он определяет
+                // размер KV-ринга.
                 metric_row("prompt_tokens", prompt_t.to_string()),
                 metric_row("gen_tokens", gen_t.to_string()),
                 metric_row("prefill_ms", prefill_ms.to_string()),
                 metric_row("decode_tps", format!("{tps:.1}")),
+                metric_row("ходов agent-loop", turns.to_string()),
+                metric_row("KV-ринг", format!("{ring_tokens} ток / {ring_mb} MB")),
+                metric_row("контекст по VRAM", format!("{ctx_budget} ток")),
+                metric_row("VRAM свободно", format!("{vram_free} MB")),
             ]
         })
     }

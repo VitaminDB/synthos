@@ -59,6 +59,126 @@ pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// решить многошаговую задачу» и «не сжечь весь контекст».
 const MAX_AGENT_TURNS: usize = 16;
 
+/// Сколько VRAM планировщик ринга НЕ отдаёт под KV.
+///
+/// Префилл держит в пуле активаций ~0.8 ГБ при чанке 256 — и это не зависит
+/// от длины промпта (пул активаций в synaptix отделён от пула весов, поэтому
+/// его резервация выходит на плато с первого чанка). Плюс на первом forward'е
+/// модель лениво собирает кэши ядер: у nvfp4 это shuffled-копии весов, ~2 ГБ.
+/// Меньше трёх гигабайт запаса оставлять нельзя — ринг займёт память, которая
+/// понадобится первому же прогону, и OOM случится уже на префилле.
+const KV_RESERVE_MB: usize = 3072;
+/// На сколько токенов ответа планируется ринг, если слайдер `max_new_tokens`
+/// стоит выше. Ринг живёт ровно один ход; планировать его на 130k «про запас»
+/// значит впустую занять гигабайты (у гибрида 27B это 64 КБ на токен). 8k
+/// токенов ответа — это ~6k слов, для чата с запасом.
+const RING_ANSWER_TOKENS: usize = 8192;
+/// Гранулярность длины ринга. Промпт растёт от хода к ходу, и ринг «в притык»
+/// каждый раз просил бы блоки чуть большего размера — освободившиеся от
+/// прошлого ринга пул отдать под них не может. Кратность 4096 делает ринг
+/// одинаковым на серии ходов, и блоки переиспользуются.
+const RING_GRANULARITY: usize = 4096;
+/// Сколько раз пересобирать ход с меньшим рингом после OOM.
+const MAX_OOM_RETRIES: usize = 3;
+/// Бюджет ответа, ниже которого ретраить уже нечем.
+const MIN_ANSWER_TOKENS: usize = 512;
+
+/// Расчёт KV-ринга на один ход: сколько токенов сажаем в кэш и сколько из них
+/// остаётся под ответ.
+struct RingPlan {
+    prompt_tokens: usize,
+    ring_tokens: usize,
+    max_new: usize,
+    /// Сколько токенов контекста вообще влезает в свободную VRAM.
+    by_mem: usize,
+    cap: usize,
+    kv_per_token: usize,
+    vram_available_mb: usize,
+    /// Промпт не влезает в ринг — движок обрежет контекст.
+    truncated_prompt: bool,
+}
+
+impl RingPlan {
+    fn new(
+        model: &LoadedSynModel,
+        prompt_tokens: usize,
+        answer_tokens: usize,
+        model_cap: usize,
+    ) -> Self {
+        let cap = model_cap.saturating_sub(1);
+        let kv_per_token = model.model.kv_bytes_per_token();
+        let vram_available_mb = crate::syn_chat::model_registry::vram_available_mb();
+        let by_mem = if kv_per_token > 0 {
+            let budget = vram_available_mb.saturating_sub(KV_RESERVE_MB) * 1024 * 1024;
+            budget / kv_per_token
+        } else {
+            cap
+        };
+        // Даже когда бюджет ушёл в ноль (оценка пессимистична сразу после
+        // загрузки, пока пулы не прогрелись), пробуем посадить хотя бы промпт
+        // с коротким ответом: не выйдет — ретрай по OOM отработает честно,
+        // а гарантированно провальный ринг на 1024 токена не помогает никому.
+        let floor = prompt_tokens.min(cap) + MIN_ANSWER_TOKENS;
+        let hard_cap = cap.min(by_mem.max(floor));
+        let want = prompt_tokens.min(cap) + answer_tokens + 128;
+        let ring_tokens = want.div_ceil(RING_GRANULARITY) * RING_GRANULARITY;
+        let ring_tokens = ring_tokens.min(hard_cap).max(1);
+        let prompt_capped = prompt_tokens.min(ring_tokens.saturating_sub(1));
+        let max_new = ring_tokens.saturating_sub(prompt_capped + 128).max(1);
+        Self {
+            prompt_tokens,
+            ring_tokens,
+            max_new,
+            by_mem,
+            cap,
+            kv_per_token,
+            vram_available_mb,
+            truncated_prompt: prompt_tokens + 1 > ring_tokens,
+        }
+    }
+
+    fn ring_bytes(&self) -> u64 {
+        (self.ring_tokens as u64) * (self.kv_per_token as u64)
+    }
+
+    fn ring_mb(&self) -> u64 {
+        self.ring_bytes() / (1024 * 1024)
+    }
+}
+
+/// Метрики хода для таба «Детали». Собираются в worker-потоке и одним
+/// пакетом переливаются в сигналы на main thread.
+struct TurnStats {
+    prompt_tokens: u32,
+    gen_tokens: u32,
+    prefill_ms: u32,
+    turns: u32,
+    ring_tokens: u32,
+    ring_bytes: u64,
+    ctx_budget: u32,
+    vram_free_mb: u32,
+}
+
+impl TurnStats {
+    fn apply(&self, ctx: &SynChatCtx) {
+        ctx.last_prompt_tokens.set_always(self.prompt_tokens);
+        ctx.last_gen_tokens.set_always(self.gen_tokens);
+        ctx.last_prefill_ms.set_always(self.prefill_ms);
+        ctx.last_turns.set_always(self.turns);
+        ctx.last_ring_tokens.set_always(self.ring_tokens);
+        ctx.kv_cache_bytes.set_always(self.ring_bytes);
+        ctx.ctx_budget_tokens.set_always(self.ctx_budget);
+        ctx.last_vram_free_mb.set_always(self.vram_free_mb);
+    }
+}
+
+/// Ошибка — это исчерпание VRAM? Драйвер отдаёт `CUDA_ERROR_OUT_OF_MEMORY`,
+/// наши аллокаторы добавляют свои формулировки («after trim+retries: OOM»).
+fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
+    let s = e.to_string();
+    s.contains("OUT_OF_MEMORY") || s.contains("out of memory") || s.contains(": OOM")
+}
+
 /// Отправляет сообщение от пользователя и запускает генерацию ответа.
 /// Вызывается с main thread (использует use_context).
 pub fn send_message(text: String) {
@@ -385,179 +505,217 @@ async fn run_agent_loop(
             tool_schemas.len()
         );
 
-        const KV_RESERVE_MB: usize = 2048;
-        let prefill_start = Instant::now();
-        let mut opts = params.to_options();
-        let usable_cap = model_cap.saturating_sub(1);
-        let prompt_capped = prompt_ids.len().min(usable_cap);
-        let headroom = usable_cap.saturating_sub(prompt_capped);
-        if opts.max_new_tokens > headroom {
-            opts.max_new_tokens = headroom.max(1);
-        }
-        let realistic = prompt_capped + opts.max_new_tokens + 128;
-        // Бюджет ринга считаем по доступной памяти, а не по «свободной»:
-        // свободные блоки пула драйвер не показывает, но ринг садится
-        // именно в них (см. `vram_available_mb`).
-        let vram_pre_kv = crate::syn_chat::model_registry::vram_available_mb();
-        let kv_per_token = model.model.kv_bytes_per_token();
-        let ring_by_mem = if kv_per_token > 0 {
-            let budget = vram_pre_kv.saturating_sub(KV_RESERVE_MB) * 1024 * 1024;
-            (budget / kv_per_token).max(prompt_capped + 256)
-        } else {
-            usable_cap
-        };
-        opts.max_seq_len = realistic.min(usable_cap).min(ring_by_mem);
-        if opts.max_seq_len < prompt_capped + opts.max_new_tokens + 128 {
-            opts.max_new_tokens = opts
-                .max_seq_len
-                .saturating_sub(prompt_capped + 128)
-                .max(1);
-        }
-        let ring_len = opts.max_seq_len;
-        let ring_max_new = opts.max_new_tokens;
-        let mut runner = LlmGeneration::new(&model.model, opts);
-        let vram_post_kv = crate::syn_chat::model_registry::vram_available_mb();
-        log::info!(
-            "[syn_chat] KV-ring: max_seq_len={ring_len} (prompt={prompt_capped} + \
-             max_new={ring_max_new} + 128, cap={usable_cap}, по памяти={ring_by_mem}, \
-             {kv_per_token} B/ток); VRAM: KV {} MB, доступно {vram_post_kv} MB \
-             (свободно по драйверу {} MB)",
-            vram_pre_kv.saturating_sub(vram_post_kv),
-            crate::syn_chat::model_registry::vram_free_mb()
-        );
-        let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
-        if channel_mode {
-            // Канальный протокол завершает ход `<|eot|>`, а он уже в eos_ids
-            // бандла — своих стопов добавлять не нужно (и `<|im_end|>` в
-            // этом словаре всё равно нет).
-            runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
-        } else {
-            set_qwen3_stops(&mut runner, &model.tokenizer);
-        }
-        // На случай если парсер callback'а не успеет отработать перед
-        // следующей итерацией — добавим явный text-level stop на закрытии
-        // tool-call (encoder в LlmGeneration сравнивает накопленный
-        // decoded-text).
-        if !tool_schemas.is_empty() {
-            runner.add_stop_sequence(if channel_mode { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
-        }
-
-        // Только для первого turn'а отчитываем prefill_ms; в следующих
-        // итерациях время уйдёт почти полностью в prefill заново
-        // построенного prompt'а с tool-result'ами.
-        let prefill_ms = prefill_start.elapsed().as_millis() as u32;
-        if turn == 0 {
-            let prompt_tokens = prompt_ids.len() as u32;
-            let ctx_stat = ctx.clone();
-            run_on_main_thread(move || {
-                ctx_stat.last_prompt_tokens.set_always(prompt_tokens);
-                ctx_stat.last_prefill_ms.set_always(prefill_ms);
-            });
-        }
-
-        // Разбор потока — по протоколу модели (ChatML или канальный).
-        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
-        // Полный текст ответа модели за этот turn — нужен для канонического
-        // assistant-msg в history (с `<tool_call>` тегами как-есть). В
-        // канальном режиме сырой текст непригоден: в нём заголовки каналов
-        // (` to=user`), поэтому там историю собираем из разобранного тела.
-        let mut raw_text: String = String::new();
-        let mut clean_text: String = String::new();
-        let mut buf_body = String::new();
-        let mut buf_think = String::new();
-        let mut last_flush = Instant::now();
-        let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
-        let mut tokens_this_turn: u32 = 0;
-
-        let t_turn = Instant::now();
-        let abort_for_cb = abort.clone();
-        let ctx_for_cb = ctx.clone();
-        let on_token = |id: u32, delta: &str| {
-            // Abort: сбросить накопленные буферы и выйти.
-            if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
-                flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, None);
-                return false;
-            }
-            raw_text.push_str(delta);
-            tokens_this_turn += 1;
-
-            let (body, thinking) = parser.feed(id, delta);
-            clean_text.push_str(&body);
-            buf_body.push_str(&body);
-            buf_think.push_str(&thinking);
-
-            // Throttled flush в UI.
-            let now = Instant::now();
-            if now.duration_since(last_flush) >= flush_interval {
-                last_flush = now;
-                flush_streaming(
-                    &ctx_for_cb,
-                    &mut buf_body,
-                    &mut buf_think,
-                    Some(tokens_this_turn),
+        // ── План KV-ринга и запуск с ретраем по OOM.
+        let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
+        let mut oom_attempt = 0usize;
+        let turn_result = loop {
+            let plan = RingPlan::new(&model, prompt_ids.len(), answer_budget, model_cap);
+            let mut opts = params.to_options();
+            opts.max_seq_len = plan.ring_tokens;
+            opts.max_new_tokens = plan.max_new;
+            log::info!(
+                "[syn_chat] KV-ринг: {} ток ({} MB) = промпт {} + ответ {} + 128; \
+                 по VRAM влезает {} ток, cap модели {}, {} B/ток; VRAM доступно {} MB \
+                 (свободно по драйверу {} MB)",
+                plan.ring_tokens,
+                plan.ring_mb(),
+                plan.prompt_tokens,
+                plan.max_new,
+                plan.by_mem,
+                plan.cap,
+                plan.kv_per_token,
+                plan.vram_available_mb,
+                crate::syn_chat::model_registry::vram_free_mb()
+            );
+            if plan.truncated_prompt {
+                log::warn!(
+                    "[syn_chat] промпт {} ток не влезает в ринг {} — история будет \
+                     обрезана движком; сожмите чат или уменьшите max_new_tokens",
+                    prompt_ids.len(),
+                    plan.ring_tokens
                 );
             }
-
-            // Если парсер уже зафиксировал tool_call — останавливаемся,
-            // не дожидаясь, пока модель уйдёт писать прозу после блока.
-            // (Stop-sequence на закрытии блока дублирует эту защиту, но
-            // text-level stop срабатывает только когда decoded-tail совпадает,
-            // что зависит от tokenizer-decode таймингов.)
-            if parser.tool_call_ready() {
-                return false;
+            let mut runner = LlmGeneration::new(&model.model, opts);
+            let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
+            if channel_mode {
+                // Канальный протокол завершает ход `<|eot|>`, а он уже в eos_ids
+                // бандла — своих стопов добавлять не нужно (и `<|im_end|>` в
+                // этом словаре всё равно нет).
+                runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
+            } else {
+                set_qwen3_stops(&mut runner, &model.tokenizer);
             }
-            true
+            // На случай если парсер callback'а не успеет отработать перед
+            // следующей итерацией — добавим явный text-level stop на закрытии
+            // tool-call (encoder в LlmGeneration сравнивает накопленный
+            // decoded-text).
+            if !tool_schemas.is_empty() {
+                runner.add_stop_sequence(if channel_mode { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
+            }
+
+            // Разбор потока — по протоколу модели (ChatML или канальный).
+            let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
+            // Полный текст ответа модели за этот turn — нужен для канонического
+            // assistant-msg в history (с `<tool_call>` тегами как-есть). В
+            // канальном режиме сырой текст непригоден: в нём заголовки каналов
+            // (` to=user`), поэтому там историю собираем из разобранного тела.
+            let mut raw_text: String = String::new();
+            let mut clean_text: String = String::new();
+            let mut buf_body = String::new();
+            let mut buf_think = String::new();
+            let mut last_flush = Instant::now();
+            let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
+            let mut tokens_this_turn: u32 = 0;
+            // Честный prefill: время до ПЕРВОГО токена. Прежний замер стоял до
+            // старта генерации и показывал в панели 0 — время планирования ринга.
+            let mut ttft_ms: Option<u32> = None;
+
+            let t_turn = Instant::now();
+            let abort_for_cb = abort.clone();
+            let ctx_for_cb = ctx.clone();
+            let on_token = |id: u32, delta: &str| {
+                // Abort: сбросить накопленные буферы и выйти.
+                if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
+                    flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, None);
+                    return false;
+                }
+                if ttft_ms.is_none() {
+                    ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
+                }
+                raw_text.push_str(delta);
+                tokens_this_turn += 1;
+
+                let (body, thinking) = parser.feed(id, delta);
+                clean_text.push_str(&body);
+                buf_body.push_str(&body);
+                buf_think.push_str(&thinking);
+
+                // Throttled flush в UI.
+                let now = Instant::now();
+                if now.duration_since(last_flush) >= flush_interval {
+                    last_flush = now;
+                    flush_streaming(
+                        &ctx_for_cb,
+                        &mut buf_body,
+                        &mut buf_think,
+                        Some(tokens_this_turn),
+                    );
+                }
+
+                // Если парсер уже зафиксировал tool_call — останавливаемся,
+                // не дожидаясь, пока модель уйдёт писать прозу после блока.
+                // (Stop-sequence на закрытии блока дублирует эту защиту, но
+                // text-level stop срабатывает только когда decoded-tail совпадает,
+                // что зависит от tokenizer-decode таймингов.)
+                if parser.tool_call_ready() {
+                    return false;
+                }
+                true
+            };
+
+            // Медиа-промпт идёт своим путём: prefill по готовым эмбеддингам
+            // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
+            // lookup / CUDA-graph) на нём не применяются.
+            let stream_res = if media_refs.is_empty() {
+                runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)
+            } else {
+                runner.generate_streaming_media(
+                    &prompt_ids,
+                    &model.tokenizer,
+                    &media_refs,
+                    on_token,
+                )
+            };
+
+            // Финальный flush — гарантированно сбрасываем хвост буферов.
+            flush_streaming(&ctx, &mut buf_body, &mut buf_think, Some(tokens_this_turn));
+
+            let channel_mode = parser.is_channel();
+
+            // Явно освобождаем runner + возвращаем VRAM. cudaMallocAsync держит
+            // освобождённые chunks в pool с release threshold ≥ 2 GB по
+            // умолчанию — после Drop KV-ring (4 GB на 32K) память остаётся в
+            // pool и не возвращается ОС, что вызывает OOM на следующем turn'е
+            // при alloc нового ring. Одного трима мало: сегменты пула держат
+            // мёртвые записи кэша TMA-дескрипторов (ключ — адрес тензора), и
+            // за ход так утекает больше гигабайта — см. `reclaim_vram`.
+            drop(runner);
+            let (freed, descs) =
+                crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+            let vram_after = crate::syn_chat::model_registry::vram_available_mb();
+            log::info!(
+                "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), VRAM \
+                 доступно {vram_after} MB (свободно по драйверу {} MB)",
+                crate::syn_chat::model_registry::vram_free_mb()
+            );
+
+            if let Err(e) = stream_res {
+                let oom = is_oom_error(&e);
+                let retryable = oom
+                    && tokens_this_turn == 0
+                    && oom_attempt < MAX_OOM_RETRIES
+                    && answer_budget > MIN_ANSWER_TOKENS;
+                if retryable {
+                    oom_attempt += 1;
+                    answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
+                    log::warn!(
+                        "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{} \
+                         с бюджетом ответа {} ток",
+                        plan.ring_tokens,
+                        plan.ring_mb(),
+                        MAX_OOM_RETRIES,
+                        oom_attempt,
+                        answer_budget
+                    );
+                    let ctx_clear = ctx.clone();
+                    run_on_main_thread(move || {
+                        ctx_clear.streaming_body.set(String::new());
+                        ctx_clear.streaming_thinking.set(String::new());
+                    });
+                    continue;
+                }
+                log::error!("[syn_chat] генерация оборвалась: {e:#}");
+                return Err(e.into());
+            }
+
+            let dt = t_turn.elapsed();
+            let tok_per_s = if dt.as_secs_f64() > 0.0 {
+                tokens_this_turn as f64 / dt.as_secs_f64()
+            } else {
+                0.0
+            };
+            let raw_calls = parser.finish();
+            log::info!(
+                "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), prefill {} ms, \
+                 tool_calls={}",
+                turn,
+                tokens_this_turn,
+                dt,
+                tok_per_s,
+                ttft_ms.unwrap_or(0),
+                raw_calls.len()
+            );
+
+            // Статистика панели — по КАЖДОМУ ходу, а не только по первому:
+            // после tool-вызовов промпт вырастает в разы, и старое значение
+            // (промпт первого хода) выглядело как «токенов мало, а OOM».
+            let ctx_stat = ctx.clone();
+            let stat = TurnStats {
+                prompt_tokens: prompt_ids.len() as u32,
+                gen_tokens: total_gen_tokens + tokens_this_turn,
+                prefill_ms: ttft_ms.unwrap_or(0),
+                turns: turn as u32 + 1,
+                ring_tokens: plan.ring_tokens as u32,
+                ring_bytes: plan.ring_bytes(),
+                ctx_budget: plan.by_mem as u32,
+                vram_free_mb: vram_after as u32,
+            };
+            run_on_main_thread(move || stat.apply(&ctx_stat));
+
+            break (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode);
         };
+        let (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode) = turn_result;
 
-        // Медиа-промпт идёт своим путём: prefill по готовым эмбеддингам
-        // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
-        // lookup / CUDA-graph) на нём не применяются.
-        if media_refs.is_empty() {
-            runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)?;
-        } else {
-            runner.generate_streaming_media(
-                &prompt_ids,
-                &model.tokenizer,
-                &media_refs,
-                on_token,
-            )?;
-        }
-
-        // Финальный flush — гарантированно сбрасываем хвост буферов.
-        flush_streaming(&ctx, &mut buf_body, &mut buf_think, Some(tokens_this_turn));
-
-        let channel_mode = parser.is_channel();
-        let raw_calls = parser.finish();
-
-        // Явно освобождаем runner + возвращаем VRAM. cudaMallocAsync держит
-        // освобождённые chunks в pool с release threshold ≥ 2 GB по
-        // умолчанию — после Drop KV-ring (4 GB на 32K) память остаётся в
-        // pool и не возвращается ОС, что вызывает OOM на следующем turn'е
-        // при alloc нового ring. Одного трима мало: сегменты пула держат
-        // мёртвые записи кэша TMA-дескрипторов (ключ — адрес тензора), и
-        // за ход так утекает больше гигабайта — см. `reclaim_vram`.
-        drop(runner);
-        let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-        log::info!(
-            "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), VRAM \
-             доступно {} MB (свободно по драйверу {} MB)",
-            crate::syn_chat::model_registry::vram_available_mb(),
-            crate::syn_chat::model_registry::vram_free_mb()
-        );
-        let dt = t_turn.elapsed();
-        let tok_per_s = if dt.as_secs_f64() > 0.0 {
-            tokens_this_turn as f64 / dt.as_secs_f64()
-        } else {
-            0.0
-        };
-        log::info!(
-            "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), tool_calls={}",
-            turn,
-            tokens_this_turn,
-            dt,
-            tok_per_s,
-            raw_calls.len()
-        );
         total_gen_tokens += tokens_this_turn;
 
         // Если abort за стримом — выходим.

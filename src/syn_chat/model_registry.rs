@@ -31,6 +31,11 @@ pub fn vram_free_mb() -> usize {
 /// «свободно» значит после первого же ответа урезать себе контекст втрое на
 /// ровном месте: бюджет ринга схлопывается, `max_new_tokens` обрезается до
 /// сотни токенов, и ответ рвётся на полуслове.
+/// Ринг и активации живут в ОТДЕЛЬНОМ пуле (см.
+/// `synaptix_core::device::cuda::activations_pool`), поэтому его слабина —
+/// самая честная часть бюджета: она вся уйдёт под следующий ринг. Слабину
+/// default-пула (веса) и staging-пула (загрузка) тоже учитываем: пулы делят
+/// одну VRAM, и трим на OOM вернёт её драйверу.
 pub fn vram_available_mb() -> usize {
     let slack = |(reserved, used): (u64, u64)| {
         reserved.saturating_sub(used) as usize / (1024 * 1024)
@@ -38,10 +43,13 @@ pub fn vram_available_mb() -> usize {
     let default_pool = synaptix_core::memory::cuda_pool::cuda_mempool_stats(0)
         .map(slack)
         .unwrap_or(0);
-    let weights_pool = synaptix_core::device::cuda::weights_pool_stats(0)
+    let act_pool = synaptix_core::device::cuda::activations_pool_stats(0)
         .map(slack)
         .unwrap_or(0);
-    vram_free_mb() + default_pool + weights_pool
+    let staging_pool = synaptix_core::device::cuda::weights_pool_stats(0)
+        .map(slack)
+        .unwrap_or(0);
+    vram_free_mb() + default_pool + act_pool + staging_pool
 }
 
 /// Возвращает ОС всё, что держат кэши ядер и пул аллокатора. Отдаёт
@@ -131,14 +139,28 @@ impl SynModelRegistry {
                         log::info!("[syn_chat] trim после загрузки: +{freed} MB");
                     }
                     let vram_after = vram_free_mb();
+                    // Потолок контекста по памяти — то, что реально ограничивает
+                    // чат: KV-ринг живёт один ход и садится в свободную VRAM.
+                    // Запас (KV_RESERVE_MB в session.rs) вычитаем, иначе цифра
+                    // обманывает на размер активаций префилла.
+                    let kv_per_token = model.kv_bytes_per_token();
+                    let ctx_ceiling = if kv_per_token > 0 {
+                        (vram_available_mb().saturating_sub(3072) * 1024 * 1024) / kv_per_token
+                    } else {
+                        model.config().max_seq_len
+                    };
                     log::info!(
                         "[syn_chat] модель загружена за {:?}, vocab={}, max_seq_len={}; \
-                         VRAM: веса {} MB, свободно {} MB",
+                         VRAM: веса {} MB, свободно {} MB; KV {} B/ток → контекст по \
+                         памяти ≈{} ток (cap модели {})",
                         t0.elapsed(),
                         model.vocab_size(),
                         model.config().max_seq_len,
                         vram_before.saturating_sub(vram_after),
-                        vram_after
+                        vram_after,
+                        kv_per_token,
+                        ctx_ceiling,
+                        model.config().max_seq_len
                     );
                     let mut cfg = crate::config::AppConfig::load();
                     let new_path_str = path.display().to_string();
@@ -181,6 +203,9 @@ impl SynModelRegistry {
         let (wres, wused) = synaptix_core::device::cuda::weights_pool_stats(0)
             .map(mb)
             .unwrap_or((0, 0));
+        let (ares, aused) = synaptix_core::device::cuda::activations_pool_stats(0)
+            .map(mb)
+            .unwrap_or((0, 0));
         // Топ живых классов аллокаций — если после выгрузки пул всё ещё
         // держит сегменты, здесь видно, кто именно их пришпилил.
         let top: Vec<String> = synaptix_core::memory::cuda_pool::live_alloc_top(5)
@@ -190,7 +215,8 @@ impl SynModelRegistry {
         log::info!(
             "[syn_chat] выгрузка модели: ссылок было {strong}, кэши ядер: {descs} TMA-деск. \
              + {} MB скретчей, trim +{freed} MB, VRAM свободно {before} -> {after} MB; \
-             default-пул {dres}/{dused} MB, weights-пул {wres}/{wused} MB (reserved/used), \
+             default-пул {dres}/{dused} MB, staging-пул {wres}/{wused} MB, \
+             пул активаций {ares}/{aused} MB (reserved/used), \
              живых по нашему учёту {:.0} MB, топ: {}",
             scratch / (1024 * 1024),
             synaptix_core::memory::cuda_pool::cuda_allocated_mb(),

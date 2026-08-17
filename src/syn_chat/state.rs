@@ -94,7 +94,16 @@ pub struct SynChatCtx {
     pub last_gen_tokens: RwSignal<u32>,
     pub last_prefill_ms: RwSignal<u32>,
     pub last_decode_tps: RwSignal<f32>,
+    /// Размер KV-ринга последнего хода в байтах (см. `session::RingPlan`).
     pub kv_cache_bytes: RwSignal<u64>,
+    /// Он же в токенах.
+    pub last_ring_tokens: RwSignal<u32>,
+    /// Сколько ходов agent-loop сделал в последней генерации.
+    pub last_turns: RwSignal<u32>,
+    /// Сколько токенов контекста влезает в свободную VRAM (потолок ринга).
+    pub ctx_budget_tokens: RwSignal<u32>,
+    /// Свободная VRAM после хода, МБ.
+    pub last_vram_free_mb: RwSignal<u32>,
 }
 
 impl SynChatCtx {
@@ -134,6 +143,10 @@ impl SynChatCtx {
             last_prefill_ms: use_signal(0),
             last_decode_tps: use_signal(0.0),
             kv_cache_bytes: use_signal(0),
+            last_ring_tokens: use_signal(0),
+            last_turns: use_signal(0),
+            ctx_budget_tokens: use_signal(0),
+            last_vram_free_mb: use_signal(0),
         }
     }
 

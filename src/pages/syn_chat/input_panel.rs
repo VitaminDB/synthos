@@ -65,7 +65,7 @@ fn attach_button() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 's
         let vision = registry
             .current
             .get()
-            .map(|m| m.model.supports_media())
+            .map(|m| m.supports_media)
             .unwrap_or(false);
         let tooltip = if vision {
             "Прикрепить файлы (картинки, видео, документы)"

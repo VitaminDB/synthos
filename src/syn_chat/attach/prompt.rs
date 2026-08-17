@@ -135,29 +135,59 @@ fn encode_media(
 }
 
 /// Догружает vision-башню, если среди вложений есть картинки или видео.
-/// Возвращает `true`, если башня в памяти и кодирование возможно.
-pub fn ensure_tower(model: &Llm, needed: bool) -> bool {
-    if !needed || !model.supports_media() {
-        return false;
+///
+/// `Ok(())` — башня в памяти и кодирование возможно; `Err` — причина, по
+/// которой вложения придётся деградировать до текстовой строки (её показывает
+/// UI: без неё «модель не видит картинку» выглядит как молчаливый глюк).
+pub fn ensure_tower(model: &Llm, needed: bool) -> Result<(), String> {
+    if !needed {
+        return Err(String::new());
+    }
+    if !model.supports_media() {
+        return Err("модель без vision-башни".into());
     }
     if model.media_tower_loaded() {
-        return true;
+        return Ok(());
     }
     let t0 = std::time::Instant::now();
     match model.ensure_media_tower() {
         Ok(true) => {
             log::info!("[attach] vision-башня загружена за {:?}", t0.elapsed());
-            true
+            Ok(())
         }
         Ok(false) => {
             log::warn!("[attach] в бандле модели нет vision-башни");
-            false
+            Err("в бандле модели нет vision-башни".into())
         }
         Err(e) => {
             log::warn!("[attach] не удалось загрузить vision-башню: {e}");
-            false
+            // Загрузка падает на середине (обычно OOM после весов LLM), и
+            // уже поднятые слои остаются в пуле аллокатора. Без явной
+            // чистки они доживают до KV-ринга: тот сжимается до пары сотен
+            // токенов, и ответ обрывается на полуслове.
+            release_tower(model);
+            Err(short_reason(&e.to_string()))
         }
     }
+}
+
+/// Выгружает башню и возвращает её память ОС.
+pub fn release_tower(model: &Llm) {
+    model.release_media_tower();
+    if let synaptix_core::device::Device::Cuda(ordinal) = model.device() {
+        let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
+        log::info!("[attach] vision-башня выгружена, trim: +{freed} MB");
+    }
+}
+
+/// Сообщение движка о загрузке башни — длинная цепочка контекстов
+/// (`vision load: load: vision: … alloc_zeros(27525120) after trim+retries:
+/// OOM`). В UI из неё нужен только смысл.
+fn short_reason(err: &str) -> String {
+    if err.contains("OOM") || err.to_lowercase().contains("out of memory") {
+        return "не хватило видеопамяти под vision-башню".into();
+    }
+    err.rsplit(": ").next().unwrap_or(err).trim().to_string()
 }
 
 /// Строка-заглушка: модель узнаёт о файле, даже когда прочесть его не может.

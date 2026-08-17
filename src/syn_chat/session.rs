@@ -350,7 +350,7 @@ async fn run_agent_loop(
     // блоками-заполнителями и эмбеддинги дальше переиспользуются на каждом
     // turn'е. Vision-башня нужна только здесь — сразу после кодирования её
     // выгружаем, чтобы KV-ring получил свободную VRAM.
-    let (mut history, media) = prepare_history(&items, &model, &caps);
+    let (mut history, media) = prepare_history(&items, &model, &caps, &ctx);
     let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
     if !media.is_empty() {
         let tokens: usize = media.iter().map(|m| m.tokens).sum();
@@ -849,6 +849,7 @@ fn prepare_history(
     items: &[HistoryItem],
     model: &Arc<LoadedSynModel>,
     caps: &MediaCaps,
+    ctx: &SynChatCtx,
 ) -> (Vec<Message>, Vec<MediaEmbedding>) {
     let needs_vision = caps.vision
         && items.iter().any(|i| {
@@ -856,7 +857,16 @@ fn prepare_history(
                 .iter()
                 .any(|a| a.kind.has_thumbnail())
         });
-    let vision_ready = attach_prompt::ensure_tower(&model.model, needs_vision);
+    let tower = attach_prompt::ensure_tower(&model.model, needs_vision);
+    let vision_ready = tower.is_ok();
+    if let Err(reason) = &tower {
+        // Пустая причина — vision и не требовался (вложений нет).
+        if !reason.is_empty() {
+            let msg = format!("Картинка не передана модели: {reason}");
+            let ctx = ctx.clone();
+            run_on_main_thread(move || ctx.error.set(Some(msg)));
+        }
+    }
     let caps = MediaCaps { vision: vision_ready, ..caps.clone() };
 
     let mut out: Vec<Message> = Vec::with_capacity(items.len());
@@ -879,11 +889,7 @@ fn prepare_history(
         }
     }
     if vision_ready {
-        model.model.release_media_tower();
-        if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
-            let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
-            eprintln!("[syn_chat] vision-башня выгружена, trim: +{freed} MB");
-        }
+        attach_prompt::release_tower(&model.model);
     }
     (out, media)
 }

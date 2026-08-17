@@ -37,6 +37,9 @@ use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::session::{
+    RingPlan, MAX_OOM_RETRIES, MIN_ANSWER_TOKENS, RING_ANSWER_TOKENS,
+};
 use crate::syn_chat::state::{SynChatCtx, ThinkParser};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
@@ -330,6 +333,8 @@ async fn run_subagent_loop(
             &params,
             &snap.abort,
             snap.abort_baseline,
+            &id,
+            turn,
         )
         .map_err(|e| ToolError::BadArgs(format!("LLM error: {e:#}")))?;
 
@@ -424,6 +429,8 @@ fn generate_subagent_turn(
     params: &SamplingParams,
     abort: &Arc<AtomicU64>,
     abort_snapshot: u64,
+    id: &str,
+    turn: usize,
 ) -> anyhow::Result<SubagentTurn> {
     let prompt = model.tokenizer.apply_chat_template_ex_tools(
         history,
@@ -437,46 +444,95 @@ fn generate_subagent_turn(
     )?;
     let prompt_ids = model.tokenizer.encode(&prompt)?;
 
-    // KV-ring cap — та же математика, что в syn_chat::session::run_agent_loop.
+    // План KV-ринга — тот же, что у основного цикла (`RingPlan`), а не «cap
+    // модели минус промпт». Слайдер `max_new_tokens` стоит в конфиге на
+    // 131072: без `RING_ANSWER_TOKENS` ринг вырастал до ~132k токенов, что у
+    // гибрида 27B (33 КБ на токен) даёт 4+ ГБ VRAM под один ход субагента, а
+    // сам ход тянется до этих 131k токенов — часы генерации на один turn.
+    // Бюджет по доступной VRAM тут игнорировался полностью.
     let model_cap = model.model.config().max_seq_len;
-    let mut opts = params.to_options();
-    let usable_cap = model_cap.saturating_sub(1);
-    let prompt_capped = prompt_ids.len().min(usable_cap);
-    let headroom = usable_cap.saturating_sub(prompt_capped);
-    if opts.max_new_tokens > headroom {
-        opts.max_new_tokens = headroom.max(1);
-    }
-    opts.max_seq_len = (prompt_capped + opts.max_new_tokens + 128).min(usable_cap);
+    let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
+    let mut oom_attempt = 0usize;
 
-    let mut runner = LlmGeneration::new(&model.model, opts);
-    crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
-    if !tool_schemas.is_empty() {
-        runner.add_stop_sequence(crate::syn_chat::session::TOOL_CALL_CLOSE);
-    }
+    loop {
+        let plan = RingPlan::new(model, prompt_ids.len(), answer_budget, model_cap);
+        let mut opts = params.to_options();
+        opts.max_seq_len = plan.ring_tokens;
+        opts.max_new_tokens = plan.max_new;
+        tracing::info!(
+            target: "subagent",
+            id = %id,
+            turn,
+            ring_tokens = plan.ring_tokens,
+            ring_mb = plan.ring_mb(),
+            prompt_tokens = plan.prompt_tokens,
+            max_new = plan.max_new,
+            by_mem = plan.by_mem,
+            "KV-ринг"
+        );
 
-    let mut tool_parser = ToolCallParser::new();
-    let mut raw_text = String::new();
-    let abort_cb = abort.clone();
-    runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
-        if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
-            return false;
+        let mut runner = LlmGeneration::new(&model.model, opts);
+        crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
+        if !tool_schemas.is_empty() {
+            runner.add_stop_sequence(crate::syn_chat::session::TOOL_CALL_CLOSE);
         }
-        raw_text.push_str(delta);
-        let _ = tool_parser.feed(delta);
-        // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
-        // не дожидаясь, пока модель уйдёт писать прозу после блока.
-        if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
-            return false;
-        }
-        true
-    })?;
-    drop(runner);
-    if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
-        let _ = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
-    }
 
-    let (calls, _tail) = tool_parser.finish();
-    Ok(SubagentTurn { raw_text, calls })
+        let mut tool_parser = ToolCallParser::new();
+        let mut raw_text = String::new();
+        let mut tokens_this_turn = 0usize;
+        let abort_cb = abort.clone();
+        let stream_res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
+            if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
+                return false;
+            }
+            tokens_this_turn += 1;
+            raw_text.push_str(delta);
+            let _ = tool_parser.feed(delta);
+            // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
+            // не дожидаясь, пока модель уйдёт писать прозу после блока.
+            if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
+                return false;
+            }
+            true
+        });
+        drop(runner);
+        if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
+            let _ = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
+        }
+
+        if let Err(e) = stream_res {
+            // Тот же ретрай, что в основном цикле: ринг вдвое короче и заново.
+            let retryable = crate::syn_chat::session::is_oom_error(&e)
+                && tokens_this_turn == 0
+                && oom_attempt < MAX_OOM_RETRIES
+                && answer_budget > MIN_ANSWER_TOKENS;
+            if retryable {
+                oom_attempt += 1;
+                answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
+                tracing::warn!(
+                    target: "subagent",
+                    id = %id,
+                    turn,
+                    ring_tokens = plan.ring_tokens,
+                    attempt = oom_attempt,
+                    answer_budget,
+                    "OOM на ринге, повтор с меньшим бюджетом: {e}"
+                );
+                continue;
+            }
+            return Err(e.into());
+        }
+
+        tracing::debug!(
+            target: "subagent",
+            id = %id,
+            turn,
+            gen_tokens = tokens_this_turn,
+            "turn done"
+        );
+        let (calls, _tail) = tool_parser.finish();
+        return Ok(SubagentTurn { raw_text, calls });
+    }
 }
 
 /// Вырезает `<think>…</think>` из финального текста — родителю уходит только
@@ -526,6 +582,8 @@ async fn force_final_summary_turn(
         &params,
         &snap.abort,
         snap.abort_baseline,
+        id,
+        snap.max_turns,
     )
     .map_err(|e| ToolError::BadArgs(format!("LLM error (final summary): {e:#}")))?;
 

@@ -38,9 +38,9 @@ pub mod right_panel;
 pub mod tool_group;
 
 pub fn view() -> impl Widget {
-    // Lazy auto-load последней модели — выполняется один раз при первом
-    // открытии страницы. См. `syn_chat::model_registry::auto_load_attempted`.
-    crate::syn_chat::model_registry::ensure_auto_load_last_model();
+    // Авто-загрузки модели тут нет: открытие чата не должно занимать VRAM.
+    // Модель поднимает пользователь — кнопкой «Загрузить модель» (последний
+    // бандл из `AppConfig.last_syn_model`) или файловым диалогом.
 
     // Разделители читают своё положение из сигналов через `get_untracked`
     // (см. `SplitView::create_element`), а при drag пишут обратно — поэтому

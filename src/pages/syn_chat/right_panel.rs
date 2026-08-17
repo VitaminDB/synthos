@@ -120,12 +120,14 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 .unwrap_or_else(|| "—".to_string());
             (MI_CHECK, "Готово".to_string(), name, "model-status ready")
         } else {
-            (
-                MI_INFO,
-                "Модель не загружена".to_string(),
-                "Выберите .syn-bundle".to_string(),
-                "model-status idle",
-            )
+            // Путь помним, но модель не поднимаем — показываем, что именно
+            // поднимет кнопка «Загрузить модель».
+            let hint = reg
+                .last_path
+                .get()
+                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "Выберите .syn-bundle".to_string());
+            (MI_INFO, "Модель не загружена".to_string(), hint, "model-status idle")
         };
 
         // Бейдж мультимодальности: есть ли в бандле vision-башня. Отвечает
@@ -223,20 +225,36 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                 "right-pick-btn"
             });
 
-        let unload = Button::new("Выгрузить модель")
-            .leading_icon(MI_POWER_SETTINGS)
-            .disabled(!has_loaded || loading)
-            .on_click(|| {
-                let ctx = use_context::<SynChatCtx>();
-                // Если идёт генерация — сначала abort, чтобы worker
-                // увидел несовпадение счётчика и завершился, отпустив
-                // Arc<LoadedSynModel> и освободив VRAM.
-                if ctx.pending.get_untracked() {
-                    ctx.abort.fetch_add(1, Ordering::Relaxed);
-                }
-                use_context::<SynModelRegistry>().unload();
-            })
-            .class("right-unload-btn-full");
+        // Модель поднимается только руками (авто-загрузки при входе в чат
+        // нет), поэтому кнопка двойная: пока ничего не загружено — поднимает
+        // последний бандл, дальше — выгружает.
+        let toggle = if has_loaded {
+            Button::new("Выгрузить модель")
+                .leading_icon(MI_POWER_SETTINGS)
+                .disabled(loading)
+                .on_click(|| {
+                    let ctx = use_context::<SynChatCtx>();
+                    // Если идёт генерация — сначала abort, чтобы worker
+                    // увидел несовпадение счётчика и завершился, отпустив
+                    // Arc<LoadedSynModel> и освободив VRAM.
+                    if ctx.pending.get_untracked() {
+                        ctx.abort.fetch_add(1, Ordering::Relaxed);
+                    }
+                    use_context::<SynModelRegistry>().unload();
+                })
+                .class("right-unload-btn-full")
+        } else {
+            let last = reg.last_path.get();
+            Button::new("Загрузить модель")
+                .leading_icon(MI_POWER_SETTINGS)
+                .disabled(loading || last.is_none())
+                .on_click(move || {
+                    if let Some(p) = last.clone() {
+                        load_from_any_thread(p);
+                    }
+                })
+                .class("right-unload-btn-full")
+        };
 
         DecoratedBox::new()
             .child(mgui! {
@@ -244,7 +262,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                     Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                         DecoratedBox::new().class("grow").child(pick),
                     ],
-                    unload,
+                    toggle,
                 ]
             })
             .class("right-pick-row")

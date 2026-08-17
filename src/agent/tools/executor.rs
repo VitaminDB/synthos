@@ -81,8 +81,26 @@ pub fn normalize_args(raw: &str) -> String {
     }
 }
 
+/// Приводит имя вызова к ключу каталога.
+///
+/// Канальные шаблоны (Muse Glimmer) объявляют инструменты пространствами
+/// имён — `# Valid recipients: "self", "bash.*", "user"` — и модель иногда
+/// пишет квалифицированное имя (`bash.bash`, `web.web`). Ключи каталога
+/// плоские, поэтому неизвестное имя с точкой пробуем как хвост.
+fn canonical_tool_name(name: &str) -> &str {
+    const KEYS: [&str; 5] = [KEY_BASH, KEY_KB_SEARCH, KEY_WEB, KEY_AUTOSKILL, KEY_SUBAGENT];
+    if KEYS.contains(&name) {
+        return name;
+    }
+    match name.rsplit_once('.') {
+        Some((_, tail)) if KEYS.contains(&tail) => tail,
+        _ => name,
+    }
+}
+
 pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     let name = call.function.name.clone().unwrap_or_default();
+    let name = canonical_tool_name(&name).to_string();
     let raw_args = call.function.arguments.as_deref().unwrap_or("");
     let normalized = normalize_args(raw_args);
     let args = normalized.as_str();
@@ -179,6 +197,15 @@ fn truncate_output(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualified_tool_name_resolves_to_catalog_key() {
+        assert_eq!(canonical_tool_name("bash"), "bash");
+        assert_eq!(canonical_tool_name("bash.bash"), "bash");
+        assert_eq!(canonical_tool_name("tools.web"), "web");
+        // Незнакомое имя остаётся как есть — ошибку про него отдаст execute.
+        assert_eq!(canonical_tool_name("weather.today"), "weather.today");
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn bash_echo_ok() {

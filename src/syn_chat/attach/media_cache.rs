@@ -36,6 +36,15 @@ fn key_of(sha: &str, kind: MediaKind, max_tokens: Option<usize>) -> String {
     format!("{sha}:{k}:{}", max_tokens.unwrap_or(0))
 }
 
+/// Есть ли эмбеддинг в кэше. Дешевле [`get`]: не клонирует тензор.
+pub fn has(sha: &str, kind: MediaKind, max_tokens: Option<usize>) -> bool {
+    let key = key_of(sha, kind, max_tokens);
+    CACHE
+        .lock()
+        .map(|g| g.iter().any(|e| e.key == key))
+        .unwrap_or(false)
+}
+
 /// Достаёт эмбеддинг из кэша, если он там есть.
 pub fn get(sha: &str, kind: MediaKind, max_tokens: Option<usize>) -> Option<MediaEmbedding> {
     let key = key_of(sha, kind, max_tokens);

@@ -15,10 +15,29 @@ fn select_device() -> Device {
     Device::Cuda(0)
 }
 
-pub(crate) fn vram_free_mb() -> usize {
+pub fn vram_free_mb() -> usize {
     synaptix_core::device::cuda::mem_info(0)
         .map(|(free, _total)| free / (1024 * 1024))
         .unwrap_or(0)
+}
+
+/// Возвращает ОС всё, что держат кэши ядер и пул аллокатора. Отдаёт
+/// `(сколько MB освободилось, сколько записей выкинуто из кэша)`.
+///
+/// Порядок важен: TMA-дескрипторы кэшируются по АДРЕСУ тензора, поэтому
+/// после каждой генерации в кэше оседают мёртвые записи на адреса KV-ринга
+/// и активаций. Сами по себе они крошечные (128 Б), но живыми аллокациями
+/// рассыпаны по сегментам mempool'а и не дают триму вернуть драйверу
+/// зарезервированное — за пару ходов на 24 ГБ так утекает больше гигабайта,
+/// ровно той VRAM, которой потом не хватает vision-башне. Чистим ДО трима;
+/// дескрипторы восстанавливаются лениво на первом же вызове ядра.
+pub fn reclaim_vram(device: Device) -> (u64, usize) {
+    let Device::Cuda(ordinal) = device else {
+        return (0, 0);
+    };
+    let (descs, _scratch) = synaptix::facade::llm::cuda_release_kernel_caches();
+    let freed = synaptix::facade::llm::cuda_trim_pool(ordinal as i32);
+    (freed, descs)
 }
 
 fn ensure_kernels_registered() {

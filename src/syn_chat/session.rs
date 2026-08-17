@@ -354,7 +354,7 @@ async fn run_agent_loop(
     let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
     if !media.is_empty() {
         let tokens: usize = media.iter().map(|m| m.tokens).sum();
-        eprintln!(
+        log::info!(
             "[syn_chat] медиа-вложений: {} ({} vision-токенов)",
             media.len(),
             tokens
@@ -377,7 +377,7 @@ async fn run_agent_loop(
             },
         )?;
         let prompt_ids = model.tokenizer.encode(&prompt)?;
-        eprintln!(
+        log::info!(
             "[syn_chat] turn={} prompt={} chars / {} tokens, tools={}",
             turn,
             prompt.len(),
@@ -414,7 +414,7 @@ async fn run_agent_loop(
         let ring_max_new = opts.max_new_tokens;
         let mut runner = LlmGeneration::new(&model.model, opts);
         let vram_post_kv = crate::syn_chat::model_registry::vram_free_mb();
-        eprintln!(
+        log::info!(
             "[syn_chat] KV-ring: max_seq_len={ring_len} (prompt={prompt_capped} + \
              max_new={ring_max_new} + 128, cap={usable_cap}, по памяти={ring_by_mem}, \
              {kv_per_token} B/ток); VRAM: KV {} MB, свободно {vram_post_kv} MB",
@@ -524,24 +524,27 @@ async fn run_agent_loop(
         let channel_mode = parser.is_channel();
         let raw_calls = parser.finish();
 
-        // Явно освобождаем runner + trim mempool. cudaMallocAsync держит
+        // Явно освобождаем runner + возвращаем VRAM. cudaMallocAsync держит
         // освобождённые chunks в pool с release threshold ≥ 2 GB по
         // умолчанию — после Drop KV-ring (4 GB на 32K) память остаётся в
         // pool и не возвращается ОС, что вызывает OOM на следующем turn'е
-        // при alloc нового ring. Trim форсит возврат всей свободной
-        // памяти ОС → следующая итерация стартует с полным free VRAM.
+        // при alloc нового ring. Одного трима мало: сегменты пула держат
+        // мёртвые записи кэша TMA-дескрипторов (ключ — адрес тензора), и
+        // за ход так утекает больше гигабайта — см. `reclaim_vram`.
         drop(runner);
-        if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
-            let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
-            eprintln!("[syn_chat] trim mempool: +{freed} MB free");
-        }
+        let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+        log::info!(
+            "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), \
+             VRAM свободно {} MB",
+            crate::syn_chat::model_registry::vram_free_mb()
+        );
         let dt = t_turn.elapsed();
         let tok_per_s = if dt.as_secs_f64() > 0.0 {
             tokens_this_turn as f64 / dt.as_secs_f64()
         } else {
             0.0
         };
-        eprintln!(
+        log::info!(
             "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), tool_calls={}",
             turn,
             tokens_this_turn,
@@ -798,6 +801,7 @@ fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
     let max = app.syn_chat_max_image_tokens.get_untracked();
     MediaCaps {
         vision: model.model.supports_media(),
+        vision_error: None,
         max_image_tokens: (max > 0).then_some(max),
         asr: Some(app.audio.asr.clone()),
     }
@@ -851,23 +855,24 @@ fn prepare_history(
     caps: &MediaCaps,
     ctx: &SynChatCtx,
 ) -> (Vec<Message>, Vec<MediaEmbedding>) {
+    // Башня нужна только под новые вложения: всё, что уже посчитано, берётся
+    // из кэша эмбеддингов и переживает и регенерацию, и выгрузку башни.
     let needs_vision = caps.vision
-        && items.iter().any(|i| {
-            i.attachments
-                .iter()
-                .any(|a| a.kind.has_thumbnail())
-        });
+        && items
+            .iter()
+            .any(|i| attach_prompt::needs_tower(&i.attachments, caps));
     let tower = attach_prompt::ensure_tower(&model.model, needs_vision);
     let vision_ready = tower.is_ok();
-    if let Err(reason) = &tower {
-        // Пустая причина — vision и не требовался (вложений нет).
+    let mut caps = MediaCaps { vision: vision_ready, ..caps.clone() };
+    if let Err(reason) = tower {
+        // Пустая причина — vision и не требовался (новых вложений нет).
         if !reason.is_empty() {
-            let msg = format!("Картинка не передана модели: {reason}");
+            let msg = format!("Вложение не передано модели: {reason}");
             let ctx = ctx.clone();
             run_on_main_thread(move || ctx.error.set(Some(msg)));
+            caps.vision_error = Some(reason);
         }
     }
-    let caps = MediaCaps { vision: vision_ready, ..caps.clone() };
 
     let mut out: Vec<Message> = Vec::with_capacity(items.len());
     let mut media: Vec<MediaEmbedding> = Vec::new();

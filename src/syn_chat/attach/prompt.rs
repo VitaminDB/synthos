@@ -21,6 +21,7 @@ use synaptix::facade::asr::Transcriber;
 use synaptix::facade::llm::{Llm, MediaEmbedding, MediaKind};
 
 use crate::agent::state::{AttachmentKind, MsgAttachment};
+use crate::syn_chat::model_registry;
 
 use super::{blobs, format_duration, format_size, media_cache};
 
@@ -31,8 +32,14 @@ const DOC_INLINE_LIMIT: usize = 60_000;
 /// Что модель умеет принимать в этой сессии.
 #[derive(Clone)]
 pub struct MediaCaps {
-    /// Есть ли у загруженной модели vision-башня.
+    /// Можно ли кодировать картинки и видео прямо сейчас: у модели есть
+    /// vision-башня и она поднята. `false` — в промпт попадут только уже
+    /// посчитанные эмбеддинги из кэша, остальное деградирует в текст.
     pub vision: bool,
+    /// Почему кодирование недоступно (`None` — доступно). Причина уходит в
+    /// текстовую заглушку: «модель не видит картинку» без объяснения
+    /// выглядит как глюк.
+    pub vision_error: Option<String>,
     /// Потолок vision-токенов на картинку (`None` — как в конфиге модели).
     pub max_image_tokens: Option<usize>,
     /// ASR-модель для расшифровки аудио-вложений; `None` — не загружена.
@@ -63,7 +70,7 @@ pub fn prepare_user_message(
 
     for a in attachments {
         match a.kind {
-            AttachmentKind::Image | AttachmentKind::Video if caps.vision => {
+            AttachmentKind::Image | AttachmentKind::Video => {
                 match encode_media(a, model, caps) {
                     Ok(emb) => {
                         text.push_str(&emb.prompt_block);
@@ -75,9 +82,6 @@ pub fn prepare_user_message(
                         text.push_str(&fallback_line(a, Some(&e)));
                     }
                 }
-            }
-            AttachmentKind::Image | AttachmentKind::Video => {
-                text.push_str(&fallback_line(a, None));
             }
             AttachmentKind::Document => text.push_str(&document_block(a)),
             AttachmentKind::Audio => text.push_str(&audio_block(a, caps)),
@@ -94,25 +98,54 @@ pub fn prepare_user_message(
     PreparedMessage { text, media }
 }
 
+/// Ключ вложения в кэше эмбеддингов: модальность и потолок токенов.
+fn cache_key(a: &MsgAttachment, caps: &MediaCaps) -> (MediaKind, Option<usize>) {
+    match a.kind {
+        // У видео потолок токенов свой, из препроцессинга (число кадров ×
+        // токенов на кадр), и настройкой чата не режется.
+        AttachmentKind::Video => (MediaKind::Video, None),
+        _ => (MediaKind::Image, caps.max_image_tokens),
+    }
+}
+
+/// Есть ли среди вложений картинка или видео, которых ещё нет в кэше
+/// эмбеддингов, — то есть нужна ли для этого сообщения vision-башня.
+///
+/// Кэш переживает и turn'ы agent-loop, и регенерации: повторная отправка
+/// того же файла башню не требует. Проверка не косметическая — башня
+/// поднимается поверх весов LLM, и на 24 ГБ VRAM её загрузка ради нуля
+/// работы честно упирается в OOM, после которого вложение деградирует в
+/// текстовую заглушку, хотя эмбеддинги уже посчитаны.
+pub fn needs_tower(attachments: &[MsgAttachment], caps: &MediaCaps) -> bool {
+    attachments.iter().any(|a| {
+        if !a.kind.has_thumbnail() {
+            return false;
+        }
+        let (kind, limit) = cache_key(a, caps);
+        !media_cache::has(&a.sha256, kind, limit)
+    })
+}
+
 /// Кодирует картинку/видео vision-башней, переиспользуя кэш.
 ///
-/// Башню грузит вызывающий ([`ensure_tower`]) — здесь она уже должна быть
-/// в памяти, иначе `encode_*` вернёт ошибку.
+/// Кэш проверяется до башни: уже посчитанные эмбеддинги живут отдельными
+/// тензорами и не зависят от того, поднята башня сейчас или нет. Если
+/// кэша нет, а башни в памяти тоже ([`ensure_tower`] не смогла) — отдаём
+/// её причину, она уйдёт в текстовую заглушку.
 fn encode_media(
     a: &MsgAttachment,
     model: &Llm,
     caps: &MediaCaps,
 ) -> Result<MediaEmbedding, String> {
-    let kind = match a.kind {
-        AttachmentKind::Video => MediaKind::Video,
-        _ => MediaKind::Image,
-    };
-    let limit = match kind {
-        MediaKind::Image => caps.max_image_tokens,
-        MediaKind::Video => None,
-    };
+    let (kind, limit) = cache_key(a, caps);
     if let Some(hit) = media_cache::get(&a.sha256, kind, limit) {
         return Ok(hit);
+    }
+    if !caps.vision {
+        return Err(caps
+            .vision_error
+            .clone()
+            .unwrap_or_else(|| "модель без vision-башни".into()));
     }
     let path = blobs::model_path(a);
     if !path.exists() {
@@ -149,6 +182,16 @@ pub fn ensure_tower(model: &Llm, needed: bool) -> Result<(), String> {
     if model.media_tower_loaded() {
         return Ok(());
     }
+    // Башня (3.5 ГБ у 30B) ложится поверх весов LLM и помещается впритык,
+    // поэтому перед загрузкой выгребаем всё, что можно вернуть: после
+    // прошлых генераций в пуле сидят сегменты, пришпиленные мёртвыми
+    // записями кэша ядер.
+    let (freed, descs) = model_registry::reclaim_vram(*model.device());
+    let free_mb = model_registry::vram_free_mb();
+    log::info!(
+        "[attach] перед vision-башней: trim +{freed} MB ({descs} TMA-деск.), \
+         VRAM свободно {free_mb} MB"
+    );
     let t0 = std::time::Instant::now();
     match model.ensure_media_tower() {
         Ok(true) => {
@@ -174,10 +217,11 @@ pub fn ensure_tower(model: &Llm, needed: bool) -> Result<(), String> {
 /// Выгружает башню и возвращает её память ОС.
 pub fn release_tower(model: &Llm) {
     model.release_media_tower();
-    if let synaptix_core::device::Device::Cuda(ordinal) = model.device() {
-        let freed = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
-        log::info!("[attach] vision-башня выгружена, trim: +{freed} MB");
-    }
+    let (freed, _) = model_registry::reclaim_vram(*model.device());
+    log::info!(
+        "[attach] vision-башня выгружена, trim: +{freed} MB; VRAM свободно {} MB",
+        model_registry::vram_free_mb()
+    );
 }
 
 /// Сообщение движка о загрузке башни — длинная цепочка контекстов

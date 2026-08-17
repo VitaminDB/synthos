@@ -12,6 +12,13 @@
 //!
 //! Пример:
 //! `vision_smoke /run/media/storage/syn_models/muse-glimmer-30b.syn photo.png "Что на картинке?"`
+//!
+//! `VSMOKE_ROUNDS=N` повторяет круг «башня → кодирование → генерация» N раз
+//! на одной загруженной модели. Первый круг проходит на свежей VRAM и потому
+//! проходит всегда; ломается обычно второй — башню приходится поднимать
+//! поверх памяти, которую оставил после себя KV-ring прошлой генерации.
+//! `VSMOKE_KEEP_CACHE=1` оставляет кэш эмбеддингов живым между кругами
+//! (тогда второй круг — это регенерация ответа на то же вложение).
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -21,9 +28,11 @@ use synaptix::facade::llm::{
 };
 use synaptix_core::device::Device;
 
-use synthos::syn_chat::attach::prompt::{prepare_user_message, MediaCaps};
+use synthos::agent::state::MsgAttachment;
+use synthos::syn_chat::attach::prompt::{self as prompt, prepare_user_message, MediaCaps};
 use synthos::syn_chat::channel_parser::{ChannelIds, ChannelParser};
-use synthos::syn_chat::attach::{blobs, ingest};
+use synthos::syn_chat::attach::{blobs, ingest, media_cache};
+use synthos::syn_chat::model_registry::{reclaim_vram, vram_free_mb};
 
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -72,32 +81,76 @@ fn main() -> Result<(), String> {
         return Err("у модели нет vision_config — нечего проверять".into());
     }
 
-    // 3. Vision-башня + кодирование вложения.
-    let t0 = Instant::now();
-    if !model
-        .ensure_media_tower()
-        .map_err(|e| format!("vision tower: {e}"))?
-    {
-        return Err("в бандле нет тензоров vision-башни".into());
-    }
-    println!("vision-башня загружена за {:?}", t0.elapsed());
-
     let caps = MediaCaps {
         vision: true,
+        vision_error: None,
         max_image_tokens: (max_image_tokens > 0).then_some(max_image_tokens),
         asr: None,
     };
+    // Тот же дефолт, что и в приложении (`AppConfig.qwen36_prefill_chunk`).
+    synaptix::facade::llm::set_prefill_chunk_size(256);
+
+    let rounds: usize = std::env::var("VSMOKE_ROUNDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let keep_cache = std::env::var("VSMOKE_KEEP_CACHE").is_ok();
+    for round in 1..=rounds {
+        if round > 1 {
+            println!("\n===== круг {round}/{rounds} =====");
+            if !keep_cache {
+                media_cache::clear();
+            }
+        }
+        round_once(&model, &tokenizer, &attachment, &question, &caps, max_new)?;
+    }
+    println!("OK");
+    Ok(())
+}
+
+/// Один круг чата: поднять башню → закодировать вложение → отпустить башню →
+/// собрать промпт → сгенерировать ответ. Ровно то, что делает `syn_chat` на
+/// каждой отправке и регенерации.
+fn round_once(
+    model: &synaptix::facade::llm::Llm,
+    tokenizer: &synaptix::facade::llm::LlmTokenizer,
+    attachment: &MsgAttachment,
+    question: &str,
+    caps: &MediaCaps,
+    max_new: usize,
+) -> Result<(), String> {
+    println!("VRAM свободно до башни: {} MB", vram_free_mb());
+    // 3. Vision-башня + кодирование вложения — тем же путём, что и чат:
+    // башня поднимается только под вложения, которых ещё нет в кэше
+    // эмбеддингов, а её провал деградирует вложение в текстовую строку.
+    let items = std::slice::from_ref(attachment);
+    let needs = prompt::needs_tower(items, caps);
+    println!("башня нужна: {needs}");
     let t0 = Instant::now();
-    let prepared = prepare_user_message(&question, std::slice::from_ref(&attachment), &model, &caps);
+    let tower = prompt::ensure_tower(model, needs);
+    let mut caps = caps.clone();
+    caps.vision = tower.is_ok();
+    match &tower {
+        Ok(()) => println!("vision-башня загружена за {:?}", t0.elapsed()),
+        Err(reason) if reason.is_empty() => {}
+        Err(reason) => {
+            println!("vision-башня недоступна: {reason}");
+            caps.vision_error = Some(reason.clone());
+        }
+    }
+
+    let t0 = Instant::now();
+    let prepared = prepare_user_message(question, items, model, &caps);
     println!("кодирование вложения за {:?}", t0.elapsed());
     // Как в чате: башня отпускается сразу после кодирования, а пул
     // возвращает её память ОС — иначе prefill длинного видео-промпта
     // упирается в потолок VRAM.
     model.release_media_tower();
-    let freed = synaptix::facade::llm::cuda_trim_pool(0);
-    println!("vision-башня выгружена, trim: +{freed} MB");
-    // Тот же дефолт, что и в приложении (`AppConfig.qwen36_prefill_chunk`).
-    synaptix::facade::llm::set_prefill_chunk_size(256);
+    let (freed, descs) = reclaim_vram(Device::Cuda(0));
+    println!(
+        "vision-башня выгружена, trim: +{freed} MB ({descs} TMA-деск.); VRAM свободно {} MB",
+        vram_free_mb()
+    );
 
     let media_tokens: usize = prepared.media.iter().map(|m| m.tokens).sum();
     if prepared.media.is_empty() {
@@ -112,11 +165,11 @@ fn main() -> Result<(), String> {
         .map_err(|e| format!("template: {e}"))?;
     let prompt_ids = tokenizer.encode(&prompt).map_err(|e| format!("encode: {e}"))?;
     println!("промпт: {} символов / {} токенов", prompt.len(), prompt_ids.len());
+    let pad_ids = media_pad_ids(tokenizer);
 
     // Главная инварианта: заполнителей в промпте ровно столько же, сколько
     // строк эмбеддингов отдала башня. Расхождение — гарантированная ошибка
     // на prefill, и ловить её лучше здесь.
-    let pad_ids = media_pad_ids(&tokenizer);
     let pads_in_prompt = prompt_ids.iter().filter(|id| pad_ids.contains(id)).count();
     println!("токенов-заполнителей в промпте: {pads_in_prompt}");
     if pads_in_prompt != media_tokens {
@@ -139,13 +192,14 @@ fn main() -> Result<(), String> {
         presence_penalty: 0.0,
         frequency_penalty: 0.0,
     };
-    let mut runner = LlmGeneration::new(&model, opts);
+    let mut runner = LlmGeneration::new(model, opts);
     runner.set_stop_tokens(tokenizer.eos_ids().to_vec());
+    println!("VRAM свободно под KV-ring: {} MB", vram_free_mb());
 
     let media_refs: Vec<_> = prepared.media.iter().collect();
     // Ровно тот же разбор, что и в чате: у канальных моделей заголовки
     // сообщений (` to=self`) не должны попадать в ответ.
-    let mut channel = ChannelIds::detect(&tokenizer).map(ChannelParser::new);
+    let mut channel = ChannelIds::detect(tokenizer).map(ChannelParser::new);
     println!(
         "протокол хода: {}",
         if channel.is_some() { "канальный (to=self/to=user)" } else { "ChatML" }
@@ -155,7 +209,7 @@ fn main() -> Result<(), String> {
     let mut thinking = String::new();
     let t0 = Instant::now();
     runner
-        .generate_streaming_media(&prompt_ids, &tokenizer, &media_refs, |id, delta| {
+        .generate_streaming_media(&prompt_ids, tokenizer, &media_refs, |id, delta| {
             print!("{delta}");
             use std::io::Write;
             let _ = std::io::stdout().flush();
@@ -173,6 +227,15 @@ fn main() -> Result<(), String> {
         .map_err(|e| format!("generate: {e}"))?;
     println!();
     println!("сгенерировано {} символов за {:?}", out.len(), t0.elapsed());
+    // KV-ring живёт внутри пайплайна и умирает вместе с вызовом generate —
+    // но его блоки остаются в пуле аллокатора. Возврат ОС здесь показывает,
+    // с какой свободной VRAM стартует следующая отправка.
+    drop(runner);
+    let (freed, descs) = reclaim_vram(Device::Cuda(0));
+    println!(
+        "после генерации trim: +{freed} MB ({descs} TMA-деск.); VRAM свободно {} MB",
+        vram_free_mb()
+    );
 
     if out.trim().is_empty() {
         return Err("модель не выдала ни одного токена".into());
@@ -184,7 +247,6 @@ fn main() -> Result<(), String> {
             return Err("заголовок канала утёк в текст ответа".into());
         }
     }
-    println!("OK");
     Ok(())
 }
 

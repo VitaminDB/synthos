@@ -19,6 +19,13 @@
 //! поверх памяти, которую оставил после себя KV-ring прошлой генерации.
 //! `VSMOKE_KEEP_CACHE=1` оставляет кэш эмбеддингов живым между кругами
 //! (тогда второй круг — это регенерация ответа на то же вложение).
+//!
+//! `VSMOKE_PROBE_MB=N` после генерации пробует занять N МБ одним куском.
+//! Разделяет два похожих симптома: «память утекла» и «память лежит
+//! свободными блоками в пуле, но не видна драйверу». Печатаемый рядом
+//! разбор `[VRAM …]` показывает reserved/used пула и число живых
+//! аллокаций — если живых столько же, сколько до генерации, значит не
+//! утекло ничего.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -119,7 +126,7 @@ fn round_once(
     caps: &MediaCaps,
     max_new: usize,
 ) -> Result<(), String> {
-    println!("VRAM свободно до башни: {} MB", vram_free_mb());
+    vram_report("до башни");
     // 3. Vision-башня + кодирование вложения — тем же путём, что и чат:
     // башня поднимается только под вложения, которых ещё нет в кэше
     // эмбеддингов, а её провал деградирует вложение в текстовую строку.
@@ -194,7 +201,7 @@ fn round_once(
     };
     let mut runner = LlmGeneration::new(model, opts);
     runner.set_stop_tokens(tokenizer.eos_ids().to_vec());
-    println!("VRAM свободно под KV-ring: {} MB", vram_free_mb());
+    vram_report("под KV-ring");
 
     let media_refs: Vec<_> = prepared.media.iter().collect();
     // Ровно тот же разбор, что и в чате: у канальных моделей заголовки
@@ -232,10 +239,33 @@ fn round_once(
     // с какой свободной VRAM стартует следующая отправка.
     drop(runner);
     let (freed, descs) = reclaim_vram(Device::Cuda(0));
-    println!(
-        "после генерации trim: +{freed} MB ({descs} TMA-деск.); VRAM свободно {} MB",
-        vram_free_mb()
-    );
+    println!("после генерации trim: +{freed} MB ({descs} TMA-деск.)");
+    vram_report("после генерации");
+    // Проба: резерв пула сверх `used` не виден в cuMemGetInfo, но пулу
+    // доступен. Если аллокация больше «свободного» проходит — память не
+    // потеряна, врёт термометр, по которому принимаются решения.
+    if let Ok(mb) = std::env::var("VSMOKE_PROBE_MB") {
+        let mb: usize = mb.parse().unwrap_or(0);
+        let t0 = Instant::now();
+        let probe = synaptix_core::tensor::Tensor::zeros(
+            vec![mb * 1024 * 1024],
+            synaptix_core::dtype::DType::U8,
+            Device::Cuda(0),
+        );
+        match probe {
+            Ok(t) => {
+                println!(
+                    "проба {mb} MB: успех за {:?}, свободно после {} MB",
+                    t0.elapsed(),
+                    vram_free_mb()
+                );
+                drop(t);
+            }
+            Err(e) => println!("проба {mb} MB: провал — {e}"),
+        }
+        let (freed, _) = reclaim_vram(Device::Cuda(0));
+        println!("после пробы trim: +{freed} MB, свободно {} MB", vram_free_mb());
+    }
 
     if out.trim().is_empty() {
         return Err("модель не выдала ни одного токена".into());
@@ -252,6 +282,36 @@ fn round_once(
 
 /// id токенов-заполнителей медиа: `<|patch|>` для картинок, `<|video|>`
 /// для видео. Берём через сам токенайзер, чтобы не хардкодить числа.
+/// Разбор свободной VRAM: сколько держит пул, сколько живо по нашему учёту
+/// и какие классы аллокаций сидят наверху. Разница между «свободно» и
+/// «живо» — то, что утекло мимо пула (JIT-модули, cuBLAS-воркспейсы,
+/// граф-буферы): их не вернёт ни trim, ни сброс кэшей ядер.
+fn vram_report(tag: &str) {
+    let mb = |(r, u): (u64, u64)| (r / (1024 * 1024), u / (1024 * 1024));
+    let (dres, dused) = synaptix_core::memory::cuda_pool::cuda_mempool_stats(0)
+        .map(mb)
+        .unwrap_or((0, 0));
+    let (wres, wused) = synaptix_core::device::cuda::weights_pool_stats(0)
+        .map(mb)
+        .unwrap_or((0, 0));
+    let all = synaptix_core::memory::cuda_pool::live_alloc_top(100_000);
+    let total: isize = all.iter().map(|(_, c)| *c).sum();
+    let small: isize = all.iter().filter(|(b, _)| *b < 65_536).map(|(_, c)| *c).sum();
+    let top: Vec<String> = all
+        .iter()
+        .take(4)
+        .map(|(bytes, count)| format!("{count}x{}KB", bytes / 1024))
+        .collect();
+    println!(
+        "[VRAM {tag}] свободно {} MB; default-пул {dres}/{dused} MB, weights-пул \
+         {wres}/{wused} MB (reserved/used); живых {:.0} MB в {total} аллокациях \
+         (мелких <64KB: {small}); топ: {}",
+        vram_free_mb(),
+        synaptix_core::memory::cuda_pool::cuda_allocated_mb(),
+        top.join(", ")
+    );
+}
+
 fn media_pad_ids(tokenizer: &synaptix::facade::llm::LlmTokenizer) -> Vec<u32> {
     ["<|patch|>", "<|video|>"]
         .iter()

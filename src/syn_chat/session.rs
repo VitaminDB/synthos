@@ -395,7 +395,10 @@ async fn run_agent_loop(
             opts.max_new_tokens = headroom.max(1);
         }
         let realistic = prompt_capped + opts.max_new_tokens + 128;
-        let vram_pre_kv = crate::syn_chat::model_registry::vram_free_mb();
+        // Бюджет ринга считаем по доступной памяти, а не по «свободной»:
+        // свободные блоки пула драйвер не показывает, но ринг садится
+        // именно в них (см. `vram_available_mb`).
+        let vram_pre_kv = crate::syn_chat::model_registry::vram_available_mb();
         let kv_per_token = model.model.kv_bytes_per_token();
         let ring_by_mem = if kv_per_token > 0 {
             let budget = vram_pre_kv.saturating_sub(KV_RESERVE_MB) * 1024 * 1024;
@@ -413,12 +416,14 @@ async fn run_agent_loop(
         let ring_len = opts.max_seq_len;
         let ring_max_new = opts.max_new_tokens;
         let mut runner = LlmGeneration::new(&model.model, opts);
-        let vram_post_kv = crate::syn_chat::model_registry::vram_free_mb();
+        let vram_post_kv = crate::syn_chat::model_registry::vram_available_mb();
         log::info!(
             "[syn_chat] KV-ring: max_seq_len={ring_len} (prompt={prompt_capped} + \
              max_new={ring_max_new} + 128, cap={usable_cap}, по памяти={ring_by_mem}, \
-             {kv_per_token} B/ток); VRAM: KV {} MB, свободно {vram_post_kv} MB",
-            vram_pre_kv.saturating_sub(vram_post_kv)
+             {kv_per_token} B/ток); VRAM: KV {} MB, доступно {vram_post_kv} MB \
+             (свободно по драйверу {} MB)",
+            vram_pre_kv.saturating_sub(vram_post_kv),
+            crate::syn_chat::model_registry::vram_free_mb()
         );
         let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
         if channel_mode {
@@ -534,8 +539,9 @@ async fn run_agent_loop(
         drop(runner);
         let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
         log::info!(
-            "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), \
-             VRAM свободно {} MB",
+            "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), VRAM \
+             доступно {} MB (свободно по драйверу {} MB)",
+            crate::syn_chat::model_registry::vram_available_mb(),
             crate::syn_chat::model_registry::vram_free_mb()
         );
         let dt = t_turn.elapsed();

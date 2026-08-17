@@ -42,7 +42,9 @@ use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
 use crate::syn_chat::channel_parser::{self, ChannelIds, ChannelParser, ATEM_CLOSE};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
-use crate::syn_chat::state::{ChatMsg, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser};
+use crate::syn_chat::state::{
+    ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser,
+};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
@@ -1168,6 +1170,9 @@ struct HistoryItem {
     role: ChatMsgRole,
     body: String,
     attachments: Vec<MsgAttachment>,
+    /// `Some(имя)` — результат инструмента: в prompt уходит как `role=tool`
+    /// (`Message::tool_named`), поле `role` при этом не используется.
+    tool_name: Option<String>,
 }
 
 impl HistoryItem {
@@ -1193,18 +1198,42 @@ fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
 /// Строит prompt-историю для chat-template. Пустой плейсхолдер ассистента
 /// в конце ленты исключается (он добавлен в `send_message` только для UI).
 /// При непустом `system_prompt` префиксует историю system-сообщением.
-/// Tool-call и tool-result сообщения, накопленные в `ctx.messages` в
-/// предыдущих сессиях, ПОКА не переэкспортируются в prompt — это требует
-/// рекувырки структуры. Сейчас в `regenerate_last` мы режем всё после
-/// последнего user, так что несовпадения не возникает.
+///
+/// Роль в ленте — не роль в prompt'е. Шаблоны Qwen принимают `system`
+/// только первым сообщением и raise'ят на нём в середине истории, а лента
+/// хранит с `role=System` и tool-результаты, и служебные плашки. Поэтому:
+///   - tool_result уходит как `role=tool` — так же, как agent-loop кладёт
+///     его в свою историю внутри одного хода;
+///   - tool_call восстанавливается в канонический ChatML-блок `<tool_call>`
+///     из структурированных `tool_calls` (в `body` лежит pretty-JSON для UI);
+///   - плашки ленты (ошибка соединения, отмена и т. п.) — UI-only, в prompt
+///     не идут;
+///   - summary autocompact-маркеров дописывается в начальное
+///     system-сообщение, сами маркеры в историю не попадают.
 fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
     let msgs = ctx.messages.get_untracked();
+
+    let mut sys = system_prompt.trim().to_string();
+    for m in msgs.iter().filter(|m| m.compacted_iter.is_none()) {
+        if let ChatMsgKind::CompactionMarker { summary, .. } = &m.kind {
+            if summary.trim().is_empty() {
+                continue;
+            }
+            if !sys.is_empty() {
+                sys.push_str("\n\n");
+            }
+            sys.push_str("Сжатая история более ранних сообщений:\n");
+            sys.push_str(summary.trim());
+        }
+    }
+
     let mut out: Vec<HistoryItem> = Vec::with_capacity(msgs.len() + 1);
-    if !system_prompt.trim().is_empty() {
+    if !sys.is_empty() {
         out.push(HistoryItem {
             role: ChatMsgRole::System,
-            body: system_prompt.to_string(),
+            body: sys,
             attachments: Vec::new(),
+            tool_name: None,
         });
     }
     for (i, m) in msgs.iter().enumerate() {
@@ -1217,11 +1246,55 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
         if m.compacted_iter.is_some() {
             continue;
         }
-        out.push(HistoryItem {
-            role: m.role,
-            body: m.body.clone(),
-            attachments: m.attachments.clone(),
-        });
+        match &m.kind {
+            ChatMsgKind::Text => {
+                if m.role == ChatMsgRole::System {
+                    continue;
+                }
+                out.push(HistoryItem {
+                    role: m.role,
+                    body: m.body.clone(),
+                    attachments: m.attachments.clone(),
+                    tool_name: None,
+                });
+            }
+            ChatMsgKind::ToolCall { .. } => {
+                let mut body = String::new();
+                for c in m.tool_calls.iter().flatten() {
+                    let name = c.function.name.clone().unwrap_or_default();
+                    let args = c
+                        .function
+                        .arguments
+                        .as_deref()
+                        .and_then(|a| serde_json::from_str::<serde_json::Value>(a).ok())
+                        .unwrap_or(serde_json::Value::Null);
+                    let call = serde_json::json!({ "name": name, "arguments": args });
+                    if !body.is_empty() {
+                        body.push('\n');
+                    }
+                    body.push_str(&format!("<tool_call>\n{call}\n</tool_call>"));
+                }
+                if body.is_empty() {
+                    continue;
+                }
+                out.push(HistoryItem {
+                    role: ChatMsgRole::Assistant,
+                    body,
+                    attachments: Vec::new(),
+                    tool_name: None,
+                });
+            }
+            ChatMsgKind::ToolResult { tool_name, .. } => {
+                out.push(HistoryItem {
+                    role: m.role,
+                    body: m.body.clone(),
+                    attachments: Vec::new(),
+                    tool_name: Some(tool_name.clone()),
+                });
+            }
+            // Уже учтён в system-префиксе выше.
+            ChatMsgKind::CompactionMarker { .. } => continue,
+        }
     }
     out
 }
@@ -1260,6 +1333,10 @@ fn prepare_history(
     let mut out: Vec<Message> = Vec::with_capacity(items.len());
     let mut media: Vec<MediaEmbedding> = Vec::new();
     for item in items {
+        if let Some(name) = &item.tool_name {
+            out.push(Message::tool_named(name.as_str(), item.body.as_str()));
+            continue;
+        }
         match item.role {
             ChatMsgRole::User if !item.attachments.is_empty() => {
                 let prepared = attach_prompt::prepare_user_message(

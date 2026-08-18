@@ -372,6 +372,7 @@ pub fn send_message(text: String) {
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
     ctx.error.set(None);
+    ctx.turn_cap_reached.set(false);
     ctx.pending.set(true);
 
     start_agent_thread(model, ctx);
@@ -425,12 +426,58 @@ pub fn regenerate_last() {
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
     ctx.error.set(None);
+    ctx.turn_cap_reached.set(false);
     ctx.pending.set(true);
 
     start_agent_thread(model, ctx);
 }
 
-/// Общая часть `send_message` / `regenerate_last`: snapshot всех нужных
+/// Продолжить прерванный ход агента, не трогая уже накопленную историю.
+///
+/// В отличие от [`regenerate_last`], которая режет ленту до последнего
+/// user-сообщения, здесь сохраняются все tool-call'ы и их результаты —
+/// цикл просто получает свежий бюджет `MAX_AGENT_TURNS` и продолжает с
+/// того места, где остановился. Основной сценарий — упёрлись в лимит
+/// ходов (`turn_cap_reached`), но кнопка работает и после ручного
+/// «Прервать», когда ответ оборвался на полуслове.
+pub fn continue_last() {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    let registry = use_context::<SynModelRegistry>();
+    let Some(model) = registry.current.get_untracked() else {
+        ctx.error.set(Some("Модель не загружена".into()));
+        return;
+    };
+    let msgs = ctx.messages.get_untracked();
+    if !msgs.iter().any(|x| x.role == ChatMsgRole::User) {
+        return;
+    }
+
+    // Плейсхолдер под новый ход. Если предыдущий ход оставил пустой
+    // assistant-пузырь (abort посреди стрима), переиспользуем его, чтобы
+    // не плодить пустые бабблы.
+    ctx.messages.update(|m| {
+        let tail_empty = m
+            .last()
+            .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
+            .unwrap_or(false);
+        if !tail_empty {
+            m.push(ChatMsg::assistant_empty());
+        }
+    });
+
+    ctx.streaming_body.set(String::new());
+    ctx.streaming_thinking.set(String::new());
+    ctx.error.set(None);
+    ctx.turn_cap_reached.set(false);
+    ctx.pending.set(true);
+
+    start_agent_thread(model, ctx);
+}
+
+/// Общая часть `send_message` / `regenerate_last` / `continue_last`: snapshot всех нужных
 /// signal-данных на main thread, спавн worker-thread и запуск agent-loop в
 /// локальном tokio current_thread runtime.
 fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
@@ -654,6 +701,12 @@ async fn run_agent_loop(
         *kv_slot = None;
     }
     let mut reused_total: u32 = 0;
+
+    // Отличаем «модель ответила текстом» (break ниже) от «кончился бюджет
+    // ходов». Раньше второй случай молча падал в конец функции: UI оставался
+    // с пустым assistant-плейсхолдером, в логе — ничего, и снаружи это
+    // выглядело как зависшая без ошибки генерация.
+    let mut answered = false;
 
     for turn in 0..MAX_AGENT_TURNS {
         if abort.load(Ordering::Relaxed) != abort_snapshot {
@@ -939,6 +992,7 @@ async fn run_agent_loop(
         if raw_calls.is_empty() {
             // Обычный текстовый ответ. commit_streaming_tail сделает
             // финализацию в send_message wrapper'е.
+            answered = true;
             break;
         }
 
@@ -1053,6 +1107,31 @@ async fn run_agent_loop(
             });
             ctx_ph.streaming_body.set(String::new());
             ctx_ph.streaming_thinking.set(String::new());
+        });
+    }
+
+    if !answered {
+        log::warn!(
+            "[syn_chat] agent-loop упёрся в лимит {MAX_AGENT_TURNS} ходов: модель              всё это время вызывала инструменты и ни разу не дала текстовый              ответ. Генерация остановлена, история цела — можно продолжить."
+        );
+        let ctx_cap = ctx.clone();
+        run_on_main_thread(move || {
+            // Убираем пустой assistant-плейсхолдер последнего хода — иначе в
+            // ленте висит пустой пузырь, который выглядит как «повисло».
+            ctx_cap.messages.update(|m| {
+                if m.last()
+                    .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
+                    .unwrap_or(false)
+                {
+                    m.pop();
+                }
+            });
+            ctx_cap.turn_cap_reached.set(true);
+            ctx_cap.error.set(Some(format!(
+                "остановлено на лимите {MAX_AGENT_TURNS} ходов агента — модель \
+                 всё время вызывала инструменты. Нажмите «Продолжить», чтобы \
+                 дать ещё ходов"
+            )));
         });
     }
 

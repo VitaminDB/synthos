@@ -6,6 +6,52 @@
 //!
 //! Для long-lived state (плеер, рекордер, загруженный файл) используется
 //! `NodeInstance.runtime: Arc<Mutex<NodeRuntime>>` — см. `types::NodeRuntime`.
+//!
+//! Логи воркеров нод идут в target [`WORKER_LOG`] (`node-editor.worker`) —
+//! парный к `node-editor.run` из `run_controls`. Первый отвечает на вопрос
+//! «что нода делала и чем кончила», второй — «в каком порядке sequencer их
+//! запускал». Хелперы [`log_worker_start`] / [`log_worker_done`] держат
+//! формат строк одинаковым между нодами.
+
+use std::time::Instant;
+
+use tracing::info;
+
+/// Target логов воркеров нод. Уровень INFO: старт с параметрами, финиш с
+/// длительностью и исходом. Прогресс внутри долгих воркеров — DEBUG.
+pub const WORKER_LOG: &str = "node-editor.worker";
+
+/// Старт воркера ноды. `params` — короткая строка вида
+/// `"1344x768, 5.0s, 20 шагов, CFG 5.0"`; пустая допустима.
+pub fn log_worker_start(node: &'static str, params: &str) -> Instant {
+    if params.is_empty() {
+        info!(target: WORKER_LOG, node, "воркер: старт");
+    } else {
+        info!(target: WORKER_LOG, node, params, "воркер: старт");
+    }
+    Instant::now()
+}
+
+/// Финиш воркера ноды. `res` — то, что воркер вернул; `Err` пишется
+/// с текстом ошибки, чтобы отмена/OOM/сбой были видны в логе, а не
+/// только в поле «Статус» на ноде.
+pub fn log_worker_done<T, E: std::fmt::Display>(
+    node: &'static str,
+    started: Instant,
+    res: &Result<T, E>,
+) {
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    match res {
+        Ok(_) => info!(target: WORKER_LOG, node, elapsed_ms, "воркер: готово"),
+        Err(e) => info!(
+            target: WORKER_LOG,
+            node,
+            elapsed_ms,
+            error = %e,
+            "воркер: ошибка"
+        ),
+    }
+}
 
 pub mod acestep;
 pub mod asr_gigaam;

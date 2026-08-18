@@ -14,11 +14,20 @@
 //!
 //! Pulse-анимация активной кнопки реализована в MSS через `@keyframes`
 //! на классе `.ne-run-btn--active`.
+//!
+//! Логирование прогона идёт в target `node-editor.run` на уровне INFO:
+//! нажатия Run/Pause/Stop, построение очереди, старт и финиш каждой
+//! ноды с длительностью, разблокировка преемников и итог прогона.
+//! Этого достаточно, чтобы по логу восстановить, где встал граф, без
+//! правки самих нод — хуки `on_run`/`busy_signal` инструментируются
+//! здесь централизованно.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 
 use syngui::core::sync::Mutex;
+use tracing::info;
 use syngui::prelude::*;
 use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, ToolButton};
 
@@ -44,6 +53,11 @@ struct RunQueue {
     /// Ноды, у которых уже вызван `on_run` и которые ждут флипа
     /// `busy_signal → false`.
     active: HashSet<NodeId>,
+    /// Момент вызова `on_run` каждой активной ноды — только для замера
+    /// длительности в логе (`node-editor.run`).
+    started_at: HashMap<NodeId, Instant>,
+    /// Момент нажатия Run — для итоговой строки прогона.
+    run_started_at: Instant,
 }
 
 impl RunQueue {
@@ -110,6 +124,8 @@ fn build_queue(nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
         remaining,
         downstream,
         active: HashSet::new(),
+        started_at: HashMap::new(),
+        run_started_at: Instant::now(),
     }
 }
 
@@ -128,13 +144,37 @@ fn refresh_values(ctx: &NodeEditorCtx) {
 fn fire(ctx: &NodeEditorCtx, id: NodeId, q: &mut RunQueue) {
     let nodes = ctx.nodes.get_untracked();
     let Some(node) = nodes.iter().find(|n| n.id == id) else {
+        info!(target: RUN_LOG, node = id.0, "старт пропущен: ноды нет в графе");
         return;
     };
-    let Some(hook) = registry::meta(node.kind).on_run else {
+    let meta = registry::meta(node.kind);
+    let Some(hook) = meta.on_run else {
+        info!(
+            target: RUN_LOG,
+            node = id.0,
+            title = meta.title,
+            "старт пропущен: у ноды нет on_run"
+        );
         return;
     };
+    info!(target: RUN_LOG, node = id.0, title = meta.title, "нода: старт");
     q.active.insert(id);
+    q.started_at.insert(id, Instant::now());
     hook(node, ctx);
+}
+
+/// Target логов прогона. Отдельная константа, чтобы `RUST_LOG` и
+/// файловый EnvFilter могли адресовать его одной директивой.
+const RUN_LOG: &str = "node-editor.run";
+
+/// Человекочитаемое имя ноды для логов — `title` из реестра.
+fn node_title(ctx: &NodeEditorCtx, id: NodeId) -> &'static str {
+    ctx.nodes
+        .get_untracked()
+        .iter()
+        .find(|n| n.id == id)
+        .map(|n| registry::meta(n.kind).title)
+        .unwrap_or("?")
 }
 
 /// Собрать busy-снимок enabled-нод. Используется и watcher'ом для
@@ -200,6 +240,20 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 return;
             }
             let finished_now = just_finished.len();
+            for id in &just_finished {
+                let elapsed_ms = q
+                    .started_at
+                    .remove(id)
+                    .map(|t| t.elapsed().as_millis() as u64)
+                    .unwrap_or(0);
+                info!(
+                    target: RUN_LOG,
+                    node = id.0,
+                    title = node_title(&editor_ctx, *id),
+                    elapsed_ms,
+                    "нода: финиш"
+                );
+            }
 
             // Свежий evaluate, чтобы output_text / output_buf завершившихся
             // нод попали в values до того, как downstream `current_input_*`
@@ -213,7 +267,22 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                         if let Some(c) = q.remaining.get_mut(&d) {
                             *c = c.saturating_sub(1);
                             if *c == 0 && !q.active.contains(&d) {
+                                info!(
+                                    target: RUN_LOG,
+                                    node = d.0,
+                                    title = node_title(&editor_ctx, d),
+                                    after = id.0,
+                                    "нода разблокирована предком"
+                                );
                                 fire(&editor_ctx, d, q);
+                            } else {
+                                info!(
+                                    target: RUN_LOG,
+                                    node = d.0,
+                                    title = node_title(&editor_ctx, d),
+                                    waiting_on = *c,
+                                    "нода ждёт остальных предков"
+                                );
                             }
                         }
                     }
@@ -227,10 +296,23 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
             ws_init.run_done.set(done_before + finished_now);
 
             if q.is_done() {
+                info!(
+                    target: RUN_LOG,
+                    total_ms = q.run_started_at.elapsed().as_millis() as u64,
+                    done = ws_init.run_done.get_untracked(),
+                    "run: очередь пуста, прогон завершён"
+                );
                 *guard = None;
                 drop(guard);
                 ws_init.run_timer.finish();
                 ws_init.run_state.set(RunState::Stopped);
+            } else {
+                info!(
+                    target: RUN_LOG,
+                    active = q.active.len(),
+                    pending = q.remaining.len(),
+                    "run: очередь продвинулась"
+                );
             }
         });
     }
@@ -248,6 +330,13 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 let nodes = editor_ctx.nodes.get_untracked();
                 let conns = editor_ctx.connections.get_untracked();
                 let mut q = build_queue(&nodes, &conns);
+                info!(
+                    target: RUN_LOG,
+                    nodes = nodes.len(),
+                    connections = conns.len(),
+                    on_run = q.remaining.len(),
+                    "run: нажат Run, очередь построена"
+                );
 
                 // Свежий evaluate перед стартом корней — чтобы свежий
                 // AudioRecorder.last_result уже сидел в values, а не
@@ -261,6 +350,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                     .filter(|(_, c)| **c == 0)
                     .map(|(id, _)| *id)
                     .collect();
+                info!(target: RUN_LOG, roots = roots.len(), "run: старт корней");
                 for id in roots {
                     fire(&editor_ctx, id, &mut q);
                 }
@@ -272,10 +362,12 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                         *g = None;
                     }
                     if stuck {
+                        info!(target: RUN_LOG, "run: отменён — цикл в графе");
                         app_run.notifications.info(
                             "Граф содержит цикл — нет нод, готовых к запуску",
                         );
                     } else {
+                        info!(target: RUN_LOG, "run: отменён — нет on_run-нод");
                         app_run.notifications.info("Нет нод с явным запуском");
                     }
                     return;
@@ -287,6 +379,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 ws.run_total.set(q.remaining.len());
                 ws.run_done.set(0);
                 ws.run_timer.start();
+                q.run_started_at = Instant::now();
 
                 if let Ok(mut g) = run_queue_cell.lock() {
                     *g = Some(q);
@@ -300,6 +393,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
         let pause_btn = ToolButton::new(MI_PAUSE)
             .tooltip("Pause")
             .on_click(move || {
+                info!(target: RUN_LOG, "run: нажат Pause");
                 ws.run_state.set(RunState::Paused);
                 app_pause.notifications.info("Paused");
             })
@@ -314,6 +408,16 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 // доработают (нет cooperative cancel), но новых fire'ов
                 // больше не произойдёт.
                 if let Ok(mut g) = stop_queue_cell.lock() {
+                    if let Some(q) = g.as_ref() {
+                        info!(
+                            target: RUN_LOG,
+                            active = q.active.len(),
+                            pending = q.remaining.len(),
+                            "run: нажат Stop, очередь сброшена (активные worker'ы дорабатывают)"
+                        );
+                    } else {
+                        info!(target: RUN_LOG, "run: нажат Stop вне прогона");
+                    }
                     *g = None;
                 }
                 // Фиксируем то, что успело натикать: уже запущенные worker'ы

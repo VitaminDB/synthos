@@ -15,6 +15,7 @@ use super::super::super::types::{
     DataBlob, H3Blob, H3ModelHandle, H3VideoLatent, LtxFrames, NodeInstance, NodeRuntime, PortValue,
 };
 use super::super::acestep::{field_row, status_row};
+use super::super::{log_worker_done, log_worker_start};
 use crate::pages::node_editor::controls::stereo_waveform::node_stereo_waveform;
 use super::super::ltx::vae_decode::tensor_frames_to_rgba_unit;
 use super::{current_input_audio_latent, current_input_model, current_input_video_latent, shared};
@@ -76,7 +77,13 @@ pub fn vae_on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-h3-vae".into())
         .spawn(move || {
-            match vae_worker(&handle, &latent) {
+            let started = log_worker_start(
+                "h3-vae-decode",
+                &format!("латент {:?}", latent.tensor.dims()),
+            );
+            let res = vae_worker(&handle, &latent);
+            log_worker_done("h3-vae-decode", started, &res);
+            match res {
                 Ok(f) => {
                     if let Ok(mut g) = frames.lock() {
                         *g = Some(Arc::new(f));
@@ -209,7 +216,11 @@ pub fn audio_on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-h3-audio".into())
         .spawn(move || {
-            match audio_worker(&handle, &latent) {
+            let started =
+                log_worker_start("h3-audio-decode", &format!("латент {:?}", latent.dims()));
+            let res = audio_worker(&handle, &latent);
+            log_worker_done("h3-audio-decode", started, &res);
+            match res {
                 Ok(b) => {
                     if let Ok(mut g) = buffer.lock() {
                         *g = Some(Arc::new(b));

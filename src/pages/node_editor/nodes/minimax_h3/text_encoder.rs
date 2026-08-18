@@ -14,6 +14,7 @@ use super::super::super::types::{
     PortValue,
 };
 use super::super::acestep::{field_row, status_row};
+use super::super::{log_worker_done, log_worker_start};
 use super::{current_input_keyframe, current_input_model, current_input_text, shared};
 
 pub struct TextEncoderExec;
@@ -90,7 +91,13 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-h3-encode".into())
         .spawn(move || {
-            match worker(&handle, &prompt, &keyframes) {
+            let started = log_worker_start(
+                "h3-text-encoder",
+                &format!("промпт {} симв., keyframes {}", prompt.chars().count(), keyframes.len()),
+            );
+            let res = worker(&handle, &prompt, &keyframes);
+            log_worker_done("h3-text-encoder", started, &res);
+            match res {
                 Ok(cond) => {
                     if let Ok(mut g) = out.lock() {
                         *g = Some(Arc::new(cond));

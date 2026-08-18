@@ -9,6 +9,7 @@ use syngui::prelude::*;
 
 use crate::agent::time::{unix_nanos, unix_secs};
 
+use super::params::SamplingParams;
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};
 
@@ -17,6 +18,26 @@ pub fn fingerprint(title: &str, messages: &[ChatMsg]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     title.hash(&mut h);
     messages.hash(&mut h);
+    h.finish()
+}
+
+/// Полный отпечаток состояния чата — то, что автосейв в
+/// `install_syn_chat_autosave` сравнивает с `last_saved_fp`.
+///
+/// Обязан считаться ровно одинаково и здесь, и в автосейве: раньше
+/// `select_internal` клал в `last_saved_fp` «голый» [`fingerprint`] без
+/// params, а автосейв сравнивал с хэшем `(fingerprint, params)`. Значения
+/// не совпадали никогда, поэтому сразу после выбора чата автосейв считал
+/// его изменённым, звал `refresh_active_preview` — и чат прыгал наверх
+/// списка с новым `updated_at`. Одна функция на оба места убирает этот
+/// класс расхождений.
+pub fn state_fingerprint(title: &str, messages: &[ChatMsg], params: &SamplingParams) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    fingerprint(title, messages).hash(&mut h);
+    // serde_json для f32/u32 — стабильный hash без NaN-issues.
+    if let Ok(bytes) = serde_json::to_vec(params) {
+        bytes.hash(&mut h);
+    }
     h.finish()
 }
 
@@ -54,11 +75,14 @@ pub fn create_new() -> String {
     ctx.chats.update(|list| list.insert(0, stored.to_meta()));
     ctx.loading.set(true);
     ctx.active_chat_id.set(Some(id.clone()));
-    ctx.last_saved_fp.set(fingerprint(&stored.title, &[]));
     ctx.messages.set(Vec::new());
     ctx.input.set(String::new());
     ctx.pending_attachments.set(Vec::new());
     ctx.error.set(None);
+    // Отпечаток ставим последним — params к этому моменту уже те, с
+    // которыми чат уйдёт в автосейв.
+    ctx.last_saved_fp
+        .set(state_fingerprint(&stored.title, &[], &ctx.params.get_untracked()));
     ctx.loading.set(false);
     id
 }
@@ -80,15 +104,19 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     };
     ctx.loading.set(true);
     ctx.active_chat_id.set(Some(stored.id.clone()));
-    let fp = fingerprint(&stored.title, &stored.messages);
-    ctx.last_saved_fp.set(fp);
-    ctx.messages.set(stored.messages);
+    let title = stored.title.clone();
+    let messages = stored.messages;
+    ctx.messages.set(messages.clone());
     // Per-chat sampling params: либо то, что сохранено в чате, либо дефолты
     // из AppConfig (для свежих чатов и старых файлов без поля).
     let params = stored
         .syn_params
         .unwrap_or_else(|| crate::config::AppConfig::load().syn_chat_defaults);
-    ctx.params.set_always(params);
+    ctx.params.set_always(params.clone());
+    // Отпечаток — ровно тот, что посчитает автосейв. Иначе выбор чата
+    // выглядит для него как правка и двигает чат наверх списка.
+    ctx.last_saved_fp
+        .set(state_fingerprint(&title, &messages, &params));
     ctx.input.set(String::new());
     ctx.input_tokens.set_always(0);
     // Черновик вложений принадлежал прошлому чату — сами blob'ы остаются

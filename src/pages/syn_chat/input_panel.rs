@@ -1,5 +1,5 @@
-//! Поле ввода Syn-чата: полоса вложений + editor + token counter + regen +
-//! send/stop + pending-hint. Без mic/kb_chip/tools/audio.
+//! Поле ввода Syn-чата: полоса вложений + editor + token counter + continue +
+//! regen + send/stop + pending-hint. Без mic/kb_chip/tools/audio.
 //!
 //! Вложения добавляются кнопкой-скрепкой (системный диалог) или
 //! перетаскиванием файлов на панель: вся панель обёрнута в [`DropArea`] с
@@ -15,7 +15,7 @@ use syngui::widgets::MultilineTextEdit;
 
 use crate::icons::*;
 use crate::syn_chat::attach;
-use crate::syn_chat::state::{ChatMsgRole, SynChatCtx};
+use crate::syn_chat::state::{ChatMsgKind, ChatMsgRole, SynChatCtx};
 use crate::syn_chat::{session, SynModelRegistry};
 
 use super::attachments;
@@ -49,6 +49,7 @@ fn panel_body() -> impl Widget {
                     ],
                     Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                         token_counter_reactive(),
+                        continue_button_reactive(),
                         regen_button_reactive(),
                         send_or_stop_reactive(),
                     ],
@@ -124,6 +125,39 @@ fn token_counter_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
                     Text::new(format!("{} ток.", n)).class("input-token-chip-text"),
                 ]
             })
+    }
+}
+
+/// Кнопка «Продолжить» — доступна, когда ход агента оборвался, не дав
+/// текстового ответа: упёрся в `MAX_AGENT_TURNS` (`turn_cap_reached`) либо
+/// пользователь нажал «Прервать» и хвост ленты остался на tool-результате.
+/// В отличие от regen историю не режет — цикл продолжает с этого места.
+fn continue_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+    || {
+        let ctx = use_context::<SynChatCtx>();
+        let pending = ctx.pending.get();
+        let cap_reached = ctx.turn_cap_reached.get();
+        let msgs = ctx.messages.get();
+        let has_any_user = msgs.iter().any(|m| m.role == ChatMsgRole::User);
+        // Ход считаем незакончённым, пока хвост ленты — не непустой
+        // текстовый ответ ассистента: tool-call/tool-result или пустой
+        // плейсхолдер означают, что цикл оборвался на полпути.
+        let tail_unfinished = msgs
+            .last()
+            .map(|m| {
+                m.kind != ChatMsgKind::Text
+                    || m.role != ChatMsgRole::Assistant
+                    || m.body.is_empty()
+            })
+            .unwrap_or(false);
+        if pending || !has_any_user || !(cap_reached || tail_unfinished) {
+            return DecoratedBox::new().class("input-regen-empty");
+        }
+        let btn = ToolButton::new(MI_PLAY_ARROW)
+            .tooltip("Продолжить — дать агенту ещё ходов, не теряя историю")
+            .on_click(session::continue_last)
+            .class("input-regen");
+        DecoratedBox::new().class("input-regen-wrap").child(btn)
     }
 }
 

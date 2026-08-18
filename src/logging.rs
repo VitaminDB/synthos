@@ -65,13 +65,20 @@ pub fn init() {
                         // html5ever/markup5ever/selectors шумят `WARN node with
                         // weird namespace ...` при парсинге HTML readability'ем
                         // внутри tool `web` — глушим до error.
-                        // synthos-fs-watcher / synthos-git-status / hyper-pool
+                        // code-editor.fs_watcher / .git_status / hyper-pool
                         // дают сотни тысяч DEBUG строк за час (file events,
                         // соединения keep-alive) и забивают файл; на post-mortem
                         // отладке они не нужны — оставляем info+.
+                        //
+                        // Директивы EnvFilter матчатся по **target**, а не по
+                        // имени потока: `synthos-fs-watcher` (имя треда) не
+                        // совпадало ни с чем, и фильтр молча не работал —
+                        // отсюда логи по 500 МБ в день. Точки в target'е
+                        // EnvFilter в директиве не принимает, поэтому глушим
+                        // по общему префиксу `code-editor`.
                         "debug,wgpu_core=warn,wgpu_hal=warn,naga=warn,\
                          html5ever=error,markup5ever=error,selectors=error,\
-                         synthos-fs-watcher=info,synthos-git-status=info,\
+                         code-editor=info,\
                          hyper_util::client::legacy::pool=info",
                     )),
             )

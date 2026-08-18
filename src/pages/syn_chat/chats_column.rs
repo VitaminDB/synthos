@@ -78,7 +78,14 @@ fn chats_list_reactive() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Se
         let active = ctx.active_chat_id.get();
 
         let on_select: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|id: &str| registry::select(id));
-        let on_delete: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|id: &str| registry::delete(id));
+        // Корзина не удаляет сразу: удаление необратимо, поэтому она лишь
+        // взводит `pending_delete`, а `registry::delete` зовёт диалог
+        // подтверждения (`delete_dialog`).
+        let on_delete: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|id: &str| {
+            let ctx = use_context::<SynChatCtx>();
+            let meta = ctx.chats.get_untracked().into_iter().find(|m| m.id == id);
+            ctx.pending_delete.set(meta);
+        });
 
         let inner: Column = if chats.is_empty() {
             Column::new()

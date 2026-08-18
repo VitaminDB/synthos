@@ -12,6 +12,7 @@ use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{LtxFrames, NodeInstance, NodeRuntime, PortValue};
 use super::super::acestep::field_row;
+use super::super::{log_worker_done, log_worker_start};
 use super::{current_input_audio, current_input_frames};
 use crate::pages::node_editor::controls::av_scrubber::node_av_scrubber;
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
@@ -66,7 +67,21 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-h3-save".into())
         .spawn(move || {
-            match write_mp4(&frames, audio.as_deref(), &out) {
+            let started = log_worker_start(
+                "h3-video-save",
+                &format!(
+                    "{}x{}, {} кадров @{:.1}fps, аудио {}, файл {}",
+                    frames.width,
+                    frames.height,
+                    frames.frames.len(),
+                    frames.fps,
+                    if audio.is_some() { "есть" } else { "нет" },
+                    out.display()
+                ),
+            );
+            let res = write_mp4(&frames, audio.as_deref(), &out);
+            log_worker_done("h3-video-save", started, &res);
+            match res {
                 Ok(()) => {
                     error.set(None);
                     saved.set(Some(out.display().to_string()));

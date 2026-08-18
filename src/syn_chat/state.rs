@@ -49,6 +49,16 @@ pub struct SynChatCtx {
     pub attach_busy: RwSignal<usize>,
     /// Открытый полноэкранный просмотр вложения. `None` — просмотрщик закрыт.
     pub viewer: RwSignal<Option<ViewerState>>,
+    /// Agent-loop упёрся в `MAX_AGENT_TURNS` и остановился, не дав
+    /// текстового ответа. Взводится воркером, гасится при любом новом
+    /// запуске генерации. UI показывает по нему кнопку «Продолжить»:
+    /// история цела, надо лишь дать циклу ещё бюджет ходов.
+    pub turn_cap_reached: RwSignal<bool>,
+    /// Чат, для которого открыт диалог подтверждения удаления. `None` —
+    /// диалог закрыт. Удаление необратимо (файл чата + GC блобов), поэтому
+    /// корзина в списке только взводит этот сигнал, а сам `registry::delete`
+    /// вызывается уже из диалога — см. `pages::syn_chat::delete_dialog`.
+    pub pending_delete: RwSignal<Option<ChatMeta>>,
     /// Поколение поля ввода — для пересоздания editor после очистки.
     pub input_gen: RwSignal<u64>,
     /// Кол-во токенов в `input` (вычисляется debounced'но в фоне).
@@ -126,6 +136,8 @@ impl SynChatCtx {
             pending_attachments: use_signal(Vec::new()),
             attach_busy: use_signal(0),
             viewer: use_signal(None),
+            pending_delete: use_signal(None),
+            turn_cap_reached: use_signal(false),
             input_gen: use_signal(0),
             input_tokens: use_signal(0),
             input_tok_gen: Arc::new(AtomicU64::new(0)),

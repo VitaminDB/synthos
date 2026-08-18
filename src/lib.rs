@@ -672,8 +672,11 @@ fn install_config_autosave(ctx: &AppCtx) {
 /// Автосохранение Syn-чатов на диск + sync system_prompt с AppConfig.
 ///
 /// Эффект 1 (per-chat): подписывается на `messages`/`chats`/`active_chat_id`/
-/// `params`. Fingerprint включает params чтобы изменение слайдеров вызывало
-/// disk write через snapshot_current (там params сохраняются в StoredChat).
+/// `params`. Отпечаток считает `registry::state_fingerprint` — он включает
+/// params, чтобы изменение слайдеров вызывало disk write через
+/// snapshot_current (там params сохраняются в StoredChat), и он же кладётся
+/// в `last_saved_fp` при выборе чата, чтобы простое переключение не
+/// считалось правкой.
 ///
 /// Эффект 2 (global): подписывается на `system_prompt`, пишет в
 /// `AppConfig.syn_chat_system_prompt`.
@@ -704,17 +707,10 @@ fn install_syn_chat_autosave() {
             .map(|m| m.title.clone())
             .unwrap_or_default();
 
-        let fp_msgs = syn_chat::registry::fingerprint(&title, &msgs);
-        // Подмешиваем хэш params в fingerprint, чтобы изменение слайдеров
-        // тоже триггерило save.
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        fp_msgs.hash(&mut h);
-        // serde_json::to_vec для f32/u32 — стабильный hash без NaN-issues.
-        if let Ok(bytes) = serde_json::to_vec(&params) {
-            bytes.hash(&mut h);
-        }
-        let fp = h.finish();
+        // Тот же расчёт, что `registry::select_internal` кладёт в
+        // `last_saved_fp` при выборе чата — иначе выбор выглядит как
+        // правка и двигает чат наверх списка.
+        let fp = syn_chat::registry::state_fingerprint(&title, &msgs, &params);
         if ctx.last_saved_fp.get_untracked() == fp {
             return;
         }

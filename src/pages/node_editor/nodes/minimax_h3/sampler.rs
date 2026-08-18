@@ -7,6 +7,7 @@ use syngui::layout::CrossAxisAlignment;
 use syngui::prelude::*;
 use syngui::widgets::Column;
 use synaptix_video_minimax_h3 as h3;
+use tracing::{debug, info};
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;
@@ -15,6 +16,7 @@ use super::super::super::types::{
     NodeInstance, NodeRuntime, PortValue,
 };
 use super::super::acestep::{field_row, make_int_slider_row, make_seed_slider, make_slider_row, status_row};
+use super::super::{log_worker_done, log_worker_start, WORKER_LOG};
 use super::{
     cancel_button, current_input_av_latent, current_input_conditioning, current_input_keyframe,
     current_input_model, progress_row, shared,
@@ -153,6 +155,21 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-h3-sampler".into())
         .spawn(move || {
+            let started = log_worker_start(
+                "h3-sampler",
+                &format!(
+                    "{}x{}, {} кадров, латент {}x{}x{}, {n_steps} шагов, CFG {cfg}, seed {s}, \
+                     негатив {}, keyframes {}",
+                    geometry.width,
+                    geometry.height,
+                    geometry.frame_count,
+                    geometry.latent_t,
+                    geometry.latent_h,
+                    geometry.latent_w,
+                    if negative.is_some() { "есть" } else { "нет" },
+                    keyframes.len(),
+                ),
+            );
             let res = worker(
                 &handle,
                 &cond,
@@ -165,6 +182,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 progress_pct,
                 &cancel,
             );
+            log_worker_done("h3-sampler", started, &res);
             match res {
                 Ok((v, a)) => {
                     if let Ok(mut g) = v_out.lock() {
@@ -196,7 +214,14 @@ fn worker(
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> std::result::Result<(H3VideoLatent, synaptix_core::tensor::Tensor), String> {
     let anchor = shared::activation_anchor(handle, 13 << 29);
+    let t_load = std::time::Instant::now();
     let shared_dit = shared::load_dit(handle)?;
+    info!(
+        target: WORKER_LOG,
+        node = "h3-sampler",
+        elapsed_ms = t_load.elapsed().as_millis() as u64,
+        "DiT готов (загрузка или попадание в кэш)"
+    );
     let dit = &shared_dit.dit;
     let ckpt = &shared_dit.ckpt;
 
@@ -234,9 +259,18 @@ fn worker(
         })
         .collect();
 
+    let t_prep = std::time::Instant::now();
     let prep = h3::pipeline::prepare(dit, &req, &sched).map_err(|e| e.to_string())?;
+    info!(
+        target: WORKER_LOG,
+        node = "h3-sampler",
+        video_tokens = g.video_tokens(dit.cfg.patch_size),
+        elapsed_ms = t_prep.elapsed().as_millis() as u64,
+        "prepare готов"
+    );
 
     if !keyframes.is_empty() {
+        let t_kf = std::time::Instant::now();
         let vae_cfg = ckpt.vae_config().map_err(|e| e.to_string())?;
         let w = h3::loader::ComponentLoader::open_component(
             ckpt.source(),
@@ -263,13 +297,50 @@ fn worker(
         req.cond_rows.video =
             h3::pipeline::cond_rows_from_keyframe_latents(&latents, dit.cfg.patch_size, None, seed)
                 .map_err(|e| e.to_string())?;
+        info!(
+            target: WORKER_LOG,
+            node = "h3-sampler",
+            count = keyframes.len(),
+            elapsed_ms = t_kf.elapsed().as_millis() as u64,
+            "keyframes закодированы VAE"
+        );
     }
 
     drop(anchor);
+    let t_cache = std::time::Instant::now();
     let cache = h3::pipeline::build_adaln_cache(dit, ckpt, &prep, shared_dit.compute)
         .map_err(|e| e.to_string())?;
+    info!(
+        target: WORKER_LOG,
+        node = "h3-sampler",
+        elapsed_ms = t_cache.elapsed().as_millis() as u64,
+        "adaLN-кэш построен, начинаем денойз"
+    );
 
+    // Шаги денойза пишем в лог сами: без этого долгий прогон выглядит в
+    // логе как тишина между «старт» и «готово», и по нему нельзя понять,
+    // считает ли пайплайн вообще и с какой скоростью.
+    let step_clock = std::sync::Mutex::new(std::time::Instant::now());
     let progress = move |p: h3::pipeline::DenoiseProgress| {
+        let step_ms = match step_clock.lock() {
+            Ok(mut last) => {
+                let ms = last.elapsed().as_millis() as u64;
+                *last = std::time::Instant::now();
+                ms
+            }
+            Err(_) => 0,
+        };
+        let left = p.total.saturating_sub(p.step) as u64;
+        debug!(
+            target: WORKER_LOG,
+            node = "h3-sampler",
+            step = p.step,
+            total = p.total,
+            sigma = p.sigma,
+            step_ms,
+            eta_s = step_ms * left / 1000,
+            "шаг денойза"
+        );
         let pct = p.step as f32 / p.total.max(1) as f32;
         run_on_main_thread(move || progress_pct.set(pct));
     };

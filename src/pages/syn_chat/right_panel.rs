@@ -244,7 +244,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                     }
                     use_context::<SynModelRegistry>().unload();
                 })
-                .class("right-unload-btn-full")
+                .class("right-model-btn right-model-btn-unload")
         } else {
             let last = reg.last_path.get();
             Button::new("Загрузить модель")
@@ -255,16 +255,17 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                         load_from_any_thread(p);
                     }
                 })
-                .class("right-unload-btn-full")
+                .class("right-model-btn right-model-btn-load")
         };
 
+        // Picker и load/unload — одна строка: под ToolButton не нужна
+        // отдельная полоса, он занимает свою ширину, а основную кнопку
+        // растягивает `.grow`.
         DecoratedBox::new()
             .child(mgui! {
-                Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                        DecoratedBox::new().class("grow").child(pick),
-                    ],
-                    toggle,
+                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    pick,
+                    DecoratedBox::new().class("grow").child(toggle),
                 ]
             })
             .class("right-pick-row")

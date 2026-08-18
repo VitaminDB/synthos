@@ -111,11 +111,21 @@
   padding-top: 4px;
 }
 
+/* Picker стоит в одной строке с load/unload, поэтому высота и радиус
+ * совпадают с `.right-model-btn` — иначе кнопки в строке разного роста. */
 .right-pick-btn {
-  padding: 6px 10px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   background-color: var(--primary);
   color: var(--on-primary);
+  icon-size: 18px;
+  transition: background-color 140ms ease-out, transform 140ms ease-out;
+}
+
+.right-pick-btn:hover {
+  background-color: var(--primary-hover);
+  transform: translateY(-1px);
 }
 
 .right-pick-btn.disabled {
@@ -132,24 +142,58 @@
   opacity: 0.3;
 }
 
-.right-unload-btn-full {
-  background-color: var(--error-container);
-  color: var(--on-error-container);
+/* Кнопка загрузки/выгрузки модели.
+ *
+ * Раньше здесь стояли `var(--error-container)` / `var(--on-error-container)`
+ * — таких переменных в палитре нет вовсе (см. `styles/base/variables.mss`),
+ * поэтому фон резолвился в ничто, и кнопка выглядела полностью плоской.
+ * Плюс «Загрузить» и «Выгрузить» делили один класс, хотя это действия
+ * разного веса: загрузка — нейтральная, выгрузка — деструктивная.
+ *
+ * Общая геометрия здесь, цвета — в модификаторах ниже. Border есть у обеих:
+ * на тёмном фоне панели заливка сама по себе почти не читается. */
+.right-model-btn {
   border-radius: 8px;
+  border-width: 1px;
   padding: 8px 14px;
   height: 36px;
   font-weight: 600;
-  transition: background-color 140ms ease-out, transform 140ms ease-out;
+  transition:
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    transform 140ms ease-out;
 }
 
-.right-unload-btn-full:hover {
-  background-color: var(--error);
-  color: var(--on-error);
+.right-model-btn:disabled {
+  opacity: 0.4;
+}
+
+.right-model-btn-load {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.right-model-btn-load:hover {
+  background-color: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--text);
   transform: translateY(-1px);
 }
 
-.right-unload-btn-full:disabled {
-  opacity: 0.4;
+.right-model-btn-unload {
+  background-color: transparent;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* Белый, а не `--text-inverse`: в тёмных темах inverse — тёмный цвет
+ * (он для текста на светлой подложке), а здесь заливка красная. */
+.right-model-btn-unload:hover {
+  background-color: var(--error);
+  border-color: var(--error);
+  color: #FFFFFF;
+  transform: translateY(-1px);
 }
 
 .right-reset-wrap {

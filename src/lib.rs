@@ -47,6 +47,22 @@ pub fn run_desktop() {
         "Synthos starting"
     );
 
+    // Регистрация backend'ов synaptix (CPU + CUDA) в глобальном registry.
+    // Это две вставки в диспетчерскую таблицу — CUDA-контекст не
+    // создаётся, `CudaBackend` unit-структура, — поэтому делать её на
+    // старте дёшево и безопасно.
+    //
+    // Раньше регистрация висела на каждом потребителе отдельно
+    // (`ensure_kernels_registered` в нодах LTX/H3/LLM/VoxCPM/ASR), и путь,
+    // который её не звал, падал на первом же `cast`: глобальный голосовой
+    // FAB грузил ASR через `agent::audio::load_selected_model` и получал
+    // «backend not registered for device Cpu — did you call
+    // synaptix::init()?». Одна регистрация на процесс убирает весь класс
+    // таких промахов; локальные вызовы идемпотентны и остаются как есть.
+    if let Err(e) = synaptix::init() {
+        tracing::error!(error = %e, "synaptix::init: регистрация backend'ов не удалась");
+    }
+
     // Регистрация sqlite-vec auto-extension: применяется глобально ко
     // всем последующим Connection'ам в процессе. Без feature
     // `kb-sqlite-vec` — no-op, KB остаётся на full-scan.

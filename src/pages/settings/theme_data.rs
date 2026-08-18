@@ -174,21 +174,66 @@ pub fn find_or_default(id: &str, dark: bool) -> SynthosTheme {
     }
 }
 
+/// Затемнить цвет в **sRGB**-пространстве: множитель применяется к
+/// гамма-кодированным компонентам, а не к линейным.
+///
+/// `Color::darken`/`lighten` из syngui работают по линейным компонентам, и
+/// для палитры это даёт не тот результат, которого ждёшь: `darken(0.66)`
+/// на светлом акценте возвращает средне-серый (#545887 для сине-фиолетового), а
+/// не тёмную подложку. На таком «затемнённом» `--surface-selected` текст
+/// `--text-muted` давал контраст ~2.6:1 — выбранный чат в списке читался
+/// хуже невыбранного. Здесь шкалируем воспринимаемую яркость.
+fn srgb_scale(c: Color, factor: f32) -> Color {
+    let [r, g, b] = c.to_srgb_u8();
+    let f = |v: u8| (v as f32 / 255.0 * factor).clamp(0.0, 1.0);
+    Color::from_srgb_f32(f(r), f(g), f(b))
+}
+
+/// Подмешать белый в sRGB-пространстве: `t = 0` — исходный цвет, `t = 1` —
+/// белый. Парный к [`srgb_scale`] для светлых тем.
+fn srgb_toward_white(c: Color, t: f32) -> Color {
+    let [r, g, b] = c.to_srgb_u8();
+    let f = |v: u8| {
+        let s = v as f32 / 255.0;
+        (s + (1.0 - s) * t).clamp(0.0, 1.0)
+    };
+    Color::from_srgb_f32(f(r), f(g), f(b))
+}
+
 /// Блок `:root`, переопределяющий акцент темы системным цветом рабочего стола.
 ///
-/// Производные (hover, мягкая заливка, цвет текста на акценте) считаются от
-/// него же: DE отдаёт только базовый цвет, а палитре нужен весь набор.
+/// Производные (hover, мягкая заливка, подложка выделения, цвет текста на
+/// акценте) считаются от него же: DE отдаёт только базовый цвет, а палитре
+/// нужен весь набор.
+///
+/// `--surface-hover` тоже переопределяется. Без этого он оставался
+/// «родным» для темы (#22252B у Onyx против фона колонки #181A1F) —
+/// разница ~4% яркости, и на полупрозрачных поверхностях hover визуально
+/// пропадал совсем. Акцентный оттенок и заметен, и согласован с выделением.
 pub fn accent_override_mss(accent: Color, is_dark: bool) -> String {
-    let hover = if is_dark { accent.lighten(0.14) } else { accent.darken(0.14) };
-    let soft = if is_dark { accent.darken(0.74) } else { accent.lighten(0.86) };
-    let selected = if is_dark { accent.darken(0.66) } else { accent.lighten(0.80) };
+    let (hover, soft, selected, surface_hover) = if is_dark {
+        (
+            srgb_toward_white(accent, 0.16),
+            srgb_scale(accent, 0.26),
+            srgb_scale(accent, 0.30),
+            srgb_scale(accent, 0.28),
+        )
+    } else {
+        (
+            srgb_scale(accent, 0.86),
+            srgb_toward_white(accent, 0.88),
+            srgb_toward_white(accent, 0.82),
+            srgb_toward_white(accent, 0.90),
+        )
+    };
 
-    let mut s = String::with_capacity(256);
+    let mut s = String::with_capacity(320);
     let _ = writeln!(s, ":root {{");
     let _ = writeln!(s, "    --primary:          {};", accent.to_hex());
     let _ = writeln!(s, "    --primary-hover:    {};", hover.to_hex());
     let _ = writeln!(s, "    --primary-soft:     {};", soft.to_hex());
     let _ = writeln!(s, "    --surface-selected: {};", selected.to_hex());
+    let _ = writeln!(s, "    --surface-hover:    {};", surface_hover.to_hex());
     let _ = writeln!(s, "    --on-primary:       {};", accent.readable_on().to_hex());
     let _ = writeln!(s, "}}");
     s

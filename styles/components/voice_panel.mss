@@ -5,13 +5,19 @@
  * с альфой). Без захардкоженного белого — на тёмной теме панель остаётся
  * затемнённым стеклом, на светлой — белёсым стеклом. */
 
+/* Ширина фиксированная, а не min-width: раньше карточка растягивалась по
+ * самому широкому ребёнку, и одна длинная строка статуса (текст ошибки
+ * загрузки модели) раздувала окно до ~1300px — получался приплюснутый
+ * «ландшафтный» блок. Колонки транскрипта теперь идут одна под другой
+ * (см. `panel.rs::transcripts_view`), так что 640px хватает на ауру 480
+ * с воздухом по краям, а окно выходит вертикальным. */
 .voice-overlay-card {
     background-color: var(--glass-card-bg);
     backdrop-filter: blur(28px);
     border-radius: 24px;
-    padding: 36px 48px 28px 48px;
-    min-width: 880px;
-    min-height: 720px;
+    padding: 32px 32px 24px 32px;
+    width: 640px;
+    max-width: 640px;
     box-shadow: var(--glass-shadow);
     border-width: 1px;
     border-color: var(--glass-border);
@@ -29,17 +35,20 @@
     accent-color: var(--primary);
 }
 
-/* Статус-текст центрируется вместе с Column.cross_axis_alignment(Center). */
+/* Статус-текст центрируется вместе с Column.cross_axis_alignment(Center).
+ * max-width обязателен: в статус попадает и текст ошибки загрузки модели,
+ * а он длинный — без ограничения одна строка растягивала всю карточку. */
 .voice-overlay-status {
     font-size: 14px;
     color: var(--text-muted);
+    max-width: 576px;
+    text-align: center;
 }
 
-/* Контейнер двух колонок (raw слева, refined справа) — прозрачный, нужен
- * только для горизонтального отступа от карточки. Сам Row делит ширину
- * между двумя `.grow`-колонками. */
+/* Контейнер секций транскрипта (raw сверху, refined снизу) — прозрачный,
+ * задаёт только ширину контентной колонки карточки. */
 .voice-overlay-transcripts {
-    width: 780px;
+    width: 576px;
     background-color: transparent;
 }
 
@@ -120,6 +129,7 @@
     font-size: 12px;
     color: var(--error);
     line-height: 1.3;
+    max-width: 576px;
 }
 
 .voice-actions-row {

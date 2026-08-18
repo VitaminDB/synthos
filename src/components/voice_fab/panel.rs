@@ -110,30 +110,30 @@ fn status_text_reactive() -> impl Fn() -> StyledWidget<Text> + Send + Sync + 'st
     }
 }
 
-/// Горизонтальная компоновка двух полей со средней Refine-кнопкой:
-/// `[ raw_section | refine_button | refined_section ]`.
+/// Вертикальная компоновка секций с Refine-кнопкой между ними:
+/// `raw_section / refine_button / refined_section / error`.
 ///
-/// Каждая колонка получает `.grow` (flex-grow: 1) — поля делят ширину поровну.
-/// Refine-кнопка центрируется по вертикали через `cross_axis_alignment(Center)`
-/// на самом Row.
+/// Раньше секции стояли рядом в Row — карточка из-за этого была широкой и
+/// приплюснутой. В колонку они складываются в ту же логику «сверху что
+/// распознали, снизу что вернула модель», но окно выходит вертикальным, а
+/// поля получают всю ширину карточки вместо половины.
 fn transcripts_view() -> impl Widget {
-    // Строка ошибки postprocess'а живёт ПОД парой колонок, а не внутри
-    // правой: раньше она была четвёртым child'ом `refined_section` и,
-    // будучи всегда смонтированной (пустой Text при отсутствии ошибки),
-    // делала правую колонку выше левой. С `cross_axis_alignment(Center)`
-    // это разъезжало заголовки и поля по вертикали.
+    // Строка ошибки postprocess'а живёт ПОД секциями, а не внутри refined:
+    // она всегда смонтирована (пустой Text при отсутствии ошибки), и
+    // четвёртым child'ом `refined_section` делала правую колонку выше
+    // левой — с `cross_axis_alignment(Center)` заголовки и поля из-за
+    // этого разъезжались по вертикали.
     DecoratedBox::new().class("voice-overlay-transcripts").child(
         Column::new()
-            .gap(6.0)
+            .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .child(raw_section())
             .child(
                 Row::new()
-                    .gap(14.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .child(raw_section())
-                    .child(refine_button_reactive())
-                    .child(refined_section()),
+                    .main_axis_alignment(MainAxisAlignment::Center)
+                    .child(refine_button_reactive()),
             )
+            .child(refined_section())
             .child(refine_error_reactive()),
     )
 }
@@ -142,7 +142,6 @@ fn raw_section() -> impl Widget {
     Column::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .class("grow")
         .child(Text::new("Исходная речь").class("voice-overlay-section-title"))
         .child(raw_field_reactive())
 }
@@ -177,7 +176,6 @@ fn refined_section() -> impl Widget {
     Column::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .class("grow")
         .child(Text::new("Отредактированный текст").class("voice-overlay-section-title"))
         .child(refined_field_reactive())
 }

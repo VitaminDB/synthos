@@ -41,10 +41,14 @@
 }
 
 /* ─── Центральная FAB (96×96 внутри voice-overlay-card) ─── */
+/* icon-size обязателен: без него глиф микрофона рисуется дефолтным
+ * размером ToolButton'а (~18px) и на 96-пиксельном круге его практически
+ * не видно — ровно та же строка есть у `.fab-voice-corner`. */
 .fab-voice-center {
     width: 96px;
     height: 96px;
     border-radius: 48px;
+    icon-size: 44px;
     background-color: var(--primary);
     color: var(--on-primary);
     box-shadow: 0 8px 32px rgba(238, 94, 72, 0.55);

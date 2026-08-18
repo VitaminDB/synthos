@@ -254,6 +254,7 @@ pub enum NodeStateData {
     LtxLipdub(LtxLipdubStateData),
     LtxA2V(LtxA2VStateData),
     H3Checkpoint(H3CheckpointStateData),
+    H3Sampler(H3SamplerStateData),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -486,6 +487,32 @@ pub struct H3CheckpointStateData {
 
 fn default_h3_lora_strength() -> f32 {
     1.0
+}
+
+/// State Sampler-ноды MiniMax-H3. Дефолты — оригинальный пайплайн
+/// (20 шагов, CFG 5); турбо-шаблон задаёт свои значения явно.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct H3SamplerStateData {
+    #[serde(default = "default_h3_steps")]
+    pub steps: u32,
+    #[serde(default = "default_h3_cfg_scale")]
+    pub cfg_scale: f32,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+impl Default for H3SamplerStateData {
+    fn default() -> Self {
+        Self { steps: default_h3_steps(), cfg_scale: default_h3_cfg_scale(), seed: 0 }
+    }
+}
+
+pub fn default_h3_steps() -> u32 {
+    20
+}
+
+pub fn default_h3_cfg_scale() -> f32 {
+    5.0
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]

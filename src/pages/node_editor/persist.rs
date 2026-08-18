@@ -338,12 +338,10 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = resize_idx.get();
             let _ = error.get();
         }
-        NodeRuntime::H3Sampler { steps, cfg_scale, seed, two_stage, refine_steps, error, .. } => {
+        NodeRuntime::H3Sampler { steps, cfg_scale, seed, error, .. } => {
             let _ = steps.get();
             let _ = cfg_scale.get();
             let _ = seed.get();
-            let _ = two_stage.get();
-            let _ = refine_steps.get();
             let _ = error.get();
         }
         NodeRuntime::H3VaeDecode { error, .. } => {

@@ -14,7 +14,7 @@ use super::super::super::types::{
     DataBlob, H3Blob, H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3VideoLatent,
     NodeInstance, NodeRuntime, PortValue,
 };
-use super::super::acestep::{field_row, make_int_slider_row, make_seed_slider, make_slider_row, make_toggle, status_row};
+use super::super::acestep::{field_row, make_int_slider_row, make_seed_slider, make_slider_row, status_row};
 use super::{
     cancel_button, current_input_av_latent, current_input_conditioning, current_input_keyframe,
     current_input_model, progress_row, shared,
@@ -81,8 +81,6 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 steps,
                 cfg_scale,
                 seed,
-                two_stage,
-                refine_steps,
                 running,
                 error,
                 progress_pct,
@@ -94,8 +92,6 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 *steps,
                 *cfg_scale,
                 *seed,
-                *two_stage,
-                *refine_steps,
                 *running,
                 *error,
                 *progress_pct,
@@ -112,8 +108,6 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         steps,
         cfg_scale,
         seed,
-        two_stage,
-        refine_steps,
         running,
         error,
         progress_pct,
@@ -150,8 +144,6 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let n_steps = steps.get_untracked().max(1) as usize;
     let cfg = cfg_scale.get_untracked();
     let s = seed.get_untracked();
-    let ts_on = two_stage.get_untracked();
-    let ts_refine = refine_steps.get_untracked().max(1) as usize;
 
     running.set(true);
     error.set(None);
@@ -170,8 +162,6 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 n_steps,
                 cfg,
                 s,
-                ts_on,
-                ts_refine,
                 progress_pct,
                 &cancel,
             );
@@ -202,8 +192,6 @@ fn worker(
     steps: usize,
     cfg_scale: f32,
     seed: u64,
-    two_stage: bool,
-    refine_steps: usize,
     progress_pct: RwSignal<f32>,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> std::result::Result<(H3VideoLatent, synaptix_core::tensor::Tensor), String> {
@@ -245,51 +233,6 @@ fn worker(
             },
         })
         .collect();
-
-    let use_two_stage = two_stage && keyframes.is_empty();
-    if use_two_stage {
-        drop(anchor);
-        let stage1_total = steps;
-        let progress = move |p: h3::pipeline::DenoiseProgress| {
-            let pct = if p.total == stage1_total {
-                0.75 * p.step as f32 / p.total.max(1) as f32
-            } else {
-                0.75 + 0.25 * p.step as f32 / p.total.max(1) as f32
-            };
-            run_on_main_thread(move || progress_pct.set(pct));
-        };
-        let hooks = h3::pipeline::DenoiseHooks {
-            progress: Some(&progress),
-            cancel: Some(cancel),
-        };
-        let mut ts = h3::pipeline::TwoStageParams {
-            refine_steps,
-            ..Default::default()
-        };
-        if let Ok(v) = std::env::var("H3_REFINE_SIGMA") {
-            if let Ok(f) = v.parse::<f64>() {
-                ts.refine_sigma = f;
-            }
-        }
-        let out = h3::pipeline::denoise_av_two_stage(
-            dit,
-            ckpt,
-            &req,
-            &sched,
-            &ts,
-            shared_dit.compute,
-            &hooks,
-        )
-        .map_err(|e| match e {
-            h3::H3Error::Cancelled => "отменено".to_string(),
-            other => other.to_string(),
-        })?;
-        shared::hold_dit(shared_dit.clone());
-        return Ok((
-            H3VideoLatent { tensor: out.video_latent, geometry },
-            out.audio_latent,
-        ));
-    }
 
     let prep = h3::pipeline::prepare(dit, &req, &sched).map_err(|e| e.to_string())?;
 
@@ -355,19 +298,17 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 steps,
                 cfg_scale,
                 seed,
-                two_stage,
-                refine_steps,
                 running,
                 error,
                 progress_pct,
                 cancel,
                 ..
-            } => Some((*steps, *cfg_scale, *seed, *two_stage, *refine_steps, *running, *error, *progress_pct, cancel.clone())),
+            } => Some((*steps, *cfg_scale, *seed, *running, *error, *progress_pct, cancel.clone())),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((steps, cfg_scale, seed, two_stage, refine_steps, running, error, progress_pct, cancel)) = snapshot else {
+    let Some((steps, cfg_scale, seed, running, error, progress_pct, cancel)) = snapshot else {
         return Box::new(Column::new());
     };
     let loaded_name = use_signal(None::<String>);
@@ -379,8 +320,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 field_row("Шагов", make_int_slider_row(steps, 1, 40, 1)),
                 field_row("CFG", make_slider_row(cfg_scale, 1.0, 12.0, 0.5, 1)),
                 field_row("Seed", make_seed_slider(seed)),
-                field_row("Half-res ×2", make_toggle(two_stage)),
-                field_row("Рефайн-шагов", make_int_slider_row(refine_steps, 1, 10, 1)),
                 field_row("Прогресс", progress_row(running, progress_pct)),
                 field_row("Отмена", cancel_button(running, cancel)),
                 field_row(

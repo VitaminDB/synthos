@@ -21,7 +21,7 @@ use super::model::{
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, H3CheckpointStateData,
-    LlmStateData,
+    H3SamplerStateData, LlmStateData,
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
     LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
     LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
@@ -223,10 +223,16 @@ fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             compute_idx: compute_idx.get_untracked(),
             memory_mode_idx: memory_mode_idx.get_untracked(),
         })),
+        NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. } => {
+            Some(NodeStateData::H3Sampler(H3SamplerStateData {
+                steps: steps.get_untracked(),
+                cfg_scale: cfg_scale.get_untracked(),
+                seed: seed.get_untracked(),
+            }))
+        }
         NodeRuntime::H3TextEncoder { .. }
         | NodeRuntime::H3EmptyLatentAv { .. }
         | NodeRuntime::H3Keyframe { .. }
-        | NodeRuntime::H3Sampler { .. }
         | NodeRuntime::H3VaeDecode { .. }
         | NodeRuntime::H3AudioDecode { .. }
         | NodeRuntime::H3VideoSave { .. } => None,
@@ -1077,6 +1083,14 @@ fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             quant_enc_idx.set(data.quant_enc_idx);
             compute_idx.set(data.compute_idx);
             memory_mode_idx.set(data.memory_mode_idx);
+        }
+        (
+            NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. },
+            NodeStateData::H3Sampler(data),
+        ) => {
+            steps.set(data.steps);
+            cfg_scale.set(data.cfg_scale);
+            seed.set(data.seed);
         }
         (
             NodeRuntime::LtxCheckpoint {

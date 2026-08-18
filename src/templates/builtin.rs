@@ -8,8 +8,8 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    FieldValueData, LtxSamplerStage1StateData, NodeData, NodeStateData, PointData, Template,
-    TemplateKind, TextViewStateData,
+    FieldValueData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData, NodeStateData,
+    PointData, Template, TemplateKind, TextViewStateData,
 };
 use crate::pages::node_editor::types::NodeKind;
 
@@ -871,9 +871,9 @@ fn h3_text_to_video_template() -> Template {
         name: "H3: Text to Video + Audio".into(),
         description:
             "Промпт → Qwen3-VL Text Encoder → Sampler (совместный денойзинг видео и звука) → \
-             VAE Decode + Audio Decode → mp4 и плеер. В Checkpoint укажите каталог MiniMax-H3; \
-             энкодер подхватится из text_encoder. Базовый режим: 20 шагов, CFG 5 — поднимите \
-             их в ноде Sampler, если не используете Turbo LoRA."
+             VAE Decode + Audio Decode → mp4 и плеер. В Checkpoint укажите .syn-бандл MiniMax-H3; \
+             энкодер подхватится из бандла. Оригинальный пайплайн: 20 шагов, CFG 5 — \
+             дефолты Sampler."
                 .into(),
         kind: TemplateKind::Full,
         nodes: h3_base_nodes(
@@ -886,20 +886,29 @@ fn h3_text_to_video_template() -> Template {
 }
 
 fn h3_turbo_template() -> Template {
+    let mut nodes = h3_base_nodes(
+        "close-up of rain hitting a neon-lit window at night, droplets sliding down, \
+         distant thunder and soft synth pads",
+    );
+    // Sampler турбо-шаблона несёт свои параметры явно: 6 шагов без CFG.
+    nodes[4] = node_with_state(
+        5,
+        NodeKind::H3Sampler,
+        940.0,
+        560.0,
+        NodeStateData::H3Sampler(H3SamplerStateData { steps: 6, cfg_scale: 1.0, seed: 0 }),
+    );
     Template {
         id: "builtin-h3-turbo".into(),
         builtin: true,
         name: "H3: Turbo (6 шагов)".into(),
         description:
-            "Тот же граф, что и Text to Video, но под Turbo LoRA: 6 шагов без CFG. Укажите \
-             minimax_h3_turbo_v4_step600_ema.safetensors в поле LoRA у Checkpoint — дефолты \
-             Sampler (6 шагов, CFG 1.0) уже настроены под неё."
+            "Тот же граф, что и Text to Video, но под Turbo LoRA: 6 шагов без CFG (задано в \
+             Sampler этого шаблона). Укажите minimax_h3_turbo_v4_step600_ema.safetensors \
+             в поле LoRA у Checkpoint — без неё на 6 шагах будет рябь."
                 .into(),
         kind: TemplateKind::Full,
-        nodes: h3_base_nodes(
-            "close-up of rain hitting a neon-lit window at night, droplets sliding down, \
-             distant thunder and soft synth pads",
-        ),
+        nodes,
         connections: h3_base_connections(),
         viewport: None,
     }

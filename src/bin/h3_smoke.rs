@@ -120,7 +120,6 @@ fn run() -> std::result::Result<(), String> {
     let width: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(640);
     let height: u32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(384);
     let dur: f32 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(2.0);
-    let steps: u32 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(6);
     if !model_path.exists() {
         return Err(format!("нет пути: {}", model_path.display()));
     }
@@ -129,6 +128,11 @@ fn run() -> std::result::Result<(), String> {
         "a calm sunlit room, dust motes drifting in the light, soft ambient hum".into()
     });
     let lora = std::env::var("H3_LORA").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
+    // 6 шагов — режим Turbo-LoRA; оригинальный пайплайн — 20.
+    let steps: u32 = args
+        .get(6)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(if lora.is_some() { 6 } else { 20 });
     let image = std::env::var("H3_IMAGE").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
 
     minimax_h3::shared::ensure_kernels_registered();
@@ -232,15 +236,7 @@ fn run() -> std::result::Result<(), String> {
         _ => return Err("H3EmptyLatentAv runtime".into()),
     }
     match &*node(&ctx, n_smp).runtime.lock().unwrap() {
-        NodeRuntime::H3Sampler { steps: s, cfg_scale, two_stage, refine_steps, .. } => {
-            if matches!(std::env::var("H3_TWO_STAGE").as_deref(), Ok("1")) {
-                two_stage.set(true);
-            }
-            if let Ok(v) = std::env::var("H3_REFINE_STEPS") {
-                if let Ok(n) = v.parse() {
-                    refine_steps.set(n);
-                }
-            }
+        NodeRuntime::H3Sampler { steps: s, cfg_scale, .. } => {
             s.set(steps);
             cfg_scale.set(
                 std::env::var("H3_CFG")

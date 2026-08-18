@@ -35,7 +35,7 @@
 .sampling-card {
   padding: 12px;
   border-radius: 10px;
-  background-color: var(--bg-elev-1);
+  background-color: var(--bg-search);
   border: 1px solid var(--border-soft);
 }
 

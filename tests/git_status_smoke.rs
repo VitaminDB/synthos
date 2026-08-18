@@ -1,6 +1,6 @@
-//! Smoke-тест для `git_status::compute` на реальном workspace-репо.
+//! Smoke-тест для `git_status::compute` на реальном репозитории.
 //! Проверяет, что:
-//! - `compute` не паникует на текущем syngui-репо;
+//! - `compute` не паникует на репозитории synthos;
 //! - возвращает непустую workdir;
 //! - HashMap files+folders валидны (никаких bogus-путей).
 //!
@@ -11,20 +11,15 @@ use std::path::PathBuf;
 
 #[test]
 fn compute_does_not_panic_on_workspace_repo() {
-    // Запускаем тест из workspace root: synthos живёт в app/synthos/,
-    // workspace root — на 2 уровня выше.
-    let here = std::env::current_dir().expect("cwd");
-    // CARGO_MANIFEST_DIR для теста = app/synthos/. Поднимаемся на 2.
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .expect("workspace root");
+    // Берём корень самого crate'а: он и есть git-репо synthos. Раньше тест
+    // поднимался на два уровня вверх — это была раскладка `app/synthos/`
+    // внутри общего workspace'а. После переезда проекта два уровня вверх
+    // ведут в каталог без `.git`, и тест падал на первом же assert'е.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    let map = git_status::compute(&workspace_root);
+    let map = git_status::compute(&repo_root);
 
-    // syngui — git-репо, поэтому workdir должен быть Some.
-    assert!(map.workdir.is_some(), "syngui — git-репо, ожидаем Some workdir");
+    assert!(map.workdir.is_some(), "synthos — git-репо, ожидаем Some workdir");
 
     // Все ключи files и folders должны быть абсолютными путями внутри
     // workdir.
@@ -46,5 +41,4 @@ fn compute_does_not_panic_on_workspace_repo() {
     }
 
     // На случай отладки.
-    let _ = here;
 }

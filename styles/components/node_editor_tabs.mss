@@ -40,17 +40,17 @@
     transition: background-color var(--duration-fast) var(--ease-standard);
 }
 .ne-tab:hover {
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 .ne-tab--active {
-    background-color: var(--bg-elevated);
+    background-color: var(--bg-search);
     border-color: var(--border);
     border-bottom-width: 2px;
     border-bottom-color: var(--primary);
 }
 .ne-tab--active:hover {
-    background-color: var(--bg-elevated);
+    background-color: var(--bg-search);
 }
 
 /* ───────────────────────── Контент таба ─────────────────────────────── */
@@ -108,7 +108,7 @@
 .ne-tab-close:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 /* ───────────────────────── Add-кнопка (+) ─────────────────────────── */
@@ -128,5 +128,5 @@
 .ne-tab-add:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }

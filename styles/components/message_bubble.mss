@@ -120,7 +120,7 @@
 }
 
 .msg-thinking:hover {
-    background-color: var(--surface);
+    background-color: var(--surface-hover);
 }
 
 .msg-thinking-title {

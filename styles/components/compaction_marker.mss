@@ -16,7 +16,7 @@
 }
 
 .compaction-marker:hover {
-    background-color: var(--surface);
+    background-color: var(--surface-hover);
 }
 
 .compaction-icon {

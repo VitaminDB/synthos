@@ -78,11 +78,12 @@
     transition: background-color var(--duration-fast) var(--ease-standard);
 }
 .term-tab:hover {
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 /*
- * Активный таб: чуть ярче фон + accent-полоса снизу (2px). Точная высота
+ * Активный таб: `--bg-search` (заметно светлее `--bg-panel` бара) +
+ * accent-полоса снизу (2px). Точная высота
  * полосы — через border-bottom-width: 2px поверх 1px-border'а бара.
  *
  * `border-bottom-color: var(--primary)` (per-side) аккуратно перекрашивает
@@ -91,13 +92,13 @@
  * визуально сливало активный таб с соседом.
  */
 .term-tab--active {
-    background-color: var(--bg-elevated);
+    background-color: var(--bg-search);
     border-color: var(--border);
     border-bottom-width: 2px;
     border-bottom-color: var(--primary);
 }
 .term-tab--active:hover {
-    background-color: var(--bg-elevated);
+    background-color: var(--bg-search);
 }
 
 /* ───────────────────────── Контент таба ─────────────────────────────── */
@@ -167,7 +168,7 @@
 .term-tab-close:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 /* ───────────────────────── Add-кнопка (+) ─────────────────────────── */
@@ -187,7 +188,7 @@
 .term-tab-add:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 /* ───────────────────────── Gear-кнопка в tab-bar ───────────────────
@@ -213,7 +214,7 @@
 .term-gear-btn:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 /* ───────────────────────── Empty placeholder ───────────────────────── */

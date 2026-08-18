@@ -115,7 +115,7 @@
 .code-editor-open-folder-btn:hover {
     opacity: 1.0;
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--surface-hover);
 }
 
 .code-editor-tree-body {

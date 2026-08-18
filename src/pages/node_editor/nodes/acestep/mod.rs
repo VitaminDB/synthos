@@ -338,7 +338,9 @@ pub fn make_dropdown(options: &'static [&'static str], idx: RwSignal<usize>) -> 
     )
 }
 
-/// Slider + numeric readout, привязка к `RwSignal<f32>`.
+/// Slider со встроенным readout'ом (`Slider::show_value`): клик по числу —
+/// точный текстовый ввод (снап к step + кламп). Привязка к `RwSignal<f32>`;
+/// внешние изменения сигнала двигают ползунок (Reactive-обёртка).
 pub fn make_slider_row(
     sig: RwSignal<f32>,
     min: f32,
@@ -346,57 +348,38 @@ pub fn make_slider_row(
     step: f32,
     decimals: usize,
 ) -> Box<dyn Widget> {
-    let slider = Slider::new()
-        .value(sig.get_untracked())
-        .range(min, max)
-        .step(step)
-        .on_change(move |v| sig.set(v))
-        .class("node-input-slider acestep-slider-stretch");
-    let readout = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let v = sig.get();
-        vec![
-            Box::new(Text::new(format!("{v:.*}", decimals)).class("audio-node-meta"))
-                as Box<dyn Widget>,
-        ]
-    });
-    Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                Box::new(slider) as Box<dyn Widget>,
-                Box::new(readout),
-            ]),
-    )
+    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        vec![Box::new(
+            Slider::new()
+                .value(sig.get())
+                .range(min, max)
+                .step(step)
+                .show_value(decimals as u8)
+                .on_change(move |v| sig.set(v))
+                .class("node-input-slider acestep-slider-stretch"),
+        ) as Box<dyn Widget>]
+    }))
 }
 
 /// Int-slider (`RwSignal<u32>`). `Slider<f32>` под капотом, на изменение
-/// округляется до ближайшего u32.
+/// округляется до ближайшего u32. Readout встроенный, с текстовым вводом.
 pub fn make_int_slider_row(
     sig: RwSignal<u32>,
     min: u32,
     max: u32,
     step: u32,
 ) -> Box<dyn Widget> {
-    let slider = Slider::new()
-        .value(sig.get_untracked() as f32)
-        .range(min as f32, max as f32)
-        .step(step as f32)
-        .on_change(move |v| sig.set(v.round().max(0.0) as u32))
-        .class("node-input-slider acestep-slider-stretch");
-    let readout = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let v = sig.get();
-        vec![Box::new(Text::new(v.to_string()).class("audio-node-meta")) as Box<dyn Widget>]
-    });
-    Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                Box::new(slider) as Box<dyn Widget>,
-                Box::new(readout),
-            ]),
-    )
+    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        vec![Box::new(
+            Slider::new()
+                .value(sig.get() as f32)
+                .range(min as f32, max as f32)
+                .step(step as f32)
+                .show_value(0)
+                .on_change(move |v| sig.set(v.round().max(0.0) as u32))
+                .class("node-input-slider acestep-slider-stretch"),
+        ) as Box<dyn Widget>]
+    }))
 }
 
 /// Bool-переключатель (Switch) с привязкой к `RwSignal<bool>`. Без подписи —

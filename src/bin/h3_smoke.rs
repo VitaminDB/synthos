@@ -228,7 +228,7 @@ fn run() -> std::result::Result<(), String> {
         }
     }
     match &*node(&ctx, n_lat).runtime.lock().unwrap() {
-        NodeRuntime::H3EmptyLatentAv { width: w, height: h, duration_seconds } => {
+        NodeRuntime::H3EmptyLatentAv { width: w, height: h, duration_seconds, .. } => {
             w.set(width);
             h.set(height);
             duration_seconds.set(dur);

@@ -1864,6 +1864,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             width: use_signal(1344_u32),
             height: use_signal(768_u32),
             duration_seconds: use_signal(5.0_f32),
+            aspect_idx: use_signal(0_usize),
         },
         NodeKind::H3Keyframe => NodeRuntime::H3Keyframe {
             path: use_signal(None),

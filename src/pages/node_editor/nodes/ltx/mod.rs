@@ -286,20 +286,151 @@ pub fn cancel_button(
     }))
 }
 
-/// Прогресс-бар ноды: стандартный [`syngui::widgets::ProgressBar`] с
-/// процентами, виден только при running (MSS-класс `.ltx-progress`).
+/// Оценщик оставшегося времени генерации: EMA-скорость прогресса по
+/// событиям изменения `progress_pct`. Первый замер появляется после
+/// второго события (интервал «загрузка модели → первый шаг» намеренно
+/// отброшен — он не характеризует скорость шага денойза).
+#[derive(Default)]
+struct EtaState {
+    /// Время и pct последнего изменения прогресса.
+    last: Option<(std::time::Instant, f32)>,
+    /// Сглаженная скорость, прогресс-единиц (0..1) в секунду.
+    rate_ema: Option<f32>,
+}
+
+impl EtaState {
+    fn observe(&mut self, now: std::time::Instant, pct: f32) {
+        match self.last {
+            None => {
+                if pct > 0.0 {
+                    self.last = Some((now, pct));
+                }
+            }
+            Some((t0, p0)) => {
+                if pct < p0 {
+                    // Рестарт генерации — старые замеры невалидны.
+                    self.rate_ema = None;
+                    self.last = if pct > 0.0 { Some((now, pct)) } else { None };
+                } else if pct > p0 {
+                    let dt = (now - t0).as_secs_f32();
+                    if dt > 0.0 {
+                        let inst = (pct - p0) / dt;
+                        self.rate_ema = Some(match self.rate_ema {
+                            Some(ema) => ema * 0.6 + inst * 0.4,
+                            None => inst,
+                        });
+                    }
+                    self.last = Some((now, pct));
+                }
+            }
+        }
+    }
+
+    /// Секунд до конца; между шагами убывает по часам (countdown), не
+    /// уходя ниже нуля.
+    fn remaining_secs(&self, now: std::time::Instant, pct: f32) -> Option<f32> {
+        let rate = self.rate_ema?;
+        let (t0, _) = self.last?;
+        if rate <= f32::EPSILON || pct >= 1.0 {
+            return None;
+        }
+        Some(((1.0 - pct) / rate - (now - t0).as_secs_f32()).max(0.0))
+    }
+}
+
+/// `95 с` → `"1:35"`, `3723 с` → `"1:02:03"`.
+fn fmt_eta(secs: f32) -> String {
+    let s = secs.round().max(0.0) as u64;
+    if s < 60 {
+        format!("{s} с")
+    } else if s < 3600 {
+        format!("{}:{:02}", s / 60, s % 60)
+    } else {
+        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    }
+}
+
+/// Секундный тик для countdown'а ETA: пока нода работает, бампает сигнал
+/// `tick` раз в секунду (Reactive-строка на него подписана), между шагами
+/// денойза оценка «тает» по часам, а не замирает до следующего callback'а.
+struct EtaTicker {
+    running: RwSignal<bool>,
+    tick: RwSignal<u64>,
+    acc: syngui::core::sync::Mutex<std::time::Duration>,
+}
+
+impl super::super::controls::ProgressTicker for EtaTicker {
+    fn tick(&self, dt: std::time::Duration) -> bool {
+        if !self.running.get_untracked() {
+            return false;
+        }
+        let due = match self.acc.lock() {
+            Ok(mut acc) => {
+                *acc += dt;
+                if *acc >= std::time::Duration::from_secs(1) {
+                    *acc = std::time::Duration::ZERO;
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_) => true,
+        };
+        if due {
+            self.tick.update(|v| *v = v.wrapping_add(1));
+        }
+        true
+    }
+}
+
+/// Прогресс-бар ноды: [`syngui::widgets::ProgressBar`] (MSS-класс
+/// `.ltx-progress`) + строка «47% · ≈ 5:32» (процент и оценка оставшегося
+/// времени). Виден только при running.
 pub fn progress_row(running: RwSignal<bool>, progress_pct: RwSignal<f32>) -> Box<dyn Widget> {
-    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+    let eta = Arc::new(syngui::core::sync::Mutex::new(EtaState::default()));
+    let tick = use_signal(0_u64);
+    let ticker = super::super::controls::node_progress_animator(Arc::new(EtaTicker {
+        running,
+        tick,
+        acc: syngui::core::sync::Mutex::new(std::time::Duration::ZERO),
+    }));
+    let row = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if !running.get() {
+            if let Ok(mut st) = eta.lock() {
+                *st = EtaState::default();
+            }
             return vec![];
         }
+        let _ = tick.get(); // подписка на секундный countdown-тик
         let pct = progress_pct.get().clamp(0.0, 1.0);
-        vec![
-            Box::new(
-                syngui::widgets::ProgressBar::with_value(pct)
-                    .show_percentage()
-                    .class("ltx-progress"),
-            ) as Box<dyn Widget>,
-        ]
-    }))
+        let now = std::time::Instant::now();
+        let label = match eta.lock() {
+            Ok(mut st) => {
+                st.observe(now, pct);
+                match st.remaining_secs(now, pct) {
+                    Some(rem) => format!("{}% · ≈ {}", (pct * 100.0) as i32, fmt_eta(rem)),
+                    None => format!("{}%", (pct * 100.0) as i32),
+                }
+            }
+            Err(_) => format!("{}%", (pct * 100.0) as i32),
+        };
+        vec![Box::new(
+            Row::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .class("ltx-progress-row")
+                .children(vec![
+                    Box::new(syngui::widgets::ProgressBar::with_value(pct).class("ltx-progress"))
+                        as Box<dyn Widget>,
+                    Box::new(Text::new(label).class("ltx-progress-label")),
+                ]),
+        ) as Box<dyn Widget>]
+    });
+    Box::new(
+        Row::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .class("ltx-progress-row")
+            .children(vec![ticker, Box::new(row) as Box<dyn Widget>]),
+    )
 }

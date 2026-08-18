@@ -28,11 +28,16 @@
 }
 
 /* ── Slider ─────────────────────────────────────────────────────────── */
+/* label-color / font-size — встроенный readout значения (Slider::show_value):
+ * клик по числу открывает текстовый инлайн-ввод, caret-color — его курсор. */
 .node-input-slider {
     width: 120px;
     height: 26px;
     accent-color: var(--primary);
     background-color: rgba(255, 255, 255, 0.10);
+    label-color: #98A0AD;
+    caret-color: var(--primary);
+    font-size: 11px;
     transition: accent-color 160ms ease-out;
 }
 

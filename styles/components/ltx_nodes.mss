@@ -40,12 +40,28 @@
     border-color: rgba(76, 174, 235, 0.75);
 }
 
-/* Прогресс денойза/декода: бирюзовая полоса с плавным заполнением. */
+/* Прогресс денойза/декода: тонкая бирюзовая полоса на тёмном треке —
+ * в стилистике остальных input-виджетов ноды (см. .node-input-slider). */
 .ltx-progress {
     width: auto;
     flex-grow: 1;
+    height: 6px;
     accent-color: #4CAEEB;
+    background-color: rgba(255, 255, 255, 0.10);
     transition: width 220ms ease-out;
+}
+
+/* Строка бара: растягивается на всю control-cell field-row'а. */
+.ltx-progress-row {
+    width: auto;
+    flex-grow: 1;
+}
+
+/* «47% · ≈ 5:32» — процент + оценка оставшегося времени справа от бара. */
+.ltx-progress-label {
+    color: #98A0AD;
+    font-size: 11px;
+    font-weight: 500;
 }
 
 /* Кнопка отмены генерации: красная при hover, видна только при running. */

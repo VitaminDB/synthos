@@ -327,10 +327,11 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = error.get();
             let _ = loaded_name.get();
         }
-        NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds } => {
+        NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx } => {
             let _ = width.get();
             let _ = height.get();
             let _ = duration_seconds.get();
+            let _ = aspect_idx.get();
         }
         NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, error, .. } => {
             let _ = path.get();

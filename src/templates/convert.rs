@@ -21,7 +21,7 @@ use super::model::{
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, H3CheckpointStateData,
-    H3SamplerStateData, LlmStateData,
+    H3EmptyLatentAvStateData, H3SamplerStateData, LlmStateData,
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
     LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
     LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
@@ -230,8 +230,15 @@ fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 seed: seed.get_untracked(),
             }))
         }
+        NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx } => {
+            Some(NodeStateData::H3EmptyLatentAv(H3EmptyLatentAvStateData {
+                width: width.get_untracked(),
+                height: height.get_untracked(),
+                duration_seconds: duration_seconds.get_untracked(),
+                aspect_idx: aspect_idx.get_untracked(),
+            }))
+        }
         NodeRuntime::H3TextEncoder { .. }
-        | NodeRuntime::H3EmptyLatentAv { .. }
         | NodeRuntime::H3Keyframe { .. }
         | NodeRuntime::H3VaeDecode { .. }
         | NodeRuntime::H3AudioDecode { .. }
@@ -1093,6 +1100,15 @@ fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             seed.set(data.seed);
         }
         (
+            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx },
+            NodeStateData::H3EmptyLatentAv(data),
+        ) => {
+            width.set(data.width);
+            height.set(data.height);
+            duration_seconds.set(data.duration_seconds);
+            aspect_idx.set(data.aspect_idx);
+        }
+        (
             NodeRuntime::LtxCheckpoint {
                 model_path,
                 gemma_dir,
@@ -1753,6 +1769,36 @@ mod tests {
                 assert_eq!(memory_mode_idx.get_untracked(), 2);
             }
             other => panic!("Expected H3Checkpoint runtime, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_h3_empty_latent_state() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::H3EmptyLatentAv,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::H3EmptyLatentAv(H3EmptyLatentAvStateData {
+                width: 768,
+                height: 1344,
+                duration_seconds: 10.0,
+                aspect_idx: 2,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        match &*rt {
+            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx } => {
+                assert_eq!(width.get_untracked(), 768);
+                assert_eq!(height.get_untracked(), 1344);
+                assert!((duration_seconds.get_untracked() - 10.0).abs() < 1e-6);
+                assert_eq!(aspect_idx.get_untracked(), 2);
+            }
+            other => panic!("Expected H3EmptyLatentAv runtime, got {other:?}"),
         }
     }
 

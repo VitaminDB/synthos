@@ -255,6 +255,7 @@ pub enum NodeStateData {
     LtxA2V(LtxA2VStateData),
     H3Checkpoint(H3CheckpointStateData),
     H3Sampler(H3SamplerStateData),
+    H3EmptyLatentAv(H3EmptyLatentAvStateData),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -512,6 +513,44 @@ pub fn default_h3_steps() -> u32 {
 }
 
 pub fn default_h3_cfg_scale() -> f32 {
+    5.0
+}
+
+/// State Empty AV Latent ноды MiniMax-H3: размеры кадра, длительность и
+/// выбранная пропорция (индекс в `minimax_h3::latent::ASPECT_OPTIONS`,
+/// 0 = «Свободно»).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct H3EmptyLatentAvStateData {
+    #[serde(default = "default_h3_width")]
+    pub width: u32,
+    #[serde(default = "default_h3_height")]
+    pub height: u32,
+    #[serde(default = "default_h3_duration")]
+    pub duration_seconds: f32,
+    #[serde(default)]
+    pub aspect_idx: usize,
+}
+
+impl Default for H3EmptyLatentAvStateData {
+    fn default() -> Self {
+        Self {
+            width: default_h3_width(),
+            height: default_h3_height(),
+            duration_seconds: default_h3_duration(),
+            aspect_idx: 0,
+        }
+    }
+}
+
+pub fn default_h3_width() -> u32 {
+    1344
+}
+
+pub fn default_h3_height() -> u32 {
+    768
+}
+
+pub fn default_h3_duration() -> f32 {
     5.0
 }
 

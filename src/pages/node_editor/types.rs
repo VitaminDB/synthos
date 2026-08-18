@@ -2013,6 +2013,10 @@ pub enum NodeRuntime {
         width: RwSignal<u32>,
         height: RwSignal<u32>,
         duration_seconds: RwSignal<f32>,
+        /// Индекс в `minimax_h3::latent::ASPECT_OPTIONS`: 0 = «Свободно»,
+        /// дальше фиксированные пропорции (16:9, 9:16, …) — ширина и
+        /// высота связаны, портретные варианты дают вертикальное видео.
+        aspect_idx: RwSignal<usize>,
     },
     H3Keyframe {
         path: RwSignal<Option<PathBuf>>,
@@ -2257,7 +2261,7 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::H3TextEncoder { running, .. } => {
                 write!(f, "NodeRuntime::H3TextEncoder{{running={}}}", running.get_untracked())
             }
-            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds } => {
+            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, .. } => {
                 write!(
                     f,
                     "NodeRuntime::H3EmptyLatentAv{{{}x{}, {:.1}s}}",

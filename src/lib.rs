@@ -22,6 +22,7 @@ pub mod kb;
 pub mod logging;
 pub mod metrics;
 pub mod migrate;
+pub mod models;
 pub mod pages;
 pub mod skills;
 pub mod styles;
@@ -108,6 +109,13 @@ pub fn run_desktop() {
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
+            // Watcher sequencer'а нодового редактора ставится здесь, а не в
+            // `run_controls::view`: страница пересобирается роутером, и
+            // effect, заведённый внутри неё, умирал вместе с прогоном.
+            pages::node_editor::run_controls::install_run_watcher();
+            // Сигнал версии реестра моделей: заводится с main-thread'а,
+            // дальше его дёргают загрузчики из воркеров.
+            models::install();
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
@@ -155,6 +163,13 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
+            // Watcher sequencer'а нодового редактора ставится здесь, а не в
+            // `run_controls::view`: страница пересобирается роутером, и
+            // effect, заведённый внутри неё, умирал вместе с прогоном.
+            pages::node_editor::run_controls::install_run_watcher();
+            // Сигнал версии реестра моделей: заводится с main-thread'а,
+            // дальше его дёргают загрузчики из воркеров.
+            models::install();
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();

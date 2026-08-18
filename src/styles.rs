@@ -94,6 +94,8 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/node_editor_run_controls.mss"),
         "\n",
+        include_str!("../styles/components/node_editor_models_panel.mss"),
+        "\n",
         include_str!("../styles/components/node_editor_timers.mss"),
         "\n",
         include_str!("../styles/components/markdown_node.mss"),

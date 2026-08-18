@@ -40,9 +40,15 @@ impl ModelKey {
     }
 }
 
+/// `component` — как компонент зовётся в панели загруженных моделей;
+/// `None` для мелочи вроде токенизаторов и null-эмбеддинга: в списке
+/// «что занимает память» им делать нечего. Strong-hold'ов у ACE-Step нет —
+/// компоненты живут ровно столько, сколько их держит воркер, поэтому
+/// `unload` здесь no-op, а панель покажет запись только пока она живая.
 fn get_or_load<T>(
     cache: &'static OnceLock<Mutex<HashMap<ModelKey, Weak<T>>>>,
     key: ModelKey,
+    component: Option<&'static str>,
     loader: impl FnOnce(&ModelKey) -> Result<T, String>,
 ) -> Result<Arc<T>, String>
 where
@@ -54,7 +60,28 @@ where
     if let Some(arc) = g.get(&key).and_then(|w| w.upgrade()) {
         return Ok(arc);
     }
-    let arc = Arc::new(loader(&key)?);
+    let device = super::device_from_idx(key.device_idx);
+    let label = key
+        .path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| key.path.display().to_string());
+    // Регистрируем только настоящую загрузку: на попадании в кэш запись
+    // уже есть, и перерегистрация затёрла бы измеренный размер нулём.
+    let (value, bytes) = crate::models::measure(|| loader(&key))?;
+    let arc = Arc::new(value);
+    if let Some(component) = component {
+        crate::models::register_weak(
+            format!("acestep/{component}/{}/{}", key.path.display(), key.device_idx),
+            "ACE-Step",
+            component,
+            label,
+            device,
+            bytes,
+            Arc::downgrade(&arc),
+            || {},
+        );
+    }
     g.insert(key, Arc::downgrade(&arc));
     Ok(arc)
 }
@@ -103,14 +130,14 @@ static AR_TOK_CACHE: OnceLock<Mutex<HashMap<ModelKey, Weak<AceTokenizer>>>> = On
 // ── Loaders ─────────────────────────────────────────────────────────────────
 
 pub fn load_vae(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<AceStepVae>, String> {
-    get_or_load(&VAE_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&VAE_CACHE, ModelKey::new(path, di, si, ci), Some("VAE"), |k| {
         let (device, _) = dev_dtype(k);
         AceStepVae::open(&k.path, device).map_err(|e| format!("AceStepVae::open: {e}"))
     })
 }
 
 pub fn load_dit(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Dit>, String> {
-    get_or_load(&DIT_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&DIT_CACHE, ModelKey::new(path, di, si, ci), Some("DiT"), |k| {
         let (device, compute) = dev_dtype(k);
         // compute = выбранный (bf16/f32); квант весов attn/mlp = дропдаун Quant
         // (none → qdt==compute = Dense, бит-в-бит). compute остаётся bf16 при
@@ -122,7 +149,7 @@ pub fn load_dit(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Dit>
 }
 
 pub fn load_cond_encoder(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<ConditionEncoder>, String> {
-    get_or_load(&COND_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&COND_CACHE, ModelKey::new(path, di, si, ci), Some("Condition Encoder"), |k| {
         let (device, _) = dev_dtype(k);
         let ck = comp_loader(&k.path, device)?;
         ConditionEncoder::load(&ck, &dit_config_for(&k.path)).map_err(|e| format!("ConditionEncoder::load: {e}"))
@@ -130,7 +157,7 @@ pub fn load_cond_encoder(path: &Path, di: usize, si: usize, ci: usize) -> Result
 }
 
 pub fn load_fsq(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Fsq>, String> {
-    get_or_load(&FSQ_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&FSQ_CACHE, ModelKey::new(path, di, si, ci), Some("FSQ"), |k| {
         let (device, _) = dev_dtype(k);
         let ck = comp_loader(&k.path, device)?;
         Fsq::load(&ck, "tokenizer.quantizer").map_err(|e| format!("Fsq::load: {e}"))
@@ -138,7 +165,7 @@ pub fn load_fsq(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Fsq>
 }
 
 pub fn load_detokenizer(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Detokenizer>, String> {
-    get_or_load(&DETOK_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&DETOK_CACHE, ModelKey::new(path, di, si, ci), Some("Detokenizer"), |k| {
         let (device, _) = dev_dtype(k);
         let ck = comp_loader(&k.path, device)?;
         Detokenizer::load(&ck, &dit_config_for(&k.path)).map_err(|e| format!("Detokenizer::load: {e}"))
@@ -146,7 +173,7 @@ pub fn load_detokenizer(path: &Path, di: usize, si: usize, ci: usize) -> Result<
 }
 
 pub fn load_null_cond(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Tensor>, String> {
-    get_or_load(&NULL_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&NULL_CACHE, ModelKey::new(path, di, si, ci), None, |k| {
         let (device, _) = dev_dtype(k);
         let ck = comp_loader(&k.path, device)?;
         ck.f32("null_condition_emb").map_err(|e| format!("null_condition_emb: {e}"))
@@ -154,7 +181,7 @@ pub fn load_null_cond(path: &Path, di: usize, si: usize, ci: usize) -> Result<Ar
 }
 
 pub fn load_text_encoder(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<TextEncoder>, String> {
-    get_or_load(&TEXT_ENC_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&TEXT_ENC_CACHE, ModelKey::new(path, di, si, ci), Some("Text Encoder"), |k| {
         let (device, compute) = dev_dtype(k);
         let (comp, qw) = quant_or_dense(k.storage_idx, compute);
         TextEncoder::open(&k.path, device, comp, qw, 4096).map_err(|e| format!("TextEncoder::open: {e}"))
@@ -162,14 +189,14 @@ pub fn load_text_encoder(path: &Path, di: usize, si: usize, ci: usize) -> Result
 }
 
 pub fn load_text_tokenizer(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<HfTokenizer>, String> {
-    get_or_load(&TEXT_TOK_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&TEXT_TOK_CACHE, ModelKey::new(path, di, si, ci), None, |k| {
         let bytes = read_bundle_bytes(&k.path, "tokenizer.json")?;
         HfTokenizer::from_bytes(&bytes).map_err(|e| format!("HfTokenizer: {e}"))
     })
 }
 
 pub fn load_ar_lm(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<AceStepLm>, String> {
-    get_or_load(&AR_LM_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&AR_LM_CACHE, ModelKey::new(path, di, si, ci), Some("AR LM"), |k| {
         let (device, compute) = dev_dtype(k);
         let (comp, qw) = quant_or_dense(k.storage_idx, compute);
         AceStepLm::open(&k.path, device, comp, qw, 8192).map_err(|e| format!("AceStepLm::open: {e}"))
@@ -177,7 +204,7 @@ pub fn load_ar_lm(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<Ac
 }
 
 pub fn load_ar_tokenizer(path: &Path, di: usize, si: usize, ci: usize) -> Result<Arc<AceTokenizer>, String> {
-    get_or_load(&AR_TOK_CACHE, ModelKey::new(path, di, si, ci), |k| {
+    get_or_load(&AR_TOK_CACHE, ModelKey::new(path, di, si, ci), None, |k| {
         let bytes = read_bundle_bytes(&k.path, "tokenizer.json")?;
         AceTokenizer::from_bytes(&bytes).map_err(|e| format!("AceTokenizer: {e}"))
     })

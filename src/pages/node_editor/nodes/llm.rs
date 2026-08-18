@@ -388,8 +388,10 @@ fn gen_worker(
         };
         let device = device_from_idx(cfg.device_idx);
         let max_seq = Some(gen.context.max(1) as usize);
+        let vram_before = crate::models::cuda_allocated();
         match LlmPipeline::load(&cfg.model_path, device, precision, max_seq) {
             Ok(p) => {
+                let bytes = crate::models::cuda_allocated().saturating_sub(vram_before);
                 let name = cfg
                     .model_path
                     .file_name()
@@ -401,7 +403,25 @@ fn gen_worker(
                 if let Ok(mut g) = loaded_cfg.lock() {
                     *g = Some(cfg.clone());
                 }
-                loaded_name.set(Some(name));
+                loaded_name.set(Some(name.clone()));
+                // Ключ по адресу слота: id ноды сюда не доезжает, а слот
+                // у каждой ноды свой и живёт столько же, сколько нода.
+                let cfg_slot = loaded_cfg.clone();
+                crate::models::register_slot(
+                    format!("llm/{:p}", Arc::as_ptr(&pipeline)),
+                    "LLM",
+                    "Pipeline",
+                    name,
+                    device,
+                    bytes,
+                    pipeline.clone(),
+                    move || {
+                        if let Ok(mut g) = cfg_slot.lock() {
+                            *g = None;
+                        }
+                        loaded_name.set(None);
+                    },
+                );
             }
             Err(e) => {
                 error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));

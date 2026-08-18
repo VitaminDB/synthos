@@ -60,9 +60,22 @@ static VAE: Cache<VaeShared> = OnceLock::new();
 static AUDIO_VAE: Cache<AudioVaeShared> = OnceLock::new();
 static HOLD: OnceLock<Mutex<Vec<Arc<DitShared>>>> = OnceLock::new();
 
-fn get_or_load<T>(
+/// Что показать про компонент в панели загруженных моделей и как его
+/// оттуда выгрузить. `unload` — функция семейства, сбрасывающая
+/// strong-ссылку (кэш держит только `Weak`, мешать не будет); для
+/// компонентов без hold-слота это no-op: они умирают сами, как только
+/// воркер их отпустил.
+struct Reg {
+    component: &'static str,
+    label: String,
+    device: Device,
+    unload: fn(),
+}
+
+fn get_or_load<T: Send + Sync + 'static>(
     cache: &Cache<T>,
     key: &str,
+    reg: Reg,
     loader: impl FnOnce() -> std::result::Result<T, String>,
 ) -> std::result::Result<Arc<T>, String> {
     let map = cache.get_or_init(|| Mutex::new(HashMap::new()));
@@ -71,8 +84,21 @@ fn get_or_load<T>(
     if let Some(existing) = g.get(key).and_then(|w| w.upgrade()) {
         return Ok(existing);
     }
-    let arc = Arc::new(loader()?);
+    // Регистрируем только настоящую загрузку: на попадании в кэш запись
+    // уже есть, и перерегистрация затёрла бы измеренный размер нулём.
+    let (value, bytes) = crate::models::measure(loader)?;
+    let arc = Arc::new(value);
     g.insert(key.to_string(), Arc::downgrade(&arc));
+    crate::models::register_weak(
+        format!("h3/{}/{key}", reg.component),
+        "MiniMax-H3",
+        reg.component,
+        reg.label,
+        reg.device,
+        bytes,
+        Arc::downgrade(&arc),
+        reg.unload,
+    );
     Ok(arc)
 }
 
@@ -102,7 +128,16 @@ pub fn encoder_source_of(
 pub fn load_dit(handle: &H3ModelHandle) -> std::result::Result<Arc<DitShared>, String> {
     ensure_kernels_registered();
     let key = cache_key(handle);
-    get_or_load(&DIT, &key, move || {
+    get_or_load(
+        &DIT,
+        &key,
+        Reg {
+            component: "DiT",
+            label: bundle_label(handle),
+            device: device_of(handle.device_idx),
+            unload: release_dit_hold,
+        },
+        move || {
         let device = device_of(handle.device_idx);
         h3::memory::trim_pool(device);
         let compute = compute_of(handle.compute_idx);
@@ -119,13 +154,23 @@ pub fn load_dit(handle: &H3ModelHandle) -> std::result::Result<Arc<DitShared>, S
         }
         let dit = h3::dit::H3Dit::load(&ckpt, device, compute, quant).map_err(|e| e.to_string())?;
         Ok(DitShared { dit, ckpt, device, compute })
-    })
+        },
+    )
 }
 
 pub fn load_encoder(handle: &H3ModelHandle) -> std::result::Result<Arc<EncoderShared>, String> {
     ensure_kernels_registered();
     let key = cache_key(handle);
-    get_or_load(&ENCODER, &key, move || {
+    get_or_load(
+        &ENCODER,
+        &key,
+        Reg {
+            component: "Text Encoder",
+            label: encoder_label(handle),
+            device: device_of(handle.device_idx),
+            unload: || {},
+        },
+        move || {
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
         let quant = quant_enc_of(handle.quant_enc_idx, compute);
@@ -134,13 +179,23 @@ pub fn load_encoder(handle: &H3ModelHandle) -> std::result::Result<Arc<EncoderSh
         let encoder = h3::text_encoder::EncoderHandle::load_source(&enc_src, device, compute, quant)
             .map_err(|e| e.to_string())?;
         Ok(EncoderShared { encoder })
-    })
+        },
+    )
 }
 
 pub fn load_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<VaeShared>, String> {
     ensure_kernels_registered();
     let key = cache_key(handle);
-    get_or_load(&VAE, &key, move || {
+    get_or_load(
+        &VAE,
+        &key,
+        Reg {
+            component: "Video VAE",
+            label: bundle_label(handle),
+            device: device_of(handle.device_idx),
+            unload: || {},
+        },
+        move || {
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
         let source = source_of(handle)?;
@@ -150,13 +205,23 @@ pub fn load_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<VaeShared>, S
         let decoder =
             h3::vae::VaeDecoder::load(&w, cfg, device, compute).map_err(|e| e.to_string())?;
         Ok(VaeShared { decoder })
-    })
+        },
+    )
 }
 
 pub fn load_audio_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<AudioVaeShared>, String> {
     ensure_kernels_registered();
     let key = cache_key(handle);
-    get_or_load(&AUDIO_VAE, &key, move || {
+    get_or_load(
+        &AUDIO_VAE,
+        &key,
+        Reg {
+            component: "Audio VAE",
+            label: bundle_label(handle),
+            device: device_of(handle.device_idx),
+            unload: || {},
+        },
+        move || {
         let device = device_of(handle.device_idx);
         let compute = compute_of(handle.compute_idx);
         let source = source_of(handle)?;
@@ -166,13 +231,43 @@ pub fn load_audio_vae(handle: &H3ModelHandle) -> std::result::Result<Arc<AudioVa
         let decoder = h3::audio_vae::AudioVae::load_decoder(&w, cfg, device, compute)
             .map_err(|e| e.to_string())?;
         Ok(AudioVaeShared { decoder })
-    })
+        },
+    )
 }
 
+/// Подпись бандла для панели моделей: имя файла `.syn` плюс вариант,
+/// если их в бандле несколько.
+fn bundle_label(h: &H3ModelHandle) -> String {
+    h.model_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| h.model_path.display().to_string())
+}
+
+/// Энкодер может лежать отдельным `.syn` — тогда в панели показываем его,
+/// а не бандл модели.
+fn encoder_label(h: &H3ModelHandle) -> String {
+    match &h.encoder_path {
+        Some(p) => p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.display().to_string()),
+        None => bundle_label(h),
+    }
+}
+
+/// Удержать DiT между Sampler → VAE Decode (иначе Weak-кэш дропнул бы
+/// его сразу после воркера сэмплера, и decode грузил бы 22B заново).
+/// Снимается в decode-нодах через [`release_dit_hold`].
+///
+/// Дедуп по указателю: без него каждый прогон дописывал в HOLD ещё одну
+/// ссылку на тот же DiT, и вектор рос от прогона к прогону.
 pub fn hold_dit(shared: Arc<DitShared>) {
     let h = HOLD.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut g) = h.lock() {
-        g.push(shared);
+        if !g.iter().any(|x| Arc::ptr_eq(x, &shared)) {
+            g.push(shared);
+        }
     }
 }
 

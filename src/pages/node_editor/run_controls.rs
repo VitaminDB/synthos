@@ -15,6 +15,18 @@
 //! Pulse-анимация активной кнопки реализована в MSS через `@keyframes`
 //! на классе `.ne-run-btn--active`.
 //!
+//! **Где живёт очередь.** `RunQueue` лежит в статике [`run_queue`], а не в
+//! локальной переменной `view()`, и watcher-effect ставится один раз на
+//! старте приложения ([`install_run_watcher`]). Причина: страница нодового
+//! редактора пересобирается целиком при переключении вкладки роутера
+//! (`RouterView::build_children`) и при смене вкладки графа (`Reactive` в
+//! `mod.rs::canvas_area`). Пока очередь и effect жили внутри `view()`,
+//! любой уход со страницы во время прогона уничтожал sequencer: worker
+//! досчитывал (в логе оставалось «воркер: готово»), но финиш ноды никто
+//! уже не замечал, следующая нода не стартовала, а свежепостроенный
+//! watcher видел «никто не занят при run_state=Running» и молча гасил
+//! pill. Именно так терялись 16-минутные прогоны H3.
+//!
 //! Логирование прогона идёт в target `node-editor.run` на уровне INFO:
 //! нажатия Run/Pause/Stop, построение очереди, старт и финиш каждой
 //! ноды с длительностью, разблокировка преемников и итог прогона.
@@ -23,11 +35,11 @@
 //! здесь централизованно.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use syngui::core::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 use syngui::prelude::*;
 use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, ToolButton};
 
@@ -40,9 +52,13 @@ use super::state::NodeEditorCtx;
 use super::tabs::{EditorWorkspace, RunState};
 use super::types::{Connection, NodeId, NodeInstance};
 
-/// Sequencer-стейт одного «Run»-прохода. Живёт в локальном
-/// `Arc<Mutex<Option<RunQueue>>>` внутри `view()`. `None` — между runs.
+/// Sequencer-стейт одного «Run»-прохода. Живёт в статике [`run_queue`],
+/// переживая пересборку страницы. `None` — между runs.
 struct RunQueue {
+    /// Граф, по которому идёт прогон. Зафиксирован в момент нажатия Run:
+    /// переключение вкладки графа или страницы больше не уводит watcher
+    /// на чужой `NodeEditorCtx`.
+    ctx: NodeEditorCtx,
     /// Сколько ещё on_run-предков должно завершиться, прежде чем ноду
     /// разрешено стартовать. При `0` нода готова к fire.
     remaining: HashMap<NodeId, usize>,
@@ -66,13 +82,21 @@ impl RunQueue {
     }
 }
 
+/// Глобальный слот очереди. Статика, а не поле `EditorWorkspace`, потому
+/// что `EditorWorkspace` — `Copy`-структура из одних `RwSignal`, а очередь
+/// хранит не-реактивное состояние (`Instant`, множества id).
+fn run_queue() -> &'static Mutex<Option<RunQueue>> {
+    static QUEUE: OnceLock<Mutex<Option<RunQueue>>> = OnceLock::new();
+    QUEUE.get_or_init(|| Mutex::new(None))
+}
+
 /// Построить очередь зависимостей: для каждой on_run-ноды посчитать
 /// число «ближайших on_run-предков» в DAG (через пассивные ноды).
 ///
 /// BFS от каждой on_run-ноды `a` через `out_edges`: пассивные звенья
 /// прозрачно пробрасываются, on_run-ноды-потомки добавляются в
 /// `downstream[a]` и инкрементируют `remaining`.
-fn build_queue(nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
+fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
     let on_run_set: HashSet<NodeId> = nodes
         .iter()
         .filter(|n| n.enabled.get_untracked() && registry::meta(n.kind).on_run.is_some())
@@ -121,6 +145,7 @@ fn build_queue(nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
     }
 
     RunQueue {
+        ctx,
         remaining,
         downstream,
         active: HashSet::new(),
@@ -192,6 +217,151 @@ fn collect_busy(nodes: &[NodeInstance]) -> HashMap<NodeId, bool> {
         .collect()
 }
 
+/// Поставить watcher прогона. Вызывается один раз на старте приложения
+/// (`lib.rs`) — вне element-scope, поэтому `cleanup_element` при пересборке
+/// страниц его не гасит.
+///
+/// Подписки эффекта пересобираются на каждом запуске: `run_state` — чтобы
+/// нажатие Run разбудило watcher, когда очередь пуста и подписок на
+/// busy-сигналы ещё нет; `nodes` + `busy_signal` каждой enabled-ноды —
+/// чтобы флип «busy → idle» дошёл до sequencer'а.
+pub fn install_run_watcher() {
+    create_effect(move || {
+        let ws = use_context::<EditorWorkspace>();
+        let _ = ws.run_state.get();
+
+        let mut guard = match run_queue().lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Внутри прогона слушаем тот граф, на котором нажали Run; вне
+        // прогона — активную вкладку (legacy per-node Play).
+        let ctx = match guard.as_ref() {
+            Some(q) => q.ctx,
+            None => match ws.active_ctx() {
+                Some(c) => c,
+                None => return,
+            },
+        };
+
+        let nodes = ctx.nodes.get();
+        let busy = collect_busy(&nodes);
+
+        let Some(q) = guard.as_mut() else {
+            // Run не активен — оставляем legacy auto-Stop для per-node
+            // Play / других внешних запусков (на будущее).
+            if !busy.values().any(|b| *b) && ws.run_state.get_untracked() == RunState::Running {
+                info!(
+                    target: RUN_LOG,
+                    "run: авто-стоп — очереди нет, ни одна нода не занята"
+                );
+                ws.run_timer.finish();
+                ws.run_state.set(RunState::Stopped);
+            }
+            return;
+        };
+
+        let just_finished: Vec<NodeId> = q
+            .active
+            .iter()
+            .copied()
+            .filter(|id| match busy.get(id) {
+                Some(is_busy) => !*is_busy,
+                // Ноду удалили или выключили посреди прогона — её
+                // busy-сигнала в снимке больше нет. Считаем завершённой:
+                // иначе очередь ждала бы её вечно.
+                None => {
+                    warn!(
+                        target: RUN_LOG,
+                        node = id.0,
+                        "нода пропала из busy-снимка во время прогона — считаем завершённой"
+                    );
+                    true
+                }
+            })
+            .collect();
+        if just_finished.is_empty() {
+            return;
+        }
+        let finished_now = just_finished.len();
+        for id in &just_finished {
+            let elapsed_ms = q
+                .started_at
+                .remove(id)
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+            info!(
+                target: RUN_LOG,
+                node = id.0,
+                title = node_title(&ctx, *id),
+                elapsed_ms,
+                "нода: финиш"
+            );
+        }
+
+        // Свежий evaluate, чтобы output_text / output_buf завершившихся
+        // нод попали в values до того, как downstream `current_input_*`
+        // их прочитает.
+        refresh_values(&ctx);
+
+        for id in &just_finished {
+            q.active.remove(id);
+            if let Some(succ_list) = q.downstream.get(id).cloned() {
+                for d in succ_list {
+                    if let Some(c) = q.remaining.get_mut(&d) {
+                        *c = c.saturating_sub(1);
+                        if *c == 0 && !q.active.contains(&d) {
+                            info!(
+                                target: RUN_LOG,
+                                node = d.0,
+                                title = node_title(&ctx, d),
+                                after = id.0,
+                                "нода разблокирована предком"
+                            );
+                            fire(&ctx, d, q);
+                        } else {
+                            info!(
+                                target: RUN_LOG,
+                                node = d.0,
+                                title = node_title(&ctx, d),
+                                waiting_on = *c,
+                                "нода ждёт остальных предков"
+                            );
+                        }
+                    }
+                }
+            }
+            q.remaining.remove(id);
+        }
+        // Счётчик «сделано/всего» в Run-pill. Считаем здесь, а не по
+        // busy-снимку: снимок не различает «ещё не стартовала» и
+        // «уже отработала».
+        let done_before = ws.run_done.get_untracked();
+        ws.run_done.set(done_before + finished_now);
+
+        if q.is_done() {
+            info!(
+                target: RUN_LOG,
+                total_ms = q.run_started_at.elapsed().as_millis() as u64,
+                done = ws.run_done.get_untracked(),
+                "run: очередь пуста, прогон завершён"
+            );
+            *guard = None;
+            drop(guard);
+            ws.run_timer.finish();
+            ws.run_state.set(RunState::Stopped);
+        } else {
+            info!(
+                target: RUN_LOG,
+                active = q.active.len(),
+                pending = q.remaining.len(),
+                "run: очередь продвинулась"
+            );
+        }
+    });
+}
+
 /// Сборка pill — фиксированный размер в MSS (`min-width` / `height`).
 ///
 /// `editor_ctx` передаётся явно потому что `run_controls` живёт в
@@ -199,137 +369,32 @@ fn collect_busy(nodes: &[NodeInstance]) -> HashMap<NodeId, bool> {
 /// делается там). Без явной передачи `use_context::<NodeEditorCtx>()`
 /// упал бы по «Context not provided» — что и было.
 pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
-    let ws_init = use_context::<EditorWorkspace>();
-
-    // Sequencer-стейт текущего run'а. None между запусками; Some(...) на
-    // время Running. Захватывается и run/stop-кнопками, и watcher-эффектом.
-    let queue_cell: Arc<Mutex<Option<RunQueue>>> = Arc::new(Mutex::new(None));
-
-    // Watcher: подписан на все busy_signal'ы. Когда нода из `active`
-    // флипается в idle — декрементим её преемников, fire'им готовых,
-    // при опустошении очереди возвращаем pill в Stopped.
-    {
-        let queue_cell = queue_cell.clone();
-        create_effect(move || {
-            let nodes = editor_ctx.nodes.get();
-            let busy = collect_busy(&nodes);
-
-            let mut guard = match queue_cell.lock() {
-                Ok(g) => g,
-                Err(_) => return,
-            };
-            let Some(q) = guard.as_mut() else {
-                // Run не активен — оставляем legacy auto-Stop для per-node
-                // Play / других внешних запусков (на будущее).
-                if !busy.values().any(|b| *b)
-                    && ws_init.run_state.get_untracked() == RunState::Running
-                {
-                    ws_init.run_timer.finish();
-                    ws_init.run_state.set(RunState::Stopped);
-                }
-                return;
-            };
-
-            let just_finished: Vec<NodeId> = q
-                .active
-                .iter()
-                .copied()
-                .filter(|id| !busy.get(id).copied().unwrap_or(true))
-                .collect();
-            if just_finished.is_empty() {
-                return;
-            }
-            let finished_now = just_finished.len();
-            for id in &just_finished {
-                let elapsed_ms = q
-                    .started_at
-                    .remove(id)
-                    .map(|t| t.elapsed().as_millis() as u64)
-                    .unwrap_or(0);
-                info!(
-                    target: RUN_LOG,
-                    node = id.0,
-                    title = node_title(&editor_ctx, *id),
-                    elapsed_ms,
-                    "нода: финиш"
-                );
-            }
-
-            // Свежий evaluate, чтобы output_text / output_buf завершившихся
-            // нод попали в values до того, как downstream `current_input_*`
-            // их прочитает.
-            refresh_values(&editor_ctx);
-
-            for id in &just_finished {
-                q.active.remove(id);
-                if let Some(succ_list) = q.downstream.get(id).cloned() {
-                    for d in succ_list {
-                        if let Some(c) = q.remaining.get_mut(&d) {
-                            *c = c.saturating_sub(1);
-                            if *c == 0 && !q.active.contains(&d) {
-                                info!(
-                                    target: RUN_LOG,
-                                    node = d.0,
-                                    title = node_title(&editor_ctx, d),
-                                    after = id.0,
-                                    "нода разблокирована предком"
-                                );
-                                fire(&editor_ctx, d, q);
-                            } else {
-                                info!(
-                                    target: RUN_LOG,
-                                    node = d.0,
-                                    title = node_title(&editor_ctx, d),
-                                    waiting_on = *c,
-                                    "нода ждёт остальных предков"
-                                );
-                            }
-                        }
-                    }
-                }
-                q.remaining.remove(id);
-            }
-            // Счётчик «сделано/всего» в Run-pill. Считаем здесь, а не по
-            // busy-снимку: снимок не различает «ещё не стартовала» и
-            // «уже отработала».
-            let done_before = ws_init.run_done.get_untracked();
-            ws_init.run_done.set(done_before + finished_now);
-
-            if q.is_done() {
-                info!(
-                    target: RUN_LOG,
-                    total_ms = q.run_started_at.elapsed().as_millis() as u64,
-                    done = ws_init.run_done.get_untracked(),
-                    "run: очередь пуста, прогон завершён"
-                );
-                *guard = None;
-                drop(guard);
-                ws_init.run_timer.finish();
-                ws_init.run_state.set(RunState::Stopped);
-            } else {
-                info!(
-                    target: RUN_LOG,
-                    active = q.active.len(),
-                    pending = q.remaining.len(),
-                    "run: очередь продвинулась"
-                );
-            }
-        });
-    }
-
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let ws = use_context::<EditorWorkspace>();
         let app = use_context::<AppCtx>();
         let state = ws.run_state.get();
 
         let app_run = app.clone();
-        let run_queue_cell = queue_cell.clone();
         let run_btn = ToolButton::new(MI_PLAY_ARROW)
             .tooltip("Run")
             .on_click(move || {
+                // Очередь одна на приложение (pill в EditorWorkspace тоже
+                // один). Перезапуск поверх живого прогона легален —
+                // уже работающие воркеры досчитают и будут учтены новой
+                // очередью, — но в логе это должно быть видно.
+                if let Ok(g) = run_queue().lock() {
+                    if let Some(prev) = g.as_ref() {
+                        warn!(
+                            target: RUN_LOG,
+                            active = prev.active.len(),
+                            pending = prev.remaining.len(),
+                            "run: Run поверх незавершённого прогона — очередь пересобирается"
+                        );
+                    }
+                }
                 let nodes = editor_ctx.nodes.get_untracked();
                 let conns = editor_ctx.connections.get_untracked();
-                let mut q = build_queue(&nodes, &conns);
+                let mut q = build_queue(editor_ctx, &nodes, &conns);
                 info!(
                     target: RUN_LOG,
                     nodes = nodes.len(),
@@ -358,7 +423,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 let stuck = q.remaining.values().any(|c| *c > 0) && q.active.is_empty();
 
                 if started == 0 {
-                    if let Ok(mut g) = run_queue_cell.lock() {
+                    if let Ok(mut g) = run_queue().lock() {
                         *g = None;
                     }
                     if stuck {
@@ -381,7 +446,7 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
                 ws.run_timer.start();
                 q.run_started_at = Instant::now();
 
-                if let Ok(mut g) = run_queue_cell.lock() {
+                if let Ok(mut g) = run_queue().lock() {
                     *g = Some(q);
                 }
                 ws.run_state.set(RunState::Running);
@@ -400,14 +465,13 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
             .class(button_class("ne-run-btn ne-run-btn--pause", state, RunState::Paused));
 
         let app_stop = app.clone();
-        let stop_queue_cell = queue_cell.clone();
         let stop_btn = ToolButton::new(MI_STOP)
             .tooltip("Stop")
             .on_click(move || {
                 // Очищаем sequencer-state. Уже запущенные worker'ы
                 // доработают (нет cooperative cancel), но новых fire'ов
                 // больше не произойдёт.
-                if let Ok(mut g) = stop_queue_cell.lock() {
+                if let Ok(mut g) = run_queue().lock() {
                     if let Some(q) = g.as_ref() {
                         info!(
                             target: RUN_LOG,

@@ -21,6 +21,7 @@ pub mod node_view;
 pub mod nodes;
 pub mod persist;
 pub mod registry;
+pub mod models_panel;
 pub mod run_controls;
 pub mod state;
 pub mod style_dialog;
@@ -129,6 +130,7 @@ fn canvas_for(ctx: NodeEditorCtx) -> impl Widget {
     let frame_inner = Stack::new().children(vec![
         Box::new(viewport) as Box<dyn Widget>,
         Box::new(overlay),
+        Box::new(models_panel_host()) as Box<dyn Widget>,
         bg_menu,
         Box::new(style_dialog::view(ctx)) as Box<dyn Widget>,
     ]);
@@ -169,6 +171,20 @@ fn overlay_row(ctx: NodeEditorCtx, toolbar: Box<dyn Widget>) -> impl Widget {
     // Row.cross_axis_alignment(Start) делает строку intrinsic-высоты —
     // нижняя часть canvas остаётся свободной для drag-нод.
     Padding::only(16.0, 16.0, 16.0, 0.0).child(row)
+}
+
+/// Хост панели «Модели в памяти»: правый край canvas'а, ниже overlay-строки
+/// с toolbar'ом и run-pill'ом. Как и `overlay_row`, возвращаем Padding без
+/// DecoratedBox-обёртки — Padding/Row passthrough'ат hit-test, поэтому
+/// пустое место справа от панели по-прежнему пан'ит и зумит canvas.
+fn models_panel_host() -> impl Widget {
+    Padding::only(0.0, 68.0, 16.0, 16.0).child(
+        Row::new()
+            .gap(0.0)
+            .main_axis_alignment(MainAxisAlignment::End)
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .children(vec![Box::new(models_panel::view()) as Box<dyn Widget>]),
+    )
 }
 
 /// Реактивный «мир» — Canvas wires + ноды на абсолютных позициях.

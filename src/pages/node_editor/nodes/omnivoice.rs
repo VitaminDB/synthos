@@ -354,8 +354,10 @@ fn synth_worker(
         let device = device_from_idx(cfg.device_idx);
         let storage = storage_from_idx(cfg.storage_idx);
         let compute = compute_from_idx(cfg.compute_idx);
+        let vram_before = crate::models::cuda_allocated();
         match OmniVoicePipeline::from_syn(&cfg.bundle_path, &device, storage, compute) {
             Ok(p) => {
+                let bytes = crate::models::cuda_allocated().saturating_sub(vram_before);
                 let name = cfg
                     .bundle_path
                     .file_name()
@@ -367,7 +369,17 @@ fn synth_worker(
                 if let Ok(mut g) = loaded_cfg.lock() {
                     *g = Some(cfg.clone());
                 }
-                loaded_name.set(Some(name));
+                loaded_name.set(Some(name.clone()));
+                register_in_panel(
+                    "TTS",
+                    "OmniVoice",
+                    name,
+                    device,
+                    bytes,
+                    pipeline.clone(),
+                    loaded_cfg.clone(),
+                    loaded_name,
+                );
             }
             Err(e) => {
                 error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));
@@ -705,4 +717,28 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 
 fn error_widget(msg: &'static str) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
+}
+
+/// Показать модель в панели загруженных моделей. Ключ — адрес слота
+/// `NodeRuntime`: id ноды до воркера не доезжает, а слот у каждой ноды
+/// свой и живёт ровно столько же. Выгрузка снимает и `loaded_cfg`, иначе
+/// следующий прогон решил бы, что грузить нечего.
+#[allow(clippy::too_many_arguments)]
+fn register_in_panel<T: Send + 'static, C: Send + 'static>(
+    family: &'static str,
+    component: &'static str,
+    label: String,
+    device: synaptix_core::device::Device,
+    bytes: u64,
+    slot: Arc<Mutex<Option<T>>>,
+    cfg_slot: Arc<Mutex<Option<C>>>,
+    loaded_name: RwSignal<Option<String>>,
+) {
+    let key = format!("{family}/{component}/{:p}", Arc::as_ptr(&slot));
+    crate::models::register_slot(key, family, component, label, device, bytes, slot, move || {
+        if let Ok(mut g) = cfg_slot.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+    });
 }

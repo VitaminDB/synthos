@@ -57,13 +57,25 @@ impl LtxModelKey {
     }
 }
 
+/// Что показать про компонент в панели загруженных моделей и как его
+/// оттуда выгрузить. `unload` сбрасывает strong-hold семейства; у
+/// компонентов без hold-слота это no-op — они уходят сами, как только
+/// воркер отпустил `Arc`.
+struct Reg {
+    component: &'static str,
+    label: String,
+    device: Device,
+    unload: fn(),
+}
+
 fn get_or_load<K, T>(
     cache: &'static OnceLock<Mutex<HashMap<K, Weak<T>>>>,
     key: K,
+    reg: Reg,
     loader: impl FnOnce(&K) -> std::result::Result<T, String>,
 ) -> std::result::Result<Arc<T>, String>
 where
-    K: std::hash::Hash + Eq + Clone + 'static,
+    K: std::hash::Hash + Eq + Clone + std::fmt::Debug + 'static,
     T: Send + Sync + 'static,
 {
     let map = cache.get_or_init(|| Mutex::new(HashMap::new()));
@@ -74,9 +86,39 @@ where
     if let Some(arc) = g.get(&key).and_then(|w| w.upgrade()) {
         return Ok(arc);
     }
-    let arc = Arc::new(loader(&key)?);
+    // Регистрируем только настоящую загрузку: на попадании в кэш запись
+    // уже есть, и перерегистрация затёрла бы измеренный размер нулём.
+    let reg_key = format!("ltx/{}/{:?}", reg.component, key);
+    let (value, bytes) = crate::models::measure(|| loader(&key))?;
+    let arc = Arc::new(value);
     g.insert(key, Arc::downgrade(&arc));
+    crate::models::register_weak(
+        reg_key,
+        "LTX",
+        reg.component,
+        reg.label,
+        reg.device,
+        bytes,
+        Arc::downgrade(&arc),
+        reg.unload,
+    );
     Ok(arc)
+}
+
+/// Имя файла чекпойнта для панели моделей.
+fn ckpt_label(h: &LtxModelHandle) -> String {
+    h.model_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| h.model_path.display().to_string())
+}
+
+/// Имя каталога Gemma для панели моделей.
+fn gemma_label(h: &LtxModelHandle) -> String {
+    h.gemma_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| h.gemma_dir.display().to_string())
 }
 
 static CKPT_CACHE: OnceLock<Mutex<HashMap<LtxModelKey, Weak<LtxCheckpoint>>>> = OnceLock::new();
@@ -98,10 +140,20 @@ pub fn load_ckpt(handle: &LtxModelHandle) -> std::result::Result<Arc<LtxCheckpoi
     ensure_kernels_registered();
     let key = LtxModelKey::from_handle(handle);
     let path = handle.model_path.clone();
-    get_or_load(&CKPT_CACHE, key, move |_| {
-        LtxCheckpoint::open(&path, Device::Cpu, DType::BF16)
-            .map_err(|e| format!("LTX ckpt {}: {e}", path.display()))
-    })
+    get_or_load(
+        &CKPT_CACHE,
+        key,
+        Reg {
+            component: "Checkpoint",
+            label: ckpt_label(handle),
+            device: Device::Cpu,
+            unload: || {},
+        },
+        move |_| {
+            LtxCheckpoint::open(&path, Device::Cpu, DType::BF16)
+                .map_err(|e| format!("LTX ckpt {}: {e}", path.display()))
+        },
+    )
 }
 
 /// AvDit + ресурсы его жизненного цикла. `_pin` — pinned-зеркало ckpt для
@@ -158,8 +210,14 @@ fn decide_offload(
 pub fn load_avdit(handle: &LtxModelHandle, tv_max: usize) -> std::result::Result<Arc<AvDitShared>, String> {
     ensure_kernels_registered();
     let key = LtxModelKey::from_handle(handle);
+    let reg = Reg {
+        component: "AvDiT",
+        label: ckpt_label(handle),
+        device: device_from_idx(handle.device_idx),
+        unload: release_avdit_hold,
+    };
     let handle = handle.clone();
-    get_or_load(&AVDIT_CACHE, key, move |_| {
+    get_or_load(&AVDIT_CACHE, key, reg, move |_| {
         let ckpt = load_ckpt(&handle)?;
         let dev = device_from_idx(handle.device_idx);
         let compute = compute_from_idx(handle.compute_idx);
@@ -201,8 +259,14 @@ pub fn load_avdit(handle: &LtxModelHandle, tv_max: usize) -> std::result::Result
 pub fn load_gemma(handle: &LtxModelHandle) -> std::result::Result<Arc<GemmaPipeline>, String> {
     ensure_kernels_registered();
     let key = LtxModelKey::from_handle(handle);
+    let reg = Reg {
+        component: "Gemma",
+        label: gemma_label(handle),
+        device: device_from_idx(handle.device_idx),
+        unload: || {},
+    };
     let handle = handle.clone();
-    get_or_load(&GEMMA_CACHE, key, move |_| load_gemma_uncached(&handle))
+    get_or_load(&GEMMA_CACHE, key, reg, move |_| load_gemma_uncached(&handle))
 }
 
 /// Загрузить Gemma БЕЗ кэша — Arc дропается воркером сразу после encode

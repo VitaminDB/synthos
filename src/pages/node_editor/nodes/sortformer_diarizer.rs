@@ -434,8 +434,10 @@ fn play_worker(
             threshold,
             allow_overlap,
         };
+        let vram_before = crate::models::cuda_allocated();
         match Diarizer::load(diar_cfg) {
             Ok(d) => {
+                let bytes = crate::models::cuda_allocated().saturating_sub(vram_before);
                 let name = d.model_name().to_string();
                 if let Ok(mut g) = diarizer.lock() {
                     *g = Some(d);
@@ -443,7 +445,17 @@ fn play_worker(
                 if let Ok(mut g) = loaded_cfg.lock() {
                     *g = Some(cfg.clone());
                 }
-                loaded_name.set(Some(name));
+                loaded_name.set(Some(name.clone()));
+                register_in_panel(
+                    "Диаризация",
+                    "Sortformer",
+                    name,
+                    device_from_idx(cfg.device_idx),
+                    bytes,
+                    diarizer.clone(),
+                    loaded_cfg.clone(),
+                    loaded_name,
+                );
             }
             Err(e) => {
                 error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));
@@ -490,4 +502,28 @@ fn play_worker(
         }
     }
     running.set(false);
+}
+
+/// Показать модель в панели загруженных моделей. Ключ — адрес слота
+/// `NodeRuntime`: id ноды до воркера не доезжает, а слот у каждой ноды
+/// свой и живёт ровно столько же. Выгрузка снимает и `loaded_cfg`, иначе
+/// следующий прогон решил бы, что грузить нечего.
+#[allow(clippy::too_many_arguments)]
+fn register_in_panel<T: Send + 'static, C: Send + 'static>(
+    family: &'static str,
+    component: &'static str,
+    label: String,
+    device: synaptix_core::device::Device,
+    bytes: u64,
+    slot: Arc<Mutex<Option<T>>>,
+    cfg_slot: Arc<Mutex<Option<C>>>,
+    loaded_name: RwSignal<Option<String>>,
+) {
+    let key = format!("{family}/{component}/{:p}", Arc::as_ptr(&slot));
+    crate::models::register_slot(key, family, component, label, device, bytes, slot, move || {
+        if let Ok(mut g) = cfg_slot.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+    });
 }

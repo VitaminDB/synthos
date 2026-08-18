@@ -12,7 +12,7 @@ use syngui::core::Color;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::overlay::portal::{Portal, PortalAnchor};
-use syngui::widgets::{MultilineTextEdit, Stack};
+use syngui::widgets::{MultilineTextEdit, Stack, StackFit};
 
 use crate::agent;
 use crate::context::AppCtx;
@@ -57,19 +57,24 @@ fn card() -> impl Widget {
 }
 
 /// Stack из ауры (Canvas 480×480) и центральной FAB-кнопки (96×96).
-/// Оба child'а ужe центрированы относительно своих bounds: Canvas через
-/// (cx,cy)=(W/2,H/2), а Stack кладёт child'ов в один и тот же origin.
-/// Stack::child принимает IntoWidget — автоматически оборачивает реактивный
-/// closure из `aura::view()` в `Reactive`.
+///
+/// Canvas ауры рисует себя от (cx,cy)=(W/2,H/2) и потому выглядит
+/// центрированным сам по себе, а вот Stack кладёт child'ов в общий origin —
+/// левый верхний угол. Кнопка из-за этого садилась в угол ауры, поэтому
+/// она приходит уже завёрнутой в `Center` (`central_fab::centered`), а
+/// Stack растягивает обоих на полные bounds обёртки (`StackFit::Expand`).
+/// Stack::child принимает IntoWidget — реактивный closure из `aura::view()`
+/// оборачивается в `Reactive` автоматически.
 fn aura_with_central_fab() -> impl Widget {
     DecoratedBox::new()
         .class("voice-aura-wrap")
         .clip(false)
         .child(
             Stack::new()
+                .fit(StackFit::Expand)
                 .clip(false)
                 .child(aura::view())
-                .child(central_fab::view()),
+                .child(central_fab::centered()),
         )
 }
 
@@ -112,13 +117,24 @@ fn status_text_reactive() -> impl Fn() -> StyledWidget<Text> + Send + Sync + 'st
 /// Refine-кнопка центрируется по вертикали через `cross_axis_alignment(Center)`
 /// на самом Row.
 fn transcripts_view() -> impl Widget {
+    // Строка ошибки postprocess'а живёт ПОД парой колонок, а не внутри
+    // правой: раньше она была четвёртым child'ом `refined_section` и,
+    // будучи всегда смонтированной (пустой Text при отсутствии ошибки),
+    // делала правую колонку выше левой. С `cross_axis_alignment(Center)`
+    // это разъезжало заголовки и поля по вертикали.
     DecoratedBox::new().class("voice-overlay-transcripts").child(
-        Row::new()
-            .gap(14.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .child(raw_section())
-            .child(refine_button_reactive())
-            .child(refined_section()),
+        Column::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .child(
+                Row::new()
+                    .gap(14.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(raw_section())
+                    .child(refine_button_reactive())
+                    .child(refined_section()),
+            )
+            .child(refine_error_reactive()),
     )
 }
 
@@ -156,13 +172,14 @@ fn raw_field_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
 }
 
 fn refined_section() -> impl Widget {
+    // Структура обязана совпадать с `raw_section` (заголовок + поле) —
+    // иначе колонки разной высоты разъезжаются по вертикали.
     Column::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("grow")
         .child(Text::new("Отредактированный текст").class("voice-overlay-section-title"))
         .child(refined_field_reactive())
-        .child(refine_error_reactive())
 }
 
 /// Центральная Refine-кнопка между raw и refined колонками.

@@ -10,32 +10,44 @@
 
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
+use syngui::widgets::Reactive;
 
 use crate::agent;
 use crate::context::AppCtx;
 use crate::icons::MI_MIC;
 
-pub fn view() -> impl Fn() -> StyledWidget<ToolButton> + Send + Sync + 'static {
-    || {
-        let app = use_context::<AppCtx>();
-        let panel_open = app.voice.panel_open.get();
-        let recording = app.audio.is_recording.get();
+/// FAB, отцентрованный в родительских bounds.
+///
+/// `Stack` кладёт всех child'ов в один origin — то есть в левый верхний
+/// угол, а не в центр: аура рисует себя от (W/2,H/2) внутри Canvas'а и
+/// выглядела центрированной, а кнопка садилась в угол ауры. `Center`
+/// (принимает `impl Widget`, поэтому реактивное замыкание оборачиваем в
+/// `Reactive` сами) ставит её ровно в середину.
+pub fn centered() -> impl Widget {
+    Center::new().child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
+        vec![Box::new(build())]
+    }))
+}
 
-        // Стартовое (закрытое) состояние — scale(0.6); opacity:0. Когда
-        // panel_open=true, MSS-class .opening переключает на scale(1); opacity:1
-        // через transition. Backdrop FAB-окна одновременно становится видимым,
-        // визуально — «кнопка прилетела из угла + увеличилась».
-        let class = match (panel_open, recording) {
-            (true, true) => "fab-voice-center opening recording",
-            (true, false) => "fab-voice-center opening",
-            (false, _) => "fab-voice-center",
-        };
+fn build() -> StyledWidget<ToolButton> {
+    let app = use_context::<AppCtx>();
+    let panel_open = app.voice.panel_open.get();
+    let recording = app.audio.is_recording.get();
 
-        ToolButton::new(MI_MIC)
-            .tooltip("Пауза / Продолжить")
-            .on_click(toggle_central)
-            .class(class)
-    }
+    // Стартовое (закрытое) состояние — scale(0.6); opacity:0. Когда
+    // panel_open=true, MSS-class .opening переключает на scale(1); opacity:1
+    // через transition. Backdrop FAB-окна одновременно становится видимым,
+    // визуально — «кнопка прилетела из угла + увеличилась».
+    let class = match (panel_open, recording) {
+        (true, true) => "fab-voice-center opening recording",
+        (true, false) => "fab-voice-center opening",
+        (false, _) => "fab-voice-center",
+    };
+
+    ToolButton::new(MI_MIC)
+        .tooltip("Пауза / Продолжить")
+        .on_click(toggle_central)
+        .class(class)
 }
 
 /// Click по центральной кнопке: если идёт запись — Pause; если на паузе —

@@ -241,14 +241,21 @@ fn active_terminal_inner() -> impl Widget {
 }
 
 /// Empty state: подсказка «нажмите +, чтобы открыть терминал».
+///
+/// Column сам по себе ужимается по контенту и садится в левый верхний угол
+/// панели — `main_axis_alignment(Center)` центрует внутри собственной
+/// (маленькой) высоты, а не внутри панели. Поэтому оборачиваем в `Center`,
+/// который растягивается на все bounds `.term-active-area` и ставит блок
+/// ровно в середину пустой области.
 fn empty_placeholder() -> impl Widget {
-    Column::new()
-        .main_axis_alignment(MainAxisAlignment::Center)
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(8.0)
-        .child(Text::new(MI_TERMINAL).class("term-empty-icon"))
-        .child(Text::new("Нет открытых терминалов").class("term-empty-title"))
-        .child(Text::new("Нажмите + чтобы открыть новый").class("term-empty-hint"))
+    Center::new().child(
+        Column::new()
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .gap(8.0)
+            .child(Text::new(MI_TERMINAL).class("term-empty-icon"))
+            .child(Text::new("Нет открытых терминалов").class("term-empty-title"))
+            .child(Text::new("Нажмите + чтобы открыть новый").class("term-empty-hint")),
+    )
 }
 
 /// Portal-popover с панелью настроек шрифта. Открывается gear-кнопкой,

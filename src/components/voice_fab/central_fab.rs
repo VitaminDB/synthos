@@ -16,17 +16,24 @@ use crate::agent;
 use crate::context::AppCtx;
 use crate::icons::MI_MIC;
 
-/// FAB, отцентрованный в родительских bounds.
+/// FAB, отцентрованный в квадрате размера ауры.
 ///
 /// `Stack` кладёт всех child'ов в один origin — то есть в левый верхний
 /// угол, а не в центр: аура рисует себя от (W/2,H/2) внутри Canvas'а и
-/// выглядела центрированной, а кнопка садилась в угол ауры. `Center`
-/// (принимает `impl Widget`, поэтому реактивное замыкание оборачиваем в
-/// `Reactive` сами) ставит её ровно в середину.
+/// выглядела центрированной, а кнопка садилась в угол ауры.
+///
+/// Слот `.voice-fab-slot` имеет явные размеры, равные `.voice-aura-wrap`.
+/// Без него центрирование пришлось бы вытягивать через
+/// `StackFit::Expand`, а тот раздувает Stack до максимума входящих
+/// constraint'ов — карточка растягивалась на весь экран. Явный квадрат
+/// даёт `Center` определённые bounds независимо от fit'а Stack'а.
 pub fn centered() -> impl Widget {
-    Center::new().child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        vec![Box::new(build())]
-    }))
+    DecoratedBox::new()
+        .class("voice-fab-slot")
+        .clip(false)
+        .child(Center::new().child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
+            vec![Box::new(build())]
+        })))
 }
 
 fn build() -> StyledWidget<ToolButton> {

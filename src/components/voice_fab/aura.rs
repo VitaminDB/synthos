@@ -19,10 +19,22 @@ use syngui::widgets::visual::canvas::Canvas;
 
 use crate::context::AppCtx;
 
-/// Ширина/высота canvas'а ауры. Должна совпадать с `.voice-aura-wrap` в MSS.
-/// Центральная FAB-кнопка (96×96) визуально занимает inner-зону; кольца и
-/// бары растут от inner_r ≈ 60 до outer_r ≈ 220.
-const AURA_SIZE: f32 = 480.0;
+/// Ширина/высота canvas'а ауры. Должна совпадать с `.voice-aura-wrap` и
+/// `.voice-fab-slot` в MSS. Центральная FAB-кнопка (96×96) занимает
+/// inner-зону; кольца и бары растут от `INNER_R` до внешнего радиуса,
+/// который считается от размера канваса (см. `outer_radius`), — так один
+/// этот параметр задаёт габарит ауры целиком.
+const AURA_SIZE: f32 = 360.0;
+
+/// Внутренний радиус колец. Привязан к FAB-кнопке: её radius 48 плюс
+/// 12px воздуха, поэтому от размера канваса не зависит.
+const INNER_R: f32 = 60.0;
+
+/// Внешний радиус — до края канваса минус небольшой запас на толщину
+/// штриха кольца.
+fn outer_radius(w: f32, h: f32) -> f32 {
+    (w.min(h) * 0.5 - 10.0).max(INNER_R + 20.0)
+}
 
 /// Реактивный wrapper: пересоздаёт Canvas при появлении / исчезновении
 /// `vis_handle` (запись начата / остановлена). Когда handle — None,
@@ -63,9 +75,8 @@ fn canvas_for_handle(handle: Option<VisHandle>) -> Canvas {
 
         let cx = ctx.width() * 0.5;
         let cy = ctx.height() * 0.5;
-        // 96px FAB — radius 48; добавим 12px воздуха, потом начинаем кольца.
-        let inner_r = 60.0;
-        let outer_r = 220.0;
+        let inner_r = INNER_R;
+        let outer_r = outer_radius(ctx.width(), ctx.height());
         let accent = ctx
             .mss_accent()
             .or_else(|| ctx.mss_color())

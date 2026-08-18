@@ -12,7 +12,7 @@ use syngui::core::Color;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::overlay::portal::{Portal, PortalAnchor};
-use syngui::widgets::{MultilineTextEdit, Stack, StackFit};
+use syngui::widgets::{MultilineTextEdit, Stack};
 
 use crate::agent;
 use crate::context::AppCtx;
@@ -61,8 +61,14 @@ fn card() -> impl Widget {
 /// Canvas ауры рисует себя от (cx,cy)=(W/2,H/2) и потому выглядит
 /// центрированным сам по себе, а вот Stack кладёт child'ов в общий origin —
 /// левый верхний угол. Кнопка из-за этого садилась в угол ауры, поэтому
-/// она приходит уже завёрнутой в `Center` (`central_fab::centered`), а
-/// Stack растягивает обоих на полные bounds обёртки (`StackFit::Expand`).
+/// она приходит завёрнутой в `Center` внутри слота с явными размерами
+/// (`central_fab::centered`).
+///
+/// Stack оставлен `Loose`: `StackFit::Expand` раздувает его до максимума
+/// входящих constraint'ов, и карточка вытягивалась на всю высоту экрана.
+/// Оба child'а и так знают свой размер — Canvas через `.size(AURA_SIZE)`,
+/// слот через MSS.
+///
 /// Stack::child принимает IntoWidget — реактивный closure из `aura::view()`
 /// оборачивается в `Reactive` автоматически.
 fn aura_with_central_fab() -> impl Widget {
@@ -71,7 +77,6 @@ fn aura_with_central_fab() -> impl Widget {
         .clip(false)
         .child(
             Stack::new()
-                .fit(StackFit::Expand)
                 .clip(false)
                 .child(aura::view())
                 .child(central_fab::centered()),

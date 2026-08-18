@@ -126,9 +126,9 @@
     padding: 4px 4px 4px 0px;
 }
 
-/* Заметный, но не агрессивный подсвет ползунка — accent-color из темы. */
+/* Цвета трека/заливки/ползунка приходят глобальным правилом `Slider` из
+ * base/reset.mss — здесь только геометрия. */
 .terminal-font-slider {
-    accent-color: var(--primary);
     /* min-width — на всякий случай: некоторые layout-paths могут не
      * передать flex-grow в DecoratedBox-обёртку. */
     min-width: 200px;

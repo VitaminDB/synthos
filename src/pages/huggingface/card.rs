@@ -7,7 +7,7 @@ use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
 use syngui::widgets::containers::GestureDetector;
 
-use crate::icons::{MI_DOWNLOAD, MI_FAVORITE, MI_SMART_TOY};
+use crate::icons::{MI_DOWNLOAD, MI_FAVORITE, MI_AUTO_AWESOME};
 
 use super::actions;
 use super::state::HfModel;
@@ -69,7 +69,7 @@ fn avatar_widget(author: &str) -> impl Widget {
     let author = author.to_string();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if author.is_empty() {
-            return vec![Box::new(Icon::new(MI_SMART_TOY).class("hf-card-avatar"))];
+            return vec![Box::new(Icon::new(MI_AUTO_AWESOME).class("hf-card-avatar"))];
         }
         let (letter, bg) = letter_and_color(&author);
         let badge = DecoratedBox::new()

@@ -15,7 +15,7 @@ use crate::icons::{
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
     MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
-    MI_CROP_SQUARE, MI_SMART_TOY, MI_TRANSLATE, MI_TUNE,
+    MI_CROP_SQUARE, MI_TRANSLATE, MI_TUNE,
 };
 
 use super::eval::NodeExecutor;
@@ -904,7 +904,7 @@ const VOXCPM2: NodeKindMeta = NodeKindMeta {
 // и кэшируется в runtime.
 const LLM: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::Llm,
-    icon: MI_SMART_TOY,
+    icon: MI_AUTO_AWESOME,
     title: "LLM (synaptix)",
     category: NodeCategory::Neuro,
     subcategory: Some("LLM"),

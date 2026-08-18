@@ -73,7 +73,9 @@ pub const MI_MENU_BOOK: &str           = "\u{EA19}";
 pub const MI_CAMPAIGN: &str            = "\u{EF49}";
 
 // --- Раздел «Модели»
-pub const MI_SMART_TOY: &str           = "\u{EF8A}";
+// smart_toy (U+EF8A) в MaterialIcons-Regular.ttf отсутствует — глиф
+// рисовался пустым местом. Все его места переведены на MI_AUTO_AWESOME.
+// Покрытие шрифта проверяет `tests/icons_font_coverage.rs`.
 pub const MI_MEMORY: &str              = "\u{E322}";
 pub const MI_FOLDER_OPEN: &str         = "\u{E2C8}";
 pub const MI_IMAGE_ICON: &str          = "\u{E3F4}";
@@ -107,7 +109,8 @@ pub const MI_SPEED: &str               = "\u{E9E4}";
 pub const MI_BOLT_FILLED: &str         = "\u{EA0B}";
 pub const MI_DEVELOPER_BOARD: &str     = "\u{E30D}";
 pub const MI_STORAGE: &str             = "\u{E1DB}";
-pub const MI_MONITOR_HEART: &str       = "\u{F154}";
+// monitor_heart (U+F154) в шрифте отсутствует; константа нигде не
+// использовалась — удалена, чтобы не всплыла пустым глифом позже.
 pub const MI_GRAPHIC_EQ: &str          = "\u{E1B8}";
 pub const MI_FILTER_ALT: &str          = "\u{EF4F}"; // filter_alt
 pub const MI_BLUR_ON: &str              = "\u{E3A5}"; // blur_on (для Reverb)
@@ -145,8 +148,10 @@ pub const MI_SYNC_PROBLEM: &str        = "\u{E629}"; // file changed externally 
 /// Material Symbols «inventory_2» — иконка nav-rail страницы SynExplorer
 /// (склад моделей-пакетов `.syn`).
 pub const MI_INVENTORY_2: &str         = "\u{E1A1}";
-/// «deployed_code» — preview-таб «Содержимое пакета».
-pub const MI_DEPLOYED_CODE: &str       = "\u{F510}";
+/// Preview-таб «Содержимое пакета». Задуманный «deployed_code» (U+F510)
+/// в MaterialIcons-Regular.ttf отсутствует, поэтому здесь «token» —
+/// четыре квадрата, читается как «составные части пакета».
+pub const MI_DEPLOYED_CODE: &str       = "\u{E9B0}";
 /// «folder_zip» — карточка `.syn` пакета в списке.
 pub const MI_FOLDER_ZIP: &str          = "\u{EB2C}";
 /// «book» — преамбула / overview таб.

@@ -100,7 +100,15 @@ fn row_frame(
         inner = inner.children(vec![t]);
     }
 
-    Box::new(DecoratedBox::new().class("settings-row").child(inner))
+    // Тот же Padding, что и в `settings::widgets::row` — `.settings-row`
+    // сам по себе внутренних отступов не задаёт (только разделитель снизу),
+    // и без обёртки строки «О программе» лепились вплотную к краям карточки
+    // и друг к другу, в отличие от остальных страниц настроек.
+    Box::new(
+        DecoratedBox::new()
+            .class("settings-row")
+            .child(Padding::symmetric(24.0, 18.0).child(inner)),
+    )
 }
 
 fn text_row(icon: &'static str, title: &'static str, value: impl Into<String>) -> Box<dyn Widget> {

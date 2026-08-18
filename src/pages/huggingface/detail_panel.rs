@@ -14,7 +14,7 @@ use syngui::widgets::visual::MarkdownView;
 use crate::context::AppCtx;
 use crate::icons::{
     MI_CHECK, MI_CLOSE, MI_CLOUD_DOWNLOAD, MI_DOWNLOAD, MI_HOURGLASS_TOP, MI_PAUSE, MI_PLAY_ARROW,
-    MI_REPORT, MI_SMART_TOY, MI_SPEED, MI_STOP, MI_TUNE, MI_VERIFIED_USER,
+    MI_REPORT, MI_AUTO_AWESOME, MI_SPEED, MI_STOP, MI_TUNE, MI_VERIFIED_USER,
 };
 
 use super::download;
@@ -113,7 +113,7 @@ fn avatar_widget(author: &str) -> impl Widget {
         if author.is_empty() {
             return vec![Box::new(
                 DecoratedBox::new().class("hf-detail-avatar-fallback").child(
-                    Icon::new(MI_SMART_TOY).class("hf-detail-avatar-icon"),
+                    Icon::new(MI_AUTO_AWESOME).class("hf-detail-avatar-icon"),
                 ),
             )];
         }

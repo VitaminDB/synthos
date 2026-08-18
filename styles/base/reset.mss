@@ -63,6 +63,55 @@ SpinBox:hover {
     border-color: var(--primary);
 }
 
+/* Dropdown — единый набор с TextField/SpinBox. Глобальное правило, а не
+ * только `.settings-row-dropdown`: без него Dropdown'ы без класса (в
+ * настройках аудио-моделей их с десяток) падали на встроенные дефолты
+ * syngui — светлая заливка и светлый бордер, которые на тёмной теме
+ * читались как контрол из чужого приложения.
+ *
+ * `--popup-*` синхронизируют выпадающий список: `--surface` в темах
+ * synthos не существует, а именно на неё popup фолбэчился по умолчанию. */
+Dropdown {
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 10px 14px;
+    font-size: 14px;
+    accent-color: var(--primary);
+    --popup-background: var(--bg-shell);
+    --popup-color: var(--text);
+    --popup-border: var(--border);
+    --popup-accent: var(--primary);
+    --popup-hover-background: var(--surface-hover);
+    --popup-hover-color: var(--text);
+    --popup-selected-background: var(--primary-soft);
+    --popup-selected-color: var(--primary);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+Dropdown:hover {
+    border-color: var(--primary);
+}
+
+/* Slider — тоже без глобального правила жил на дефолтах syngui: трек
+ * #D1D5DB и заливка #3B82F6, то есть светлая полоса и синий «не из темы»
+ * (см. slider.rs::build_display_list). Раскладка свойств там такая:
+ *   background-color → незаполненный трек,
+ *   color            → заполненная часть,
+ *   accent-color     → заливка ползунка,
+ *   border-color/-width → кольцо вокруг ползунка.
+ * Кольцо красим в фон панели — так ползунок читается и на треке, и на
+ * заливке, не сливаясь ни с тем, ни с другим. */
+Slider {
+    background-color: var(--border-strong);
+    color: var(--primary);
+    accent-color: var(--primary);
+    border-color: var(--bg-panel);
+    border-width: 2px;
+}
+
 /* MultilineTextEdit — глобально привязан к теме. Виджет сам рендерит фон
  * и рамку (background_color/border_color из ComputedStyle), поэтому
  * никаких DecoratedBox-обёрток сверху не нужно. `accent-color` идёт в

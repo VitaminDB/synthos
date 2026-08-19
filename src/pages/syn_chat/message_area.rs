@@ -1,9 +1,10 @@
 //! Лента Syn-чата: точечная подложка + реактивный список пузырьков.
 //!
 //! Кроме текстовых сообщений лента рендерит работу агента — карточки
-//! tool-call / tool-result (`super::message_bubble`) и, в `minimal`-режиме,
-//! свёрнутые группы одинаковых вызовов (`super::tool_group`).
-//! Compaction-маркеров у Syn-чата нет.
+//! tool-call / tool-result (`super::message_bubble`), в `minimal`-режиме
+//! свёрнутые группы одинаковых вызовов (`super::tool_group`) и маркеры
+//! компактификации (`super::compaction_marker`): сжатые autocompact'ом
+//! сообщения в основную ленту не идут — они прячутся под свой маркер.
 
 use syngui::core::Color;
 use syngui::mgui;
@@ -14,7 +15,7 @@ use crate::components::date_divider;
 use crate::context::AppCtx;
 use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, SynChatCtx};
 
-use super::{message_bubble, tool_group};
+use super::{compaction_marker, message_bubble, tool_group};
 
 pub fn view() -> impl Widget {
     DecoratedBox::new().class("message-area").child(
@@ -101,20 +102,44 @@ fn populated(msgs: Vec<ChatMsg>, pending: bool, tool_mode: &str) -> impl Widget 
     let mut items: Vec<Box<dyn Widget>> = Vec::new();
     items.push(Box::new(date_divider::view(&format_date_today())));
 
-    let last_idx = msgs.len().saturating_sub(1);
+    // Свёрнутые autocompact'ом сообщения из основной ленты исключаются (они
+    // рендерятся внутри своего маркера). Лента и группировка строятся по
+    // «видимым» сообщениям, а исходные индексы сохраняются для ключей
+    // open-state в bubble'ах.
+    let mut visible: Vec<ChatMsg> = Vec::with_capacity(msgs.len());
+    let mut orig_idx: Vec<usize> = Vec::with_capacity(msgs.len());
+    for (i, m) in msgs.iter().enumerate() {
+        if m.compacted_iter.is_none() {
+            visible.push(m.clone());
+            orig_idx.push(i);
+        }
+    }
+
+    let last_vis = visible.len().saturating_sub(1);
     // В minimal-режиме подряд идущие пары `(ToolCall, ToolResult)` одного
     // инструмента (≥ 2 пар) схлопываются в одну сворачиваемую карточку.
-    for entry in build_lane(&msgs, tool_mode) {
+    for entry in build_lane(&visible, tool_mode) {
         match entry {
-            LaneEntry::Single(idx) => {
+            LaneEntry::Single(vi) => {
+                let idx = orig_idx[vi];
                 let msg = &msgs[idx];
+                if let ChatMsgKind::CompactionMarker { iteration, .. } = &msg.kind {
+                    let compacted: Vec<(usize, ChatMsg)> = msgs
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| m.compacted_iter == Some(*iteration))
+                        .map(|(i, m)| (i, m.clone()))
+                        .collect();
+                    items.push(compaction_marker::view(msg, compacted, tool_mode));
+                    continue;
+                }
                 // Стрим-хвост и regen привязаны только к текстовому bubble'у
                 // ассистента: tool-карточки собственного стрима не имеют.
-                let is_last_assistant = idx == last_idx
+                let is_last_assistant = vi == last_vis
                     && msg.role == ChatMsgRole::Assistant
                     && matches!(msg.kind, ChatMsgKind::Text);
                 let is_typing = pending
-                    && idx == last_idx
+                    && vi == last_vis
                     && msg.role == ChatMsgRole::Assistant
                     && msg.body.is_empty();
                 items.push(message_bubble::view(
@@ -125,7 +150,17 @@ fn populated(msgs: Vec<ChatMsg>, pending: bool, tool_mode: &str) -> impl Widget 
                     tool_mode,
                 ));
             }
-            LaneEntry::Group(g) => items.push(Box::new(tool_group::view(g))),
+            LaneEntry::Group(mut g) => {
+                // Индексы группы — в «видимом» пространстве; для ключей
+                // open-state возвращаем исходные.
+                g.start_idx = orig_idx[g.start_idx];
+                g.items = g
+                    .items
+                    .into_iter()
+                    .map(|(vi, m)| (orig_idx[vi], m))
+                    .collect();
+                items.push(Box::new(tool_group::view(g)));
+            }
         }
     }
 

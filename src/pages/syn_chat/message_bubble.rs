@@ -55,7 +55,8 @@ pub fn view(
                 Box::new(chat_row(msg, msg_idx, false, is_typing, is_last_assistant))
             }
         },
-        // У Syn-чата autocompact'а нет — маркер в ленту не попадает.
+        // Маркер компактификации рендерится на уровне ленты
+        // (`message_area` → `compaction_marker::view`), сюда не попадает.
         // Защитный fallback, чтобы не падать на чужих JSON'ах.
         ChatMsgKind::CompactionMarker { .. } => Box::new(DecoratedBox::new()),
     }

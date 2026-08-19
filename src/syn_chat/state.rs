@@ -92,6 +92,10 @@ pub struct SynChatCtx {
     /// показом тела целиком, в `full` — доразворотом длинного вывода
     /// (см. `pages::syn_chat::message_bubble::TOOL_RESULT_PREVIEW_LINES`).
     pub tool_body_open: RwSignal<HashMap<usize, bool>>,
+    /// Раскрытие маркеров компактификации. Ключ — номер итерации
+    /// (`CompactionMarker.iteration`, стабилен в отличие от индекса).
+    /// Эфемерно, не persist'ится. Дефолт — закрыт.
+    pub compaction_open: RwSignal<HashMap<u32, bool>>,
     /// Активный таб правой панели: 0=Инструменты, 1=Параметры, 2=Детали.
     /// См. `context::SYN_RIGHT_PANEL_*`.
     pub right_panel_tab: RwSignal<usize>,
@@ -155,6 +159,7 @@ impl SynChatCtx {
             thinking_open: use_signal(HashMap::new()),
             tool_group_open: use_signal(HashMap::new()),
             tool_body_open: use_signal(HashMap::new()),
+            compaction_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
             left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),

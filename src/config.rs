@@ -64,19 +64,21 @@ pub struct GeneralConfig {
     #[serde(default = "default_voice_font_size")]
     pub voice_font_size: f32,
     /// Максимум tool-turn'ов в одном цикле основного агента
-    /// (`chat::session::run_agent`). По его исчерпании цикл выходит с
-    /// `reason="max_turns_reached"`. Поднимать, если модель часто упирается.
+    /// (`syn_chat::session::run_agent_loop`). По его исчерпании генерация
+    /// останавливается с подсказкой «Продолжить». Поднимать, если модель
+    /// часто упирается.
     #[serde(default = "default_agent_max_turns")]
     pub agent_max_turns: u32,
     /// Максимум tool-turn'ов внутри одного субагента
-    /// (`chat::tools::subagent::run_subagent_loop`). По исчерпании делается
+    /// (`agent::tools::subagent`). По исчерпании делается
     /// финальный summarize-turn без tools — модель сжимает прогресс.
     #[serde(default = "default_subagent_max_turns")]
     pub subagent_max_turns: u32,
     /// Включён ли autocompact: автоматическое сжатие старых сообщений
-    /// в `system`-summary, когда `prompt_tokens / n_ctx` превышает
-    /// [`autocompact_threshold_percent`]. См. `chat::compact::run_compaction`.
-    /// При выключенном флаге доступна только ручная кнопка «Compact now».
+    /// в `system`-summary, когда промпт последнего хода превышает
+    /// `autocompact_threshold_percent` от лимита контекста.
+    /// См. `syn_chat::compact::maybe_autocompact`. При выключенном флаге
+    /// доступна только ручная кнопка сжатия в шапке чата.
     #[serde(default = "default_autocompact_enabled")]
     pub autocompact_enabled: bool,
     /// Порог срабатывания autocompact в процентах от размера контекстного

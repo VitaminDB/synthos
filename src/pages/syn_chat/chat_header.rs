@@ -1,8 +1,8 @@
 //! Шапка Syn-чата: avatar + title (inline-rename по двойному клику) +
-//! subtitle (имя модели) + actions (rename / delete / clear).
+//! subtitle (имя модели) + actions (compact / clear / delete).
 //!
-//! Visual parity с `components::chat_header`, но без context-progress-bar и
-//! без compact-кнопки (autocompact в Syn-чате не реализован).
+//! Кнопка сжатия зовёт `syn_chat::compact::compact_now` (ручной autocompact);
+//! disabled, пока идёт генерация или в ленте нет кандидатов на сжатие.
 
 use syngui::mgui;
 use syngui::prelude::*;
@@ -26,6 +26,12 @@ fn header_body_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         let chats = ctx.chats.get();
         let _model = reg.current.get();
         let _editing = ctx.last_saved_fp.get();
+        // Кнопка сжатия: disabled, пока идёт генерация/сжатие ИЛИ в ленте
+        // нет кандидатов (find_compact_range = None).
+        let pending = ctx.pending.get();
+        let msgs = ctx.messages.get();
+        let can_compact =
+            !pending && crate::syn_chat::compact::find_compact_range(&msgs).is_some();
 
         let Some(id) = active else {
             return empty_header();
@@ -33,7 +39,7 @@ fn header_body_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         let Some(meta) = chats.into_iter().find(|m| m.id == id) else {
             return empty_header();
         };
-        active_header(meta.id, meta.title)
+        active_header(meta.id, meta.title, can_compact)
     }
 }
 
@@ -49,7 +55,7 @@ fn empty_header() -> StyledWidget<DecoratedBox> {
     })
 }
 
-fn active_header(id: String, title: String) -> StyledWidget<DecoratedBox> {
+fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<DecoratedBox> {
     let tone = tone_for(&id);
     let initials = initials_from_title(&title);
 
@@ -65,6 +71,11 @@ fn active_header(id: String, title: String) -> StyledWidget<DecoratedBox> {
 
     let actions_row = mgui! {
         Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            ToolButton::new(MI_COMPRESS)
+                .tooltip("Сжать старые сообщения в краткое system-summary")
+                .disabled(!can_compact)
+                .on_click(|| crate::syn_chat::compact::compact_now())
+                .class("chat-header-action"),
             ToolButton::new(MI_CLEAR_ALL)
                 .tooltip("Очистить ленту")
                 .on_click(|| {

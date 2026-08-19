@@ -4,7 +4,7 @@
 //! локальном tokio current_thread runtime гоняет [`run_agent_loop`]:
 //!
 //! ```text
-//! loop turn in 0..MAX_AGENT_TURNS:
+//! loop turn in 0..max_turns:   # настройка «Глубина основного агента»
 //!     prompt = apply_chat_template_ex_tools(history, tools)
 //!     result = generate_streaming(prompt) ─┐
 //!                                          │  callback парсит <tool_call>
@@ -58,10 +58,9 @@ const IM_END_TOKEN: &str = "<|im_end|>";
 /// Закрытие tool-call блока — stop-sequence для генерации, чтобы модель
 /// не уходила додумывать после tool-вызова.
 pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
-/// Лимит итераций agent-loop: модель в режиме tool-calling может зациклиться,
-/// поэтому ограничиваем общее число turn-ов. 16 — баланс между «успеть
-/// решить многошаговую задачу» и «не сжечь весь контекст».
-const MAX_AGENT_TURNS: usize = 16;
+/// Бюджет ответа summary-запроса компактификации: сводка в 7–15 абзацев —
+/// это сотни токенов, 2048 хватает с запасом и не раздувает ринг.
+const SUMMARY_MAX_NEW_TOKENS: usize = 2048;
 
 /// Шаг ёмкости кэша префикс-KV. Сессия живёт между ходами, а пересоздание
 /// стирает префикс — значит расти надо редко и с запасом, а не «в притык» под
@@ -438,8 +437,8 @@ pub fn regenerate_last() {
 ///
 /// В отличие от [`regenerate_last`], которая режет ленту до последнего
 /// user-сообщения, здесь сохраняются все tool-call'ы и их результаты —
-/// цикл просто получает свежий бюджет `MAX_AGENT_TURNS` и продолжает с
-/// того места, где остановился. Основной сценарий — упёрлись в лимит
+/// цикл просто получает свежий бюджет ходов (настройка «Глубина основного
+/// агента») и продолжает с того места, где остановился. Основной сценарий — упёрлись в лимит
 /// ходов (`turn_cap_reached`), но кнопка работает и после ручного
 /// «Прервать», когда ответ оборвался на полуслове.
 pub fn continue_last() {
@@ -494,6 +493,12 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
     let chat_id = ctx.active_chat_id.get_untracked();
+    let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
+    let autocompact_enabled = app_ctx.general.autocompact_enabled.get_untracked();
+    let autocompact_threshold = app_ctx
+        .general
+        .autocompact_threshold_percent
+        .get_untracked();
     let ctx_for_worker = ctx.clone();
     let abort = ctx.abort.clone();
 
@@ -517,17 +522,38 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
                 return;
             }
         };
-        let result = rt.block_on(run_agent_loop(
-            model,
-            history,
-            caps,
-            tool_schemas,
-            params,
-            abort,
-            abort_snapshot,
-            chat_id,
-            ctx_for_worker.clone(),
-        ));
+        let model_for_compact = model.clone();
+        let abort_for_compact = abort.clone();
+        let result = rt.block_on(async {
+            let r = run_agent_loop(
+                model,
+                history,
+                caps,
+                tool_schemas,
+                params,
+                abort,
+                abort_snapshot,
+                chat_id,
+                ctx_for_worker.clone(),
+                max_turns,
+            )
+            .await;
+            // Автокомпакт — строго после хода: генерация закончилась, guard
+            // KV-слота отпущен, VRAM свободна под summary-запрос.
+            if r.is_ok()
+                && autocompact_enabled
+                && abort_for_compact.load(Ordering::Relaxed) == abort_snapshot
+            {
+                crate::syn_chat::compact::maybe_autocompact(
+                    &model_for_compact,
+                    &abort_for_compact,
+                    abort_snapshot,
+                    autocompact_threshold,
+                )
+                .await;
+            }
+            r
+        });
         if let Err(e) = result {
             eprintln!("[syn_chat] agent-loop error: {e:#}");
             let ctx = ctx_for_worker.clone();
@@ -659,7 +685,8 @@ impl StreamParser {
 
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
 /// append history → next turn. Прерывается по abort, EOS-only ответу (no
-/// tool_calls) или по достижении `MAX_AGENT_TURNS`.
+/// tool_calls) или по достижении `max_turns` (настройка «Глубина основного
+/// агента», `AppConfig.general.agent_max_turns`).
 #[allow(clippy::too_many_arguments)]
 async fn run_agent_loop(
     model: Arc<LoadedSynModel>,
@@ -671,6 +698,7 @@ async fn run_agent_loop(
     abort_snapshot: u64,
     chat_id: Option<String>,
     ctx: SynChatCtx,
+    max_turns: usize,
 ) -> anyhow::Result<()> {
     let model_cap = model.model.config().max_seq_len;
     let mut total_gen_tokens: u32 = 0;
@@ -713,7 +741,7 @@ async fn run_agent_loop(
     // выглядело как зависшая без ошибки генерация.
     let mut answered = false;
 
-    for turn in 0..MAX_AGENT_TURNS {
+    for turn in 0..max_turns {
         if abort.load(Ordering::Relaxed) != abort_snapshot {
             return Ok(());
         }
@@ -1151,7 +1179,7 @@ async fn run_agent_loop(
 
     if !answered {
         log::warn!(
-            "[syn_chat] agent-loop упёрся в лимит {MAX_AGENT_TURNS} ходов: модель              всё это время вызывала инструменты и ни разу не дала текстовый              ответ. Генерация остановлена, история цела — можно продолжить."
+            "[syn_chat] agent-loop упёрся в лимит {max_turns} ходов: модель              всё это время вызывала инструменты и ни разу не дала текстовый              ответ. Генерация остановлена, история цела — можно продолжить."
         );
         let ctx_cap = ctx.clone();
         run_on_main_thread(move || {
@@ -1167,7 +1195,7 @@ async fn run_agent_loop(
             });
             ctx_cap.turn_cap_reached.set(true);
             ctx_cap.error.set(Some(format!(
-                "остановлено на лимите {MAX_AGENT_TURNS} ходов агента — модель \
+                "остановлено на лимите {max_turns} ходов агента — модель \
                  всё время вызывала инструменты. Нажмите «Продолжить», чтобы \
                  дать ещё ходов"
             )));
@@ -1189,6 +1217,66 @@ async fn run_agent_loop(
     });
 
     Ok(())
+}
+
+/// Одноразовая plain-генерация вне agent-loop: без tools, без thinking, без
+/// префикс-KV и без стрима в UI. Используется компактификацией
+/// (`syn_chat::compact`) для summary-запроса. Блокирует вызывающий поток на
+/// время генерации — звать только из worker-потока.
+pub(crate) fn generate_summary(
+    model: &Arc<LoadedSynModel>,
+    system: &str,
+    user: &str,
+    abort: &Arc<AtomicU64>,
+    abort_snapshot: u64,
+) -> anyhow::Result<String> {
+    let history = vec![Message::system(system), Message::user(user)];
+    let prompt = model
+        .tokenizer
+        .apply_chat_template_ex_tools(&history, true, false, None)?;
+    let prompt_ids = model.tokenizer.encode(&prompt)?;
+    let model_cap = model.model.config().max_seq_len;
+    let plan = RingPlan::new(model, prompt_ids.len(), SUMMARY_MAX_NEW_TOKENS, model_cap);
+    log::info!(
+        "[syn_chat] summary-запрос: промпт {} ток, ринг {} ток ({} MB)",
+        prompt_ids.len(),
+        plan.ring_tokens,
+        plan.ring_mb()
+    );
+
+    // Низкая температура: сводка должна быть детерминированной и сухой.
+    let mut params = SamplingParams::default();
+    params.temperature = 0.3;
+    let mut opts = params.to_options();
+    opts.max_seq_len = plan.ring_tokens;
+    opts.max_new_tokens = plan.max_new;
+
+    let mut runner = LlmGeneration::new(&model.model, opts);
+    if ChannelIds::detect(&model.tokenizer).is_some() {
+        runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
+    } else {
+        set_qwen3_stops(&mut runner, &model.tokenizer);
+    }
+
+    let mut parser = StreamParser::for_model(&model.tokenizer, false);
+    let mut clean = String::new();
+    let abort_cb = abort.clone();
+    let res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |id, delta| {
+        if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
+            return false;
+        }
+        let (body, _thinking, _tool) = parser.feed(id, delta);
+        clean.push_str(&body);
+        true
+    });
+
+    // Ринг summary-запроса больше не нужен — возвращаем VRAM (см. комментарий
+    // про cudaMallocAsync-пул в run_agent_loop).
+    drop(runner);
+    let _ = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+
+    res?;
+    Ok(clean.trim().to_string())
 }
 
 /// Сбрасывает накопленные body/think/tool буферы в реактивные сигналы UI.

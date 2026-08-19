@@ -31,6 +31,7 @@ pub mod attachments;
 pub mod chat_header;
 pub mod chat_pane;
 pub mod chats_column;
+pub mod compaction_marker;
 pub mod delete_dialog;
 pub mod input_panel;
 pub mod media_viewer;

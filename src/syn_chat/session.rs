@@ -371,6 +371,7 @@ pub fn send_message(text: String) {
     ctx.input_tokens.set_always(0);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
+    ctx.streaming_tool.set(String::new());
     ctx.error.set(None);
     ctx.turn_cap_reached.set(false);
     ctx.pending.set(true);
@@ -425,6 +426,7 @@ pub fn regenerate_last() {
 
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
+    ctx.streaming_tool.set(String::new());
     ctx.error.set(None);
     ctx.turn_cap_reached.set(false);
     ctx.pending.set(true);
@@ -470,6 +472,7 @@ pub fn continue_last() {
 
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
+    ctx.streaming_tool.set(String::new());
     ctx.error.set(None);
     ctx.turn_cap_reached.set(false);
     ctx.pending.set(true);
@@ -617,20 +620,22 @@ impl StreamParser {
         matches!(self, Self::Channel(_))
     }
 
-    /// Очередной токен → (текст ответа, текст размышлений).
-    fn feed(&mut self, id: u32, delta: &str) -> (String, String) {
+    /// Очередной токен → (текст ответа, размышления, live-текст tool-вызова).
+    fn feed(&mut self, id: u32, delta: &str) -> (String, String, String) {
         match self {
             Self::ChatML { think, tools } => {
                 let feed = tools.feed(delta);
-                if feed.clean_delta.is_empty() {
-                    return (String::new(), String::new());
-                }
-                let split = think.feed(&feed.clean_delta);
-                (split.body, split.thinking)
+                let (body, thinking) = if feed.clean_delta.is_empty() {
+                    (String::new(), String::new())
+                } else {
+                    let split = think.feed(&feed.clean_delta);
+                    (split.body, split.thinking)
+                };
+                (body, thinking, feed.tool_delta)
             }
             Self::Channel(p) => {
                 let split = p.feed(id, delta);
-                (split.body, split.thinking)
+                (split.body, split.thinking, split.tool)
             }
         }
     }
@@ -802,6 +807,7 @@ async fn run_agent_loop(
             let mut clean_text: String = String::new();
             let mut buf_body = String::new();
             let mut buf_think = String::new();
+            let mut buf_tool = String::new();
             let mut last_flush = Instant::now();
             let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
             let mut tokens_this_turn: u32 = 0;
@@ -815,7 +821,7 @@ async fn run_agent_loop(
             let on_token = |id: u32, delta: &str| {
                 // Abort: сбросить накопленные буферы и выйти.
                 if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
-                    flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, None);
+                    flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
                     return false;
                 }
                 if ttft_ms.is_none() {
@@ -824,10 +830,11 @@ async fn run_agent_loop(
                 raw_text.push_str(delta);
                 tokens_this_turn += 1;
 
-                let (body, thinking) = parser.feed(id, delta);
+                let (body, thinking, tool) = parser.feed(id, delta);
                 clean_text.push_str(&body);
                 buf_body.push_str(&body);
                 buf_think.push_str(&thinking);
+                buf_tool.push_str(&tool);
 
                 // Throttled flush в UI.
                 let now = Instant::now();
@@ -837,6 +844,7 @@ async fn run_agent_loop(
                         &ctx_for_cb,
                         &mut buf_body,
                         &mut buf_think,
+                        &mut buf_tool,
                         Some(tokens_this_turn),
                     );
                 }
@@ -889,7 +897,7 @@ async fn run_agent_loop(
             };
 
             // Финальный flush — гарантированно сбрасываем хвост буферов.
-            flush_streaming(&ctx, &mut buf_body, &mut buf_think, Some(tokens_this_turn));
+            flush_streaming(&ctx, &mut buf_body, &mut buf_think, &mut buf_tool, Some(tokens_this_turn));
 
             let channel_mode = parser.is_channel();
 
@@ -912,26 +920,56 @@ async fn run_agent_loop(
 
             if let Err(e) = stream_res {
                 let oom = is_oom_error(&e);
+                let has_session = kv_slot.is_some();
                 let retryable = oom
                     && tokens_this_turn == 0
                     && oom_attempt < MAX_OOM_RETRIES
-                    && answer_budget > MIN_ANSWER_TOKENS;
+                    && (has_session || answer_budget > MIN_ANSWER_TOKENS);
                 if retryable {
                     oom_attempt += 1;
-                    answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
-                    log::warn!(
-                        "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{} \
-                         с бюджетом ответа {} ток",
-                        plan.ring_tokens,
-                        plan.ring_mb(),
-                        MAX_OOM_RETRIES,
-                        oom_attempt,
-                        answer_budget
-                    );
+                    if has_session {
+                        // Главный резерв: кэш префикс-KV держит гигабайты в
+                        // пуле активаций, и пока он жив, forward'у может не
+                        // хватать места под рабочие буферы (наблюдали OOM на
+                        // alloc в 8 MB при живой сессии на 3.9 GB). Сбрасываем
+                        // и переигрываем ход: ensure_kv_slot пересоздаст кэш
+                        // под честный бюджет, а не выйдет — ход пройдёт на
+                        // обычном ринге с полным префиллом.
+                        let held_mb = kv_slot
+                            .as_ref()
+                            .map(|s| {
+                                (s.session.ctx_tokens() * model.model.kv_bytes_per_token())
+                                    / (1024 * 1024)
+                            })
+                            .unwrap_or(0);
+                        *kv_slot = None;
+                        let (freed, _) =
+                            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+                        log::warn!(
+                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{}: \
+                             сброшен кэш префикс-KV ({held_mb} MB, трим вернул {freed} MB)",
+                            plan.ring_tokens,
+                            plan.ring_mb(),
+                            oom_attempt,
+                            MAX_OOM_RETRIES,
+                        );
+                    } else {
+                        answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
+                        log::warn!(
+                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{} \
+                             с бюджетом ответа {} ток",
+                            plan.ring_tokens,
+                            plan.ring_mb(),
+                            oom_attempt,
+                            MAX_OOM_RETRIES,
+                            answer_budget
+                        );
+                    }
                     let ctx_clear = ctx.clone();
                     run_on_main_thread(move || {
                         ctx_clear.streaming_body.set(String::new());
                         ctx_clear.streaming_thinking.set(String::new());
+                        ctx_clear.streaming_tool.set(String::new());
                     });
                     continue;
                 }
@@ -1107,6 +1145,7 @@ async fn run_agent_loop(
             });
             ctx_ph.streaming_body.set(String::new());
             ctx_ph.streaming_thinking.set(String::new());
+            ctx_ph.streaming_tool.set(String::new());
         });
     }
 
@@ -1152,20 +1191,23 @@ async fn run_agent_loop(
     Ok(())
 }
 
-/// Сбрасывает накопленный body/think буфер в реактивные сигналы UI.
+/// Сбрасывает накопленные body/think/tool буферы в реактивные сигналы UI.
 /// Передавать `tokens_emitted = None` если статистику обновлять не надо
 /// (например, на abort-сбросе).
 fn flush_streaming(
     ctx: &SynChatCtx,
     buf_body: &mut String,
     buf_think: &mut String,
+    buf_tool: &mut String,
     tokens_emitted: Option<u32>,
 ) {
-    if buf_body.is_empty() && buf_think.is_empty() && tokens_emitted.is_none() {
+    if buf_body.is_empty() && buf_think.is_empty() && buf_tool.is_empty() && tokens_emitted.is_none()
+    {
         return;
     }
     let b = std::mem::take(buf_body);
     let t = std::mem::take(buf_think);
+    let tc = std::mem::take(buf_tool);
     let ctx = ctx.clone();
     run_on_main_thread(move || {
         if !t.is_empty() {
@@ -1173,6 +1215,9 @@ fn flush_streaming(
         }
         if !b.is_empty() {
             ctx.streaming_body.update(|s| s.push_str(&b));
+        }
+        if !tc.is_empty() {
+            ctx.streaming_tool.update(|s| s.push_str(&tc));
         }
         if let Some(n) = tokens_emitted {
             ctx.last_gen_tokens.set_always(n);

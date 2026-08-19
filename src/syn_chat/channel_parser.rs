@@ -94,11 +94,15 @@ enum State {
 }
 
 /// Результат разбора одной дельты: что дописать в тело ответа, что — в
-/// блок размышлений. Обе части могут быть пустыми.
+/// блок размышлений, что — в live-превью tool-вызова. Все части могут быть
+/// пустыми.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ChannelSplit {
     pub body: String,
     pub thinking: String,
+    /// Текст, который модель пишет как вызов инструмента (тело ATEM-блока
+    /// и «сырьё» служебного канала) — для live-превью команды в UI.
+    pub tool: String,
 }
 
 /// Инкрементальный парсер канального протокола.
@@ -157,20 +161,22 @@ impl ChannelParser {
             // Модель иногда открывает ATEM-блок прямо в канале user или self
             // (адресат при этом остаётся прежним), поэтому tool-разметку
             // выцеживаем из любого канала, а не только из `to=<функция>`.
-            State::Body(Channel::User) => ChannelSplit {
-                body: self.atem.feed(delta, None),
-                thinking: String::new(),
-            },
-            State::Body(Channel::SelfChannel) => ChannelSplit {
-                body: String::new(),
-                thinking: self.atem.feed(delta, None),
-            },
+            State::Body(Channel::User) => {
+                let (clean, tool) = self.atem.feed(delta, None);
+                ChannelSplit { body: clean, thinking: String::new(), tool }
+            }
+            State::Body(Channel::SelfChannel) => {
+                let (clean, tool) = self.atem.feed(delta, None);
+                ChannelSplit { body: String::new(), thinking: clean, tool }
+            }
             State::Body(Channel::Tool(name)) => {
                 let name = name.clone();
-                // Служебный канал: текст вокруг блока — «сырьё» вызова,
-                // пользователю его показывать нечего.
-                self.atem.feed(delta, Some(&name));
-                ChannelSplit::default()
+                // Служебный канал: текст вокруг блока — «сырьё» вызова.
+                // Пользователю в ответ он не идёт, но в live-превью — да.
+                let (clean, tool) = self.atem.feed(delta, Some(&name));
+                let mut merged = clean;
+                merged.push_str(&tool);
+                ChannelSplit { body: String::new(), thinking: String::new(), tool: merged }
             }
         }
     }
@@ -261,8 +267,12 @@ fn parse_recipient(header: &str) -> Channel {
 struct AtemParser {
     inside: bool,
     /// Снаружи блока — потенциальный префикс `<atem:function_calls>`;
-    /// внутри — тело блока до закрывающего тега.
+    /// внутри — потенциальный префикс закрывающего тега (тело блока сразу
+    /// уходит в `inner` и tool-дельту).
     buf: String,
+    /// Тело текущего блока, накопленное для разбора на закрытии. Дублирует
+    /// то, что уже отдано наружу как tool-дельта.
+    inner: String,
     calls: Vec<RawToolCall>,
     /// Хотя бы один блок закрыт корректно.
     closed_block: bool,
@@ -270,25 +280,46 @@ struct AtemParser {
 
 impl AtemParser {
     fn new() -> Self {
-        Self { inside: false, buf: String::new(), calls: Vec::new(), closed_block: false }
+        Self {
+            inside: false,
+            buf: String::new(),
+            inner: String::new(),
+            calls: Vec::new(),
+            closed_block: false,
+        }
     }
 
     /// `fallback_name` — адресат канала: им подписывается вызов, если в
-    /// `<atem:invoke>` имя не указано.
-    fn feed(&mut self, delta: &str, fallback_name: Option<&str>) -> String {
+    /// `<atem:invoke>` имя не указано. Возвращает `(clean, tool)`: чистый
+    /// текст вне блока и live-дельту его содержимого (без самих тегов).
+    fn feed(&mut self, delta: &str, fallback_name: Option<&str>) -> (String, String) {
         let mut out = String::new();
+        let mut tool_out = String::new();
         let mut work = std::mem::take(&mut self.buf);
         work.push_str(delta);
 
         loop {
             if self.inside {
-                let Some(idx) = work.find(ATEM_CLOSE) else { break };
-                let body = work[..idx].to_string();
-                self.calls.extend(parse_atem_invokes(&body, fallback_name));
-                self.closed_block = true;
-                work.drain(..idx + ATEM_CLOSE.len());
-                self.inside = false;
-                continue;
+                if let Some(idx) = work.find(ATEM_CLOSE) {
+                    tool_out.push_str(&work[..idx]);
+                    self.inner.push_str(&work[..idx]);
+                    self.calls.extend(parse_atem_invokes(&self.inner, fallback_name));
+                    self.inner.clear();
+                    self.closed_block = true;
+                    work.drain(..idx + ATEM_CLOSE.len());
+                    self.inside = false;
+                    continue;
+                }
+                // Закрывающий тег не найден: придерживаем его возможный
+                // префикс, остальное — в тело и live-дельту.
+                let hold = potential_prefix_len(&work, ATEM_CLOSE);
+                let emit_end = work.len() - hold;
+                if emit_end > 0 {
+                    tool_out.push_str(&work[..emit_end]);
+                    self.inner.push_str(&work[..emit_end]);
+                    work.drain(..emit_end);
+                }
+                break;
             }
             if let Some(idx) = work.find(ATEM_OPEN) {
                 out.push_str(&work[..idx]);
@@ -306,17 +337,18 @@ impl AtemParser {
         }
 
         self.buf = work;
-        out
+        (out, tool_out)
     }
 
     /// Конец сообщения: незакрытый блок отбрасываем (модель оборвалась),
     /// придержанный хвост чистого текста тоже — он уже вне канала.
     fn close_block(&mut self) {
-        if self.inside && !self.buf.trim().is_empty() {
+        if self.inside && !(self.inner.trim().is_empty() && self.buf.trim().is_empty()) {
             log::warn!("[syn_chat] ATEM-блок оборван без закрывающего тега — пропускаем");
         }
         self.inside = false;
         self.buf.clear();
+        self.inner.clear();
     }
 
     fn has_closed_call(&self) -> bool {
@@ -430,6 +462,7 @@ mod tests {
             let s = p.feed(*id, delta);
             acc.body.push_str(&s.body);
             acc.thinking.push_str(&s.thinking);
+            acc.tool.push_str(&s.tool);
         }
         let calls = p.finish();
         (acc, calls)
@@ -566,6 +599,40 @@ mod tests {
     #[test]
     fn history_text_without_calls_is_plain_answer() {
         assert_eq!(rebuild_turn_text(" Привет!\n", &[]), "Привет!");
+    }
+
+    #[test]
+    fn tool_delta_streams_from_tool_channel() {
+        let (out, calls) = run(&[
+            (TEXT, " to=bash"),
+            (MESSAGE, ""),
+            (TEXT, "<atem:function_calls><atem:invoke name=\"bash\">"),
+            (TEXT, "<atem:parameter name=\"command\">ls -la</atem:parameter>"),
+            (TEXT, "</atem:invoke></atem:function_calls>"),
+            (EOM, ""),
+        ]);
+        // Live-дельта — содержимое блока без внешних тегов.
+        assert!(out.tool.contains("<atem:invoke name=\"bash\">"), "{}", out.tool);
+        assert!(out.tool.contains("ls -la"), "{}", out.tool);
+        assert!(!out.tool.contains("<atem:function_calls>"), "{}", out.tool);
+        assert_eq!(out.body, "");
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn tool_delta_streams_from_user_channel_block() {
+        let (out, calls) = run(&[
+            (TEXT, " to=user"),
+            (MESSAGE, ""),
+            (TEXT, "сейчас гляну "),
+            (TEXT, "<atem:function_calls><atem:invoke name=\"bash\">"),
+            (TEXT, "<atem:parameter name=\"command\">pwd</atem:parameter>"),
+            (TEXT, "</atem:invoke></atem:function_calls>"),
+            (EOT, ""),
+        ]);
+        assert_eq!(out.body, "сейчас гляну ");
+        assert!(out.tool.contains("pwd"), "{}", out.tool);
+        assert_eq!(calls.len(), 1);
     }
 
     #[test]

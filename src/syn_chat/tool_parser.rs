@@ -25,10 +25,15 @@ pub struct RawToolCall {
     pub arguments_json: String,
 }
 
-/// Результат одного `feed`: чистый текст, готовый к показу пользователю.
+/// Результат одного `feed`: чистый текст, готовый к показу пользователю,
+/// плюс live-дельта содержимого tool_call-блока для превью команды в UI.
 #[derive(Debug, Default)]
 pub struct ToolParseFeed {
     pub clean_delta: String,
+    /// Текст, «съеденный» внутри `<tool_call>`-блока этим feed'ом. Сами теги
+    /// и их частичные префиксы сюда не попадают — UI может показывать дельту
+    /// как есть, пока модель дописывает вызов.
+    pub tool_delta: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,9 +49,12 @@ enum State {
 pub struct ToolCallParser {
     state: State,
     /// Незавершённый «хвост» из предыдущих feed-ов. В режиме Outside может
-    /// содержать частичный префикс OPEN_TAG; в режиме Inside — частичное
-    /// тело tool_call (без CLOSE_TAG).
+    /// содержать частичный префикс OPEN_TAG; в режиме Inside — частичный
+    /// префикс CLOSE_TAG (само тело сразу уходит в `inner` и `tool_delta`).
     buf: String,
+    /// Тело текущего tool_call-блока, накопленное для разбора на закрытии.
+    /// Дублирует то, что уже отдано наружу через `tool_delta`.
+    inner: String,
     /// Завершённые tool-вызовы.
     calls: Vec<RawToolCall>,
 }
@@ -56,6 +64,7 @@ impl ToolCallParser {
         Self {
             state: State::Outside,
             buf: String::new(),
+            inner: String::new(),
             calls: Vec::new(),
         }
     }
@@ -78,6 +87,7 @@ impl ToolCallParser {
     /// который безопасно немедленно отрендерить в UI.
     pub fn feed(&mut self, delta: &str) -> ToolParseFeed {
         let mut out = String::new();
+        let mut tool_out = String::new();
         // Объединяем хвост с новой дельтой, чтобы корректно ловить теги
         // на стыке chunks.
         let mut work = std::mem::take(&mut self.buf);
@@ -105,30 +115,40 @@ impl ToolCallParser {
                 }
                 State::Inside => {
                     if let Some(idx) = work.find(CLOSE_TAG) {
-                        let body = &work[..idx];
-                        match parse_tool_call_body(body) {
+                        tool_out.push_str(&work[..idx]);
+                        self.inner.push_str(&work[..idx]);
+                        match parse_tool_call_body(&self.inner) {
                             Some((call, _format)) => {
                                 self.calls.push(call);
                             }
                             None => {
                                 tracing::warn!(
-                                    tool_call_body = %body.trim(),
+                                    tool_call_body = %self.inner.trim(),
                                     "failed to parse <tool_call> JSON — пропускаем"
                                 );
                             }
                         }
+                        self.inner.clear();
                         work.drain(..idx + CLOSE_TAG.len());
                         self.state = State::Outside;
                         continue;
                     }
-                    // Закрывающий тег не найден — копим в buf, ничего не эмитим.
+                    // Закрывающий тег не найден: придерживаем возможный
+                    // префикс тега, остальное — в тело и live-дельту.
+                    let hold = potential_tag_suffix_len(&work, CLOSE_TAG);
+                    let emit_end = work.len() - hold;
+                    if emit_end > 0 {
+                        tool_out.push_str(&work[..emit_end]);
+                        self.inner.push_str(&work[..emit_end]);
+                        work.drain(..emit_end);
+                    }
                     break;
                 }
             }
         }
 
         self.buf = work;
-        ToolParseFeed { clean_delta: out }
+        ToolParseFeed { clean_delta: out, tool_delta: tool_out }
     }
 
     /// Финализирует парсер: возвращает накопленные tool-вызовы и хвост
@@ -144,8 +164,9 @@ impl ToolCallParser {
             }
             State::Inside => {
                 // Открытый, но не закрытый tool_call — отбрасываем.
+                self.inner.push_str(&self.buf);
                 tracing::warn!(
-                    truncated_body = %self.buf.trim(),
+                    truncated_body = %self.inner.trim(),
                     "stream закончился внутри <tool_call> без </tool_call> — отбрасываем"
                 );
                 (self.calls, String::new())
@@ -452,6 +473,42 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "bash");
         assert!(calls[0].arguments_json.contains("\"command\":\"ls\""));
+    }
+
+    #[test]
+    fn tool_delta_streams_incrementally() {
+        let mut p = ToolCallParser::new();
+        assert_eq!(p.feed("<tool_call>").tool_delta, "");
+        assert_eq!(p.feed(r#"{"name":"bash","#).tool_delta, r#"{"name":"bash","#);
+        assert_eq!(
+            p.feed(r#""arguments":{"command":"ls"}}"#).tool_delta,
+            r#""arguments":{"command":"ls"}}"#
+        );
+        assert_eq!(p.feed("</tool_call>").tool_delta, "");
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+    }
+
+    #[test]
+    fn tool_delta_holds_partial_close_tag() {
+        let mut p = ToolCallParser::new();
+        let _ = p.feed("<tool_call>");
+        // Частичный `</tool_c` придерживается, JSON — отдаётся.
+        assert_eq!(p.feed(r#"{"name":"x"}</tool_c"#).tool_delta, r#"{"name":"x"}"#);
+        // Хвост тега пришёл — дельта пустая, вызов зафиксирован.
+        assert_eq!(p.feed("all>").tool_delta, "");
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "x");
+    }
+
+    #[test]
+    fn tool_delta_empty_outside_block() {
+        let mut p = ToolCallParser::new();
+        let feed = p.feed("обычный текст");
+        assert_eq!(feed.clean_delta, "обычный текст");
+        assert_eq!(feed.tool_delta, "");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Хранение голосовых записей на диске.
 //!
 //! Структура каталога:
-//! ```
+//! ```text
 //! ~/.config/synthos/voice/
 //!   index.json           # Vec<VoiceRecording>, сортирован по убыванию created_at
 //!   {id}.wav             # сырые WAV-байты от AudioRecorder::stop_and_encode_wav

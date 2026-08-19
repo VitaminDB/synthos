@@ -109,14 +109,11 @@ fn chat_row(
             move || -> Vec<Box<dyn Widget>> {
                 let ctx = use_context::<SynChatCtx>();
                 let pending = ctx.pending.get();
-                let tail = if pending {
-                    ctx.streaming_body.get()
+                let (tail, tool_tail) = if pending {
+                    (ctx.streaming_body.get(), ctx.streaming_tool.get())
                 } else {
-                    String::new()
+                    (String::new(), String::new())
                 };
-                if pending && initial_body.is_empty() && tail.is_empty() {
-                    return vec![Box::new(Text::new("•••").class("msg-typing"))];
-                }
                 let merged = if tail.is_empty() {
                     initial_body.clone()
                 } else if initial_body.is_empty() {
@@ -124,7 +121,27 @@ fn chat_row(
                 } else {
                     format!("{initial_body}{tail}")
                 };
-                vec![Box::new(bubble_markdown(&merged, "msg-bubble-md"))]
+                let mut children: Vec<Box<dyn Widget>> = Vec::new();
+                if !merged.is_empty() {
+                    children.push(Box::new(bubble_markdown(&merged, "msg-bubble-md")));
+                }
+                if !tool_tail.is_empty() {
+                    children.push(streaming_tool_preview(&tool_tail));
+                }
+                if children.is_empty() {
+                    if pending {
+                        return vec![Box::new(Text::new("•••").class("msg-typing"))];
+                    }
+                    children.push(Box::new(bubble_markdown(&merged, "msg-bubble-md")));
+                }
+                // Reactive — Loose-контейнер (дети в одной точке), поэтому
+                // текст и превью складываем в явный Column.
+                vec![Box::new(
+                    Column::new()
+                        .gap(8.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .children(children),
+                )]
             },
         ))
     } else if is_typing {
@@ -416,6 +433,71 @@ fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_op
 // Tool-карточки — работа агента (вызов инструмента и его результат)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Live-превью tool-вызова: модель ещё дописывает команду, а её частичный
+/// текст уже стримится в карточку — тем же стилем, что настоящая
+/// `.tool-call-card`, которая заменит превью по завершении вызова.
+fn streaming_tool_preview(raw: &str) -> Box<dyn Widget> {
+    let (icon, label) = match extract_streaming_tool_name(raw) {
+        Some(name) => tool_visuals(&name),
+        None => (MI_TERMINAL.to_string(), "Инструмент".to_string()),
+    };
+    let header = mgui! {
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Icon::new(icon).class("tool-call-icon"),
+            Text::new(label).class("tool-call-name"),
+            DecoratedBox::new().class("grow"),
+            Text::new("пишет команду…").class("tool-call-hint"),
+        ]
+    };
+    let text = raw.trim_start();
+    let body: Box<dyn Widget> = if text.is_empty() {
+        Box::new(Text::new("•••").class("msg-typing"))
+    } else {
+        Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
+            MarkdownView::new(fence_plain_text(text, "json"))
+                .with_copy_code(false)
+                .with_syntax_theme("InspiredGitHub")
+                .class("tool-call-args"),
+        ))
+    };
+    Box::new(DecoratedBox::new().class("tool-call-card").child(
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(vec![Box::new(header) as Box<dyn Widget>, body]),
+    ))
+}
+
+/// Имя инструмента из частичного текста вызова, пока он ещё пишется.
+/// Поддерживает Qwen3 JSON (`"name": "bash"`), ATEM (`name="bash"`) и
+/// Anthropic-XML (`<function=bash>`, включая глюк `<functionfunction=`).
+fn extract_streaming_tool_name(raw: &str) -> Option<String> {
+    fn qwen_json(raw: &str) -> Option<String> {
+        let pos = raw.find("\"name\"")?;
+        let rest = raw[pos + "\"name\"".len()..].trim_start();
+        let rest = rest.strip_prefix(':')?.trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+    fn atem_attr(raw: &str) -> Option<String> {
+        let pos = raw.find("name=\"")?;
+        let rest = &raw[pos + "name=\"".len()..];
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+    fn xml_function(raw: &str) -> Option<String> {
+        let pos = raw.find("function=")?;
+        let rest = &raw[pos + "function=".len()..];
+        let end = rest.find('>')?;
+        Some(rest[..end].trim().to_string())
+    }
+    qwen_json(raw)
+        .or_else(|| atem_attr(raw))
+        .or_else(|| xml_function(raw))
+        .filter(|s| !s.is_empty())
+}
+
 /// Иконка + человекочитаемое имя инструмента по его ключу. Неизвестный
 /// ключ (скил или tool из будущей версии) деградирует до терминала.
 fn tool_visuals(tool_name: &str) -> (String, String) {
@@ -510,7 +592,7 @@ pub(super) fn tool_call_card_only(
         let md = if args_body.trim().is_empty() {
             "(без аргументов)".to_string()
         } else {
-            format!("```json\n{}\n```", unescape_persisted_json_newlines(&args_body))
+            fence_plain_text(&unescape_persisted_json_newlines(&args_body), "json")
         };
         Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
             MarkdownView::new(md)
@@ -661,9 +743,12 @@ pub(super) fn tool_result_card_only(
         "tool-result-body"
     };
 
+    // Тело — плоский текст инструмента: оборачиваем в код-фенс, чтобы
+    // markdown-разметка внутри вывода не срабатывала (см. fence_plain_text),
+    // а длинные строки переносились код-блоком.
     let body_wrap = move |text: String| -> Box<dyn Widget> {
         Box::new(DecoratedBox::new().class("tool-result-body-wrap").child(
-            MarkdownView::new(text)
+            MarkdownView::new(fence_plain_text(&text, ""))
                 .selectable(true)
                 .with_copy_code(false)
                 .class(body_class),
@@ -781,6 +866,28 @@ fn tool_result_row(
     }
 }
 
+/// Оборачивает плоский текст в код-фенс, выбирая ограждение длиннее самой
+/// длинной серии бэктиков внутри (иначе ``` в содержимом рвёт блок).
+///
+/// Вывод инструмента — не markdown, и парсить его как markdown нельзя:
+/// `echo "---"` в stdout превращал весь текст выше в setext-заголовок H2
+/// (крупный жирный шрифт с линией-подчёркиванием), `#` становился
+/// заголовком, отступы — код-блоками, `*` — курсивом.
+fn fence_plain_text(text: &str, lang: &str) -> String {
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for c in text.chars() {
+        if c == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}{lang}\n{text}\n{fence}")
+}
+
 /// Tool-результаты, сохранённые как pretty-JSON, содержат `\n` в виде двух
 /// символов `\` + `n`. Разворачиваем обратно, чтобы старые чаты не
 /// показывались одной бесконечной строкой. Новые (plain-text) проходят
@@ -820,5 +927,55 @@ mod tests {
     fn unescape_is_noop_for_plain_text() {
         let s = "WEB_SEARCH query=\"rust\"\nresults-count: 10";
         assert_eq!(unescape_persisted_json_newlines(s), s);
+    }
+
+    #[test]
+    fn fence_wraps_plain_text() {
+        assert_eq!(fence_plain_text("a\nb", ""), "```\na\nb\n```");
+        assert_eq!(fence_plain_text("{}", "json"), "```json\n{}\n```");
+    }
+
+    #[test]
+    fn fence_grows_past_backtick_runs_inside() {
+        // ``` внутри текста не должен закрывать блок — ограждение длиннее.
+        let out = fence_plain_text("код:\n```rust\nfn main() {}\n```", "");
+        assert!(out.starts_with("````\n"), "{out}");
+        assert!(out.ends_with("\n````"), "{out}");
+    }
+
+    #[test]
+    fn markdown_structure_in_tool_output_stays_literal() {
+        // Регрессия: echo "---" в stdout превращал текст выше в setext-H2.
+        let body = "$ echo \"---\"\nexit: 0\n--- stdout ---\n---";
+        let fenced = fence_plain_text(body, "");
+        let blocks = syngui::widgets::visual::markdown_view::parse_markdown(&fenced);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert!(
+            matches!(
+                &blocks[0],
+                syngui::widgets::visual::markdown_view::MdBlock::CodeBlock { code, .. }
+                if code.contains("--- stdout ---")
+            ),
+            "{blocks:?}"
+        );
+    }
+
+    #[test]
+    fn extract_tool_name_from_partial_streams() {
+        assert_eq!(
+            extract_streaming_tool_name(r#"{"name": "bash", "argu"#).as_deref(),
+            Some("bash")
+        );
+        // Двоеточие ещё не приехало — имени пока нет.
+        assert_eq!(extract_streaming_tool_name(r#"{"name""#), None);
+        assert_eq!(
+            extract_streaming_tool_name("<atem:invoke name=\"web\">").as_deref(),
+            Some("web")
+        );
+        assert_eq!(
+            extract_streaming_tool_name("<functionfunction=kb_search><param").as_deref(),
+            Some("kb_search")
+        );
+        assert_eq!(extract_streaming_tool_name("просто текст"), None);
     }
 }

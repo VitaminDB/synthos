@@ -39,6 +39,11 @@ pub struct SynChatCtx {
     pub streaming_body: RwSignal<String>,
     /// Аналогично — для reasoning/thinking блока.
     pub streaming_thinking: RwSignal<String>,
+    /// Live-текст tool-вызова, который модель пишет прямо сейчас (содержимое
+    /// `<tool_call>` / ATEM-блока). Показывается карточкой-превью в последнем
+    /// assistant-бабле; в ленту не коммитится — его заменяет настоящий
+    /// tool_call-бабл, когда вызов дописан.
+    pub streaming_tool: RwSignal<String>,
     /// Черновик ввода.
     pub input: RwSignal<String>,
     /// Вложения, прикреплённые к ещё не отправленному сообщению. Уезжают в
@@ -132,6 +137,7 @@ impl SynChatCtx {
             messages: use_signal(Vec::new()),
             streaming_body: use_signal(String::new()),
             streaming_thinking: use_signal(String::new()),
+            streaming_tool: use_signal(String::new()),
             input: use_signal(String::new()),
             pending_attachments: use_signal(Vec::new()),
             attach_busy: use_signal(0),
@@ -169,6 +175,11 @@ impl SynChatCtx {
     /// последнее сообщение ленты и очищает их. Вызывать только на main
     /// thread (через `run_on_main_thread`).
     pub fn commit_streaming_tail(&self) {
+        // Live-превью tool-вызова в ленту не переливается: его либо заменил
+        // настоящий tool_call-бабл, либо стрим оборвался посреди вызова.
+        if !self.streaming_tool.get_untracked().is_empty() {
+            self.streaming_tool.set(String::new());
+        }
         let body = self.streaming_body.get_untracked();
         let thinking = self.streaming_thinking.get_untracked();
         let has_any = !body.is_empty() || !thinking.is_empty();

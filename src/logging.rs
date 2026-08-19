@@ -163,8 +163,14 @@ pub fn log_dir_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Оба теста крутят одни и те же env-переменные, а cargo гоняет тесты
+    /// параллельными потоками — без сериализации они флачат, перетирая
+    /// XDG_STATE_HOME/HOME друг у друга посреди проверки.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn log_dir_with_xdg_state_home() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var_os("XDG_STATE_HOME");
         // Используем temp-путь, чтобы не зависеть от хостовой машины.
         std::env::set_var("XDG_STATE_HOME", "/tmp/synthos-test-state");
@@ -178,6 +184,7 @@ mod tests {
 
     #[test]
     fn log_dir_falls_back_to_home_local_state() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev_xdg = std::env::var_os("XDG_STATE_HOME");
         let prev_home = std::env::var_os("HOME");
         std::env::remove_var("XDG_STATE_HOME");

@@ -25,6 +25,7 @@
 //! сбрасывает их в сигналы раз в ~16 мс (или при detected stop). Без этого
 //! при 50 tok/s × ~3 char/token = ~150 update/s main thread задушивается.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,6 +46,7 @@ use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
     ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser,
 };
+use crate::syn_chat::system_prompt::{self, PromptEnv};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
@@ -61,6 +63,47 @@ pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// Бюджет ответа summary-запроса компактификации: сводка в 7–15 абзацев —
 /// это сотни токенов, 2048 хватает с запасом и не раздувает ринг.
 const SUMMARY_MAX_NEW_TOKENS: usize = 2048;
+
+/// Сколько раз ПОДРЯД агенту прощается один и тот же вызов инструмента.
+///
+/// Считаем именно подряд идущие повторы: между двумя одинаковыми вызовами
+/// подряд не происходит вообще ничего, кроме собственного хода модели, —
+/// значит и результат измениться не может. А вот «правка файла → та же
+/// команда сборки → правка → та же команда» повтором не является, и блокировать
+/// её нельзя.
+///
+/// Повтор №2 подряд не исполняется: вместо результата модель получает заметку
+/// «этот вызов уже был». Повтор №3 останавливает ход. Без guard'а loop
+/// вырождается намертво: в сохранённых чатах встречается 106 подряд
+/// идентичных `bash`-вызовов на одно сообщение пользователя — greedy-сэмплинг
+/// на контексте из одинаковых блоков просто не имеет причины выбрать другое.
+const REPEAT_WARN_AT: usize = 2;
+/// Порог остановки хода (см. [`REPEAT_WARN_AT`]).
+const REPEAT_STOP_AT: usize = 3;
+/// С какого по счёту повтора (уже не подряд) к результату дописывается
+/// подсказка. Такой вызов исполняется как обычно — он может быть законным
+/// (пересборка после правки), но если результат не меняется, модель должна
+/// это заметить.
+const REPEAT_HINT_AT: usize = 3;
+/// Температура, ниже которой ход не опускается после детекта повтора:
+/// greedy-декод из петли не выходит в принципе, нужна хоть какая-то
+/// стохастика. Пользовательскую настройку не понижаем — только поднимаем.
+const ANTI_LOOP_TEMPERATURE: f32 = 0.6;
+/// Frequency-штраф, включаемый там же: он аддитивный и растёт с числом
+/// повторов, то есть бьёт именно по зацикленному тексту.
+const ANTI_LOOP_FREQUENCY_PENALTY: f32 = 0.25;
+/// Окно штрафов при анти-loop режиме. По всему промпту штраф размазывается
+/// в шум, поэтому смотрим только на свежий хвост.
+const ANTI_LOOP_PENALTY_WINDOW: usize = 256;
+/// Сколько символов результата инструмента уходит в промпт модели.
+///
+/// В UI пузырь остаётся полным, обрезается только копия для истории:
+/// `MAX_OUTPUT_BYTES` у executor'а — 64 КБ, и десяток таких результатов
+/// сжигает контекст быстрее, чем агент успевает решить задачу.
+const HISTORY_TOOL_RESULT_CHARS: usize = 8000;
+/// Сколько последних сообщений ленты не трогает компактификация внутри хода
+/// (последняя tool-пара + плейсхолдер).
+const IN_TURN_KEEP_TAIL: usize = 3;
 
 /// Шаг ёмкости кэша префикс-KV. Сессия живёт между ходами, а пересоздание
 /// стирает префикс — значит расти надо редко и с запасом, а не «в притык» под
@@ -487,13 +530,20 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
 
     // 2. Snapshot params + история + tool-схемы (всё на main thread!).
     let params = ctx.params.get_untracked();
-    let system_prompt = ctx.system_prompt.get_untracked();
+    let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
+    // Системный промпт агента: базовые правила + пользовательская добавка из
+    // настроек. Пустое поле в настройках больше не означает «промпта нет».
+    let system_prompt = system_prompt::build(&PromptEnv::snapshot(
+        active_tool_labels(&app_ctx),
+        max_turns,
+        ctx.system_prompt.get_untracked(),
+    ));
     let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt);
     let caps = snapshot_media_caps(&app_ctx, &model);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
     let chat_id = ctx.active_chat_id.get_untracked();
-    let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
+    let repeats = seen_calls_in_current_turn(&ctx);
     let autocompact_enabled = app_ctx.general.autocompact_enabled.get_untracked();
     let autocompact_threshold = app_ctx
         .general
@@ -535,7 +585,13 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
                 abort_snapshot,
                 chat_id,
                 ctx_for_worker.clone(),
-                max_turns,
+                LoopSettings {
+                    max_turns,
+                    system_prompt,
+                    autocompact_enabled,
+                    autocompact_threshold,
+                    repeats,
+                },
             )
             .await;
             // Автокомпакт — строго после хода: генерация закончилась, guard
@@ -565,6 +621,23 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         let ctx = ctx_for_worker;
         run_on_main_thread(move || {
             ctx.commit_streaming_tail();
+            // Прерывание посреди хода оставляло в ленте пустой
+            // assistant-пузырь: в UI он выглядит как «повисло», а на
+            // следующем сообщении уезжает в промпт пустой assistant-репликой
+            // (`build_history` отбрасывал его, только пока он последний).
+            ctx.messages.update(|m| {
+                if m.last()
+                    .map(|x| {
+                        x.role == ChatMsgRole::Assistant
+                            && matches!(x.kind, ChatMsgKind::Text)
+                            && x.body.is_empty()
+                            && x.thinking.is_empty()
+                    })
+                    .unwrap_or(false)
+                {
+                    m.pop();
+                }
+            });
             ctx.pending.set(false);
         });
     });
@@ -688,6 +761,87 @@ impl StreamParser {
 /// tool_calls) или по достижении `max_turns` (настройка «Глубина основного
 /// агента», `AppConfig.general.agent_max_turns`).
 #[allow(clippy::too_many_arguments)]
+/// Настройки одного запуска agent-loop'а, снятые на main-потоке.
+struct LoopSettings {
+    /// «Глубина основного агента» — сколько ходов даётся на одно сообщение.
+    max_turns: usize,
+    /// Уже собранный системный промпт (правила агента + добавка из настроек).
+    /// Нужен и после компактификации — для пересборки истории.
+    system_prompt: String,
+    autocompact_enabled: bool,
+    autocompact_threshold: u32,
+    /// Состояние guard'а повторов, восстановленное из ленты.
+    repeats: RepeatState,
+}
+
+/// Состояние guard'а повторов, восстановленное из ленты: сколько раз каждый
+/// вызов уже сделан в текущем ходе, каким был последний вызов и сколько раз
+/// он повторён подряд.
+///
+/// Нужно, чтобы guard пережил «Прервать» и «Продолжить»: иначе кнопка просто
+/// перезапускала бы ту же петлю с чистого листа.
+///
+/// Свёрнутые компактификацией сообщения не считаем: их результатов в промпте
+/// больше нет, и повторный вызов там уже осмыслен.
+#[derive(Default)]
+struct RepeatState {
+    totals: HashMap<String, usize>,
+    last: Option<String>,
+    consecutive: usize,
+}
+
+fn seen_calls_in_current_turn(ctx: &SynChatCtx) -> RepeatState {
+    repeat_state_from(&ctx.messages.get_untracked())
+}
+
+/// Чистая часть [`seen_calls_in_current_turn`] — считает состояние по ленте.
+fn repeat_state_from(msgs: &[ChatMsg]) -> RepeatState {
+    let from = msgs
+        .iter()
+        .rposition(|m| m.role == ChatMsgRole::User && matches!(m.kind, ChatMsgKind::Text))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let mut st = RepeatState::default();
+    for m in msgs.iter().skip(from) {
+        if m.compacted_iter.is_some() || !matches!(m.kind, ChatMsgKind::ToolCall { .. }) {
+            continue;
+        }
+        for c in m.tool_calls.iter().flatten() {
+            let key = call_key(c);
+            *st.totals.entry(key.clone()).or_insert(0) += 1;
+            st.consecutive = if st.last.as_deref() == Some(key.as_str()) {
+                st.consecutive + 1
+            } else {
+                1
+            };
+            st.last = Some(key);
+        }
+    }
+    st
+}
+
+/// Пересобрать историю agent-loop'а из ленты — после компактификации внутри
+/// хода собственная копия истории устарела.
+///
+/// Зовётся только на медиа-свободном пути (см. вызов), поэтому
+/// `prepare_history` здесь не трогает vision-башню.
+async fn rebuild_history(
+    ctx: &SynChatCtx,
+    system_prompt: &str,
+    model: &Arc<LoadedSynModel>,
+    caps: &MediaCaps,
+) -> Option<Vec<Message>> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<HistoryItem>>();
+    let ctx_main = ctx.clone();
+    let sp = system_prompt.to_string();
+    run_on_main_thread(move || {
+        let _ = tx.send(build_history(&ctx_main, &sp));
+    });
+    let items = rx.await.ok()?;
+    let (history, _media) = prepare_history(&items, model, caps, ctx);
+    Some(history)
+}
+
 async fn run_agent_loop(
     model: Arc<LoadedSynModel>,
     items: Vec<HistoryItem>,
@@ -698,8 +852,20 @@ async fn run_agent_loop(
     abort_snapshot: u64,
     chat_id: Option<String>,
     ctx: SynChatCtx,
-    max_turns: usize,
+    settings: LoopSettings,
 ) -> anyhow::Result<()> {
+    let LoopSettings {
+        max_turns,
+        system_prompt: sys_prompt,
+        autocompact_enabled,
+        autocompact_threshold,
+        repeats:
+            RepeatState {
+                totals: mut call_seen,
+                last: last_call_key,
+                consecutive: consecutive_repeats,
+            },
+    } = settings;
     let model_cap = model.model.config().max_seq_len;
     let mut total_gen_tokens: u32 = 0;
     let t_overall = Instant::now();
@@ -741,7 +907,17 @@ async fn run_agent_loop(
     // выглядело как зависшая без ошибки генерация.
     let mut answered = false;
 
-    for turn in 0..max_turns {
+    // Guard от вырождения в петлю. Счётчики приходят из ленты, поэтому
+    // переживают «Прервать» и «Продолжить» — иначе кнопка просто
+    // перезапускала бы ту же петлю с чистого листа.
+    let mut anti_loop = consecutive_repeats >= REPEAT_WARN_AT;
+    let mut last_call: Option<String> = last_call_key;
+    let mut consecutive = consecutive_repeats;
+    // Причина досрочной остановки: показывается вместо сообщения о лимите
+    // ходов, чтобы пользователь видел именно «агент зациклился».
+    let mut stop_reason: Option<String> = None;
+
+    'agent: for turn in 0..max_turns {
         if abort.load(Ordering::Relaxed) != abort_snapshot {
             return Ok(());
         }
@@ -785,6 +961,31 @@ async fn run_agent_loop(
             let mut opts = params.to_options();
             opts.max_seq_len = plan.ring_tokens;
             opts.max_new_tokens = plan.max_new;
+            if anti_loop {
+                // Повтор уже случился. Greedy-декод из петли не выходит
+                // никогда, поэтому поднимаем температуру и включаем
+                // frequency-штраф по свежему хвосту. Настройки пользователя
+                // только повышаем, но не понижаем.
+                opts.temperature = opts.temperature.max(ANTI_LOOP_TEMPERATURE);
+                opts.frequency_penalty =
+                    opts.frequency_penalty.max(ANTI_LOOP_FREQUENCY_PENALTY);
+                // Окно должно накрывать весь повторяющийся блок
+                // (tool_call + результат), иначе штраф смотрит только в
+                // хвост прошлого результата и на выбор команды не влияет.
+                // `0` в настройках означает «весь контекст» — на промпте
+                // агента это размазывает штраф в шум.
+                opts.repeat_last_n = if opts.repeat_last_n == 0 {
+                    ANTI_LOOP_PENALTY_WINDOW
+                } else {
+                    opts.repeat_last_n.max(ANTI_LOOP_PENALTY_WINDOW)
+                };
+                log::info!(
+                    "[syn_chat] анти-loop сэмплинг: temp={:.2}, freq_penalty={:.2}, окно {}",
+                    opts.temperature,
+                    opts.frequency_penalty,
+                    opts.repeat_last_n
+                );
+            }
             log::info!(
                 "[syn_chat] KV-ринг: {} ток ({} MB) = промпт {} + ответ {} + 128; \
                  по VRAM влезает {} ток, cap модели {}, {} B/ток; VRAM доступно {} MB \
@@ -800,9 +1001,14 @@ async fn run_agent_loop(
                 crate::syn_chat::model_registry::vram_free_mb()
             );
             if plan.truncated_prompt {
+                // Движок историю НЕ подрезает: без sliding-window он вернёт
+                // «KV overflow», а со скользящим окном молча выбросит голову
+                // контекста — то есть системный промпт и саму задачу.
                 log::warn!(
-                    "[syn_chat] промпт {} ток не влезает в ринг {} — история будет \
-                     обрезана движком; сожмите чат или уменьшите max_new_tokens",
+                    "[syn_chat] промпт {} ток не влезает в ринг {}: движок либо \
+                     упадёт с KV overflow, либо потеряет голову контекста \
+                     (системный промпт и задачу). Сожмите чат или уменьшите \
+                     max_new_tokens",
                     prompt_ids.len(),
                     plan.ring_tokens
                 );
@@ -1044,9 +1250,19 @@ async fn run_agent_loop(
             };
             run_on_main_thread(move || stat.apply(&ctx_stat));
 
-            break (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode);
+            break (
+                raw_text,
+                clean_text,
+                raw_calls,
+                tokens_this_turn,
+                channel_mode,
+                // Честный потолок контекста этого хода — нужен
+                // компактификации внутри хода.
+                plan.by_mem.min(plan.cap),
+            );
         };
-        let (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode) = turn_result;
+        let (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
+            turn_result;
 
         total_gen_tokens += tokens_this_turn;
 
@@ -1117,11 +1333,57 @@ async fn run_agent_loop(
             });
         });
 
-        // Выполняем каждый tool: confirm → execute → push result.
+        // Выполняем каждый tool: guard повторов → confirm → execute → push.
         for chat_call in chat_calls.iter() {
             if abort.load(Ordering::Relaxed) != abort_snapshot {
                 return Ok(());
             }
+
+            // ── Guard: тот же инструмент с теми же аргументами.
+            let key = call_key(chat_call);
+            let total = {
+                let n = call_seen.entry(key.clone()).or_insert(0);
+                *n += 1;
+                *n
+            };
+            consecutive = if last_call.as_deref() == Some(key.as_str()) {
+                consecutive + 1
+            } else {
+                1
+            };
+            last_call = Some(key);
+            if consecutive >= REPEAT_STOP_AT {
+                let text = format!(
+                    "Остановлено: инструмент `{}` вызван с теми же аргументами \
+                     {consecutive}-й раз подряд — агент ходит по кругу.",
+                    tool_name(chat_call)
+                );
+                log::warn!("[syn_chat] guard повторов: {text}");
+                push_tool_result(&ctx, chat_call, text.clone(), true);
+                history.push(Message::tool_named(tool_name(chat_call), text.clone()));
+                stop_reason = Some(text);
+                break 'agent;
+            }
+            if consecutive >= REPEAT_WARN_AT {
+                let text = format!(
+                    "Вызов `{}` с этими аргументами только что выполнялся — между \
+                     двумя одинаковыми вызовами подряд ничего не произошло, \
+                     результат выше и он не изменится, поэтому повторно он не \
+                     исполнен. Смени подход: другая команда, другой путь, другой \
+                     инструмент — либо дай текстовый ответ по тому, что уже \
+                     известно.",
+                    tool_name(chat_call)
+                );
+                log::warn!(
+                    "[syn_chat] guard повторов: `{}` повторён, вызов пропущен",
+                    tool_name(chat_call)
+                );
+                anti_loop = true;
+                push_tool_result(&ctx, chat_call, text.clone(), true);
+                history.push(Message::tool_named(tool_name(chat_call), text));
+                continue;
+            }
+
             let decision = crate::agent::tool_flow::await_decision_on_tool_call(
                 chat_call,
                 &abort,
@@ -1161,7 +1423,72 @@ async fn run_agent_loop(
             };
 
             push_tool_result(&ctx, chat_call, outcome.content.clone(), outcome.error);
-            history.push(Message::tool_named(tool_name(chat_call), outcome.content));
+            // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
+            // с одного вызова (потолок executor'а) съедают контекст быстрее,
+            // чем агент успевает решить задачу.
+            let mut for_history = clip_for_history(&outcome.content);
+            if total >= REPEAT_HINT_AT {
+                // Не подряд — исполняем (после правки файла та же команда
+                // сборки законна), но если результат не меняется, модель
+                // должна это заметить сама.
+                for_history.push_str(&format!(
+                    "\n\n[Системная заметка: этот вызов с теми же аргументами \
+                     сделан {total}-й раз за ход. Если результат не меняется — \
+                     меняй подход, а не повторяй.]"
+                ));
+            }
+            // Заметку про остаток ходов дописываем к результату, а не в
+            // system: system лежит в голове контекста и держит префикс-KV,
+            // правка на каждом ходу обнуляла бы его целиком.
+            let turns_left = max_turns.saturating_sub(turn + 1);
+            if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
+                for_history.push_str(&system_prompt::budget_note(turns_left));
+            }
+            history.push(Message::tool_named(tool_name(chat_call), for_history));
+        }
+
+        // ── Компактификация ВНУТРИ хода. Межходовой автокомпакт тут
+        // бессилен: он сжимает только то, что до последнего сообщения
+        // пользователя, а tool-цепочка агента растёт после него — в чатах
+        // это давало рост промпта с 25k до 70k+ символов за одно сообщение.
+        if autocompact_enabled && media.is_empty() && turn_ctx_budget > 0 {
+            let prompt_tokens = prompt_ids.len() as u32;
+            let pct = prompt_tokens as u64 * 100 / turn_ctx_budget as u64;
+            if pct >= autocompact_threshold as u64 {
+                // Сводку считает та же модель: освобождаем кэш префикс-KV
+                // ДО summary-запроса — после сжатия он всё равно не совпадёт
+                // с новой историей, а его VRAM нужна ринг-буферу сводки.
+                if kv_slot.is_some() {
+                    *kv_slot = None;
+                    crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+                }
+                let compacted = crate::syn_chat::compact::maybe_compact_in_turn(
+                    &model,
+                    &abort,
+                    abort_snapshot,
+                    autocompact_threshold,
+                    IN_TURN_KEEP_TAIL,
+                    prompt_tokens,
+                    turn_ctx_budget as u32,
+                )
+                .await;
+                if compacted {
+                    match rebuild_history(&ctx, &sys_prompt, &model, &caps).await {
+                        Some(h) => {
+                            log::info!(
+                                "[syn_chat] история хода пересобрана после сжатия: \
+                                 {} сообщений",
+                                h.len()
+                            );
+                            history = h;
+                        }
+                        None => log::warn!(
+                            "[syn_chat] не удалось пересобрать историю после сжатия — \
+                             продолжаем на прежней"
+                        ),
+                    }
+                }
+            }
         }
 
         // Готовим placeholder для следующего turn (UI bubble — пустой
@@ -1177,9 +1504,23 @@ async fn run_agent_loop(
         });
     }
 
-    if !answered {
+    if let Some(reason) = stop_reason {
+        let ctx_stop = ctx.clone();
+        run_on_main_thread(move || {
+            // Плейсхолдер этого хода уже заменён tool_call-пузырём, чистить
+            // нечего — но кнопка «Продолжить» нужна: пользователь может дать
+            // агенту ещё попытку, уже с заметками guard'а в контексте.
+            ctx_stop.turn_cap_reached.set(true);
+            ctx_stop.error.set(Some(format!(
+                "{reason} Генерация остановлена, история цела. Уточните задачу \
+                 или нажмите «Продолжить»."
+            )));
+        });
+    } else if !answered {
         log::warn!(
-            "[syn_chat] agent-loop упёрся в лимит {max_turns} ходов: модель              всё это время вызывала инструменты и ни разу не дала текстовый              ответ. Генерация остановлена, история цела — можно продолжить."
+            "[syn_chat] agent-loop упёрся в лимит {max_turns} ходов: модель всё \
+             это время вызывала инструменты и ни разу не дала текстовый ответ. \
+             Генерация остановлена, история цела — можно продолжить."
         );
         let ctx_cap = ctx.clone();
         run_on_main_thread(move || {
@@ -1325,6 +1666,35 @@ async fn wait_abort(abort: &Arc<AtomicU64>, snapshot: u64) {
 }
 
 /// Имя вызванной функции — им подписывается блок результата в prompt'е.
+/// Ключ вызова для guard'а повторов: имя + канонизированные аргументы.
+/// Канонизация нужна, чтобы `{"a":1}` и `{ "a": 1 }` считались одним и тем
+/// же вызовом — модель переформатирует JSON от хода к ходу.
+fn call_key(call: &ChatToolCall) -> String {
+    let args = call.function.arguments.as_deref().unwrap_or("").trim();
+    let canonical = serde_json::from_str::<serde_json::Value>(args)
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| args.to_string());
+    format!("{}\u{1f}{}", tool_name(call), canonical)
+}
+
+/// Копия вывода инструмента для промпта: голова + хвост, середина заменяется
+/// пометкой. Хвост важен не меньше головы — у команд там exit-код и stderr.
+fn clip_for_history(s: &str) -> String {
+    let total = s.chars().count();
+    if total <= HISTORY_TOOL_RESULT_CHARS {
+        return s.to_string();
+    }
+    let head_len = HISTORY_TOOL_RESULT_CHARS * 2 / 3;
+    let tail_len = HISTORY_TOOL_RESULT_CHARS - head_len;
+    let head: String = s.chars().take(head_len).collect();
+    let tail: String = s.chars().skip(total - tail_len).collect();
+    format!(
+        "{head}\n…[вывод обрезан: показаны первые {head_len} и последние \
+         {tail_len} символов из {total}; уточните команду, если нужен весь \
+         вывод]…\n{tail}"
+    )
+}
+
 fn tool_name(call: &ChatToolCall) -> String {
     call.function.name.clone().unwrap_or_default()
 }
@@ -1344,6 +1714,21 @@ fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, erro
 /// Собирает JSON-схемы активных инструментов (для передачи в Jinja-шаблон
 /// Qwen3 или manual prefix). Особый случай — `autoskill`, описание которого
 /// расширяется актуальным списком скилов через [`build_autoskill_chat_tool`].
+/// Лейблы активных инструментов для системного промпта — в том же порядке,
+/// в каком они уходят в tool-схемы.
+fn active_tool_labels(app: &AppCtx) -> Vec<String> {
+    app.tools
+        .active
+        .get_untracked()
+        .iter()
+        .map(|k| {
+            Tool::by_key(k)
+                .map(|t| t.label.to_string())
+                .unwrap_or_else(|| k.clone())
+        })
+        .collect()
+}
+
 fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
     use crate::agent::tools::catalog::KEY_AUTOSKILL;
     let keys = app.tools.active.get_untracked();
@@ -1448,10 +1833,15 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
             tool_name: None,
         });
     }
-    for (i, m) in msgs.iter().enumerate() {
-        // Skip последний assistant-плейсхолдер с пустым body.
-        let is_last = i + 1 == msgs.len();
-        if is_last && m.role == ChatMsgRole::Assistant && m.body.is_empty() {
+    for m in msgs.iter() {
+        // Пустой assistant — это плейсхолдер под стрим (в том числе
+        // оставшийся от прерванного хода). В промпт он не идёт никогда: не
+        // только последний, иначе после «Прервать» в истории навсегда
+        // остаётся пустая реплика ассистента.
+        if m.role == ChatMsgRole::Assistant
+            && matches!(m.kind, ChatMsgKind::Text)
+            && m.body.trim().is_empty()
+        {
             continue;
         }
         // Свернутые autocompact-сообщения не идут в prompt.
@@ -1571,3 +1961,129 @@ fn prepare_history(
     (out, media)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(name: &str, args: &str) -> ChatToolCall {
+        ChatToolCall {
+            id: "id".to_string(),
+            kind: "function".to_string(),
+            function: ChatToolCallFunction {
+                name: Some(name.to_string()),
+                arguments: Some(args.to_string()),
+            },
+        }
+    }
+
+    #[test]
+    fn call_key_ignores_json_formatting() {
+        // Модель переформатирует JSON от хода к ходу — guard обязан видеть
+        // в этом один и тот же вызов.
+        let a = call("bash", r#"{"command":"ls -la"}"#);
+        let b = call("bash", "{\n  \"command\": \"ls -la\"\n}");
+        assert_eq!(call_key(&a), call_key(&b));
+    }
+
+    #[test]
+    fn call_key_separates_different_args_and_tools() {
+        assert_ne!(
+            call_key(&call("bash", r#"{"command":"ls"}"#)),
+            call_key(&call("bash", r#"{"command":"pwd"}"#))
+        );
+        assert_ne!(
+            call_key(&call("bash", r#"{"q":"x"}"#)),
+            call_key(&call("web", r#"{"q":"x"}"#))
+        );
+    }
+
+    #[test]
+    fn call_key_survives_broken_json() {
+        // Невалидный JSON не должен схлопывать разные вызовы в один ключ.
+        assert_ne!(call_key(&call("bash", "{oops")), call_key(&call("bash", "{other")));
+    }
+
+    fn tool_call_msg(name: &str, args: &str) -> ChatMsg {
+        ChatMsg::tool_call(name, args, vec![call(name, args)])
+    }
+
+    #[test]
+    fn repeat_state_counts_only_current_turn() {
+        // Вызовы до последнего user-сообщения к текущему ходу не относятся.
+        let msgs = vec![
+            ChatMsg::user("старый запрос"),
+            tool_call_msg("bash", r#"{"command":"ls"}"#),
+            ChatMsg::user("новый запрос"),
+            tool_call_msg("bash", r#"{"command":"ls"}"#),
+        ];
+        let st = repeat_state_from(&msgs);
+        assert_eq!(st.totals.values().sum::<usize>(), 1);
+        assert_eq!(st.consecutive, 1);
+    }
+
+    #[test]
+    fn repeat_state_tracks_consecutive_run() {
+        let msgs = vec![
+            ChatMsg::user("u"),
+            tool_call_msg("bash", r#"{"command":"a"}"#),
+            tool_call_msg("bash", r#"{"command":"b"}"#),
+            tool_call_msg("bash", r#"{"command":"b"}"#),
+        ];
+        let st = repeat_state_from(&msgs);
+        // «Продолжить» после двух одинаковых подряд обязано видеть счётчик 2,
+        // иначе кнопка перезапускает ту же петлю с нуля.
+        assert_eq!(st.consecutive, 2);
+        assert_eq!(st.totals[&call_key(&call("bash", r#"{"command":"b"}"#))], 2);
+    }
+
+    #[test]
+    fn repeat_state_resets_run_on_different_call() {
+        let msgs = vec![
+            ChatMsg::user("u"),
+            tool_call_msg("bash", r#"{"command":"build"}"#),
+            tool_call_msg("bash", r#"{"command":"edit"}"#),
+            tool_call_msg("bash", r#"{"command":"build"}"#),
+        ];
+        let st = repeat_state_from(&msgs);
+        // Правка между двумя сборками — это не петля: подряд идущих нет.
+        assert_eq!(st.consecutive, 1);
+        assert_eq!(st.totals[&call_key(&call("bash", r#"{"command":"build"}"#))], 2);
+    }
+
+    #[test]
+    fn repeat_state_ignores_compacted() {
+        let mut msgs = vec![
+            ChatMsg::user("u"),
+            tool_call_msg("bash", r#"{"command":"a"}"#),
+            tool_call_msg("bash", r#"{"command":"a"}"#),
+        ];
+        msgs[1].compacted_iter = Some(1);
+        let st = repeat_state_from(&msgs);
+        assert_eq!(st.consecutive, 1);
+    }
+
+    #[test]
+    fn clip_for_history_keeps_short_output_intact() {
+        let s = "короткий вывод";
+        assert_eq!(clip_for_history(s), s);
+    }
+
+    #[test]
+    fn clip_for_history_keeps_head_and_tail() {
+        let body = format!("НАЧАЛО{}КОНЕЦ", "x".repeat(HISTORY_TOOL_RESULT_CHARS * 2));
+        let out = clip_for_history(&body);
+        assert!(out.starts_with("НАЧАЛО"));
+        assert!(out.ends_with("КОНЕЦ"), "хвост с exit-кодом обязан остаться");
+        assert!(out.contains("вывод обрезан"));
+        assert!(out.chars().count() < body.chars().count());
+    }
+
+    #[test]
+    fn clip_for_history_is_char_safe() {
+        // Обрезка идёт по символам, а не байтам: кириллица не должна биться.
+        let body = "я".repeat(HISTORY_TOOL_RESULT_CHARS + 100);
+        let out = clip_for_history(&body);
+        assert!(out.contains('я'));
+    }
+}

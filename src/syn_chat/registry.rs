@@ -168,6 +168,19 @@ pub fn rename_active(title: String) {
     });
 }
 
+/// Имя загруженного бандла (`qwen3.8-27b.syn` → `qwen3.8-27b`) для записи
+/// в файл чата.
+fn current_model_name() -> Option<String> {
+    use_context::<crate::syn_chat::SynModelRegistry>()
+        .current
+        .get_untracked()
+        .and_then(|m| {
+            m.path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+        })
+}
+
 pub fn snapshot_current() -> Option<StoredChat> {
     let ctx = use_context::<SynChatCtx>();
     let id = ctx.active_chat_id.get_untracked()?;
@@ -178,12 +191,18 @@ pub fn snapshot_current() -> Option<StoredChat> {
         .find(|m| m.id == id)?;
     let messages: Vec<ChatMsg> = ctx.messages.get_untracked();
     let created_at = storage::load(&id).map(|c| c.created_at).unwrap_or_else(unix_secs);
+    // Имя модели раньше не сохранялось вообще: по файлу чата нельзя было
+    // понять, какой бандл отвечал, — а разбор поведения агента без этого
+    // сводится к угадыванию. Пишем имя текущего бандла; если модель ещё не
+    // загружена — оставляем то, что было записано раньше.
+    let model_name = current_model_name()
+        .or_else(|| storage::load(&id).and_then(|c| c.model_name));
     Some(StoredChat {
         id: meta.id.clone(),
         title: meta.title.clone(),
         created_at,
         updated_at: unix_secs(),
-        model_name: None,
+        model_name,
         messages,
         syn_params: Some(ctx.params.get_untracked()),
     })

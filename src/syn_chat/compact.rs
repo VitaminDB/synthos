@@ -94,10 +94,58 @@ pub fn find_compact_range(msgs: &[ChatMsg]) -> Option<Range<usize>> {
         start += 1;
     }
 
-    let mut end = pivot;
+    refine_range(msgs, start, pivot, pivot)
+}
 
+/// Диапазон для компактификации ВНУТРИ хода агента: сжимаем tool-цепочку
+/// текущего сообщения, оставляя нетронутыми сам запрос пользователя и
+/// последние `keep_tail` сообщений ленты.
+///
+/// Нужен потому, что [`find_compact_range`] по определению бессилен внутри
+/// хода: он считает «свежим» всё после последнего user-сообщения, а у агента
+/// именно там и живут десятки tool-вызовов, которые раздувают контекст.
+pub fn find_compact_range_in_turn(msgs: &[ChatMsg], keep_tail: usize) -> Option<Range<usize>> {
+    let pivot = msgs
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, m)| {
+            matches!(m.role, ChatMsgRole::User)
+                && matches!(m.kind, ChatMsgKind::Text)
+                && m.compacted_iter.is_none()
+        })
+        .map(|(i, _)| i)?;
+
+    // Левая граница — сразу после запроса пользователя: сам запрос в сводку
+    // уходить не должен, агент обязан видеть задачу дословно.
+    let mut start = pivot + 1;
+    while start < msgs.len()
+        && (msgs[start].compacted_iter.is_some()
+            || matches!(msgs[start].kind, ChatMsgKind::CompactionMarker { .. }))
+    {
+        start += 1;
+    }
+    let end = msgs.len().checked_sub(keep_tail)?;
+    if end <= start {
+        return None;
+    }
+    refine_range(msgs, start, end, msgs.len())
+}
+
+/// Общая часть обоих поисков: атомарность tool-пар по обеим границам и
+/// проверка, что сжимать вообще есть что.
+///
+/// `scan_end` — до какого индекса можно искать `ToolResult` для `ToolCall`'а
+/// с правой границы (для межходовой компактификации это pivot, для
+/// внутриходовой — конец ленты).
+fn refine_range(
+    msgs: &[ChatMsg],
+    mut start: usize,
+    mut end: usize,
+    scan_end: usize,
+) -> Option<Range<usize>> {
     // 3. Атомарность tool-пар по правой границе. Если последний кандидат —
-    //    `ToolCall`, его `ToolResult` лежит ПОСЛЕ pivot'а или вообще
+    //    `ToolCall`, его `ToolResult` лежит ПОСЛЕ границы или вообще
     //    отсутствует — сжимать такой ToolCall нельзя (в prompt будет stub).
     //    Сдвигаем `end` назад, пока хвост — это незакрытый ToolCall.
     while end > start {
@@ -106,7 +154,7 @@ pub fn find_compact_range(msgs: &[ChatMsg]) -> Option<Range<usize>> {
             ChatMsgKind::ToolCall { .. } => {
                 if let Some(calls) = &last.tool_calls {
                     calls.iter().any(|c| {
-                        !msgs[end..pivot].iter().any(|mm| matches!(
+                        !msgs[end..scan_end].iter().any(|mm| matches!(
                             &mm.kind,
                             ChatMsgKind::ToolResult { tool_call_id, .. } if tool_call_id == &c.id
                         ))
@@ -372,6 +420,64 @@ pub async fn maybe_autocompact(
     .await;
 }
 
+/// Что именно сжимаем: историю между ходами или tool-цепочку внутри
+/// текущего хода агента.
+#[derive(Debug, Clone, Copy)]
+pub enum CompactScope {
+    /// Всё до последнего сообщения пользователя ([`find_compact_range`]).
+    BetweenTurns,
+    /// Tool-цепочка текущего хода, кроме последних `keep_tail` сообщений
+    /// ([`find_compact_range_in_turn`]).
+    InTurn { keep_tail: usize },
+}
+
+impl CompactScope {
+    fn range(self, msgs: &[ChatMsg]) -> Option<Range<usize>> {
+        match self {
+            CompactScope::BetweenTurns => find_compact_range(msgs),
+            CompactScope::InTurn { keep_tail } => find_compact_range_in_turn(msgs, keep_tail),
+        }
+    }
+}
+
+/// Автотриггер ВНУТРИ хода агента: зовётся из `run_agent_loop` между ходами
+/// одного сообщения, когда промпт перевалил за порог. Возвращает `true`,
+/// если лента была сжата — вызывающий обязан пересобрать свою историю.
+///
+/// Отдельная точка входа нужна потому, что межходовой автокомпакт внутри хода
+/// бессилен: `find_compact_range` не трогает ничего после последнего
+/// user-сообщения, а у агента весь рост контекста именно там.
+pub async fn maybe_compact_in_turn(
+    model: &Arc<LoadedSynModel>,
+    abort: &Arc<AtomicU64>,
+    snapshot: u64,
+    threshold_percent: u32,
+    keep_tail: usize,
+    prompt_tokens: u32,
+    budget_tokens: u32,
+) -> bool {
+    if prompt_tokens == 0 || budget_tokens == 0 {
+        return false;
+    }
+    let pct = prompt_tokens.saturating_mul(100) / budget_tokens;
+    if pct < threshold_percent {
+        return false;
+    }
+    log::info!(
+        "[syn_chat] autocompact внутри хода: промпт {prompt_tokens} ток = {pct}% \
+         от лимита {budget_tokens} (порог {threshold_percent}%) — сжимаем \
+         tool-цепочку текущего хода"
+    );
+    run_compaction_scoped(
+        model.clone(),
+        abort.clone(),
+        snapshot,
+        CompactionTrigger::Auto { tokens_before: prompt_tokens as i64 },
+        CompactScope::InTurn { keep_tail },
+    )
+    .await
+}
+
 /// Главный async-оркестратор. Идемпотентен: при отсутствии кандидатов —
 /// просто возвращается. Все ошибки логируются + notification, состояние
 /// ленты НЕ модифицируется.
@@ -381,22 +487,34 @@ pub async fn run_compaction(
     snapshot: u64,
     trigger: CompactionTrigger,
 ) {
+    run_compaction_scoped(model, abort, snapshot, trigger, CompactScope::BetweenTurns).await;
+}
+
+/// Тело оркестратора, параметризованное областью сжатия. `true` — сжатие
+/// применено к ленте.
+async fn run_compaction_scoped(
+    model: Arc<LoadedSynModel>,
+    abort: Arc<AtomicU64>,
+    snapshot: u64,
+    trigger: CompactionTrigger,
+    scope: CompactScope,
+) -> bool {
     if abort.load(Ordering::Relaxed) != snapshot {
-        return;
+        return false;
     }
 
     // 1. Снимаем snapshot ленты на main и считаем диапазон.
-    let Some((msgs_snapshot, range, iteration)) = read_compact_plan_on_main().await else {
+    let Some((msgs_snapshot, range, iteration)) = read_compact_plan_on_main(scope).await else {
         log::debug!("[syn_chat] autocompact: кандидатов нет, пропуск");
-        return;
+        return false;
     };
     if abort.load(Ordering::Relaxed) != snapshot {
-        return;
+        return false;
     }
 
     let block = serialize_for_summary(&msgs_snapshot, range);
     if block.trim().is_empty() {
-        return;
+        return false;
     }
 
     push_snackbar(format!("Сжатие контекста (итерация {iteration})…"), false);
@@ -404,7 +522,11 @@ pub async fn run_compaction(
     // 2. Summary через in-process генерацию. Кэш префикс-KV сбрасываем до
     //    неё: после компактификации история всё равно перестанет совпадать с
     //    посчитанным префиксом, а его VRAM пригодится summary-запросу.
-    session::drop_kv_session();
+    //    Внутри хода слот держит сам agent-loop — он его и освобождает, а
+    //    `drop_kv_session` тут только повесил бы отложенную очистку.
+    if matches!(scope, CompactScope::BetweenTurns) {
+        session::drop_kv_session();
+    }
     let summary = match session::generate_summary(
         &model,
         SUMMARY_SYSTEM_PROMPT,
@@ -416,11 +538,11 @@ pub async fn run_compaction(
         Err(e) => {
             log::warn!("[syn_chat] autocompact: summary-запрос упал: {e:#}");
             push_snackbar(format!("Не удалось сжать контекст: {e}"), true);
-            return;
+            return false;
         }
     };
     if abort.load(Ordering::Relaxed) != snapshot {
-        return;
+        return false;
     }
     if summary.is_empty() {
         log::warn!("[syn_chat] autocompact: модель вернула пустой summary");
@@ -428,7 +550,7 @@ pub async fn run_compaction(
             "Не удалось сжать контекст: модель вернула пустой ответ".to_string(),
             true,
         );
-        return;
+        return false;
     }
 
     // 3. Токены summary — честно через токенизатор, fallback на chars/4.
@@ -451,7 +573,7 @@ pub async fn run_compaction(
         let ctx = use_context::<SynChatCtx>();
         let mut applied_ok = false;
         ctx.messages.update(|v| {
-            if let Some(fresh_range) = find_compact_range(v) {
+            if let Some(fresh_range) = scope.range(v) {
                 let iter = next_iteration(v);
                 apply_compaction_to_messages(
                     v,
@@ -477,16 +599,19 @@ pub async fn run_compaction(
         };
         push_snackbar(msg, false);
     }
+    applied
 }
 
 /// Читает на main-потоке текущую ленту, диапазон для сжатия и следующий
 /// номер итерации. `None` если кандидатов нет.
-async fn read_compact_plan_on_main() -> Option<(Vec<ChatMsg>, Range<usize>, u32)> {
+async fn read_compact_plan_on_main(
+    scope: CompactScope,
+) -> Option<(Vec<ChatMsg>, Range<usize>, u32)> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
         let msgs = ctx.messages.get_untracked();
-        let plan = find_compact_range(&msgs).map(|range| {
+        let plan = scope.range(&msgs).map(|range| {
             let iteration = next_iteration(&msgs);
             (msgs.clone(), range, iteration)
         });
@@ -628,6 +753,59 @@ mod tests {
         // меньше двух → None.
         let msgs = vec![user("u1"), user("u2")];
         assert_eq!(find_compact_range(&msgs), None);
+    }
+
+    #[test]
+    fn in_turn_range_keeps_user_message_and_tail() {
+        // [u1, call, res, call, res, placeholder] — сжимаем только первую
+        // tool-пару: запрос пользователя и хвост из keep_tail=3 остаются.
+        let msgs = vec![
+            user("u1"),
+            tool_call("c1", "bash"),
+            tool_result("c1", "bash", "ok"),
+            tool_call("c2", "bash"),
+            tool_result("c2", "bash", "ok"),
+            assistant(""),
+        ];
+        assert_eq!(find_compact_range_in_turn(&msgs, 3).unwrap(), 1..3);
+    }
+
+    #[test]
+    fn in_turn_range_never_swallows_the_task() {
+        // Запрос пользователя обязан остаться дословно: он не должен попасть
+        // ни в один диапазон, иначе агент теряет задачу.
+        let msgs = vec![
+            user("u1"),
+            tool_call("c1", "bash"),
+            tool_result("c1", "bash", "ok"),
+            tool_call("c2", "bash"),
+            tool_result("c2", "bash", "ok"),
+        ];
+        let r = find_compact_range_in_turn(&msgs, 2).unwrap();
+        assert!(r.start > 0, "range={r:?} затрагивает user-сообщение");
+    }
+
+    #[test]
+    fn in_turn_range_shrinks_unmatched_tool_call() {
+        // Хвост keep_tail=1 отрезает ToolResult у второй пары — значит и её
+        // ToolCall в диапазон брать нельзя.
+        let msgs = vec![
+            user("u1"),
+            tool_call("c1", "bash"),
+            tool_result("c1", "bash", "ok"),
+            tool_call("c2", "bash"),
+            tool_result("c2", "bash", "ok"),
+        ];
+        assert_eq!(find_compact_range_in_turn(&msgs, 2).unwrap(), 1..3);
+    }
+
+    #[test]
+    fn in_turn_range_none_when_nothing_to_compact() {
+        let msgs = vec![user("u1"), tool_call("c1", "bash"), tool_result("c1", "bash", "ok")];
+        // keep_tail съедает всю цепочку.
+        assert_eq!(find_compact_range_in_turn(&msgs, 4), None);
+        // Нет ни одного user-сообщения.
+        assert_eq!(find_compact_range_in_turn(&[assistant("a")], 0), None);
     }
 
     #[test]

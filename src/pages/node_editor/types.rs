@@ -2113,6 +2113,45 @@ impl NodeRuntime {
         }
     }
 
+    /// Пустые ОБЯЗАТЕЛЬНЫЕ пути моделей ноды — pre-check агентского прогона
+    /// (`pipeline_run::prepare`): запускать граф с незаполненным чекпойнтом
+    /// бессмысленно, нода упадёт. ACE-Step здесь не проверяется — его
+    /// чекпойнт умеет fallback на глобальные настройки бандлов; LoRA и
+    /// LTX-upscaler опциональны; encoder H3 подхватывается из бандла.
+    pub fn missing_model_paths(&self) -> Vec<&'static str> {
+        use NodeRuntime as R;
+        let empty = |p: &RwSignal<Option<PathBuf>>| p.get_untracked().is_none();
+        match self {
+            R::LtxCheckpoint {
+                model_path,
+                gemma_dir,
+                ..
+            } => {
+                let mut v = Vec::new();
+                if empty(model_path) {
+                    v.push("model_path");
+                }
+                if empty(gemma_dir) {
+                    v.push("gemma_dir");
+                }
+                v
+            }
+            R::H3Checkpoint { model_path, .. }
+            | R::Llm { model_path, .. }
+            | R::AsrGigaam { model_path, .. }
+            | R::OmniVoice { model_path, .. }
+            | R::VoxCpm2 { model_path, .. }
+            | R::SortformerDiarizer { model_path, .. } => {
+                if empty(model_path) {
+                    vec!["model_path"]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Сигнал прогресса воркера (0..1) — для живой карточки прогона в чате.
     /// У части нод он есть, но не пишется (ACE-Step Generate; Lipdub пишет
     /// вехи 0.1/0.5/1.0) — потребитель должен переживать «застывший» 0.

@@ -152,6 +152,31 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         );
     }
 
+    // Пустые чекпойнты ловим ДО прогона (и до выгрузки LLM): нода всё равно
+    // упадёт, а агент потеряет ход и цикл unload/reload.
+    let mut missing: Vec<String> = Vec::new();
+    for n in &nodes {
+        if !n.enabled.get_untracked() {
+            continue;
+        }
+        if let Ok(rt) = n.runtime.lock() {
+            for field in rt.missing_model_paths() {
+                missing.push(format!(
+                    "нода {} ({}): {field}",
+                    n.id.0,
+                    registry::meta(n.kind).title
+                ));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "не заполнены пути моделей:\n{}\nВозьми пути из pipelines list \
+             (раздел «Модели в каталоге») и проставь через apply set_state.",
+            missing.join("\n")
+        ));
+    }
+
     let out_dir = outputs_dir().join(&chat_id).join(run_label);
     let mut planned = Vec::new();
     for n in &nodes {

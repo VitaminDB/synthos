@@ -43,6 +43,7 @@ pub fn view() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(vec![
                 Box::new(header) as Box<dyn Widget>,
+                models_dir_card(),
                 runtime_card(),
                 preset_card(&q),
                 components_card(&q),
@@ -345,6 +346,51 @@ fn preset_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
              accuracy на vocab projection. Любое ручное изменение dropdown'а ниже переключит \
              пресет на «Custom».",
             preset_control,
+        )],
+    )
+}
+
+/// Карточка «Каталог моделей» — общая папка с .syn-бандлами/LoRA/HF-
+/// каталогами для всех пайплайнов. Агентский инструмент `pipelines`
+/// (action=list) перечисляет её содержимое, чтобы LLM проставляла пути в
+/// чекпойнт-ноды сама. `~` в начале пути раскрывается при использовании.
+fn models_dir_card() -> Box<dyn Widget> {
+    let ctx = use_context::<AppCtx>();
+    let sig = ctx.models_dir;
+
+    let field = syngui::widgets::input::TextField::with_text(sig.get_untracked())
+        .placeholder(crate::config::default_models_dir())
+        .on_change(move |s| sig.set(s.to_string()))
+        .class("models-path-field");
+
+    let browse = Button::new("Выбрать…")
+        .icon(MI_FOLDER_OPEN)
+        .on_click(move || {
+            let dlg = rfd::FileDialog::new().set_title("Каталог моделей");
+            if let Some(p) = dlg.pick_folder() {
+                sig.set(p.display().to_string());
+            }
+        })
+        .class("ai-models-apply-button");
+
+    let control = Row::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .children(vec![
+            Box::new(field) as Box<dyn Widget>,
+            Box::new(browse) as Box<dyn Widget>,
+        ]);
+
+    section_card(
+        "Каталог моделей",
+        vec![row_frame(
+            MI_FOLDER_OPEN,
+            "Где искать модели (.syn, LoRA, HF-каталоги)",
+            "Общая папка моделей для всех пайплайнов. Агент Syn-чата берёт \
+             отсюда пути к бандлам, когда заполняет чекпойнт-ноды \
+             (pipelines action=list показывает содержимое). По умолчанию — \
+             ~/Storage/syn_models.",
+            Box::new(control),
         )],
     )
 }

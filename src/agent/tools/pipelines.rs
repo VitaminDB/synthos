@@ -31,6 +31,7 @@ use syngui::context_provider::use_context;
 use syngui::core::Point;
 
 use crate::agent::state::{AttachmentKind, ChatMsg, MsgAttachment};
+use crate::context::AppCtx;
 use crate::pages::node_editor::registry::{self, NodeCategory};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::tabs::EditorWorkspace;
@@ -142,6 +143,24 @@ fn list_impl() -> Result<String, String> {
         ));
     }
 
+    // Инвентарь каталога моделей: отсюда агент берёт пути для чекпойнт-нод
+    // (LtxCheckpoint.model_path/gemma_dir, H3Checkpoint.model_path, …) —
+    // встроенные шаблоны путей не несут.
+    let app = use_context::<AppCtx>();
+    let dir = crate::config::resolve_models_dir(&app.models_dir.get_untracked());
+    out.push_str(&format!("--- Модели в каталоге {} ---\n", dir.display()));
+    let inventory = models_inventory(&dir);
+    if inventory.is_empty() {
+        out.push_str(
+            "(пусто или каталог не существует — путь задаётся в Настройки → AI-модели)\n",
+        );
+    } else {
+        for l in &inventory {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+
     out.push_str("--- Вложения чата (для attachment:<имя|sha|last>) ---\n");
     let atts = chat_attachments();
     if atts.is_empty() {
@@ -163,6 +182,49 @@ fn list_impl() -> Result<String, String> {
         None => out.push_str("(ещё не создана — открой шаблон через action=open)\n"),
     }
     Ok(out)
+}
+
+/// Скан каталога моделей (глубина ≤ 2): `.syn` / `.safetensors` / `.gguf`
+/// файлы с размером; каталоги с `config.json` — как HF-модели целиком (в
+/// них не спускаемся). Потолок — 80 строк, дальше «… и ещё N».
+fn models_inventory(dir: &std::path::Path) -> Vec<String> {
+    fn scan(dir: &std::path::Path, depth: usize, out: &mut Vec<String>) {
+        if depth > 2 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.join("config.json").exists() {
+                    out.push(format!("{} · HF-каталог модели", p.display()));
+                } else {
+                    scan(&p, depth + 1, out);
+                }
+            } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                if matches!(ext.to_lowercase().as_str(), "syn" | "safetensors" | "gguf") {
+                    let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                    out.push(format!(
+                        "{} · {}",
+                        p.display(),
+                        crate::models::human_bytes(size)
+                    ));
+                }
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    scan(dir, 0, &mut lines);
+    lines.sort();
+    const CAP: usize = 80;
+    if lines.len() > CAP {
+        let extra = lines.len() - CAP;
+        lines.truncate(CAP);
+        lines.push(format!("… и ещё {extra} файлов"));
+    }
+    lines
 }
 
 fn attachment_kind_label(k: AttachmentKind) -> &'static str {
@@ -749,6 +811,47 @@ mod tests {
         });
         let t = template_from_value(&graph).expect("parse");
         assert!(t.nodes[0].state.is_some());
+    }
+
+    /// Дефолтные чекпойнты без путей — pre-check прогона это ловит.
+    #[test]
+    fn default_checkpoints_report_missing_paths() {
+        let rt = registry::default_runtime(NodeKind::LtxCheckpoint);
+        let g = rt.lock().unwrap();
+        let miss = g.missing_model_paths();
+        assert!(miss.contains(&"model_path"), "{miss:?}");
+        assert!(miss.contains(&"gemma_dir"), "{miss:?}");
+        drop(g);
+        let rt = registry::default_runtime(NodeKind::H3Checkpoint);
+        assert_eq!(rt.lock().unwrap().missing_model_paths(), vec!["model_path"]);
+        // Реактивные ноды ничего не требуют.
+        let rt = registry::default_runtime(NodeKind::Add);
+        assert!(rt.lock().unwrap().missing_model_paths().is_empty());
+    }
+
+    /// Инвентарь каталога моделей видит .syn на глубине и HF-каталоги.
+    #[test]
+    fn models_inventory_finds_bundles() {
+        let tmp = std::env::temp_dir().join(format!(
+            "synthos_models_inv_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("video")).unwrap();
+        std::fs::create_dir_all(tmp.join("gemma-3-12b")).unwrap();
+        std::fs::write(tmp.join("qwen3.8-27b.syn"), b"x").unwrap();
+        std::fs::write(tmp.join("video/ltx23.syn"), b"x").unwrap();
+        std::fs::write(tmp.join("video/turbo_lora.safetensors"), b"x").unwrap();
+        std::fs::write(tmp.join("gemma-3-12b/config.json"), b"{}").unwrap();
+        std::fs::write(tmp.join("readme.txt"), b"x").unwrap();
+
+        let inv = models_inventory(&tmp).join("\n");
+        assert!(inv.contains("qwen3.8-27b.syn"), "{inv}");
+        assert!(inv.contains("ltx23.syn"), "{inv}");
+        assert!(inv.contains("turbo_lora.safetensors"), "{inv}");
+        assert!(inv.contains("HF-каталог"), "{inv}");
+        assert!(!inv.contains("readme.txt"), "{inv}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// Пример state снимается с default_runtime и несёт правильный тег.

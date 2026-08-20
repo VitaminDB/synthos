@@ -609,6 +609,13 @@ pub struct AppConfig {
     /// слишком дорого без необходимости).
     #[serde(default)]
     pub last_syn_model: Option<String>,
+    /// Каталог моделей для ВСЕХ пайплайнов: .syn-бандлы, LoRA/.safetensors,
+    /// HF-каталоги. Агентский инструмент `pipelines` (action=list)
+    /// перечисляет его содержимое, чтобы модель могла проставить пути в
+    /// чекпойнт-ноды без поиска по диску. По умолчанию —
+    /// `~/Storage/syn_models` (см. [`default_models_dir`]).
+    #[serde(default = "default_models_dir")]
+    pub models_dir: String,
     /// Положение левого разделителя страницы Syn-чата (список чатов ↔ центр).
     #[serde(default = "default_syn_chat_left_split_ratio")]
     pub syn_chat_left_split_ratio: f32,
@@ -1052,6 +1059,29 @@ pub fn default_window_opacity() -> f32 {
     1.0
 }
 
+/// Дефолтный каталог моделей: `~/Storage/syn_models`. Резолвится от `HOME`
+/// на текущей машине, а не хардкодом пути — на чужой системе дефолт тоже
+/// осмыслен.
+pub fn default_models_dir() -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    format!("{home}/Storage/syn_models")
+}
+
+/// Каталог моделей с раскрытием `~` в начале пути.
+pub fn resolve_models_dir(raw: &str) -> std::path::PathBuf {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return std::path::PathBuf::from(default_models_dir());
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        return std::path::PathBuf::from(home).join(rest);
+    }
+    std::path::PathBuf::from(raw)
+}
+
 /// Стартовый набор активных инструментов — используется и как `Default`,
 /// и как fallback для конфигов без поля.
 pub fn default_tools_active() -> Vec<String> {
@@ -1118,6 +1148,7 @@ impl Default for AppConfig {
             qwen36_nvfp4_gemv: false,
             acestep_xl_bundle_path: None,
             acestep_vae_bundle_path: None,
+            models_dir: default_models_dir(),
         }
     }
 }

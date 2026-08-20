@@ -358,6 +358,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let qwen36_nvfp4_gemv = use_signal(saved.qwen36_nvfp4_gemv);
     let acestep_xl_bundle_path = use_signal(saved.acestep_xl_bundle_path.clone());
     let acestep_vae_bundle_path = use_signal(saved.acestep_vae_bundle_path.clone());
+    let models_dir = use_signal(saved.models_dir.clone());
 
     // Применить режим к глобальному runtime-state llm-qwen36 при старте.
     // Сигнал-driven sync с runtime — ниже в `create_effect` после `ctx`.
@@ -409,6 +410,7 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         qwen36_layer_sync,
         qwen36_nvfp4_mma,
         qwen36_nvfp4_gemv,
+        models_dir,
         acestep_xl_bundle_path,
         acestep_vae_bundle_path,
     };
@@ -504,6 +506,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let qwen36_nvfp4_gemv = ctx.qwen36_nvfp4_gemv;
     let acestep_xl_bundle_path = ctx.acestep_xl_bundle_path;
     let acestep_vae_bundle_path = ctx.acestep_vae_bundle_path;
+    let models_dir_sig = ctx.models_dir;
     let code = use_context::<pages::code_editor::state::CodeEditorCtx>();
     let syn = use_context::<pages::syn_explorer::state::SynExplorerCtx>();
     let hf = use_context::<pages::huggingface::HuggingFaceCtx>();
@@ -634,6 +637,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             qwen36_nvfp4_gemv: qwen36_nvfp4_gemv.get(),
             acestep_xl_bundle_path: acestep_xl_bundle_path.get(),
             acestep_vae_bundle_path: acestep_vae_bundle_path.get(),
+            models_dir: models_dir_sig.get(),
             // Layout-разделители страницы Syn-чата. `.get()` подписывает
             // effect: drag дивайдера → set() сигнала → autosave пишет новые
             // ширины в config.json.

@@ -435,6 +435,10 @@ pub struct AppCtx {
     /// Путь к ACE-Step «общему» bundle'у (xl-base или xl-turbo). Используется
     /// нодами TextEncoder/LyricEncoder/TimbreEncoder/Sampler/ArLm для загрузки
     /// TextProjector / LyricEncoder / TimbreEncoder / DiT / NullCondEmb /
+    /// Каталог моделей всех пайплайнов (.syn/LoRA/HF-каталоги). Сохраняется
+    /// в `AppConfig.models_dir`; читают агентский `pipelines list` и
+    /// настройки. Резолв `~` — `config::resolve_models_dir`.
+    pub models_dir: RwSignal<String>,
     /// FSQ / Detokenizer. Сохраняется в `AppConfig.acestep_xl_bundle_path`.
     pub acestep_xl_bundle_path: RwSignal<Option<String>>,
     /// Путь к ACE-Step VAE bundle'у (`acestep_vae.syn`). Используется нодами

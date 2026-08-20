@@ -7036,6 +7036,7 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
+ "synaptix-bundle",
  "synaptix-config",
  "synaptix-core",
  "synaptix-io",

@@ -154,31 +154,40 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row(
             "Чекпойнт",
             node_file_picker(
-                "LTX-2.3 .safetensors (DiT+VAE+vocoder+коннекторы)",
+                "LTX-2.3 .syn-бандл или .safetensors (DiT+VAE+vocoder+коннекторы)",
                 model_path,
-                &[("Safetensors", &["safetensors"])],
+                &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
             ),
         ),
         field_row(
             "Gemma",
-            dir_picker_row("Каталог Gemma-3-12B (текст-энкодер)", gemma_dir),
+            node_file_picker(
+                "Gemma-3-12B (текст-энкодер) — .syn-бандл",
+                gemma_dir,
+                &[("Syn bundle", &["syn"])],
+                |_| {},
+            ),
+        ),
+        field_row(
+            "Gemma HF-каталог",
+            dir_picker_row("Или HF-каталог Gemma-3-12B (config.json + safetensors)", gemma_dir),
         ),
         field_row(
             "Upscaler",
             node_file_picker(
-                "Spatial-upscaler ×2 .safetensors (для two-stage)",
+                "Spatial-upscaler ×2 — .syn-бандл или .safetensors (для two-stage)",
                 upscaler_path,
-                &[("Safetensors", &["safetensors"])],
+                &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
             ),
         ),
         field_row(
             "LoRA",
             node_file_picker(
-                "LoRA-адаптер для мерджа в DiT (опционально)",
+                "LoRA-адаптер для мерджа в DiT — .syn или .safetensors (опционально)",
                 lora_path,
-                &[("Safetensors", &["safetensors"])],
+                &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
             ),
         ),

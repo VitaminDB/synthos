@@ -39,13 +39,22 @@ pub struct RunRequest {
 /// `Some(RunRequest)` — если это вызов `pipelines` c `action=run`.
 /// Канальные модели пишут квалифицированные имена (`x.pipelines`) — хвост
 /// после точки тоже считается.
+///
+/// Аргументы прогоняются через [`normalize_args`] — тот же нормализатор, что
+/// у `tools::execute`. Модели любят обрамлять значения переводами строк
+/// (`{"action":"\nrun\n"}`); без trim'а такой вызов не опознавался здесь,
+/// проваливался в `tools::execute`, где уже нормализованный `action` попадал
+/// в subagent-ветку — и главный агент чата получал «run доступен только
+/// основному агенту».
 pub fn parse_run_call(call: &ChatToolCall) -> Option<RunRequest> {
-    let name = call.function.name.as_deref().unwrap_or("");
+    let name = call.function.name.as_deref().unwrap_or("").trim();
     if name != "pipelines" && !name.ends_with(".pipelines") {
         return None;
     }
-    let v: serde_json::Value =
-        serde_json::from_str(call.function.arguments.as_deref().unwrap_or("")).ok()?;
+    let args = crate::agent::tools::executor::normalize_args(
+        call.function.arguments.as_deref().unwrap_or(""),
+    );
+    let v: serde_json::Value = serde_json::from_str(&args).ok()?;
     if v.get("action").and_then(|x| x.as_str()) != Some("run") {
         return None;
     }
@@ -432,6 +441,8 @@ mod tests {
             },
         };
         assert!(parse_run_call(&mk("pipelines", r#"{"action":"run"}"#)).is_some());
+        // Модель обрамила значения переводами строк — это всё ещё run.
+        assert!(parse_run_call(&mk("pipelines", "{\"action\":\"\\nrun\\n\"}")).is_some());
         assert!(parse_run_call(&mk("x.pipelines", r#"{"action":"run","free_vram":true}"#))
             .map(|r| r.free_vram)
             .unwrap_or(false));

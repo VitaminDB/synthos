@@ -346,7 +346,8 @@ fn ltx_text_to_video_template() -> Template {
             "Промпт → Text Encoder (Gemma) → Sampler Stage1 (A/V, NAG) → Upscale ×2 → \
              Stage2-refine → VAE Decode + Audio Decode → Video Save (mp4) и Видеоплеер \
              (кадры+звук из памяти, параллельно Save). В Checkpoint-ноде укажите \
-             чекпойнт LTX-2.3, каталог Gemma и upscaler."
+             чекпойнт LTX-2.3, Gemma и upscaler — .syn-бандлы из каталога моделей \
+             (или .safetensors + HF-каталог Gemma)."
                 .into(),
         kind: TemplateKind::Full,
         nodes: vec![

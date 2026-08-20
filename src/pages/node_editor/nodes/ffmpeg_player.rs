@@ -421,7 +421,7 @@ fn error_widget(msg: &'static str) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("ffmpeg-player-error")))
 }
 
-const HWACCEL_LABELS: &[&str] = &[
+pub const HWACCEL_LABELS: &[&str] = &[
     "Auto",
     "Software",
     "VAAPI",

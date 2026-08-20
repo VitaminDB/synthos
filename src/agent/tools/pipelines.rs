@@ -62,10 +62,13 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             "apply" => apply_impl(&v),
             "save_template" => save_template_impl(&v),
             // В основном чате run перехватывается agent-loop'ом ДО
-            // tools::execute (он управляет жизненным циклом LLM). Сюда run
-            // доходит только из subagent'а — там прогоны запрещены.
+            // tools::execute (`pipeline_run::parse_run_call` — он управляет
+            // жизненным циклом LLM). Сюда run доходит только из subagent'а —
+            // там прогоны запрещены.
             "run" => Err(
-                "action=run доступен только основному агенту чата (не subagent)".to_string(),
+                "action=run доступен только основному агенту чата (не subagent): \
+                 попроси главного агента запустить граф"
+                    .to_string(),
             ),
             other => Err(format!(
                 "неизвестный action «{other}» (list | nodes | open | graph | apply | save_template | run)"
@@ -143,21 +146,24 @@ fn list_impl() -> Result<String, String> {
         ));
     }
 
-    // Инвентарь каталога моделей: отсюда агент берёт пути для чекпойнт-нод
+    // Инвентарь каталогов моделей: отсюда агент берёт пути для чекпойнт-нод
     // (LtxCheckpoint.model_path/gemma_dir, H3Checkpoint.model_path, …) —
-    // встроенные шаблоны путей не несут.
-    let app = use_context::<AppCtx>();
-    let dir = crate::config::resolve_models_dir(&app.models_dir.get_untracked());
-    out.push_str(&format!("--- Модели в каталоге {} ---\n", dir.display()));
-    let inventory = models_inventory(&dir);
-    if inventory.is_empty() {
-        out.push_str(
-            "(пусто или каталог не существует — путь задаётся в Настройки → AI-модели)\n",
-        );
-    } else {
-        for l in &inventory {
-            out.push_str(l);
-            out.push('\n');
+    // встроенные шаблоны путей не несут. Каталогов два: основной
+    // (Настройки → AI-модели) и кэш HF-загрузок — модели, скачанные со
+    // страницы Hugging Face, лежат там, и агент, знающий только первый,
+    // честно докладывал «такой модели нет».
+    for (label, dir) in models_dirs() {
+        out.push_str(&format!("--- Модели в каталоге {} ({label}) ---\n", dir.display()));
+        let inventory = models_inventory(&dir);
+        if inventory.is_empty() {
+            out.push_str(
+                "(пусто или каталог не существует — путь задаётся в Настройки → AI-модели)\n",
+            );
+        } else {
+            for l in &inventory {
+                out.push_str(l);
+                out.push('\n');
+            }
         }
     }
 
@@ -182,6 +188,29 @@ fn list_impl() -> Result<String, String> {
         None => out.push_str("(ещё не создана — открой шаблон через action=open)\n"),
     }
     Ok(out)
+}
+
+/// Каталоги, где живут модели: основной (`AppConfig.models_dir`) и кэш
+/// HF-загрузок (`AppConfig.hf_cache_dir`). Второй отбрасывается, если
+/// совпадает с первым или лежит внутри него — дублировать инвентарь незачем.
+fn models_dirs() -> Vec<(&'static str, std::path::PathBuf)> {
+    let app = use_context::<AppCtx>();
+    let main = crate::config::resolve_models_dir(&app.models_dir.get_untracked());
+    // try_: в headless-раннерах (smoke-бинари) HF-контекста нет — тогда
+    // второй каталог просто не показываем.
+    let Some(hf) =
+        syngui::context_provider::try_use_context::<crate::pages::huggingface::HuggingFaceCtx>()
+    else {
+        return vec![("основной", main)];
+    };
+    let hf_dir = crate::config::resolve_hf_cache_dir(&hf.cache_dir.get_untracked());
+    let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (main_c, hf_c) = (canon(&main), canon(&hf_dir));
+    let mut dirs = vec![("основной", main)];
+    if hf_c != main_c && !hf_c.starts_with(&main_c) {
+        dirs.push(("кэш HF", hf_dir));
+    }
+    dirs
 }
 
 /// Скан каталога моделей (глубина ≤ 2): `.syn` / `.safetensors` / `.gguf`
@@ -287,6 +316,100 @@ fn ports_line(spec: PortsSpec) -> String {
 
 /// Пример state-JSON вида ноды: default_runtime → runtime_to_state.
 /// Именно эту форму принимает `apply.set_state[].state` и `NodeData.state`.
+/// Расшифровка `*_idx`-полей state: сами дропдауны живут в UI-нодах, а в
+/// state попадает голое число — по `{"quant_dit_idx": 0}` агент не мог знать,
+/// что 0 это nvfp4, и оставлял выбор точности случайным. Таблица зеркалит
+/// `*_OPTIONS`-константы нод.
+fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
+    use crate::pages::node_editor::nodes::{
+        acestep, asr_gigaam, ffmpeg_player, llm, ltx, minimax_h3, omnivoice, sortformer_diarizer,
+        syn_checkpoint, voxcpm2,
+    };
+    match kind {
+        NodeKind::SynCheckpoint => vec![
+            ("device_idx", syn_checkpoint::DEVICE_PREF_OPTIONS),
+            ("storage_idx", syn_checkpoint::STORAGE_PREF_OPTIONS),
+            ("compute_idx", syn_checkpoint::COMPUTE_PREF_OPTIONS),
+        ],
+        NodeKind::SortformerDiarizer => vec![
+            ("device_idx", sortformer_diarizer::DEVICE_OPTIONS),
+            ("storage_idx", sortformer_diarizer::STORAGE_OPTIONS),
+            ("compute_idx", sortformer_diarizer::COMPUTE_OPTIONS),
+        ],
+        NodeKind::AsrGigaam => vec![
+            ("device_idx", asr_gigaam::DEVICE_OPTIONS),
+            ("storage_idx", asr_gigaam::STORAGE_OPTIONS),
+            ("compute_idx", asr_gigaam::COMPUTE_OPTIONS),
+        ],
+        NodeKind::OmniVoice => vec![
+            ("device_idx", omnivoice::DEVICE_OPTIONS),
+            ("storage_idx", omnivoice::STORAGE_OPTIONS),
+            ("compute_idx", omnivoice::COMPUTE_OPTIONS),
+        ],
+        NodeKind::VoxCpm2 => vec![
+            ("device_idx", voxcpm2::DEVICE_OPTIONS),
+            ("compute_idx", voxcpm2::COMPUTE_OPTIONS),
+        ],
+        NodeKind::Llm => vec![
+            ("device_idx", llm::DEVICE_OPTIONS),
+            ("quant_idx", llm::QUANT_OPTIONS),
+            ("compute_idx", llm::COMPUTE_OPTIONS),
+        ],
+        NodeKind::AceStepCheckpoint => vec![
+            ("device_idx", acestep::DEVICE_OPTIONS),
+            ("quant_dit_idx", acestep::QUANT_OPTIONS),
+            ("quant_enc_idx", acestep::QUANT_OPTIONS),
+            ("compute_idx", acestep::COMPUTE_OPTIONS),
+        ],
+        NodeKind::AceStepGenerate => vec![
+            ("mode_idx", acestep::generate::MODE_OPTIONS),
+            ("keyscale_idx", acestep::generate::KEYSCALE_OPTIONS),
+            ("timesig_idx", acestep::generate::TIMESIG_OPTIONS),
+        ],
+        NodeKind::FfmpegPlayer => vec![("hwaccel_idx", ffmpeg_player::HWACCEL_LABELS)],
+        NodeKind::LtxCheckpoint => vec![
+            ("device_idx", ltx::DEVICE_OPTIONS),
+            ("quant_dit_idx", ltx::QUANT_DIT_OPTIONS),
+            ("quant_enc_idx", ltx::QUANT_ENC_OPTIONS),
+            ("compute_idx", ltx::COMPUTE_OPTIONS),
+        ],
+        NodeKind::LtxSamplerStage1
+        | NodeKind::LtxRetake
+        | NodeKind::LtxLipdub
+        | NodeKind::LtxA2V => vec![("fps_idx", ltx::FPS_OPTIONS)],
+        NodeKind::LtxIcLora => vec![
+            ("fps_idx", ltx::FPS_OPTIONS),
+            ("control_idx", ltx::CONTROL_OPTIONS),
+        ],
+        NodeKind::H3Checkpoint => vec![
+            ("variant_idx", minimax_h3::VARIANT_OPTIONS),
+            ("device_idx", minimax_h3::DEVICE_OPTIONS),
+            ("quant_dit_idx", minimax_h3::QUANT_DIT_OPTIONS),
+            ("quant_enc_idx", minimax_h3::QUANT_ENC_OPTIONS),
+            ("compute_idx", minimax_h3::COMPUTE_OPTIONS),
+            ("memory_mode_idx", minimax_h3::MEMORY_MODE_OPTIONS),
+        ],
+        NodeKind::H3EmptyLatentAv => vec![("aspect_idx", minimax_h3::latent::ASPECT_OPTIONS)],
+        _ => Vec::new(),
+    }
+}
+
+/// `quant_dit_idx: 0=nvfp4, 1=mxfp8, 2=dense (compute)` — одна строка на поле.
+fn enum_hints_lines(kind: NodeKind) -> Vec<String> {
+    enum_hints(kind)
+        .into_iter()
+        .map(|(field, opts)| {
+            let vals = opts
+                .iter()
+                .enumerate()
+                .map(|(i, o)| format!("{i}={o}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{field}: {vals}")
+        })
+        .collect()
+}
+
 fn state_example(kind: NodeKind) -> Option<String> {
     let rt = registry::default_runtime(kind);
     let g = rt.lock().ok()?;
@@ -313,7 +436,9 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
     if filter.is_empty() {
         out.push_str(
             "Все виды нод (kind · название · категория). Детали (порты, \
-             state-JSON) — повтори с filter по kind/названию/категории.\n",
+             state-JSON, расшифровка *_idx) — повтори с filter по \
+             kind/названию/категории. filter — подстрока: «h3» или «ltx» \
+             отдаёт всё семейство за один вызов.\n",
         );
         let mut current_cat: Option<NodeCategory> = None;
         for kind in NodeKind::ALL {
@@ -370,6 +495,9 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         ));
         if let Some(state) = state_example(*kind) {
             out.push_str(&format!("state (пример с дефолтами): {state}\n"));
+        }
+        for line in enum_hints_lines(*kind) {
+            out.push_str(&format!("  {line}\n"));
         }
     }
     if matched == 0 {
@@ -483,10 +611,11 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
 
     if let Some(items) = v.get("set_state").and_then(|x| x.as_array()) {
         for item in items {
-            let node_id = item
+            let node_ref = item
                 .get("node")
-                .and_then(|x| x.as_u64())
-                .ok_or("set_state[]: нужно поле node (id ноды)")?;
+                .ok_or("set_state[]: нужно поле node (id ноды или имя вида)")?;
+            let node_id = resolve_node_ref(node_ref, &ctx)
+                .map_err(|e| format!("set_state[]: {e}"))?;
             let state_v = item
                 .get("state")
                 .cloned()
@@ -524,7 +653,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
 
     if let Some(items) = v.get("connect").and_then(|x| x.as_array()) {
         for item in items {
-            let c = conn_from_value(item)?;
+            let c = conn_from_value(item, &ctx)?;
             add_connection(&ctx, &c)?;
             notes.push(format!(
                 "связь {}.{} → {}.{}",
@@ -535,7 +664,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
 
     if let Some(items) = v.get("disconnect").and_then(|x| x.as_array()) {
         for item in items {
-            let c = conn_from_value(item)?;
+            let c = conn_from_value(item, &ctx)?;
             let mut conns = ctx.connections.get_untracked();
             let before = conns.len();
             conns.retain(|e| {
@@ -609,8 +738,61 @@ fn template_from_value(graph: &serde_json::Value) -> Result<Template, String> {
     Ok(t)
 }
 
-fn conn_from_value(v: &serde_json::Value) -> Result<ConnData, String> {
-    serde_json::from_value(v.clone()).map_err(|e| format!("связь: {e}"))
+/// Числовая часть ссылки на ноду: `2` или `"2"` (модели любят строки).
+fn node_ref_as_number(v: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+/// Ссылка на ноду: числовой id (`2`), строка с числом (`"2"`) или slug вида
+/// ноды (`"h3_checkpoint"`). Слаг разрешён, пока такая нода в графе одна:
+/// снимок графа печатает `[2] h3_checkpoint`, и модели цепляются за имя чаще,
+/// чем за номер — отвечать им «нужно поле node» было ложью.
+fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, String> {
+    if let Some(n) = node_ref_as_number(v) {
+        return Ok(n);
+    }
+    let Some(raw) = v.as_str() else {
+        return Err("id ноды — число (2) или имя вида ноды («h3_checkpoint»)".to_string());
+    };
+    let name = raw.trim();
+    let nodes = ctx.nodes.get_untracked();
+    let want = name.to_lowercase();
+    let hits: Vec<_> = nodes
+        .iter()
+        .filter(|n| kind_slug(n.kind).eq_ignore_ascii_case(&want))
+        .map(|n| n.id.0)
+        .collect();
+    match hits.len() {
+        1 => Ok(hits[0]),
+        0 => Err(format!(
+            "ноды «{name}» нет в графе; есть: {}",
+            nodes
+                .iter()
+                .map(|n| format!("{} ({})", n.id.0, kind_slug(n.kind)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => Err(format!(
+            "«{name}» в графе не одна — укажи числовой id: {}",
+            hits.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// Связь: `from_node`/`to_node` принимают то же, что и `set_state[].node`.
+fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnData, String> {
+    let mut v = v.clone();
+    for field in ["from_node", "to_node"] {
+        let Some(raw) = v.get(field) else {
+            return Err(format!("связь: нужно поле {field}"));
+        };
+        let id = resolve_node_ref(raw, ctx).map_err(|e| format!("связь.{field}: {e}"))?;
+        v[field] = serde_json::json!(id);
+    }
+    serde_json::from_value(v).map_err(|e| format!("связь: {e}"))
 }
 
 /// Добавить связь в граф вкладки с той же валидацией, что у `complete_wire`:
@@ -760,6 +942,25 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_ref_accepts_number_and_numeric_string() {
+        assert_eq!(node_ref_as_number(&serde_json::json!(2)), Some(2));
+        assert_eq!(node_ref_as_number(&serde_json::json!(" 3 ")), Some(3));
+        assert_eq!(node_ref_as_number(&serde_json::json!("h3_checkpoint")), None);
+    }
+
+    /// `*_idx`-поля state расшифрованы: без этого агент выбирал квант вслепую.
+    #[test]
+    fn enum_hints_explain_quant_indices() {
+        let lines = enum_hints_lines(NodeKind::LtxCheckpoint);
+        let quant = lines
+            .iter()
+            .find(|l| l.starts_with("quant_dit_idx:"))
+            .expect("quant_dit_idx расшифрован");
+        assert!(quant.contains("0=nvfp4"), "{quant}");
+        assert!(enum_hints_lines(NodeKind::Add).is_empty());
+    }
 
     #[test]
     fn kind_slug_is_snake_case() {

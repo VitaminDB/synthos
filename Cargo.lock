@@ -7319,6 +7319,7 @@ dependencies = [
  "image",
  "jni 0.21.1",
  "js-sys",
+ "libc",
  "log",
  "percent-encoding",
  "pollster",

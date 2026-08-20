@@ -52,6 +52,58 @@ use super::state::NodeEditorCtx;
 use super::tabs::{EditorWorkspace, RunState};
 use super::types::{Connection, NodeId, NodeInstance};
 
+/// Чем закончился прогон — для внешнего наблюдателя ([`RunOutcome`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunEnd {
+    /// Очередь опустела сама: все on_run-ноды отработали.
+    Completed,
+    /// Прогон остановлен (Stop в pill или [`cancel_active_run`]).
+    Stopped,
+    /// Новый Run заместил очередь до завершения этого прогона.
+    Superseded,
+}
+
+/// Итог работы одной on_run-ноды в прогоне.
+#[derive(Debug, Clone)]
+pub struct NodeRunReport {
+    pub id: u64,
+    pub title: &'static str,
+    pub elapsed_ms: u64,
+    /// Ошибка ноды на момент её финиша (`NodeRuntime::run_error_signal`).
+    pub error: Option<String>,
+}
+
+/// Итог прогона, отправляемый в oneshot-канал `notify` (если внешний
+/// инициатор — агент Syn-чата — его передал в [`start_run`]).
+#[derive(Debug, Clone)]
+pub struct RunOutcome {
+    pub end: RunEnd,
+    pub total_ms: u64,
+    /// Отчёты завершившихся нод в порядке финиша. При `Stopped`/`Superseded`
+    /// ноды, не успевшие финишировать, сюда не попадают.
+    pub nodes: Vec<NodeRunReport>,
+}
+
+impl RunOutcome {
+    /// Ошибки прогона одним списком (нода → текст).
+    pub fn errors(&self) -> Vec<(&'static str, &str)> {
+        self.nodes
+            .iter()
+            .filter_map(|r| r.error.as_deref().map(|e| (r.title, e)))
+            .collect()
+    }
+}
+
+/// Почему прогон не стартовал. UI мапит в notification, агент — в текст
+/// ошибки инструмента.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartRunError {
+    /// В графе нет ни одной enabled-ноды с `on_run`.
+    NoRunnableNodes,
+    /// on_run-ноды есть, но все ждут предков — в графе цикл.
+    CycleInGraph,
+}
+
 /// Sequencer-стейт одного «Run»-прохода. Живёт в статике [`run_queue`],
 /// переживая пересборку страницы. `None` — между runs.
 struct RunQueue {
@@ -74,12 +126,39 @@ struct RunQueue {
     started_at: HashMap<NodeId, Instant>,
     /// Момент нажатия Run — для итоговой строки прогона.
     run_started_at: Instant,
+    /// Канал итога для внешнего инициатора прогона (агент Syn-чата).
+    /// None у прогонов, запущенных кнопкой Run.
+    notify: Option<tokio::sync::oneshot::Sender<RunOutcome>>,
+    /// Отчёты финишировавших нод — копятся по ходу прогона.
+    reports: Vec<NodeRunReport>,
 }
 
 impl RunQueue {
     fn is_done(&self) -> bool {
         self.active.is_empty() && self.remaining.values().all(|c| *c == 0)
     }
+}
+
+/// Отправить итог прогона внешнему инициатору (если он есть). Забирает
+/// очередь по значению: вызывается ровно в трёх местах, где она
+/// выкорчёвывается из статики — завершение, Stop/отмена, замещение новым Run.
+fn send_outcome(mut q: RunQueue, end: RunEnd) {
+    if let Some(tx) = q.notify.take() {
+        let _ = tx.send(RunOutcome {
+            end,
+            total_ms: q.run_started_at.elapsed().as_millis() as u64,
+            nodes: std::mem::take(&mut q.reports),
+        });
+    }
+}
+
+/// Текущая ошибка ноды (`NodeRuntime::run_error_signal`). try_lock — чтобы
+/// main thread не встал, если воркер ноды ещё держит runtime.
+fn node_error(ctx: &NodeEditorCtx, id: NodeId) -> Option<String> {
+    let nodes = ctx.nodes.get_untracked();
+    let n = nodes.iter().find(|n| n.id == id)?;
+    let rt = n.runtime.try_lock().ok()?;
+    rt.run_error_signal().and_then(|s| s.get_untracked())
 }
 
 /// Глобальный слот очереди. Статика, а не поле `EditorWorkspace`, потому
@@ -151,6 +230,8 @@ fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection])
         active: HashSet::new(),
         started_at: HashMap::new(),
         run_started_at: Instant::now(),
+        notify: None,
+        reports: Vec::new(),
     }
 }
 
@@ -235,22 +316,15 @@ pub fn install_run_watcher() {
             Err(_) => return,
         };
 
-        // Внутри прогона слушаем тот граф, на котором нажали Run; вне
-        // прогона — активную вкладку (legacy per-node Play).
-        let ctx = match guard.as_ref() {
-            Some(q) => q.ctx,
-            None => match ws.active_ctx() {
+        let Some(q) = guard.as_mut() else {
+            // Run не активен — legacy auto-Stop для per-node Play / других
+            // внешних запусков (на будущее). Слушаем активную вкладку.
+            let ctx = match ws.active_ctx() {
                 Some(c) => c,
                 None => return,
-            },
-        };
-
-        let nodes = ctx.nodes.get();
-        let busy = collect_busy(&nodes);
-
-        let Some(q) = guard.as_mut() else {
-            // Run не активен — оставляем legacy auto-Stop для per-node
-            // Play / других внешних запусков (на будущее).
+            };
+            let nodes = ctx.nodes.get();
+            let busy = collect_busy(&nodes);
             if !busy.values().any(|b| *b) && ws.run_state.get_untracked() == RunState::Running {
                 info!(
                     target: RUN_LOG,
@@ -261,6 +335,42 @@ pub fn install_run_watcher() {
             }
             return;
         };
+
+        if advance(&ws, q) {
+            let q = match guard.take() {
+                Some(q) => q,
+                None => return,
+            };
+            drop(guard);
+            info!(
+                target: RUN_LOG,
+                total_ms = q.run_started_at.elapsed().as_millis() as u64,
+                done = ws.run_done.get_untracked(),
+                "run: очередь пуста, прогон завершён"
+            );
+            send_outcome(q, RunEnd::Completed);
+            ws.run_timer.finish();
+            ws.run_state.set(RunState::Stopped);
+        }
+    });
+}
+
+/// Продвинуть очередь до устойчивого состояния: обработать завершившиеся
+/// активные ноды, разблокировать и запустить преемников — и повторить,
+/// потому что hook может отработать синхронно, не тронув ни одного
+/// отслеживаемого сигнала (типовой случай — sampler без входа: `error.set`,
+/// `return`, `running` так и не выставлен). Без повторного прохода такая
+/// нода зависала бы в `active` навсегда: watcher-effect без флипа сигнала
+/// не перезапустится. Возвращает `is_done()`.
+///
+/// Вызывается из watcher-effect (там `.get()` внутри `collect_busy` заодно
+/// оформляет подписки) и из [`start_run`] сразу после старта корней.
+fn advance(ws: &EditorWorkspace, q: &mut RunQueue) -> bool {
+    let ctx = q.ctx;
+    let mut finished_total = 0usize;
+    loop {
+        let nodes = ctx.nodes.get();
+        let busy = collect_busy(&nodes);
 
         let just_finished: Vec<NodeId> = q
             .active
@@ -282,22 +392,39 @@ pub fn install_run_watcher() {
             })
             .collect();
         if just_finished.is_empty() {
-            return;
+            break;
         }
-        let finished_now = just_finished.len();
+        finished_total += just_finished.len();
         for id in &just_finished {
             let elapsed_ms = q
                 .started_at
                 .remove(id)
                 .map(|t| t.elapsed().as_millis() as u64)
                 .unwrap_or(0);
-            info!(
-                target: RUN_LOG,
-                node = id.0,
-                title = node_title(&ctx, *id),
+            let error = node_error(&ctx, *id);
+            if let Some(err) = &error {
+                warn!(
+                    target: RUN_LOG,
+                    node = id.0,
+                    title = node_title(&ctx, *id),
+                    error = err.as_str(),
+                    "нода: финиш с ошибкой"
+                );
+            } else {
+                info!(
+                    target: RUN_LOG,
+                    node = id.0,
+                    title = node_title(&ctx, *id),
+                    elapsed_ms,
+                    "нода: финиш"
+                );
+            }
+            q.reports.push(NodeRunReport {
+                id: id.0,
+                title: node_title(&ctx, *id),
                 elapsed_ms,
-                "нода: финиш"
-            );
+                error,
+            });
         }
 
         // Свежий evaluate, чтобы output_text / output_buf завершившихся
@@ -334,24 +461,15 @@ pub fn install_run_watcher() {
             }
             q.remaining.remove(id);
         }
+    }
+
+    if finished_total > 0 {
         // Счётчик «сделано/всего» в Run-pill. Считаем здесь, а не по
         // busy-снимку: снимок не различает «ещё не стартовала» и
         // «уже отработала».
         let done_before = ws.run_done.get_untracked();
-        ws.run_done.set(done_before + finished_now);
-
-        if q.is_done() {
-            info!(
-                target: RUN_LOG,
-                total_ms = q.run_started_at.elapsed().as_millis() as u64,
-                done = ws.run_done.get_untracked(),
-                "run: очередь пуста, прогон завершён"
-            );
-            *guard = None;
-            drop(guard);
-            ws.run_timer.finish();
-            ws.run_state.set(RunState::Stopped);
-        } else {
+        ws.run_done.set(done_before + finished_total);
+        if !q.is_done() {
             info!(
                 target: RUN_LOG,
                 active = q.active.len(),
@@ -359,7 +477,163 @@ pub fn install_run_watcher() {
                 "run: очередь продвинулась"
             );
         }
-    });
+    }
+    q.is_done()
+}
+
+/// Запустить прогон графа `editor_ctx`. Общий вход кнопки Run и агентского
+/// инструмента `pipelines`. Только main thread: внутри — сигналы и context.
+///
+/// `notify` — oneshot, в который уйдёт [`RunOutcome`], когда прогон
+/// завершится, будет остановлен или замещён новым Run.
+///
+/// Возвращает число нод, запущенных сразу (корни DAG).
+pub fn start_run(
+    editor_ctx: NodeEditorCtx,
+    notify: Option<tokio::sync::oneshot::Sender<RunOutcome>>,
+    // `std::result` явно: prelude syngui затеняет Result своим алиасом.
+) -> std::result::Result<usize, StartRunError> {
+    let ws = use_context::<EditorWorkspace>();
+
+    // Очередь одна на приложение (pill в EditorWorkspace тоже один).
+    // Перезапуск поверх живого прогона легален — уже работающие воркеры
+    // досчитают и будут учтены новой очередью, — но прежний инициатор
+    // обязан узнать, что его прогон замещён (иначе агент ждал бы вечно).
+    if let Ok(mut g) = run_queue().lock() {
+        if let Some(prev) = g.take() {
+            warn!(
+                target: RUN_LOG,
+                active = prev.active.len(),
+                pending = prev.remaining.len(),
+                "run: Run поверх незавершённого прогона — очередь пересобирается"
+            );
+            send_outcome(prev, RunEnd::Superseded);
+        }
+    }
+
+    let nodes = editor_ctx.nodes.get_untracked();
+    let conns = editor_ctx.connections.get_untracked();
+    let mut q = build_queue(editor_ctx, &nodes, &conns);
+    q.notify = notify;
+    info!(
+        target: RUN_LOG,
+        nodes = nodes.len(),
+        connections = conns.len(),
+        on_run = q.remaining.len(),
+        "run: очередь построена"
+    );
+
+    // Свежий evaluate перед стартом корней — чтобы свежий
+    // AudioRecorder.last_result уже сидел в values, а не
+    // «застрял» в предыдущем evaluate.
+    refresh_values(&editor_ctx);
+
+    // Корни — все on_run-ноды с remaining == 0.
+    let roots: Vec<NodeId> = q
+        .remaining
+        .iter()
+        .filter(|(_, c)| **c == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    info!(target: RUN_LOG, roots = roots.len(), "run: старт корней");
+    for id in roots {
+        fire(&editor_ctx, id, &mut q);
+    }
+    let started = q.active.len();
+    let stuck = q.remaining.values().any(|c| *c > 0) && q.active.is_empty();
+
+    if started == 0 {
+        if stuck {
+            info!(target: RUN_LOG, "run: отменён — цикл в графе");
+            return Err(StartRunError::CycleInGraph);
+        }
+        info!(target: RUN_LOG, "run: отменён — нет on_run-нод");
+        return Err(StartRunError::NoRunnableNodes);
+    }
+
+    // Глобальный секундомер: отсчёт от нажатия Run до опустошения
+    // очереди. `run_total` — все on_run-ноды прогона, включая те,
+    // что ещё ждут своих upstream-предков.
+    ws.run_total.set(q.remaining.len());
+    ws.run_done.set(0);
+    ws.run_timer.start();
+    q.run_started_at = Instant::now();
+
+    // Дренаж корней, завершившихся синхронно прямо в fire (hook мог
+    // выставить error и выйти, не тронув running) — иначе очередь легла бы
+    // в статику уже зависшей.
+    if advance(&ws, &mut q) {
+        info!(
+            target: RUN_LOG,
+            total_ms = q.run_started_at.elapsed().as_millis() as u64,
+            "run: все ноды завершились синхронно на старте"
+        );
+        send_outcome(q, RunEnd::Completed);
+        ws.run_timer.finish();
+        ws.run_state.set(RunState::Stopped);
+        return Ok(started);
+    }
+
+    if let Ok(mut g) = run_queue().lock() {
+        *g = Some(q);
+    }
+    ws.run_state.set(RunState::Running);
+    Ok(started)
+}
+
+/// Остановить прогон: выкорчевать очередь, отдать инициатору `Stopped`,
+/// финализировать pill. `cancel_workers` — дополнительно взвести
+/// cooperative-cancel флаги активных нод. Возвращает false, если прогона
+/// не было. Только main thread.
+fn stop_run(cancel_workers: bool) -> bool {
+    let ws = use_context::<EditorWorkspace>();
+    let taken = match run_queue().lock() {
+        Ok(mut g) => g.take(),
+        Err(_) => None,
+    };
+    let Some(q) = taken else {
+        info!(target: RUN_LOG, "run: Stop вне прогона");
+        // Фиксируем возможный legacy-Running (per-node Play).
+        ws.run_timer.finish();
+        ws.run_state.set(RunState::Stopped);
+        return false;
+    };
+    if cancel_workers {
+        let nodes = q.ctx.nodes.get_untracked();
+        for id in &q.active {
+            let Some(n) = nodes.iter().find(|n| n.id == *id) else {
+                continue;
+            };
+            // try_lock: если воркер держит runtime, флаг не взвести — нода
+            // доработает, как и ноды вовсе без cancel (ACE-Step Generate).
+            if let Ok(rt) = n.runtime.try_lock() {
+                if let Some(flag) = rt.run_cancel_flag() {
+                    flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    info!(target: RUN_LOG, node = id.0, "нода: взведён cancel");
+                }
+            }
+        }
+    }
+    info!(
+        target: RUN_LOG,
+        active = q.active.len(),
+        pending = q.remaining.len(),
+        cancel_workers,
+        "run: очередь сброшена (активные worker'ы дорабатывают)"
+    );
+    send_outcome(q, RunEnd::Stopped);
+    // Фиксируем то, что успело натикать: уже запущенные worker'ы
+    // доработают, но прогон как таковой закончился здесь.
+    ws.run_timer.finish();
+    ws.run_state.set(RunState::Stopped);
+    true
+}
+
+/// Отменить текущий прогон извне (агент Syn-чата, abort хода): сброс
+/// очереди + cooperative-cancel активных нод. LTX/H3-сэмплеры прерываются
+/// через `DenoiseHooks`; ноды без флага досчитывают до конца.
+pub fn cancel_active_run() -> bool {
+    stop_run(true)
 }
 
 /// Сборка pill — фиксированный размер в MSS (`min-width` / `height`).
@@ -378,79 +652,20 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
         let run_btn = ToolButton::new(MI_PLAY_ARROW)
             .tooltip("Run")
             .on_click(move || {
-                // Очередь одна на приложение (pill в EditorWorkspace тоже
-                // один). Перезапуск поверх живого прогона легален —
-                // уже работающие воркеры досчитают и будут учтены новой
-                // очередью, — но в логе это должно быть видно.
-                if let Ok(g) = run_queue().lock() {
-                    if let Some(prev) = g.as_ref() {
-                        warn!(
-                            target: RUN_LOG,
-                            active = prev.active.len(),
-                            pending = prev.remaining.len(),
-                            "run: Run поверх незавершённого прогона — очередь пересобирается"
-                        );
+                info!(target: RUN_LOG, "run: нажат Run");
+                match start_run(editor_ctx, None) {
+                    Ok(started) => {
+                        app_run.notifications.info(format!("Запущено нод: {started}"));
                     }
-                }
-                let nodes = editor_ctx.nodes.get_untracked();
-                let conns = editor_ctx.connections.get_untracked();
-                let mut q = build_queue(editor_ctx, &nodes, &conns);
-                info!(
-                    target: RUN_LOG,
-                    nodes = nodes.len(),
-                    connections = conns.len(),
-                    on_run = q.remaining.len(),
-                    "run: нажат Run, очередь построена"
-                );
-
-                // Свежий evaluate перед стартом корней — чтобы свежий
-                // AudioRecorder.last_result уже сидел в values, а не
-                // «застрял» в предыдущем evaluate.
-                refresh_values(&editor_ctx);
-
-                // Корни — все on_run-ноды с remaining == 0.
-                let roots: Vec<NodeId> = q
-                    .remaining
-                    .iter()
-                    .filter(|(_, c)| **c == 0)
-                    .map(|(id, _)| *id)
-                    .collect();
-                info!(target: RUN_LOG, roots = roots.len(), "run: старт корней");
-                for id in roots {
-                    fire(&editor_ctx, id, &mut q);
-                }
-                let started = q.active.len();
-                let stuck = q.remaining.values().any(|c| *c > 0) && q.active.is_empty();
-
-                if started == 0 {
-                    if let Ok(mut g) = run_queue().lock() {
-                        *g = None;
-                    }
-                    if stuck {
-                        info!(target: RUN_LOG, "run: отменён — цикл в графе");
+                    Err(StartRunError::CycleInGraph) => {
                         app_run.notifications.info(
                             "Граф содержит цикл — нет нод, готовых к запуску",
                         );
-                    } else {
-                        info!(target: RUN_LOG, "run: отменён — нет on_run-нод");
+                    }
+                    Err(StartRunError::NoRunnableNodes) => {
                         app_run.notifications.info("Нет нод с явным запуском");
                     }
-                    return;
                 }
-
-                // Глобальный секундомер: отсчёт от нажатия Run до опустошения
-                // очереди. `run_total` — все on_run-ноды прогона, включая те,
-                // что ещё ждут своих upstream-предков.
-                ws.run_total.set(q.remaining.len());
-                ws.run_done.set(0);
-                ws.run_timer.start();
-                q.run_started_at = Instant::now();
-
-                if let Ok(mut g) = run_queue().lock() {
-                    *g = Some(q);
-                }
-                ws.run_state.set(RunState::Running);
-                app_run.notifications.info(format!("Запущено нод: {started}"));
             })
             .class(button_class("ne-run-btn ne-run-btn--play", state, RunState::Running));
 
@@ -468,26 +683,10 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
         let stop_btn = ToolButton::new(MI_STOP)
             .tooltip("Stop")
             .on_click(move || {
-                // Очищаем sequencer-state. Уже запущенные worker'ы
-                // доработают (нет cooperative cancel), но новых fire'ов
-                // больше не произойдёт.
-                if let Ok(mut g) = run_queue().lock() {
-                    if let Some(q) = g.as_ref() {
-                        info!(
-                            target: RUN_LOG,
-                            active = q.active.len(),
-                            pending = q.remaining.len(),
-                            "run: нажат Stop, очередь сброшена (активные worker'ы дорабатывают)"
-                        );
-                    } else {
-                        info!(target: RUN_LOG, "run: нажат Stop вне прогона");
-                    }
-                    *g = None;
-                }
-                // Фиксируем то, что успело натикать: уже запущенные worker'ы
-                // доработают, но прогон как таковой закончился здесь.
-                ws.run_timer.finish();
-                ws.run_state.set(RunState::Stopped);
+                info!(target: RUN_LOG, "run: нажат Stop");
+                // Уже запущенные worker'ы доработают (кнопка исторически не
+                // взводит cancel), но новых fire'ов больше не произойдёт.
+                stop_run(false);
                 app_stop.notifications.info("Stopped");
             })
             .class(button_class("ne-run-btn ne-run-btn--stop", state, RunState::Stopped));

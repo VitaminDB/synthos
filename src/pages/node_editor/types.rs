@@ -2075,6 +2075,64 @@ pub enum NodeRuntime {
     },
 }
 
+impl NodeRuntime {
+    /// Сигнал ошибки последнего запуска ноды — для сбора итога прогона
+    /// (`run_controls::RunOutcome`). None у нод без понятия «ошибка запуска»
+    /// (реактивные ноды, чекпойнты); `load_error` AudioFile/FfmpegPlayer —
+    /// про загрузку файла, не про прогон, поэтому сюда не входит.
+    pub fn run_error_signal(&self) -> Option<RwSignal<Option<String>>> {
+        use NodeRuntime as R;
+        match self {
+            R::AsrGigaam { error, .. }
+            | R::OmniVoice { error, .. }
+            | R::VoxCpm2 { error, .. }
+            | R::SortformerDiarizer { error, .. }
+            | R::Llm { error, .. }
+            | R::AceStepVaeEncode { error, .. }
+            | R::AceStepGenerate { error, .. }
+            | R::LtxTextEncoder { error, .. }
+            | R::LtxNagPrompt { error, .. }
+            | R::LtxSamplerStage1 { error, .. }
+            | R::LtxUpscale { error, .. }
+            | R::LtxSamplerStage2 { error, .. }
+            | R::LtxVaeDecode { error, .. }
+            | R::LtxAudioDecode { error, .. }
+            | R::LtxVideoSave { error, .. }
+            | R::LtxImage { error, .. }
+            | R::LtxRetake { error, .. }
+            | R::LtxIcLora { error, .. }
+            | R::LtxLipdub { error, .. }
+            | R::LtxA2V { error, .. }
+            | R::H3TextEncoder { error, .. }
+            | R::H3Keyframe { error, .. }
+            | R::H3Sampler { error, .. }
+            | R::H3VaeDecode { error, .. }
+            | R::H3AudioDecode { error, .. }
+            | R::H3VideoSave { error, .. } => Some(*error),
+            _ => None,
+        }
+    }
+
+    /// Cooperative-cancel флаг воркера — для отмены прогона извне
+    /// (`run_controls::cancel_active_run`). У нод без флага (в т.ч.
+    /// ACE-Step Generate) воркер не отменяется и досчитывает до конца.
+    pub fn run_cancel_flag(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        use NodeRuntime as R;
+        match self {
+            R::SaveToFile { cancel, .. }
+            | R::Llm { cancel, .. }
+            | R::LtxSamplerStage1 { cancel, .. }
+            | R::LtxSamplerStage2 { cancel, .. }
+            | R::LtxRetake { cancel, .. }
+            | R::LtxIcLora { cancel, .. }
+            | R::LtxLipdub { cancel, .. }
+            | R::LtxA2V { cancel, .. }
+            | R::H3Sampler { cancel, .. } => Some(cancel.clone()),
+            _ => None,
+        }
+    }
+}
+
 /// Снимок конфига, с которым в данный момент загружен `Transcriber` ASR-ноды.
 /// Сравнивается перед каждым Play: если изменилось — модель сбрасывается и
 /// перезагружается.

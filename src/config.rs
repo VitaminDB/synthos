@@ -1055,7 +1055,11 @@ pub fn default_window_opacity() -> f32 {
 /// Стартовый набор активных инструментов — используется и как `Default`,
 /// и как fallback для конфигов без поля.
 pub fn default_tools_active() -> Vec<String> {
-    vec!["bash".to_string(), "web_read".to_string()]
+    vec![
+        "bash".to_string(),
+        "web_read".to_string(),
+        "system".to_string(),
+    ]
 }
 
 impl Default for AppConfig {

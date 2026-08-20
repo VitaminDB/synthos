@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use crate::icons::{MI_BOLT, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE};
+use crate::icons::{MI_BOLT, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE};
 
 use super::descriptor::Tool;
 
@@ -12,6 +12,7 @@ pub const KEY_KB_SEARCH: &str = "kb_search";
 pub const KEY_WEB: &str = "web";
 pub const KEY_AUTOSKILL: &str = "autoskill";
 pub const KEY_SUBAGENT: &str = "subagent";
+pub const KEY_SYSTEM: &str = "system";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -145,6 +146,43 @@ pub(super) fn build_all() -> Vec<Tool> {
                     }
                 },
                 "required": ["id"],
+                "additionalProperties": false
+            }),
+        },
+        Tool {
+            key: KEY_SYSTEM,
+            label: "system",
+            icon: MI_MEMORY,
+            description: "Состояние системы и памяти. action=status — VRAM \
+                (всего / свободно / доступно с учётом пулов), RAM, список \
+                моделей в памяти: нодовые (с id для выгрузки) и чат-LLM. \
+                action=unload — выгрузить нодовые модели из VRAM (по id из \
+                status или все сразу с all=true). ВЫЗЫВАЙ status перед \
+                запуском тяжёлого пайплайна, чтобы решить, хватает ли VRAM \
+                и что выгрузить. Чат-LLM (та, на которой работаешь ты) этим \
+                инструментом не выгружается — используй free_vram у \
+                pipelines action=run.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "unload"],
+                        "description": "status — снимок VRAM/RAM/моделей; \
+                            unload — выгрузка нодовых моделей."
+                    },
+                    "id": {
+                        "type": "integer",
+                        "description": "Только для action=unload: id модели \
+                            из вывода status."
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "Только для action=unload: true — \
+                            выгрузить все нодовые модели."
+                    }
+                },
+                "required": ["action"],
                 "additionalProperties": false
             }),
         },

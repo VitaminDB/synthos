@@ -25,6 +25,7 @@ pub mod descriptor;
 pub mod executor;
 pub mod kb_search;
 pub mod subagent;
+pub mod system;
 pub mod web;
 pub mod web_fetch;
 

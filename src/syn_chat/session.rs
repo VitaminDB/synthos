@@ -1853,7 +1853,15 @@ async fn run_pipeline_tool(
     };
 
     // 5. Артефакты: файлы save-нод → CAS-вложения (worker-поток, диск).
-    let (attachments, artifact_lines) = pr::collect_artifacts(&prepared.planned);
+    let (mut attachments, mut artifact_lines) = pr::collect_artifacts(&prepared.planned);
+    // 5b. Ноды-просмотрщики (Видео-плеер, Аудио-плеер) держат результат в
+    //     памяти: без save-ноды в чат не приходило ничего, хотя результат
+    //     посчитан. Материализуем и прикладываем — но не дублируем то, что
+    //     уже пришло файлом.
+    let (viewer_atts, viewer_lines) =
+        pr::collect_viewer_outputs(&req.run_label, &attachments).await;
+    attachments.extend(viewer_atts);
+    artifact_lines.extend(viewer_lines);
 
     // 6. Вернуть LLM (и после abort тоже — чат не должен молча остаться
     //    без модели).

@@ -34,6 +34,8 @@ pub mod chats_column;
 pub mod compaction_marker;
 pub mod delete_dialog;
 pub mod input_panel;
+pub mod media_audio;
+pub mod media_inline;
 pub mod media_viewer;
 pub mod message_area;
 pub mod message_bubble;

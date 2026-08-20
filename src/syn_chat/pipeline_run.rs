@@ -328,6 +328,160 @@ pub async fn cancel_current() {
     let _ = rx.await;
 }
 
+/// Что показывает нода-просмотрщик после прогона. Данные живут только в
+/// памяти ноды (кадры от VAE Decode, буфер от TTS), файла на диске нет —
+/// материализуем их сами, иначе граф без save-ноды не отдаёт в чат ничего,
+/// хотя результат уже посчитан и играет в редакторе.
+enum ViewerOutput {
+    Video {
+        frames: std::sync::Arc<crate::pages::node_editor::types::LtxFrames>,
+        audio: Option<std::sync::Arc<syngui::audio::AudioBuffer>>,
+    },
+    Audio(std::sync::Arc<syngui::audio::AudioBuffer>),
+    /// Плеер, которому дали файл (а не память) — прикладываем как есть.
+    File(PathBuf),
+}
+
+struct PlannedViewer {
+    node_id: u64,
+    title: &'static str,
+    out: ViewerOutput,
+}
+
+/// Снять с нод-просмотрщиков то, что они показывают (main thread: сигналы).
+/// `skip_video`/`skip_audio` — что уже пришло от save-нод: дублировать один
+/// и тот же результат двумя вложениями незачем.
+fn planned_viewers(skip_video: bool, skip_audio: bool) -> (Option<String>, Vec<PlannedViewer>) {
+    let chat_id = use_context::<SynChatCtx>().active_chat_id.get_untracked();
+    let Ok(ctx) = agent_tab_ctx() else {
+        return (chat_id, Vec::new());
+    };
+    let mut out = Vec::new();
+    for n in ctx.nodes.get_untracked().iter() {
+        if !n.enabled.get_untracked() {
+            continue;
+        }
+        let Ok(rt) = n.runtime.lock() else { continue };
+        let title = registry::meta(n.kind).title;
+        match &*rt {
+            NodeRuntime::FfmpegPlayer { frames_in, audio_in, current_path, .. } => {
+                if skip_video {
+                    continue;
+                }
+                let frames = frames_in.lock().ok().and_then(|g| g.clone());
+                if let Some(frames) = frames {
+                    let audio = audio_in.lock().ok().and_then(|g| g.clone());
+                    out.push(PlannedViewer {
+                        node_id: n.id.0,
+                        title,
+                        out: ViewerOutput::Video { frames, audio },
+                    });
+                } else if let Some(p) = current_path.get_untracked() {
+                    out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::File(p) });
+                }
+            }
+            NodeRuntime::AudioPlayer { pcm_view, .. } => {
+                if skip_audio {
+                    continue;
+                }
+                if let Some(buf) = pcm_view.get_untracked() {
+                    out.push(PlannedViewer {
+                        node_id: n.id.0,
+                        title,
+                        out: ViewerOutput::Audio(buf),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    (chat_id, out)
+}
+
+/// Материализовать результаты просмотрщиков в каталог прогона и приложить к
+/// сообщению. Вызывается после [`collect_artifacts`]: `have` — то, что уже
+/// собрано с save-нод.
+pub async fn collect_viewer_outputs(
+    run_label: &str,
+    have: &[MsgAttachment],
+) -> (Vec<MsgAttachment>, Vec<String>) {
+    let skip_video = have.iter().any(|a| a.kind == crate::agent::state::AttachmentKind::Video);
+    let skip_audio = have.iter().any(|a| a.kind == crate::agent::state::AttachmentKind::Audio);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    run_on_main_thread(move || {
+        let _ = tx.send(planned_viewers(skip_video, skip_audio));
+    });
+    let Ok((chat_id, planned)) = rx.await else {
+        return (Vec::new(), Vec::new());
+    };
+    if planned.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let dir = outputs_dir()
+        .join(chat_id.unwrap_or_else(|| "chat".to_string()))
+        .join(run_label);
+    let mut atts = Vec::new();
+    let mut lines = Vec::new();
+    for p in planned {
+        let path = match &p.out {
+            ViewerOutput::Video { frames, audio } => {
+                let out = dir.join(format!("node{}_preview.mp4", p.node_id));
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    lines.push(format!("{} (нода {}): {e}", p.title, p.node_id));
+                    continue;
+                }
+                match crate::pages::node_editor::nodes::ltx::video_save::encode_mp4(
+                    frames,
+                    audio.as_deref(),
+                    &out,
+                    None,
+                ) {
+                    Ok(()) => out,
+                    Err(e) => {
+                        lines.push(format!("{} (нода {}): не закодировать: {e}", p.title, p.node_id));
+                        continue;
+                    }
+                }
+            }
+            ViewerOutput::Audio(buf) => {
+                let out = dir.join(format!("node{}_preview.wav", p.node_id));
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    lines.push(format!("{} (нода {}): {e}", p.title, p.node_id));
+                    continue;
+                }
+                match crate::pages::node_editor::nodes::ltx::video_save::write_wav(&out, buf) {
+                    Ok(()) => out,
+                    Err(e) => {
+                        lines.push(format!("{} (нода {}): не записать WAV: {e}", p.title, p.node_id));
+                        continue;
+                    }
+                }
+            }
+            ViewerOutput::File(p) => p.clone(),
+        };
+        match ingest::ingest(&path) {
+            Ok(a) => {
+                lines.push(format!(
+                    "{} (нода {}) → {} ({}) — приложено к сообщению",
+                    p.title,
+                    p.node_id,
+                    path.display(),
+                    models::human_bytes(a.size_bytes)
+                ));
+                atts.push(a);
+            }
+            Err(e) => lines.push(format!(
+                "{} (нода {}) → {}: не приложился: {e}",
+                p.title,
+                p.node_id,
+                path.display()
+            )),
+        }
+    }
+    (atts, lines)
+}
+
 /// Собрать записанные save-нодами файлы в CAS-вложения. Возвращает
 /// (вложения, строки отчёта). Файл считается результатом, если появился
 /// или изменился относительно снимка `pre`.

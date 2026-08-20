@@ -123,9 +123,14 @@ pub fn bubble_grid(attachments: &[MsgAttachment]) -> Box<dyn Widget> {
         .enumerate()
         .map(|(idx, a)| {
             let all = items.clone();
-            Box::new(card(a, CardMode::Sent, move || {
-                open_viewer(all.clone(), idx)
-            })) as Box<dyn Widget>
+            let open = move || open_viewer(all.clone(), idx);
+            // Медиа играет прямо в ленте: результат прогона смотрят здесь же,
+            // а не через модальный просмотрщик (он остаётся по клику).
+            if super::media_inline::is_inline(a) {
+                super::media_inline::media_card(a, open)
+            } else {
+                Box::new(card(a, CardMode::Sent, open)) as Box<dyn Widget>
+            }
         })
         .collect();
 

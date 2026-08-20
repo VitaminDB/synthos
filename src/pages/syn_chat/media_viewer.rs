@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use syngui::audio::{AudioBuffer, AudioPlayer};
+use syngui::audio::AudioPlayer;
 use syngui::core::sync::Mutex;
 use syngui::mgui;
 use syngui::prelude::*;
@@ -53,11 +53,8 @@ const ZOOM_MAX: f32 = 12.0;
 struct ViewerSignals {
     zoom: RwSignal<f32>,
     pan: RwSignal<Point>,
-    /// sha текущего аудио-вложения — чтобы не декодировать одно и то же дважды.
-    audio_key: RwSignal<String>,
-    audio_buf: RwSignal<Option<Arc<AudioBuffer>>>,
-    audio_pos: RwSignal<f32>,
-    audio_playing: RwSignal<bool>,
+    /// Декод и воспроизведение — общие с инлайн-карточкой ленты.
+    audio: super::media_audio::AudioSignals,
 }
 
 pub fn view() -> impl Widget {
@@ -75,10 +72,7 @@ pub fn view() -> impl Widget {
     let signals = ViewerSignals {
         zoom: use_signal(1.0),
         pan: use_signal(Point::new(0.0, 0.0)),
-        audio_key: use_signal(String::new()),
-        audio_buf: use_signal(None),
-        audio_pos: use_signal(0.0),
-        audio_playing: use_signal(false),
+        audio: super::media_audio::AudioSignals::new(),
     };
     // Плеер живёт вне реактивного дерева: его нужно останавливать при
     // закрытии и смене вложения, а не пересоздавать на каждый rebuild.
@@ -91,7 +85,7 @@ pub fn view() -> impl Widget {
         .backdrop(true)
         .anchor(PortalAnchor::Center)
         .on_close(move || {
-            stop_audio(&player_for_close);
+            super::media_audio::stop(&player_for_close);
             use_context::<SynChatCtx>().viewer.set(None);
         })
         .child(card(signals, audio_player))
@@ -106,7 +100,7 @@ fn card(
         let Some(state) = ctx.viewer.get() else {
             // Portal закрыт — содержимое всё равно не видно, но плеер надо
             // отпустить, иначе аудио продолжит играть в фоне.
-            stop_audio(&audio_player);
+            super::media_audio::stop(&audio_player);
             return DecoratedBox::new().class("media-viewer-empty");
         };
         let Some(item) = state.current().cloned() else {
@@ -150,6 +144,7 @@ fn header(a: &MsgAttachment) -> impl Widget {
     };
     let meta = attach::short_meta(a);
     let source = blobs::source_path(a);
+    let for_save = a.clone();
 
     mgui! {
         DecoratedBox::new().class("media-viewer-header") => [
@@ -160,6 +155,10 @@ fn header(a: &MsgAttachment) -> impl Widget {
                     Text::new(meta).class("media-viewer-subtitle"),
                 ],
                 DecoratedBox::new().class("grow"),
+                ToolButton::new(crate::icons::MI_DOWNLOAD)
+                    .tooltip("Сохранить как…")
+                    .on_click(move || super::media_inline::save_as(&for_save))
+                    .class("media-viewer-action"),
                 ToolButton::new(MI_OPEN_IN_NEW)
                     .tooltip("Открыть системным приложением")
                     .on_click(move || open_externally(&source))
@@ -304,16 +303,16 @@ fn audio_stage(
     signals: ViewerSignals,
     audio_player: Arc<Mutex<Option<AudioPlayer>>>,
 ) -> Box<dyn Widget> {
-    ensure_audio_decoded(a, signals, &audio_player);
+    super::media_audio::ensure_decoded(a, signals.audio, &audio_player);
 
     let name = a.original_name.clone();
     let duration = attach::format_duration(a.duration_ms);
     let player = audio_player.clone();
 
     let controls = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let buf = signals.audio_buf.get();
-        let playing = signals.audio_playing.get();
-        let pos = signals.audio_pos.get();
+        let buf = signals.audio.buf.get();
+        let playing = signals.audio.playing.get();
+        let pos = signals.audio.pos.get();
         let Some(buf) = buf else {
             return vec![Box::new(
                 Text::new("Декодируем аудио…").class("media-viewer-hint"),
@@ -339,7 +338,7 @@ fn audio_stage(
                 Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).main_axis_alignment(MainAxisAlignment::Center) => [
                     ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
                         .tooltip(if playing { "Пауза" } else { "Воспроизвести" })
-                        .on_click(move || toggle_audio(&player, signals))
+                        .on_click(move || super::media_audio::toggle(&player, signals.audio))
                         .class("media-viewer-play"),
                 ],
             ]
@@ -446,114 +445,5 @@ fn open_externally(path: &std::path::Path) {
     };
     if let Err(e) = std::process::Command::new(cmd).arg(path).spawn() {
         log::warn!("[media-viewer] не удалось открыть {}: {e}", path.display());
-    }
-}
-
-/// Декодирует аудио в фоне (symphonia), если оно ещё не декодировано.
-fn ensure_audio_decoded(
-    a: &MsgAttachment,
-    signals: ViewerSignals,
-    audio_player: &Arc<Mutex<Option<AudioPlayer>>>,
-) {
-    if signals.audio_key.get_untracked() == a.sha256 {
-        return;
-    }
-    stop_audio(audio_player);
-    signals.audio_key.set_always(a.sha256.clone());
-    signals.audio_buf.set_always(None);
-    signals.audio_pos.set_always(0.0);
-    signals.audio_playing.set_always(false);
-
-    let path = blobs::source_path(a);
-    let sha = a.sha256.clone();
-    std::thread::spawn(move || {
-        let decoded = crate::pages::node_editor::nodes::decode::decode_file(&path);
-        syngui::async_runtime::run_on_main_thread(move || {
-            // Пока декодировали, пользователь мог перелистнуть дальше.
-            if signals.audio_key.get_untracked() != sha {
-                return;
-            }
-            match decoded {
-                Ok(buf) => signals.audio_buf.set(Some(Arc::new(buf))),
-                Err(e) => log::warn!("[media-viewer] декод аудио: {e}"),
-            }
-        });
-    });
-}
-
-fn toggle_audio(player: &Arc<Mutex<Option<AudioPlayer>>>, signals: ViewerSignals) {
-    let Ok(mut guard) = player.lock() else {
-        return;
-    };
-    match guard.as_ref() {
-        Some(p) if p.is_paused() => {
-            p.resume();
-            signals.audio_playing.set(true);
-            spawn_position_poller(player.clone(), signals);
-        }
-        Some(p) => {
-            p.pause();
-            signals.audio_playing.set(false);
-        }
-        None => {
-            let Some(buf) = signals.audio_buf.get_untracked() else {
-                return;
-            };
-            // AudioPlayer принимает моно-поток; для стерео-исходника
-            // усредняем каналы — превью, точность здесь не нужна.
-            let pcm: Arc<[f32]> = if buf.channels > 1 {
-                let ch = buf.channels as usize;
-                buf.pcm
-                    .chunks(ch)
-                    .map(|c| c.iter().sum::<f32>() / ch as f32)
-                    .collect()
-            } else {
-                buf.pcm.clone()
-            };
-            match AudioPlayer::start(pcm, buf.sample_rate) {
-                Ok(p) => {
-                    *guard = Some(p);
-                    signals.audio_playing.set(true);
-                    spawn_position_poller(player.clone(), signals);
-                }
-                Err(e) => log::warn!("[media-viewer] воспроизведение: {e}"),
-            }
-        }
-    }
-}
-
-/// Тикает позицию воспроизведения в сигнал, пока звук играет.
-fn spawn_position_poller(player: Arc<Mutex<Option<AudioPlayer>>>, signals: ViewerSignals) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        let snapshot = {
-            let Ok(guard) = player.lock() else {
-                return;
-            };
-            match guard.as_ref() {
-                Some(p) => Some((p.position_seconds() as f32, p.is_paused(), p.is_done())),
-                None => None,
-            }
-        };
-        let Some((pos, paused, done)) = snapshot else {
-            return;
-        };
-        syngui::async_runtime::run_on_main_thread(move || {
-            signals.audio_pos.set(pos);
-            if done {
-                signals.audio_playing.set(false);
-            }
-        });
-        if paused || done {
-            return;
-        }
-    });
-}
-
-fn stop_audio(player: &Arc<Mutex<Option<AudioPlayer>>>) {
-    if let Ok(mut guard) = player.lock() {
-        if let Some(p) = guard.take() {
-            p.stop();
-        }
     }
 }

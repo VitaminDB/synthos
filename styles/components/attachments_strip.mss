@@ -218,3 +218,101 @@ ToolButton.input-attach:hover {
     font-size: 11px;
     padding-left: 2px;
 }
+
+/* ── Инлайн-медиа в ленте (media_inline) ────────────────────────────────── */
+/* Результат прогона пайплайна приходит вложением, и смотреть его через
+ * модальное окно — лишний клик: карточка играет видео/аудио на месте и даёт
+ * «Сохранить». Ширина ограничена, чтобы пузырёк не разъезжался на весь чат. */
+
+.chat-media-card {
+    width: 420px;
+    border-radius: 12px;
+    background-color: var(--surface-hover);
+    border-width: 1px;
+    border-color: var(--border);
+    overflow: hidden;
+}
+
+.chat-media-stage {
+    height: 236px;
+    background-color: var(--surface-sunken);
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.chat-media-poster {
+    width: 420px;
+    height: 236px;
+}
+
+.chat-media-poster-empty {
+    width: 420px;
+    height: 236px;
+    background-color: var(--surface-sunken);
+}
+
+.chat-media-image {
+    width: 420px;
+    height: 236px;
+}
+
+/* Кнопка ⏵ поверх постера: до клика видео не декодируется. */
+.chat-media-play {
+    width: 56px;
+    height: 56px;
+    border-radius: 28px;
+    background-color: rgba(0, 0, 0, 0.55);
+    color: var(--text-on-primary);
+    font-size: 28px;
+}
+
+.chat-media-play:hover {
+    background-color: var(--primary);
+}
+
+.chat-media-audio {
+    padding: 10px 12px 10px 12px;
+    background-color: var(--surface-sunken);
+}
+
+.chat-media-waveform {
+    height: 64px;
+}
+
+.chat-media-play-small {
+    width: 32px;
+    height: 32px;
+    border-radius: 16px;
+    background-color: var(--surface-hover);
+}
+
+.chat-media-play-small:hover {
+    background-color: var(--primary);
+    color: var(--text-on-primary);
+}
+
+.chat-media-actions {
+    padding: 6px 8px 6px 10px;
+    background-color: var(--surface);
+    border-width: 0;
+}
+
+.chat-media-name {
+    font-size: 12px;
+    color: var(--text);
+}
+
+.chat-media-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.chat-media-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+}
+
+.chat-media-btn:hover {
+    background-color: var(--surface-hover);
+}

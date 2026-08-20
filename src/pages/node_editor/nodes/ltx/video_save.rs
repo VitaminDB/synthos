@@ -167,7 +167,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         .name("synthos-ltx-video-save".into())
         .spawn(move || {
             let out = PathBuf::from(out_path.trim());
-            match worker(&frames, audio.as_deref(), &out, progress_pct) {
+            match encode_mp4(&frames, audio.as_deref(), &out, Some(progress_pct)) {
                 Ok(()) => {
                     status.set(SaveStatus::Saved(out));
                     error.set(None);
@@ -181,7 +181,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         });
 }
 
-fn write_wav(path: &PathBuf, buf: &AudioBuffer) -> std::result::Result<(), String> {
+pub fn write_wav(path: &PathBuf, buf: &AudioBuffer) -> std::result::Result<(), String> {
     let spec = hound::WavSpec {
         channels: buf.channels,
         sample_rate: buf.sample_rate,
@@ -196,11 +196,13 @@ fn write_wav(path: &PathBuf, buf: &AudioBuffer) -> std::result::Result<(), Strin
     writer.finalize().map_err(|e| format!("wav finalize: {e}"))
 }
 
-fn worker(
+/// Кодирование кадров (+ аудио) в mp4 через ffmpeg. `progress_pct` — None,
+/// когда вызывающему нечего показывать (проброс результата плеера в чат).
+pub fn encode_mp4(
     frames: &LtxFrames,
     audio: Option<&AudioBuffer>,
     out: &PathBuf,
-    progress_pct: RwSignal<f32>,
+    progress_pct: Option<RwSignal<f32>>,
 ) -> std::result::Result<(), String> {
     if frames.frames.is_empty() {
         return Err("нет кадров".into());
@@ -240,8 +242,10 @@ fn worker(
             write_err = Some(format!("ffmpeg stdin: {e}"));
             break;
         }
-        let pct = (i + 1) as f32 / total as f32;
-        run_on_main_thread(move || progress_pct.set(pct));
+        if let Some(sig) = progress_pct {
+            let pct = (i + 1) as f32 / total as f32;
+            run_on_main_thread(move || sig.set(pct));
+        }
     }
     drop(stdin);
     let out_res = child.wait_with_output().map_err(|e| format!("ffmpeg wait: {e}"));

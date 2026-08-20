@@ -229,8 +229,9 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
         .class(btn_class);
 
     // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
-    // Цвет по занятости (busy_count пишет семплер terminal_activity):
-    // все заняты — зелёный, все простаивают — красный, смешанно — оранжевый.
+    // Цвет по занятости (busy_count пишет семплер terminal_activity;
+    // занят = вывод обновлялся в последние секунды): все заняты — зелёный,
+    // все простаивают — красный, смешанно — оранжевый.
     // Реактивность — через .get() в scope Reactive'а sessions_segment.
     let term_count = session.terminals.tabs.get().len();
     let busy_count = session.terminals.busy_count.get();
@@ -249,7 +250,7 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
                     .small()
                     .class(format!("nav-rail-term-badge {tone}")),
             )
-            .at(22.0, -2.0),
+            .at(24.0, -2.0),
         );
     }
 

@@ -2,16 +2,17 @@
 //!
 //! Раз в секунду фоновый поток постит main-thread callback, который проходит
 //! по всем code-сессиям и пишет в `TerminalsState.busy_count` число «занятых»
-//! терминалов. Терминал занят, если выполняется ЛЮБОЕ из двух условий:
+//! терминалов. Терминал занят, если **вывод обновлялся** в последние
+//! [`ACTIVITY_WINDOW`] секунд: `TerminalSession::revision()` (bump на каждый
+//! обработанный чанк PTY-вывода) изменился недавно. Окно, а не «с прошлого
+//! тика», — чтобы команды с редким выводом (компиляция) не мигали
+//! зелёный↔красный между строками.
 //!
-//! 1. **foreground-процесс** — у tty есть foreground process group, отличная
-//!    от shell'а, т.е. прямо сейчас идёт команда
-//!    (`TerminalSession::is_busy`, `tcgetpgrp` под капотом);
-//! 2. **вывод обновляется** — `TerminalSession::revision()` (bump на каждый
-//!    обработанный чанк PTY-вывода) изменился с прошлого тика. Ловит
-//!    активность, которую первое условие не видит: фоновые job'ы, пишущие в
-//!    терминал, `tail -f` и т.п. Если текст не обновляется и foreground'а
-//!    нет — терминал простаивает.
+//! Наличие foreground-процесса (tcgetpgrp ≠ shell) сознательно НЕ считается
+//! занятостью: интерактивные TUI (Claude Code, vim, htop в паузе) висят
+//! foreground'ом всё время жизни, даже когда просто ждут ввода — бейдж
+//! горел бы зелёным на простаивающем терминале. «Что-то происходит» ⇔
+//! «текст меняется».
 //!
 //! Сигналы thread-local, поэтому вся работа с ними — строго внутри
 //! `run_on_main_thread`; `RwSignal::set` с равным значением не будит
@@ -24,22 +25,29 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 
 use super::state::{CodeEditorCtx, SessionId};
 
 /// Интервал опроса. 1 Гц достаточно: бейдж — индикатор «идёт ли работа»,
-/// а не осциллограф; сам опрос — один `tcgetpgrp` + чтение атомика на таб.
+/// а не осциллограф; сам опрос — чтение одного атомика на таб.
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Последняя виденная `revision` каждого таба; ключ — (session.id, tab.id).
-/// static, потому что тик — короткий main-thread callback и состояние между
-/// тиками держать больше негде (closure пересоздаётся). Карта пересобирается
-/// целиком на каждом тике — записи закрытых табов не накапливаются.
-fn revision_registry() -> &'static Mutex<HashMap<(SessionId, u32), u64>> {
-    static R: OnceLock<Mutex<HashMap<(SessionId, u32), u64>>> = OnceLock::new();
+/// Сколько держать статус «занят» после последнего изменения вывода.
+/// 3 с сглаживают паузы между строками у «медленных» команд, но красный
+/// загорается достаточно быстро после того, как терминал затих.
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(3);
+
+/// Последнее наблюдение по каждому табу: (revision, момент её изменения).
+/// Ключ — (session.id, tab.id). static, потому что тик — короткий
+/// main-thread callback и состояние между тиками держать больше негде
+/// (closure пересоздаётся). Карта пересобирается целиком на каждом тике —
+/// записи закрытых табов не накапливаются.
+type TabKey = (SessionId, u32);
+fn revision_registry() -> &'static Mutex<HashMap<TabKey, (u64, Instant)>> {
+    static R: OnceLock<Mutex<HashMap<TabKey, (u64, Instant)>>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -60,7 +68,8 @@ fn sample_tick(ctx: CodeEditorCtx) {
     let Ok(mut registry) = revision_registry().lock() else {
         return;
     };
-    let mut seen: HashMap<(SessionId, u32), u64> = HashMap::new();
+    let now = Instant::now();
+    let mut seen: HashMap<TabKey, (u64, Instant)> = HashMap::new();
 
     for session in ctx.sessions.get_untracked() {
         let tabs = session.terminals.tabs.get_untracked();
@@ -69,11 +78,17 @@ fn sample_tick(ctx: CodeEditorCtx) {
             .filter(|t| {
                 let key = (session.id, t.id);
                 let rev = t.session.revision();
-                // Первый тик после открытия таба: prev нет → «не менялось»,
-                // судим только по foreground-процессу.
-                let output_changed = registry.get(&key).is_some_and(|&prev| prev != rev);
-                seen.insert(key, rev);
-                t.session.is_busy() || output_changed
+                // Первое наблюдение таба: считаем простаивающим (last_change
+                // отодвинут на окно назад), пока вывод реально не изменится.
+                let (prev_rev, mut last_change) = registry
+                    .get(&key)
+                    .copied()
+                    .unwrap_or((rev, now - ACTIVITY_WINDOW));
+                if rev != prev_rev {
+                    last_change = now;
+                }
+                seen.insert(key, (rev, last_change));
+                now.duration_since(last_change) < ACTIVITY_WINDOW
             })
             .count();
         session.terminals.busy_count.set(busy);

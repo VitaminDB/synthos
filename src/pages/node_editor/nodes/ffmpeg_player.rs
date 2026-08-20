@@ -408,13 +408,13 @@ pub fn on_run(node: &NodeInstance, _ctx: &super::super::state::NodeEditorCtx) {
     toggle_play_pause(&h);
 }
 
-pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
-    let g = node.runtime.lock().ok()?;
-    if let NodeRuntime::FfmpegPlayer { is_playing, .. } = &*g {
-        Some(*is_playing)
-    } else {
-        None
-    }
+/// Плеер не «занят» для секвенсера: он показывает результат, а не считает
+/// его. Раньше busy=`is_playing` держал прогон открытым всё время
+/// воспроизведения — 8-секундный ролик стоил минуты в отчёте («Видео-плеер ·
+/// 1м 1с»), а агентский ход всё это время ждал вместе с выгруженной LLM.
+/// Воспроизведение продолжается само по себе, downstream-нод у плеера нет.
+pub fn busy_signal(_node: &NodeInstance) -> Option<RwSignal<bool>> {
+    None
 }
 
 fn error_widget(msg: &'static str) -> Box<dyn Widget> {

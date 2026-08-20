@@ -163,12 +163,28 @@ impl ToolCallParser {
                 (self.calls, tail)
             }
             State::Inside => {
-                // Открытый, но не закрытый tool_call — отбрасываем.
+                // Открытый, но не закрытый tool_call. Модель нередко
+                // заканчивает генерацию сразу после JSON, не написав
+                // `</tool_call>` — тело при этом целое. Отбрасывать такой
+                // вызов значит потерять ход: цикл завершается без действия,
+                // и пользователю остаётся жать «Продолжить». Поэтому сначала
+                // пробуем разобрать накопленное, и только если не вышло —
+                // выбрасываем.
                 self.inner.push_str(&self.buf);
-                tracing::warn!(
-                    truncated_body = %self.inner.trim(),
-                    "stream закончился внутри <tool_call> без </tool_call> — отбрасываем"
-                );
+                match parse_tool_call_body(&self.inner) {
+                    Some((call, _format)) => {
+                        tracing::debug!(
+                            name = %call.name,
+                            "tool_call без </tool_call> — тело целое, принимаем"
+                        );
+                        self.calls.push(call);
+                    }
+                    None => tracing::warn!(
+                        truncated_body = %self.inner.trim(),
+                        "stream закончился внутри <tool_call> без </tool_call>, \
+                         тело не разбирается — отбрасываем"
+                    ),
+                }
                 (self.calls, String::new())
             }
         }
@@ -291,6 +307,30 @@ fn parse_tool_call_xml_anthropic(body: &str) -> Option<RawToolCall> {
 
 #[cfg(test)]
 mod tests {
+    /// Стрим кончился сразу после JSON, без `</tool_call>` — вызов должен
+    /// доехать: иначе ход теряется впустую и пользователь жмёт «Продолжить».
+    #[test]
+    fn unclosed_tool_call_with_valid_body_is_accepted() {
+        let mut p = ToolCallParser::new();
+        p.feed(
+            "<tool_call>{\"name\":\"pipelines\",\"arguments\":{\"action\":\"run\",\"free_vram\":true}}",
+        );
+        let (calls, tail) = p.finish();
+        assert_eq!(calls.len(), 1, "вызов принят");
+        assert_eq!(calls[0].name, "pipelines");
+        assert!(calls[0].arguments_json.contains("\"action\":\"run\""));
+        assert!(tail.is_empty());
+    }
+
+    /// Оборвался на полуслове — разбирать нечего, отбрасываем.
+    #[test]
+    fn unclosed_tool_call_with_broken_body_is_dropped() {
+        let mut p = ToolCallParser::new();
+        p.feed("<tool_call>{\"name\":\"pipel");
+        let (calls, _) = p.finish();
+        assert!(calls.is_empty());
+    }
+
     use super::*;
 
     fn feed_all(parser: &mut ToolCallParser, chunks: &[&str]) -> String {
@@ -382,16 +422,6 @@ mod tests {
         let (calls, _tail) = p.finish();
         assert_eq!(out, "Сейчасготово");
         assert_eq!(calls.len(), 1);
-    }
-
-    #[test]
-    fn unclosed_tool_call_discarded() {
-        let mut p = ToolCallParser::new();
-        let _ = p.feed(r#"<tool_call>{"name":"x","arguments":{}}"#);
-        let (calls, tail) = p.finish();
-        // Хвост tool_call'а без закрывающего тега — отбрасывается.
-        assert!(calls.is_empty());
-        assert_eq!(tail, "");
     }
 
     #[test]

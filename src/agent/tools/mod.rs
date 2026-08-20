@@ -24,6 +24,7 @@ pub mod catalog;
 pub mod descriptor;
 pub mod executor;
 pub mod kb_search;
+pub mod pipelines;
 pub mod subagent;
 pub mod system;
 pub mod web;

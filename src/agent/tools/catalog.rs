@@ -2,7 +2,9 @@
 
 use serde_json::json;
 
-use crate::icons::{MI_BOLT, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE};
+use crate::icons::{
+    MI_ACCOUNT_TREE, MI_BOLT, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE,
+};
 
 use super::descriptor::Tool;
 
@@ -13,6 +15,7 @@ pub const KEY_WEB: &str = "web";
 pub const KEY_AUTOSKILL: &str = "autoskill";
 pub const KEY_SUBAGENT: &str = "subagent";
 pub const KEY_SYSTEM: &str = "system";
+pub const KEY_PIPELINES: &str = "pipelines";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -146,6 +149,98 @@ pub(super) fn build_all() -> Vec<Tool> {
                     }
                 },
                 "required": ["id"],
+                "additionalProperties": false
+            }),
+        },
+        Tool {
+            key: KEY_PIPELINES,
+            label: "pipelines",
+            icon: MI_ACCOUNT_TREE,
+            description: "Нодовые пайплайны генерации (видео LTX/MiniMax-H3, \
+                музыка ACE-Step, TTS, ASR, LLM-нода) в служебной вкладке \
+                редактора — одна на чат, пользователь может открыть её из \
+                чата и наблюдать. Типовой workflow: 1) action=list — шаблоны \
+                (встроенные и кастомные) и вложения чата; 2) action=open с \
+                template=<id> — загрузить шаблон; 3) action=nodes с \
+                filter=<kind> — точная схема нод (порты + пример state-JSON); \
+                4) action=apply — заполнить: set_state=[{node,state}] ставит \
+                промпты/параметры/пути, connect/disconnect правят связи, \
+                graph (mode=replace|merge) заменяет/дополняет граф целиком \
+                Template-JSON'ом; 5) action=run — запустить прогон (перед \
+                тяжёлым прогоном проверь system status; free_vram=true \
+                выгрузит чат-LLM на время прогона и вернёт после). \
+                В строках state работает ссылка attachment:<имя|sha|last> — \
+                подставляет путь вложения из чата (например ref-картинка в \
+                LtxImage.image_path). action=graph — снимок графа; \
+                action=save_template с name — сохранить граф пользователю \
+                как кастомный шаблон.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "nodes", "open", "graph", "apply", "save_template", "run"],
+                        "description": "Что сделать (см. описание инструмента)."
+                    },
+                    "template": {
+                        "type": "string",
+                        "description": "action=open: id шаблона из action=list."
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "action=nodes: подстрока по kind/названию/категории. \
+                            Без filter — компактный список всех видов нод."
+                    },
+                    "graph": {
+                        "type": "object",
+                        "description": "action=apply: Template-JSON {nodes:[{id?,kind,pos?,state?,enabled?}], \
+                            connections:[{from_node,from_port,to_node,to_port}]}. \
+                            id и pos можно опустить — проставятся автоматически."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "merge"],
+                        "description": "action=apply с graph: replace — заменить граф (по умолчанию), \
+                            merge — дописать к существующему (id нод переназначатся)."
+                    },
+                    "set_state": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "action=apply: [{node:<id>, state:{kind,data}}] — \
+                            state-JSON смотри в action=nodes (пример с дефолтами) \
+                            или action=graph (текущие значения)."
+                    },
+                    "connect": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "action=apply: [{from_node,from_port,to_node,to_port}] — добавить связи."
+                    },
+                    "disconnect": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "action=apply: [{from_node,from_port,to_node,to_port}] — убрать связи."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "action=save_template: имя нового кастомного шаблона."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "action=save_template: описание шаблона (опционально)."
+                    },
+                    "free_vram": {
+                        "type": "boolean",
+                        "description": "action=run: выгрузить чат-LLM на время прогона \
+                            (нужно тяжёлым пайплайнам — LTX/H3 на 24 ГБ рядом с LLM не влезут) \
+                            и загрузить обратно после."
+                    },
+                    "run_id": {
+                        "type": "string",
+                        "description": "action=run: метка запуска; при повторном запуске \
+                            того же графа передай НОВОЕ значение (например run-2)."
+                    }
+                },
+                "required": ["action"],
                 "additionalProperties": false
             }),
         },

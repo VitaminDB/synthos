@@ -196,7 +196,9 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
 
 /// Снимок per-kind state из runtime'а ноды. `None` для нод без
 /// пользовательского state (`Number`, `Add`, `Output`, `Demo`).
-fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
+/// pub — используется агентским инструментом `pipelines` (схема state
+/// по default_runtime и точечный set_state).
+pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
     match rt {
         NodeRuntime::None => None,
         NodeRuntime::H3Checkpoint {
@@ -752,7 +754,8 @@ fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
 /// Стороны эффекта: `RwSignal::set` бампает subscribers, поэтому UI карточки
 /// сразу видит загруженные значения. Тяжёлые объекты (Transcriber/Pipeline)
 /// — НЕ трогаются: они грузятся лениво на первый Play.
-fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
+/// pub — используется агентским инструментом `pipelines` (set_state).
+pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
     match (rt, state) {
         (
             NodeRuntime::AsrGigaam {

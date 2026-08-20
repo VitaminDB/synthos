@@ -1,0 +1,757 @@
+//! Tool `pipelines` — доступ агента Syn-чата к нодовому редактору.
+//!
+//! Агент работает со СЛУЖЕБНОЙ вкладкой редактора (одна на чат, скрытая из
+//! полосы — см. `EditorWorkspace::ensure_agent_tab`): открывает в ней шаблон,
+//! декларативно правит граф (Template-JSON), читает snapshot и сохраняет
+//! результат как кастомный шаблон. Запуск прогона (`action=run`) живёт в
+//! `pipelines_run` — он завязан на жизненный цикл LLM и исполняется
+//! обёрткой в agent-loop, а не здесь.
+//!
+//! Действия:
+//! - `list` — шаблоны (builtin + custom), вложения текущего чата (для
+//!   `attachment:`-ссылок) и состояние служебной вкладки.
+//! - `nodes` — схемы видов нод из `registry::REGISTRY`: порты, поля и
+//!   пример `state`-JSON (снятый с default_runtime). Без `filter` — компакт-
+//!   список, с `filter` — детали совпавших.
+//! - `open` — загрузить шаблон в служебную вкладку (replace).
+//! - `graph` — snapshot служебной вкладки.
+//! - `apply` — правки графа: `graph` (replace/merge Template-JSON),
+//!   `set_state` (точечный state ноды), `connect`/`disconnect` (связи).
+//!   Строки вида `attachment:<имя|sha-префикс|last>` в state резолвятся в
+//!   путь blob'а вложения чата (`blobs::model_path` — формат, читаемый
+//!   пайплайнами).
+//! - `save_template` — сохранить граф вкладки кастомным шаблоном.
+//!
+//! Все сигналы — main-thread: каждое действие целиком исполняется в
+//! `run_on_main_thread`-замыкании, результат уходит через oneshot
+//! (паттерн `kb_search`).
+
+use syngui::async_runtime::run_on_main_thread;
+use syngui::context_provider::use_context;
+use syngui::core::Point;
+
+use crate::agent::state::{AttachmentKind, ChatMsg, MsgAttachment};
+use crate::pages::node_editor::registry::{self, NodeCategory};
+use crate::pages::node_editor::state::NodeEditorCtx;
+use crate::pages::node_editor::tabs::EditorWorkspace;
+use crate::pages::node_editor::types::{Connection, NodeKind, PortKind, PortsSpec, PortSide};
+use crate::syn_chat::attach::blobs;
+use crate::syn_chat::SynChatCtx;
+use crate::templates::{self, convert, model::NodeStateData, ConnData, NodeData, Template, TemplateKind};
+
+use super::executor::ToolError;
+
+/// Главный entrypoint из `executor::execute`.
+pub async fn run(args_json: &str) -> Result<String, ToolError> {
+    let v: serde_json::Value =
+        serde_json::from_str(args_json).map_err(|e| ToolError::BadArgs(e.to_string()))?;
+    let action = v
+        .get("action")
+        .and_then(|x| x.as_str())
+        .ok_or(ToolError::MissingField("action"))?
+        .to_string();
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+    run_on_main_thread(move || {
+        let result = match action.as_str() {
+            "list" => list_impl(),
+            "nodes" => nodes_impl(&v),
+            "open" => open_impl(&v),
+            "graph" => graph_impl(),
+            "apply" => apply_impl(&v),
+            "save_template" => save_template_impl(&v),
+            other => Err(format!(
+                "неизвестный action «{other}» (list | nodes | open | graph | apply | save_template | run)"
+            )),
+        };
+        let _ = tx.send(result);
+    });
+    rx.await
+        .map_err(|e| ToolError::Spawn(e.to_string()))?
+        .map_err(ToolError::BadArgs)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Контекст: чат + служебная вкладка
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn active_chat_id() -> Result<String, String> {
+    let chat = use_context::<SynChatCtx>();
+    chat.active_chat_id
+        .get_untracked()
+        .ok_or_else(|| "нет активного чата".to_string())
+}
+
+/// Ctx служебной вкладки текущего чата, если она уже создана.
+fn agent_ctx() -> Result<Option<NodeEditorCtx>, String> {
+    let chat_id = active_chat_id()?;
+    let ws = use_context::<EditorWorkspace>();
+    let Some(tab_id) = ws.agent_tab_for_chat(&chat_id) else {
+        return Ok(None);
+    };
+    Ok(ws
+        .tabs
+        .get_untracked()
+        .iter()
+        .find(|t| t.id == tab_id)
+        .map(|t| t.ctx))
+}
+
+/// Ctx служебной вкладки, создавая её при необходимости.
+fn agent_ctx_ensure(title: &str) -> Result<NodeEditorCtx, String> {
+    let chat_id = active_chat_id()?;
+    let ws = use_context::<EditorWorkspace>();
+    let tab_id = ws.ensure_agent_tab(&chat_id, title);
+    let tabs = ws.tabs.get_untracked();
+    let tab = tabs
+        .iter()
+        .find(|t| t.id == tab_id)
+        .ok_or_else(|| "служебная вкладка не создалась".to_string())?;
+    if !title.is_empty() {
+        tab.title.set(title.to_string());
+    }
+    Ok(tab.ctx)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// list
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn list_impl() -> Result<String, String> {
+    let mut out = String::new();
+
+    out.push_str("--- Шаблоны пайплайнов ---\n");
+    for t in templates::list_all() {
+        out.push_str(&format!(
+            "{} · «{}»{} · нод: {}{}\n",
+            t.id,
+            t.name,
+            if t.builtin { "" } else { " · custom" },
+            t.nodes.len(),
+            if t.description.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", t.description)
+            }
+        ));
+    }
+
+    out.push_str("--- Вложения чата (для attachment:<имя|sha|last>) ---\n");
+    let atts = chat_attachments();
+    if atts.is_empty() {
+        out.push_str("(нет)\n");
+    } else {
+        for a in &atts {
+            out.push_str(&format!(
+                "{} · {} · sha:{}\n",
+                a.original_name,
+                attachment_kind_label(a.kind),
+                &a.sha256[..12.min(a.sha256.len())]
+            ));
+        }
+    }
+
+    out.push_str("--- Служебная вкладка ---\n");
+    match agent_ctx()? {
+        Some(ctx) => out.push_str(&graph_summary(&ctx)?),
+        None => out.push_str("(ещё не создана — открой шаблон через action=open)\n"),
+    }
+    Ok(out)
+}
+
+fn attachment_kind_label(k: AttachmentKind) -> &'static str {
+    match k {
+        AttachmentKind::Image => "картинка",
+        AttachmentKind::Video => "видео",
+        AttachmentKind::Audio => "аудио",
+        AttachmentKind::Document => "документ",
+        AttachmentKind::Other => "файл",
+    }
+}
+
+/// Все вложения user-сообщений активного чата, свежие в конце.
+fn chat_attachments() -> Vec<MsgAttachment> {
+    let chat = use_context::<SynChatCtx>();
+    let msgs: Vec<ChatMsg> = chat.messages.get_untracked();
+    msgs.iter()
+        .flat_map(|m| m.attachments.iter().cloned())
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// nodes — схемы видов нод
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn kind_slug(kind: NodeKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{kind:?}"))
+}
+
+fn port_kind_label(k: PortKind) -> &'static str {
+    match k {
+        PortKind::Data => "data",
+        PortKind::Audio => "audio",
+        PortKind::Control => "control",
+        PortKind::Text => "text",
+        PortKind::Video => "video",
+    }
+}
+
+fn ports_line(spec: PortsSpec) -> String {
+    let pool = spec.pool();
+    if pool.is_empty() {
+        return "—".to_string();
+    }
+    let dynamic = matches!(spec, PortsSpec::Dynamic { .. });
+    let joined = pool
+        .iter()
+        .map(|p| format!("{}:{}", p.name, port_kind_label(p.kind)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if dynamic {
+        format!("{joined} (динамические)")
+    } else {
+        joined
+    }
+}
+
+/// Пример state-JSON вида ноды: default_runtime → runtime_to_state.
+/// Именно эту форму принимает `apply.set_state[].state` и `NodeData.state`.
+fn state_example(kind: NodeKind) -> Option<String> {
+    let rt = registry::default_runtime(kind);
+    let g = rt.lock().ok()?;
+    let state = convert::runtime_to_state(&g)?;
+    serde_json::to_string(&state).ok()
+}
+
+fn category_path(meta: &'static registry::NodeKindMeta) -> String {
+    match meta.subcategory {
+        Some(sub) => format!("{} / {}", meta.category.label(), sub),
+        None => meta.category.label().to_string(),
+    }
+}
+
+fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
+    let filter = v
+        .get("filter")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+
+    let mut out = String::new();
+    if filter.is_empty() {
+        out.push_str(
+            "Все виды нод (kind · название · категория). Детали (порты, \
+             state-JSON) — повтори с filter по kind/названию/категории.\n",
+        );
+        let mut current_cat: Option<NodeCategory> = None;
+        for kind in NodeKind::ALL {
+            let meta = registry::meta(*kind);
+            if current_cat != Some(meta.category) {
+                current_cat = Some(meta.category);
+                out.push_str(&format!("--- {} ---\n", meta.category.label()));
+            }
+            out.push_str(&format!(
+                "{} · {} · есть запуск: {}\n",
+                kind_slug(*kind),
+                meta.title,
+                if meta.on_run.is_some() { "да" } else { "нет" }
+            ));
+        }
+        return Ok(out);
+    }
+
+    let mut matched = 0usize;
+    for kind in NodeKind::ALL {
+        let meta = registry::meta(*kind);
+        let slug = kind_slug(*kind);
+        let hay = format!(
+            "{} {} {} {}",
+            slug,
+            meta.title.to_lowercase(),
+            meta.category.label().to_lowercase(),
+            meta.subcategory.unwrap_or("").to_lowercase()
+        );
+        if !hay.contains(&filter) {
+            continue;
+        }
+        matched += 1;
+        out.push_str(&format!(
+            "--- {} · «{}» · {} ---\n",
+            slug,
+            meta.title,
+            category_path(meta)
+        ));
+        out.push_str(&format!("входы: {}\n", ports_line(meta.inputs)));
+        out.push_str(&format!("выходы: {}\n", ports_line(meta.outputs)));
+        if !meta.fields.is_empty() {
+            let fields = meta
+                .fields
+                .iter()
+                .map(|f| format!("{} ({:?})", f.name, f.ty))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("поля: {fields}\n"));
+        }
+        out.push_str(&format!(
+            "запуск (on_run): {}\n",
+            if meta.on_run.is_some() { "да" } else { "нет (реактивная)" }
+        ));
+        if let Some(state) = state_example(*kind) {
+            out.push_str(&format!("state (пример с дефолтами): {state}\n"));
+        }
+    }
+    if matched == 0 {
+        return Err(format!(
+            "по фильтру «{filter}» нод не найдено; вызови без filter за полным списком"
+        ));
+    }
+    Ok(out)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// open / graph
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn open_impl(v: &serde_json::Value) -> Result<String, String> {
+    let id = v
+        .get("template")
+        .and_then(|x| x.as_str())
+        .ok_or("для action=open нужен параметр template (id из action=list)")?;
+    let all = templates::list_all();
+    let t = all
+        .iter()
+        .find(|t| t.id == id)
+        .ok_or_else(|| format!("шаблона «{id}» нет (см. action=list)"))?;
+
+    let ctx = agent_ctx_ensure(&t.name)?;
+    convert::load_into_ctx(&ctx, t);
+    let mut out = format!("шаблон «{}» загружен в служебную вкладку\n", t.name);
+    out.push_str(&graph_summary(&ctx)?);
+    Ok(out)
+}
+
+fn graph_impl() -> Result<String, String> {
+    match agent_ctx()? {
+        Some(ctx) => graph_summary(&ctx),
+        None => Err("служебной вкладки ещё нет — открой шаблон (action=open) или собери граф (action=apply)".into()),
+    }
+}
+
+/// Текстовый snapshot графа: ноды с id/kind/state и связи. `state`-строки
+/// обрезаются — envelope должен оставаться компактным (в историю агента
+/// tool-result уходит клипованным).
+fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
+    const STATE_CLIP: usize = 700;
+    let (nodes, conns, _viewport) = convert::snapshot(ctx);
+    let mut out = format!("граф: нод {}, связей {}\n", nodes.len(), conns.len());
+    for n in &nodes {
+        let meta = registry::meta(n.kind);
+        let mut line = format!(
+            "[{}] {} · {}{}",
+            n.id,
+            kind_slug(n.kind),
+            meta.title,
+            if n.enabled { "" } else { " · ВЫКЛ" }
+        );
+        if let Some(state) = &n.state {
+            if let Ok(js) = serde_json::to_string(state) {
+                let clipped = if js.len() > STATE_CLIP {
+                    let mut end = STATE_CLIP;
+                    while end > 0 && !js.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &js[..end])
+                } else {
+                    js
+                };
+                line.push_str(&format!(" · state: {clipped}"));
+            }
+        }
+        line.push('\n');
+        out.push_str(&line);
+    }
+    if !conns.is_empty() {
+        out.push_str("связи:\n");
+        for c in &conns {
+            out.push_str(&format!(
+                "{}.{} → {}.{}\n",
+                c.from_node, c.from_port, c.to_node, c.to_port
+            ));
+        }
+    }
+    Ok(out)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// apply
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
+    let ctx = agent_ctx_ensure("Агент")?;
+    let mut notes: Vec<String> = Vec::new();
+
+    // attachment:-ссылки резолвятся по всему payload'у до парсинга структур.
+    let mut v = v.clone();
+    resolve_attachment_uris(&mut v, &mut notes);
+
+    if let Some(graph) = v.get("graph") {
+        let mode = v.get("mode").and_then(|x| x.as_str()).unwrap_or("replace");
+        let template = template_from_value(graph)?;
+        match mode {
+            "replace" => convert::load_into_ctx(&ctx, &template),
+            "merge" => convert::apply_to_ctx(&ctx, &template, Point::new(0.0, 0.0)),
+            other => return Err(format!("mode «{other}» неизвестен (replace | merge)")),
+        }
+        notes.push(format!(
+            "graph применён ({mode}): нод {}, связей {}",
+            template.nodes.len(),
+            template.connections.len()
+        ));
+    }
+
+    if let Some(items) = v.get("set_state").and_then(|x| x.as_array()) {
+        for item in items {
+            let node_id = item
+                .get("node")
+                .and_then(|x| x.as_u64())
+                .ok_or("set_state[]: нужно поле node (id ноды)")?;
+            let state_v = item
+                .get("state")
+                .cloned()
+                .ok_or("set_state[]: нужно поле state")?;
+            let state: NodeStateData = serde_json::from_value(state_v)
+                .map_err(|e| format!("set_state[{node_id}]: не разобрать state: {e}"))?;
+            let nodes = ctx.nodes.get_untracked();
+            let node = nodes
+                .iter()
+                .find(|n| n.id.0 == node_id)
+                .ok_or_else(|| format!("set_state: ноды {node_id} нет в графе"))?;
+            // Совпадение варианта state с kind ноды проверяем заранее:
+            // apply_state_to_runtime при несовпадении молча no-op'ает, а
+            // агенту нужна честная ошибка.
+            let expected = registry::default_runtime(node.kind)
+                .lock()
+                .ok()
+                .and_then(|g| convert::runtime_to_state(&g))
+                .and_then(|s| variant_tag(&s));
+            let got = variant_tag(&state);
+            if expected != got {
+                return Err(format!(
+                    "set_state: нода {node_id} ({}) ждёт state kind={}, а пришёл {}",
+                    kind_slug(node.kind),
+                    expected.unwrap_or_else(|| "—".into()),
+                    got.unwrap_or_else(|| "—".into())
+                ));
+            }
+            if let Ok(rt) = node.runtime.lock() {
+                convert::apply_state_to_runtime(&rt, &state);
+            }
+            notes.push(format!("state ноды {node_id} обновлён"));
+        }
+    }
+
+    if let Some(items) = v.get("connect").and_then(|x| x.as_array()) {
+        for item in items {
+            let c = conn_from_value(item)?;
+            add_connection(&ctx, &c)?;
+            notes.push(format!(
+                "связь {}.{} → {}.{}",
+                c.from_node, c.from_port, c.to_node, c.to_port
+            ));
+        }
+    }
+
+    if let Some(items) = v.get("disconnect").and_then(|x| x.as_array()) {
+        for item in items {
+            let c = conn_from_value(item)?;
+            let mut conns = ctx.connections.get_untracked();
+            let before = conns.len();
+            conns.retain(|e| {
+                !(e.from_node.0 == c.from_node
+                    && e.to_node.0 == c.to_node
+                    && e.from_port == c.from_port
+                    && e.to_port == c.to_port)
+            });
+            let removed = before - conns.len();
+            ctx.connections.set(conns);
+            notes.push(format!(
+                "разъединено {}: {}.{} → {}.{}",
+                removed, c.from_node, c.from_port, c.to_node, c.to_port
+            ));
+        }
+    }
+
+    if notes.is_empty() {
+        return Err(
+            "apply без изменений: передай graph, set_state, connect или disconnect".into(),
+        );
+    }
+
+    let mut out = notes.join("\n");
+    out.push('\n');
+    out.push_str(&graph_summary(&ctx)?);
+    Ok(out)
+}
+
+/// Тег варианта NodeStateData («LtxTextEncoder», …) — из его serde-формы.
+fn variant_tag(s: &NodeStateData) -> Option<String> {
+    serde_json::to_value(s)
+        .ok()?
+        .get("kind")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Собрать Template из agent-JSON `{nodes, connections}`. Послабления к
+/// строгой схеме: отсутствующие `id` нумеруются по порядку, отсутствующие
+/// `pos` раскладываются сеткой — LLM не обязан придумывать координаты.
+fn template_from_value(graph: &serde_json::Value) -> Result<Template, String> {
+    let mut graph = graph.clone();
+    if let Some(nodes) = graph.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+        for (i, node) in nodes.iter_mut().enumerate() {
+            let Some(obj) = node.as_object_mut() else {
+                return Err(format!("nodes[{i}] — не объект"));
+            };
+            obj.entry("id".to_string())
+                .or_insert(serde_json::json!((i + 1) as u64));
+            obj.entry("pos".to_string()).or_insert(serde_json::json!({
+                "x": 80.0 + (i % 4) as f32 * 300.0,
+                "y": 100.0 + (i / 4) as f32 * 260.0,
+            }));
+        }
+    }
+    let nodes: Vec<NodeData> = serde_json::from_value(
+        graph.get("nodes").cloned().unwrap_or(serde_json::json!([])),
+    )
+    .map_err(|e| format!("graph.nodes: {e}"))?;
+    let connections: Vec<ConnData> = serde_json::from_value(
+        graph
+            .get("connections")
+            .cloned()
+            .unwrap_or(serde_json::json!([])),
+    )
+    .map_err(|e| format!("graph.connections: {e}"))?;
+    let mut t = Template::empty("agent", TemplateKind::Full);
+    t.nodes = nodes;
+    t.connections = connections;
+    Ok(t)
+}
+
+fn conn_from_value(v: &serde_json::Value) -> Result<ConnData, String> {
+    serde_json::from_value(v.clone()).map_err(|e| format!("связь: {e}"))
+}
+
+/// Добавить связь в граф вкладки с той же валидацией, что у `complete_wire`:
+/// имена портов резолвятся в `&'static str` по registry, самосвязи и дубли
+/// отбрасываются.
+fn add_connection(ctx: &NodeEditorCtx, c: &ConnData) -> Result<(), String> {
+    if c.from_node == c.to_node {
+        return Err(format!("связь {}→{}: самосвязь запрещена", c.from_node, c.to_node));
+    }
+    let nodes = ctx.nodes.get_untracked();
+    let from_kind = nodes
+        .iter()
+        .find(|n| n.id.0 == c.from_node)
+        .map(|n| n.kind)
+        .ok_or_else(|| format!("connect: ноды {} нет в графе", c.from_node))?;
+    let to_kind = nodes
+        .iter()
+        .find(|n| n.id.0 == c.to_node)
+        .map(|n| n.kind)
+        .ok_or_else(|| format!("connect: ноды {} нет в графе", c.to_node))?;
+    let from_port = convert::resolve_port_name(Some(from_kind), PortSide::Output, &c.from_port)
+        .ok_or_else(|| {
+            format!(
+                "connect: у {} нет выхода «{}» (см. action=nodes filter={})",
+                kind_slug(from_kind),
+                c.from_port,
+                kind_slug(from_kind)
+            )
+        })?;
+    let to_port = convert::resolve_port_name(Some(to_kind), PortSide::Input, &c.to_port)
+        .ok_or_else(|| {
+            format!(
+                "connect: у {} нет входа «{}» (см. action=nodes filter={})",
+                kind_slug(to_kind),
+                c.to_port,
+                kind_slug(to_kind)
+            )
+        })?;
+
+    let conn = Connection {
+        from_node: crate::pages::node_editor::types::NodeId(c.from_node),
+        from_port,
+        to_node: crate::pages::node_editor::types::NodeId(c.to_node),
+        to_port,
+    };
+    let mut conns = ctx.connections.get_untracked();
+    let dup = conns.iter().any(|e| {
+        e.from_node == conn.from_node
+            && e.to_node == conn.to_node
+            && e.from_port == conn.from_port
+            && e.to_port == conn.to_port
+    });
+    if !dup {
+        conns.push(conn);
+        ctx.connections.set(conns);
+    }
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// attachment:-ссылки
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Пройтись по payload'у и заменить строки `attachment:<ref>` на путь blob'а
+/// вложения текущего чата. `<ref>` — имя файла (case-insensitive), префикс
+/// sha256 (≥6 hex) или `last` (самое свежее вложение). Используется
+/// `blobs::model_path` — derived-копия в формате, читаемом пайплайнами.
+fn resolve_attachment_uris(v: &mut serde_json::Value, notes: &mut Vec<String>) {
+    match v {
+        serde_json::Value::String(s) => {
+            if let Some(r) = s.strip_prefix("attachment:") {
+                match find_attachment(r) {
+                    Some(a) => {
+                        let path = blobs::model_path(&a).display().to_string();
+                        notes.push(format!("attachment:{r} → {path}"));
+                        *s = path;
+                    }
+                    None => notes.push(format!(
+                        "attachment:{r} — вложение не найдено (см. action=list), строка оставлена как есть"
+                    )),
+                }
+            }
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(|x| resolve_attachment_uris(x, notes)),
+        serde_json::Value::Object(o) => {
+            o.values_mut().for_each(|x| resolve_attachment_uris(x, notes))
+        }
+        _ => {}
+    }
+}
+
+fn find_attachment(r: &str) -> Option<MsgAttachment> {
+    let atts = chat_attachments();
+    let r_lower = r.to_lowercase();
+    if r_lower == "last" || r_lower == "latest" {
+        return atts.last().cloned();
+    }
+    // Точное имя файла.
+    if let Some(a) = atts
+        .iter()
+        .rev()
+        .find(|a| a.original_name.to_lowercase() == r_lower)
+    {
+        return Some(a.clone());
+    }
+    // Префикс sha256.
+    if r_lower.len() >= 6 && r_lower.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Some(a) = atts.iter().rev().find(|a| a.sha256.starts_with(&r_lower)) {
+            return Some(a.clone());
+        }
+    }
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// save_template
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
+    let name = v
+        .get("name")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("для action=save_template нужен name")?;
+    let ctx = agent_ctx()?
+        .ok_or("служебной вкладки нет — нечего сохранять")?;
+    let (nodes, connections, viewport) = convert::snapshot(&ctx);
+    if nodes.is_empty() {
+        return Err("граф пуст — нечего сохранять".into());
+    }
+    let mut t = Template::empty(name, TemplateKind::Full);
+    if let Some(desc) = v.get("description").and_then(|x| x.as_str()) {
+        t.description = desc.to_string();
+    }
+    t.nodes = nodes;
+    t.connections = connections;
+    t.viewport = viewport;
+    let created = templates::create(t).map_err(|e| e.to_string())?;
+    crate::components::template_picker::bump_revision();
+    Ok(format!(
+        "сохранён кастомный шаблон «{}» (id: {})",
+        created.name, created.id
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_slug_is_snake_case() {
+        assert_eq!(kind_slug(NodeKind::LtxTextEncoder), "ltx_text_encoder");
+        assert_eq!(kind_slug(NodeKind::AceStepGenerate), "ace_step_generate");
+    }
+
+    /// Agent-JSON без id/pos дополняется автоматически; state парсится.
+    #[test]
+    fn template_from_value_fills_defaults() {
+        let graph = serde_json::json!({
+            "nodes": [
+                { "kind": "ltx_checkpoint" },
+                {
+                    "kind": "ltx_text_encoder",
+                    "state": {
+                        "kind": "LtxTextEncoder",
+                        "data": { "prompt": "закат над морем" }
+                    }
+                }
+            ],
+            "connections": [
+                { "from_node": 1, "from_port": "model", "to_node": 2, "to_port": "model" }
+            ]
+        });
+        let t = template_from_value(&graph).expect("parse");
+        assert_eq!(t.nodes.len(), 2);
+        assert_eq!(t.nodes[0].id, 1);
+        assert_eq!(t.nodes[1].id, 2);
+        assert_eq!(t.nodes[0].kind, NodeKind::LtxCheckpoint);
+        // pos проставлен сеткой.
+        assert!(t.nodes[1].pos.x > t.nodes[0].pos.x);
+        let state = t.nodes[1].state.as_ref().expect("state");
+        assert_eq!(variant_tag(state).as_deref(), Some("LtxTextEncoder"));
+        assert_eq!(t.connections.len(), 1);
+    }
+
+    /// Неизвестные ключи внутри state.data не валят парсинг (serde default).
+    #[test]
+    fn template_from_value_tolerates_unknown_state_fields() {
+        let graph = serde_json::json!({
+            "nodes": [{
+                "kind": "ltx_text_encoder",
+                "state": {
+                    "kind": "LtxTextEncoder",
+                    "data": { "prompt": "x", "made_up_field": 42 }
+                }
+            }]
+        });
+        let t = template_from_value(&graph).expect("parse");
+        assert!(t.nodes[0].state.is_some());
+    }
+
+    /// Пример state снимается с default_runtime и несёт правильный тег.
+    #[test]
+    fn state_example_matches_kind() {
+        let js = state_example(NodeKind::LtxSamplerStage1).expect("state");
+        assert!(js.contains("\"LtxSamplerStage1\""), "{js}");
+        assert!(js.contains("width"), "{js}");
+        // Реактивные ноды без state.
+        assert!(state_example(NodeKind::Add).is_none());
+    }
+}

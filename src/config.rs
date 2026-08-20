@@ -1059,6 +1059,7 @@ pub fn default_tools_active() -> Vec<String> {
         "bash".to_string(),
         "web_read".to_string(),
         "system".to_string(),
+        "pipelines".to_string(),
     ]
 }
 

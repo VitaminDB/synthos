@@ -317,6 +317,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             quant_enc_idx,
             compute_idx,
             memory_mode_idx,
+            resident,
             ..
         } => {
             let _ = model_path.get();
@@ -329,6 +330,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = quant_enc_idx.get();
             let _ = compute_idx.get();
             let _ = memory_mode_idx.get();
+            let _ = resident.get();
         }
         NodeRuntime::H3TextEncoder { error, loaded_name, .. } => {
             let _ = error.get();
@@ -668,6 +670,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             quant_dit_idx,
             quant_enc_idx,
             compute_idx,
+            resident,
             ..
         } => {
             let _ = model_path.get();
@@ -679,6 +682,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = quant_dit_idx.get();
             let _ = quant_enc_idx.get();
             let _ = compute_idx.get();
+            let _ = resident.get();
         }
         NodeRuntime::LtxTextEncoder {
             prompt_field,
@@ -804,6 +808,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             quant_dit_idx,
             quant_enc_idx,
             compute_idx,
+            resident,
             ..
         } => {
             let _ = models_dir.get();
@@ -815,6 +820,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = quant_dit_idx.get();
             let _ = quant_enc_idx.get();
             let _ = compute_idx.get();
+            let _ = resident.get();
         }
         NodeRuntime::AceStepGenerate {
             mode_idx,

@@ -111,7 +111,10 @@ pub fn vae_busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 }
 
 fn vae_worker(handle: &H3ModelHandle, latent: &H3VideoLatent) -> std::result::Result<LtxFrames, String> {
-    shared::release_dit_hold();
+    // «Держать в памяти» на Checkpoint: hold DiT переживает decode.
+    if !handle.resident {
+        shared::release_dit_hold();
+    }
     shared::trim_pool(handle);
     let vae = shared::load_vae(handle)?;
     let rgb = vae.decoder.decode(&latent.tensor).map_err(|e| e.to_string())?;
@@ -248,7 +251,9 @@ fn audio_worker(
     handle: &H3ModelHandle,
     latent: &synaptix_core::tensor::Tensor,
 ) -> std::result::Result<AudioBuffer, String> {
-    shared::release_dit_hold();
+    if !handle.resident {
+        shared::release_dit_hold();
+    }
     shared::trim_pool(handle);
     let vae = shared::load_audio_vae(handle)?;
     let wave = vae.decoder.decode(latent).map_err(|e| e.to_string())?;

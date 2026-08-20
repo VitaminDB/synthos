@@ -18,7 +18,8 @@ use super::super::super::types::{
     AceStepBlob, AceStepModelHandle, DataBlob, NodeInstance, NodeRuntime, PortValue,
 };
 use super::{
-    dir_picker_row, field_row, make_dropdown, COMPUTE_OPTIONS, DEVICE_OPTIONS, QUANT_OPTIONS,
+    dir_picker_row, field_row, make_dropdown, make_toggle, COMPUTE_OPTIONS, DEVICE_OPTIONS,
+    QUANT_OPTIONS,
 };
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
 
@@ -41,6 +42,7 @@ impl NodeExecutor for CheckpointExec {
                     quant_dit_idx,
                     quant_enc_idx,
                     compute_idx,
+                    resident,
                     handle_cache,
                 } => {
                     let get = |s: &RwSignal<Option<std::path::PathBuf>>| {
@@ -78,6 +80,11 @@ impl NodeExecutor for CheckpointExec {
                             quant_dit_idx: geti(quant_dit_idx),
                             quant_enc_idx: geti(quant_enc_idx),
                             compute_idx: geti(compute_idx),
+                            resident: if track {
+                                resident.get()
+                            } else {
+                                resident.get_untracked()
+                            },
                         };
                         let arc = match handle_cache.lock() {
                             Ok(mut g) => match g.as_ref() {
@@ -114,6 +121,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 quant_dit_idx,
                 quant_enc_idx,
                 compute_idx,
+                resident,
                 ..
             } => Some((
                 *models_dir,
@@ -125,6 +133,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 *quant_dit_idx,
                 *quant_enc_idx,
                 *compute_idx,
+                *resident,
             )),
             _ => None,
         },
@@ -140,6 +149,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         quant_dit_idx,
         quant_enc_idx,
         compute_idx,
+        resident,
     )) = snapshot
     else {
         return Box::new(
@@ -171,6 +181,12 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Quant DiT", make_dropdown(QUANT_OPTIONS, quant_dit_idx)),
         field_row("Quant Enc", make_dropdown(QUANT_OPTIONS, quant_enc_idx)),
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
+        // Пока декоративный для ACE-Step: Generate-монолит грузит и дропает
+        // компоненты последовательно внутри generate_music (sequential-drop
+        // под 24 ГБ), а VaeEncode берёт VAE из глобальных настроек. Чекбокс
+        // здесь ради единого стиля чекпойнтов; заработает, когда движок
+        // научится держать компоненты между вызовами.
+        field_row("Держать в памяти", make_toggle(resident)),
     ];
     Box::new(
         Column::new()

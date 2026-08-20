@@ -1898,6 +1898,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             quant_enc_idx: use_signal(0_usize),
             compute_idx: use_signal(0_usize),
             memory_mode_idx: use_signal(0_usize),
+            // Резидентность по умолчанию выключена — прежнее weak-поведение.
+            resident: use_signal(false),
             handle_cache: Arc::new(Mutex::new(None)),
         },
         NodeKind::H3TextEncoder => NodeRuntime::H3TextEncoder {
@@ -1964,6 +1966,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             quant_dit_idx: use_signal(0_usize),
             quant_enc_idx: use_signal(0_usize),
             compute_idx: use_signal(0_usize),
+            // Резидентность по умолчанию выключена — прежнее weak-поведение.
+            resident: use_signal(false),
             handle_cache: Arc::new(Mutex::new(None)),
         },
         NodeKind::LtxTextEncoder => NodeRuntime::LtxTextEncoder {
@@ -2129,6 +2133,8 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             quant_dit_idx: use_signal(acestep::default_storage_idx()),
             quant_enc_idx: use_signal(acestep::default_storage_idx()),
             compute_idx: use_signal(acestep::default_compute_idx()),
+            // Резидентность по умолчанию выключена — прежнее weak-поведение.
+            resident: use_signal(false),
             handle_cache: Arc::new(Mutex::new(None)),
         },
         NodeKind::AceStepGenerate => NodeRuntime::AceStepGenerate {

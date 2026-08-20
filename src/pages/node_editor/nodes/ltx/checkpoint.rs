@@ -14,7 +14,7 @@ use syngui::widgets::Column;
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::types::{DataBlob, LtxBlob, LtxModelHandle, NodeInstance, NodeRuntime, PortValue};
-use super::super::acestep::{field_row, make_dropdown, make_slider_row};
+use super::super::acestep::{field_row, make_dropdown, make_slider_row, make_toggle};
 use super::{dir_picker_row, COMPUTE_OPTIONS, DEVICE_OPTIONS, QUANT_DIT_OPTIONS, QUANT_ENC_OPTIONS};
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
 
@@ -35,6 +35,7 @@ impl NodeExecutor for CheckpointExec {
                     quant_dit_idx,
                     quant_enc_idx,
                     compute_idx,
+                    resident,
                     handle_cache,
                 } => {
                     let (mp, gd) = if track {
@@ -42,7 +43,7 @@ impl NodeExecutor for CheckpointExec {
                     } else {
                         (model_path.get_untracked(), gemma_dir.get_untracked())
                     };
-                    let (up, lp, ls, di, qd, qe, ci) = if track {
+                    let (up, lp, ls, di, qd, qe, ci, res) = if track {
                         (
                             upscaler_path.get(),
                             lora_path.get(),
@@ -51,6 +52,7 @@ impl NodeExecutor for CheckpointExec {
                             quant_dit_idx.get(),
                             quant_enc_idx.get(),
                             compute_idx.get(),
+                            resident.get(),
                         )
                     } else {
                         (
@@ -61,6 +63,7 @@ impl NodeExecutor for CheckpointExec {
                             quant_dit_idx.get_untracked(),
                             quant_enc_idx.get_untracked(),
                             compute_idx.get_untracked(),
+                            resident.get_untracked(),
                         )
                     };
                     match (mp, gd) {
@@ -75,6 +78,7 @@ impl NodeExecutor for CheckpointExec {
                                 quant_dit_idx: qd,
                                 quant_enc_idx: qe,
                                 compute_idx: ci,
+                                resident: res,
                             };
                             let arc = match handle_cache.lock() {
                                 Ok(mut g) => match g.as_ref() {
@@ -113,6 +117,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 quant_dit_idx,
                 quant_enc_idx,
                 compute_idx,
+                resident,
                 ..
             } => Some((
                 *model_path,
@@ -124,6 +129,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 *quant_dit_idx,
                 *quant_enc_idx,
                 *compute_idx,
+                *resident,
             )),
             _ => None,
         },
@@ -139,6 +145,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         quant_dit_idx,
         quant_enc_idx,
         compute_idx,
+        resident,
     )) = snapshot
     else {
         return Box::new(Text::new("LtxCheckpoint: некорректный runtime").class("node-card-field-error"));
@@ -180,6 +187,9 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Quant DiT", make_dropdown(QUANT_DIT_OPTIONS, quant_dit_idx)),
         field_row("Quant Gemma", make_dropdown(QUANT_ENC_OPTIONS, quant_enc_idx)),
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
+        // Держать DiT в VRAM после прогона: на 24 ГБ рядом с VAE-decode
+        // может не хватить памяти — осознанный опт-ин.
+        field_row("Держать в памяти", make_toggle(resident)),
     ];
     Box::new(
         Column::new()

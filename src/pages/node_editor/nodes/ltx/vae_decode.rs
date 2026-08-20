@@ -198,7 +198,11 @@ fn worker(
     progress_pct: RwSignal<f32>,
 ) -> std::result::Result<LtxFrames, String> {
     let dev = device_from_idx(handle.device_idx);
-    shared::release_avdit_hold();
+    // «Держать в памяти» на Checkpoint: hold DiT переживает decode. Иначе —
+    // прежнее поведение: отпустить DiT, чтобы VAE влез в VRAM.
+    if !handle.resident {
+        shared::release_avdit_hold();
+    }
     shared::sync_and_trim(dev);
     let set_pct = |pct: f32| {
         run_on_main_thread(move || progress_pct.set(pct));

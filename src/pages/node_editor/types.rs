@@ -650,6 +650,8 @@ pub struct H3ModelHandle {
     pub quant_enc_idx: usize,
     pub compute_idx: usize,
     pub memory_mode_idx: usize,
+    /// Держать DiT в VRAM после прогона (чекбокс «Держать в памяти»).
+    pub resident: bool,
 }
 
 /// Геометрия генерации: снапнутое число кадров + латентная сетка.
@@ -763,6 +765,10 @@ pub struct LtxModelHandle {
     pub quant_dit_idx: usize,
     pub quant_enc_idx: usize,
     pub compute_idx: usize,
+    /// Держать тяжёлые компоненты в VRAM после прогона (см. чекбокс
+    /// «Держать в памяти» на Checkpoint-ноде). В ключи weak-кэшей НЕ
+    /// входит — резидентность не меняет сами веса.
+    pub resident: bool,
 }
 
 /// Конфиг ACE-Step чекпойнта: каталог моделей (как CLI `--models`) +
@@ -782,6 +788,8 @@ pub struct AceStepModelHandle {
     pub quant_dit_idx: usize,
     pub quant_enc_idx: usize,
     pub compute_idx: usize,
+    /// Держать модели в VRAM после прогона (чекбокс «Держать в памяти»).
+    pub resident: bool,
 }
 
 /// Видео-латент с метаданными латентной сетки (нужны downstream-нодам для
@@ -1787,6 +1795,8 @@ pub enum NodeRuntime {
         quant_dit_idx: RwSignal<usize>,
         quant_enc_idx: RwSignal<usize>,
         compute_idx: RwSignal<usize>,
+        /// Держать модели в VRAM после прогона.
+        resident: RwSignal<bool>,
         /// Кэш Arc-хэндла: новый Arc только при смене параметров (иначе
         /// ptr_eq в PortValue видел бы «новое» значение каждый evaluate).
         handle_cache: Arc<Mutex<Option<Arc<AceStepModelHandle>>>>,
@@ -1898,6 +1908,9 @@ pub enum NodeRuntime {
         quant_dit_idx: RwSignal<usize>,
         quant_enc_idx: RwSignal<usize>,
         compute_idx: RwSignal<usize>,
+        /// Держать DiT в VRAM после прогона (внимание: на 24 ГБ рядом с
+        /// VAE-decode может не хватить памяти — осознанный опт-ин).
+        resident: RwSignal<bool>,
         /// Кэш Arc-хэндла: новый Arc только при смене параметров (иначе
         /// ptr_eq в PortValue видел бы «новое» значение каждый evaluate).
         handle_cache: Arc<Mutex<Option<Arc<LtxModelHandle>>>>,
@@ -2060,6 +2073,8 @@ pub enum NodeRuntime {
         quant_enc_idx: RwSignal<usize>,
         compute_idx: RwSignal<usize>,
         memory_mode_idx: RwSignal<usize>,
+        /// Держать DiT в VRAM после прогона.
+        resident: RwSignal<bool>,
         handle_cache: Arc<Mutex<Option<Arc<H3ModelHandle>>>>,
     },
     H3TextEncoder {

@@ -485,6 +485,10 @@ pub struct LtxCheckpointStateData {
     pub quant_enc_idx: usize,
     #[serde(default)]
     pub compute_idx: usize,
+    /// Держать тяжёлые компоненты в VRAM после прогона. Старые шаблоны
+    /// без поля → false (прежнее weak-поведение).
+    #[serde(default)]
+    pub resident: bool,
 }
 
 fn default_ltx_lora_strength() -> f32 {
@@ -515,6 +519,9 @@ pub struct H3CheckpointStateData {
     pub compute_idx: usize,
     #[serde(default)]
     pub memory_mode_idx: usize,
+    /// Держать DiT в VRAM после прогона. Старые шаблоны → false.
+    #[serde(default)]
+    pub resident: bool,
 }
 
 fn default_h3_lora_strength() -> f32 {
@@ -1237,6 +1244,8 @@ pub struct AceStepCheckpointStateData {
     pub quant_dit_idx: usize,
     pub quant_enc_idx: usize,
     pub compute_idx: usize,
+    /// Держать модели в VRAM после прогона. Старые шаблоны → false.
+    pub resident: bool,
 }
 
 /// State ACE-Step Generate-ноды (монолит): режим + sampler/AR/DCW-параметры

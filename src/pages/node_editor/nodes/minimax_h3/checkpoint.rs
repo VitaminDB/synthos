@@ -6,7 +6,7 @@ use syngui::widgets::Column;
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::types::{DataBlob, H3Blob, H3ModelHandle, NodeInstance, NodeRuntime, PortValue};
-use super::super::acestep::{field_row, make_dropdown, make_slider_row};
+use super::super::acestep::{field_row, make_dropdown, make_slider_row, make_toggle};
 use super::{
     COMPUTE_OPTIONS, DEVICE_OPTIONS, MEMORY_MODE_OPTIONS, QUANT_DIT_OPTIONS, QUANT_ENC_OPTIONS,
     VARIANT_OPTIONS,
@@ -34,6 +34,7 @@ impl NodeExecutor for CheckpointExec {
                     quant_enc_idx,
                     compute_idx,
                     memory_mode_idx,
+                    resident,
                     handle_cache,
                 } => {
                     let md = if track { model_path.get() } else { model_path.get_untracked() };
@@ -68,6 +69,7 @@ impl NodeExecutor for CheckpointExec {
                         } else {
                             memory_mode_idx.get_untracked()
                         },
+                        resident: if track { resident.get() } else { resident.get_untracked() },
                     });
                     match handle {
                         Some(h) => {
@@ -109,6 +111,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 quant_enc_idx,
                 compute_idx,
                 memory_mode_idx,
+                resident,
                 ..
             } => Some((
                 *model_path,
@@ -121,6 +124,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 *quant_enc_idx,
                 *compute_idx,
                 *memory_mode_idx,
+                *resident,
             )),
             _ => None,
         },
@@ -137,6 +141,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         quant_enc_idx,
         compute_idx,
         memory_mode_idx,
+        resident,
     )) = snapshot
     else {
         return Box::new(Column::new());
@@ -176,6 +181,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Квант DiT", make_dropdown(QUANT_DIT_OPTIONS, quant_dit_idx)),
         field_row("Квант энкодера", make_dropdown(QUANT_ENC_OPTIONS, quant_enc_idx)),
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
+        // Держать DiT в VRAM после прогона (decode пропустит release hold).
+        field_row("Держать в памяти", make_toggle(resident)),
         field_row("Память", make_dropdown(MEMORY_MODE_OPTIONS, memory_mode_idx)),
     ];
     Box::new(

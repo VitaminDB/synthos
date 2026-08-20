@@ -212,6 +212,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_enc_idx,
             compute_idx,
             memory_mode_idx,
+            resident,
             ..
         } => Some(NodeStateData::H3Checkpoint(H3CheckpointStateData {
             model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
@@ -224,6 +225,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_enc_idx: quant_enc_idx.get_untracked(),
             compute_idx: compute_idx.get_untracked(),
             memory_mode_idx: memory_mode_idx.get_untracked(),
+            resident: resident.get_untracked(),
         })),
         NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. } => {
             Some(NodeStateData::H3Sampler(H3SamplerStateData {
@@ -502,6 +504,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_dit_idx,
             quant_enc_idx,
             compute_idx,
+            resident,
             ..
         } => Some(NodeStateData::LtxCheckpoint(LtxCheckpointStateData {
             model_path: model_path
@@ -521,6 +524,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_dit_idx: quant_dit_idx.get_untracked(),
             quant_enc_idx: quant_enc_idx.get_untracked(),
             compute_idx: compute_idx.get_untracked(),
+            resident: resident.get_untracked(),
         })),
         NodeRuntime::LtxTextEncoder {
             prompt_field,
@@ -649,6 +653,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_dit_idx,
             quant_enc_idx,
             compute_idx,
+            resident,
             ..
         } => Some(NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
             models_dir: models_dir.get_untracked().map(|p| p.to_string_lossy().to_string()),
@@ -662,6 +667,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             quant_dit_idx: quant_dit_idx.get_untracked(),
             quant_enc_idx: quant_enc_idx.get_untracked(),
             compute_idx: compute_idx.get_untracked(),
+            resident: resident.get_untracked(),
         })),
         NodeRuntime::AceStepGenerate {
             mode_idx,
@@ -1095,6 +1101,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
                 quant_enc_idx,
                 compute_idx,
                 memory_mode_idx,
+                resident,
                 ..
             },
             NodeStateData::H3Checkpoint(data),
@@ -1109,6 +1116,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             quant_enc_idx.set(data.quant_enc_idx);
             compute_idx.set(data.compute_idx);
             memory_mode_idx.set(data.memory_mode_idx);
+            resident.set(data.resident);
         }
         (
             NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. },
@@ -1155,6 +1163,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
                 quant_dit_idx,
                 quant_enc_idx,
                 compute_idx,
+                resident,
                 ..
             },
             NodeStateData::LtxCheckpoint(data),
@@ -1168,6 +1177,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             quant_dit_idx.set(data.quant_dit_idx);
             quant_enc_idx.set(data.quant_enc_idx);
             compute_idx.set(data.compute_idx);
+            resident.set(data.resident);
         }
         (
             NodeRuntime::LtxTextEncoder {
@@ -1312,6 +1322,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
                 quant_dit_idx,
                 quant_enc_idx,
                 compute_idx,
+                resident,
                 ..
             },
             NodeStateData::AceStepCheckpoint(data),
@@ -1325,6 +1336,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             quant_dit_idx.set(data.quant_dit_idx);
             quant_enc_idx.set(data.quant_enc_idx);
             compute_idx.set(data.compute_idx);
+            resident.set(data.resident);
         }
         (
             NodeRuntime::AceStepGenerate {
@@ -1816,6 +1828,7 @@ mod tests {
                 device_idx: 0,
                 quant_dit_idx: 1,
                 quant_enc_idx: 2,
+                resident: false,
                 compute_idx: 1,
                 memory_mode_idx: 2,
             })),
@@ -2160,6 +2173,7 @@ mod tests {
                 quant_dit_idx: 1,
                 quant_enc_idx: 2,
                 compute_idx: 0,
+                resident: false,
             })),
         };
         let ctx = roundtrip(&make_template(vec![nd]));

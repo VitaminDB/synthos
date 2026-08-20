@@ -80,7 +80,13 @@
  * вывод обновлялся за последнюю секунду, см. terminal_activity):
  *   busy  — все заняты        → зелёный;
  *   idle  — все простаивают   → красный;
- *   mixed — часть занята      → оранжевый. */
+ *   mixed — часть занята      → оранжевый.
+ * padding ужимает кружок: высота Badge = font(10px) + 2·padding,
+ * дефолтные 8px давали ~26px — непропорционально много на 40px-кнопке. */
+.nav-rail-term-badge {
+    padding: 3px;
+}
+
 .nav-rail-term-badge.busy {
     background-color: var(--presence-online);
 }

@@ -572,7 +572,56 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     convert::load_into_ctx(&ctx, t);
     let mut out = format!("шаблон «{}» загружен в служебную вкладку\n", t.name);
     out.push_str(&graph_summary(&ctx)?);
+    // Чем заполнять граф — говорим сразу: встроенные шаблоны путей не несут,
+    // и агент иначе выясняет это только на pre-check прогона, потратив ходы.
+    let missing = missing_model_paths(&ctx);
+    if !missing.is_empty() {
+        out.push_str("не заполнены пути моделей (apply set_state, пути — из action=list):\n");
+        for m in &missing {
+            out.push_str(m);
+            out.push('\n');
+        }
+    }
     Ok(out)
+}
+
+/// Ноды графа с пустыми путями моделей — то же, что проверяет pre-check
+/// прогона (`pipeline_run::prepare`), но до `run`.
+fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
+    let nodes = ctx.nodes.get_untracked();
+    let conns = ctx.connections.get_untracked();
+    let mut out = Vec::new();
+    for n in &nodes {
+        if !n.enabled.get_untracked() {
+            continue;
+        }
+        // Слот-ноды с подключённым входом `model` берут путь от чекпойнта.
+        let has_model_input = conns
+            .iter()
+            .any(|c| c.to_node == n.id && c.to_port == "model");
+        let Ok(rt) = n.runtime.lock() else { continue };
+        let mut fields: Vec<&str> = rt
+            .missing_model_paths()
+            .into_iter()
+            .filter(|f| !(*f == "model_path" && has_model_input))
+            .collect();
+        // Upscaler требуется только графам со стадией Upscale ×2.
+        let needs_upscaler = nodes
+            .iter()
+            .any(|x| x.enabled.get_untracked() && x.kind == NodeKind::LtxUpscale);
+        if needs_upscaler && rt.ltx_upscaler_missing() {
+            fields.push("upscaler_path");
+        }
+        if !fields.is_empty() {
+            out.push(format!(
+                "нода {} ({}): {}",
+                n.id.0,
+                registry::meta(n.kind).title,
+                fields.join(", ")
+            ));
+        }
+    }
+    out
 }
 
 fn graph_impl() -> Result<String, String> {
@@ -737,8 +786,9 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
     }
 
     if notes.is_empty() {
-        // Перечисляем полученные ключи: «ты ничего не передал» на вызов с
-        // непустым set_state — это тупик, из которого агент не выберется.
+        // Не ошибка: `apply` без полей модели шлют как «подтверди правки»,
+        // и отказ загонял их в цикл повторов. Отдаём состояние графа и
+        // прямо называем следующий шаг.
         let got = v
             .as_object()
             .map(|o| {
@@ -748,10 +798,12 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
                     .join(", ")
             })
             .unwrap_or_default();
-        return Err(format!(
-            "apply без изменений: передай graph, set_state, connect или disconnect. \
-             Пришло — {got}. Формат set_state: \
-             [{{\"node\": <id|имя вида>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]"
+        return Ok(format!(
+            "apply без изменений — передано только [{got}]. Правки идут в \
+             set_state / connect / disconnect / graph, формат set_state: \
+             [{{\"node\": <id|имя вида>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]\n\
+             Если граф уже собран — следующий шаг action=run.\n{}",
+            graph_brief(&ctx)?
         ));
     }
 
@@ -764,7 +816,14 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
             out.push('\n');
         }
     }
-    out.push_str(&graph_summary(&ctx)?);
+    // Сводка, а не полный снимок: state всех нод со связями — это ~2.5 тыс.
+    // символов на каждый apply, из которых агенту нужна лишь строка «что
+    // дальше». Полный снимок остаётся за action=graph.
+    out.push_str(&graph_brief(&ctx)?);
+    out.push_str(
+        "Следующий шаг: action=run (free_vram=true, если по system status \
+         VRAM не хватает). Проверить state целиком — action=graph.\n",
+    );
     Ok(out)
 }
 
@@ -825,10 +884,26 @@ fn unwrap_json_string(v: &serde_json::Value, field: &str) -> Result<serde_json::
     let text = raw.trim();
     serde_json::from_str(text).map_err(|e| {
         format!(
-            "{field} пришёл строкой, и это не разбирается как JSON: {e}. \
-             Передавай значение структурой, а не текстом."
+            "{field} пришёл строкой, и это не разбирается как JSON: {e}{}. \
+             Передавай значение структурой (массивом/объектом), а не текстом.",
+            json_error_context(text, &e)
         )
     })
+}
+
+/// Фрагмент текста вокруг места ошибки разбора: «expected `:` at column 132»
+/// без самого куска модель чинит наугад, тратя ходы.
+fn json_error_context(text: &str, e: &serde_json::Error) -> String {
+    let col = e.column();
+    if e.line() != 1 || col == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let idx = col.min(chars.len()).saturating_sub(1);
+    let from = idx.saturating_sub(40);
+    let to = (idx + 20).min(chars.len());
+    let frag: String = chars[from..to].iter().collect();
+    format!(" (около: …{frag}…)")
 }
 
 /// Массив-аргумент: принимает массив, одиночный объект и строку с JSON.
@@ -1132,6 +1207,7 @@ mod tests {
         let err = coerce_array(&v, "set_state").expect_err("битый JSON");
         assert!(err.contains("set_state пришёл строкой"), "{err}");
         assert!(err.contains("column"), "{err}");
+        assert!(err.contains("около:"), "нужен фрагмент вокруг ошибки: {err}");
     }
 
     /// Описания шаблонов в `list` подрезаются: полный `list` обязан влезать

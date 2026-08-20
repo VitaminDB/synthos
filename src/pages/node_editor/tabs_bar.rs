@@ -12,7 +12,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::{DecoratedBox, GestureDetector, Reactive, Row, ToolButton};
 
-use crate::icons::{MI_ADD, MI_CLOSE, MI_PUBLIC, MI_TUNE};
+use crate::icons::{MI_ADD, MI_CLOSE, MI_PSYCHOLOGY, MI_PUBLIC, MI_TUNE};
 
 use super::tabs::{EditorWorkspace, OpenTab};
 
@@ -26,7 +26,9 @@ pub fn view() -> impl Widget {
             .gap(0.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::Start);
-        for tab in tabs.iter() {
+        // Скрытые (агентские) вкладки в полосе не показываются; `.get()` —
+        // чтобы reveal из чата перерисовал бар.
+        for tab in tabs.iter().filter(|t| !t.hidden.get()) {
             let is_active = active == Some(tab.id);
             row = row.child(tab_chip(ws, tab.clone(), is_active));
         }
@@ -58,10 +60,11 @@ fn tab_chip(ws: EditorWorkspace, tab: OpenTab, is_active: bool) -> impl Widget {
     let dirty_signal = tab.dirty;
     let class = if is_active { "ne-tab ne-tab--active" } else { "ne-tab" };
 
-    // Иконка зависит от происхождения вкладки: builtin/custom-template
-    // или Untitled. На текущем этапе отличаем только по факту привязки
-    // к шаблону.
-    let icon_glyph = if tab.source.get_untracked().is_some() {
+    // Иконка зависит от происхождения вкладки: агентская (раскрытая из
+    // чата), builtin/custom-template или Untitled.
+    let icon_glyph = if tab.agent_chat.get_untracked().is_some() {
+        MI_PSYCHOLOGY
+    } else if tab.source.get_untracked().is_some() {
         MI_PUBLIC
     } else {
         MI_TUNE

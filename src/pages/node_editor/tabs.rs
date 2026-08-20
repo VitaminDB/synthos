@@ -28,6 +28,12 @@ pub struct OpenTab {
     pub source: RwSignal<Option<String>>,
     pub dirty: RwSignal<bool>,
     pub last_saved_fp: RwSignal<u64>,
+    /// `Some(chat_id)` — служебная вкладка агента Syn-чата: граф в ней
+    /// собирает и запускает инструмент `pipelines`, по одной на чат.
+    pub agent_chat: RwSignal<Option<String>>,
+    /// Скрыта из полосы вкладок. Агентские вкладки рождаются скрытыми и
+    /// показываются переходом из чата ([`EditorWorkspace::reveal`]).
+    pub hidden: RwSignal<bool>,
     pub ctx: NodeEditorCtx,
 }
 
@@ -142,14 +148,29 @@ impl EditorWorkspace {
         let next = ws.next_tab_id.get_untracked().max(max_id + 1);
         ws.next_tab_id.set(next);
 
-        // Activate: prefer сохранённую active-id, иначе первая вкладка.
+        // Activate: prefer сохранённую active-id (если она видимая), иначе
+        // первая видимая вкладка. Скрытую агентскую активной не делаем.
         let active = state
             .active
-            .and_then(|id| tabs.iter().find(|t| t.id.0 == id).map(|t| t.id))
-            .or_else(|| tabs.first().map(|t| t.id));
+            .and_then(|id| {
+                tabs.iter()
+                    .find(|t| t.id.0 == id && !t.hidden.get_untracked())
+                    .map(|t| t.id)
+            })
+            .or_else(|| {
+                tabs.iter()
+                    .find(|t| !t.hidden.get_untracked())
+                    .map(|t| t.id)
+            });
 
+        let no_visible = active.is_none();
         ws.tabs.set(tabs);
         ws.active.set(active);
+        if no_visible {
+            // Остались одни скрытые (агентские) вкладки — полоса не должна
+            // быть пустой.
+            ws.new_untitled();
+        }
         ws
     }
 
@@ -180,6 +201,8 @@ impl EditorWorkspace {
             source: use_signal(None),
             dirty: use_signal(false),
             last_saved_fp: use_signal(0),
+            agent_chat: use_signal(None),
+            hidden: use_signal(false),
             ctx: NodeEditorCtx::new(),
         };
         persist::install_dirty_for_tab(tab);
@@ -187,6 +210,59 @@ impl EditorWorkspace {
         self.tabs.set(tabs);
         self.active.set(Some(id));
         id
+    }
+
+    /// Служебная вкладка агента для чата `chat_id`: найти существующую или
+    /// создать новую — скрытую, с пустым графом и БЕЗ смены активной
+    /// вкладки (пользователь не должен терять фокус, пока агент работает).
+    pub fn ensure_agent_tab(&self, chat_id: &str, title: &str) -> TabId {
+        if let Some(id) = self.agent_tab_for_chat(chat_id) {
+            return id;
+        }
+        let id_n = self.next_tab_id.get_untracked();
+        self.next_tab_id.set(id_n + 1);
+        let id = TabId(id_n);
+        let ctx = NodeEditorCtx::new();
+        // NodeEditorCtx::new() добавляет стартовую demo-ноду — агенту
+        // нужен чистый граф.
+        ctx.nodes.set(Vec::new());
+        ctx.connections.set(Vec::new());
+        let tab = OpenTab {
+            id,
+            title: use_signal(title.to_string()),
+            source: use_signal(None),
+            dirty: use_signal(false),
+            last_saved_fp: use_signal(0),
+            agent_chat: use_signal(Some(chat_id.to_string())),
+            hidden: use_signal(true),
+            ctx,
+        };
+        persist::install_dirty_for_tab(tab);
+        let mut tabs = self.tabs.get_untracked();
+        tabs.push(tab);
+        self.tabs.set(tabs);
+        id
+    }
+
+    /// Найти служебную вкладку агента для чата.
+    pub fn agent_tab_for_chat(&self, chat_id: &str) -> Option<TabId> {
+        self.tabs
+            .get_untracked()
+            .iter()
+            .find(|t| t.agent_chat.get_untracked().as_deref() == Some(chat_id))
+            .map(|t| t.id)
+    }
+
+    /// Показать скрытую вкладку в полосе и активировать — переход по
+    /// ссылке «открыть граф» из чата.
+    pub fn reveal(&self, id: TabId) {
+        let tabs = self.tabs.get_untracked();
+        if let Some(t) = tabs.iter().find(|t| t.id == id) {
+            if t.hidden.get_untracked() {
+                t.hidden.set(false);
+            }
+        }
+        self.activate(id);
     }
 
     /// Открыть шаблон. Если уже открыт во вкладке — просто активирует
@@ -213,6 +289,8 @@ impl EditorWorkspace {
             source: use_signal(Some(t.id.clone())),
             dirty: use_signal(false),
             last_saved_fp: use_signal(0),
+            agent_chat: use_signal(None),
+            hidden: use_signal(false),
             ctx,
         };
         persist::install_dirty_for_tab(tab);
@@ -225,8 +303,9 @@ impl EditorWorkspace {
         id
     }
 
-    /// Закрыть вкладку. Если последняя — создать пустую `Untitled` чтобы
-    /// canvas никогда не был «без ничего».
+    /// Закрыть вкладку. Если видимых не осталось — создать пустую
+    /// `Untitled`: полоса вкладок не должна быть пустой, а canvas не должен
+    /// молча показывать скрытый агентский граф.
     pub fn close(&self, id: TabId) {
         let mut tabs = self.tabs.get_untracked();
         let idx = match tabs.iter().position(|t| t.id == id) {
@@ -234,17 +313,21 @@ impl EditorWorkspace {
             None => return,
         };
         tabs.remove(idx);
-        if tabs.is_empty() {
+        if !tabs.iter().any(|t| !t.hidden.get_untracked()) {
             self.tabs.set(tabs);
             self.new_untitled();
             return;
         }
-        // Если закрыли активную — переключиться на соседнюю.
+        // Если закрыли активную — переключиться на ближайшую ВИДИМУЮ слева
+        // (скрытые агентские вкладки пользователю не подсовываем).
         if self.active.get_untracked() == Some(id) {
-            // Берём ту, что слева (или первую).
-            let next_idx = idx.saturating_sub(1);
-            let next_id = tabs[next_idx.min(tabs.len() - 1)].id;
-            self.active.set(Some(next_id));
+            let next_id = tabs[..idx.min(tabs.len())]
+                .iter()
+                .rev()
+                .find(|t| !t.hidden.get_untracked())
+                .or_else(|| tabs.iter().find(|t| !t.hidden.get_untracked()))
+                .map(|t| t.id);
+            self.active.set(next_id);
         }
         self.tabs.set(tabs);
     }
@@ -309,6 +392,8 @@ fn make_tab_from_state(ts: &TabState) -> OpenTab {
         source: use_signal(ts.source.clone()),
         dirty: use_signal(false),
         last_saved_fp: use_signal(0),
+        agent_chat: use_signal(ts.agent_chat.clone()),
+        hidden: use_signal(ts.hidden),
         ctx,
     };
     persist::install_dirty_for_tab(tab);

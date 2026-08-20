@@ -47,6 +47,13 @@ pub struct TabState {
     /// Untitled или scratch.
     #[serde(default)]
     pub source: Option<String>,
+    /// `Some(chat_id)` — служебная вкладка агента Syn-чата. Сохраняется,
+    /// чтобы крэш посреди долгого прогона не терял агентский граф.
+    #[serde(default)]
+    pub agent_chat: Option<String>,
+    /// Скрыта из полосы вкладок (агентская, пока не раскрыта из чата).
+    #[serde(default)]
+    pub hidden: bool,
     /// Снимок нод. NodeData уже несёт всю pos/style/enabled/fields/state информацию.
     #[serde(default)]
     pub nodes: Vec<NodeData>,
@@ -886,6 +893,8 @@ mod tests {
             id: 1,
             title: "Untitled".into(),
             source: None,
+            agent_chat: None,
+            hidden: false,
             nodes: vec![NodeData {
                 id: 7,
                 kind: NodeKind::Gain,
@@ -933,6 +942,8 @@ mod tests {
             id: 42,
             title: "My Workflow".into(),
             source: None,
+            agent_chat: None,
+            hidden: false,
             nodes: vec![NodeData {
                 id: 9,
                 kind: NodeKind::Gain,
@@ -976,6 +987,48 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// Агентская вкладка: флаги переживают roundtrip, restore не делает
+    /// скрытую вкладку активной, а при одних скрытых — заводит Untitled.
+    #[test]
+    fn agent_tab_roundtrip_and_restore() {
+        use super::super::tabs::EditorWorkspace;
+
+        let agent_tab = TabState {
+            id: 5,
+            title: "Агент: LTX".into(),
+            source: None,
+            agent_chat: Some("chat-abc".into()),
+            hidden: true,
+            nodes: Vec::new(),
+            connections: Vec::new(),
+            viewport: None,
+        };
+        let state = WorkspaceState {
+            tabs: vec![agent_tab],
+            active: Some(5),
+            next_tab_id: 6,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: WorkspaceState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, state);
+        assert_eq!(restored.tabs[0].agent_chat.as_deref(), Some("chat-abc"));
+        assert!(restored.tabs[0].hidden);
+
+        let ws = EditorWorkspace::from_state(restored);
+        let tabs = ws.tabs.get_untracked();
+        // Агентская вкладка восстановлена + добавлена видимая Untitled.
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(ws.agent_tab_for_chat("chat-abc"), Some(tabs[0].id));
+        // Активной стала видимая, а не скрытая.
+        let active = ws.active.get_untracked().unwrap();
+        assert_ne!(active, tabs[0].id);
+
+        // reveal показывает вкладку и активирует её.
+        ws.reveal(tabs[0].id);
+        assert!(!tabs[0].hidden.get_untracked());
+        assert_eq!(ws.active.get_untracked(), Some(tabs[0].id));
     }
 
     #[test]

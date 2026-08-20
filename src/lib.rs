@@ -806,6 +806,10 @@ fn install_workspace_autosave() {
         // снимок через get_untracked — повторных подписок не возникает.
         for tab in tabs.iter() {
             persist::subscribe_tab_signals(&tab.ctx);
+            // Флаги агентской вкладки живут на OpenTab, не в ctx — reveal
+            // из чата тоже должен пересохранить workspace.
+            let _ = tab.hidden.get();
+            let _ = tab.agent_chat.get();
         }
 
         let mut tab_states = Vec::with_capacity(tabs.len());
@@ -815,6 +819,8 @@ fn install_workspace_autosave() {
                 id: tab.id.0,
                 title: tab.title.get_untracked(),
                 source: tab.source.get_untracked(),
+                agent_chat: tab.agent_chat.get_untracked(),
+                hidden: tab.hidden.get_untracked(),
                 nodes,
                 connections: conns,
                 viewport,

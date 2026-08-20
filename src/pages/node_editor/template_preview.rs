@@ -119,6 +119,7 @@ fn node_color(kind: NodeKind) -> Color {
         NodeKind::OmniVoice => Color::new(0.55, 0.42, 0.92, 1.0),      // indigo (TTS/нейро)
         NodeKind::VoxCpm2 => Color::new(0.62, 0.50, 0.92, 1.0),        // lavender (TTS/нейро)
         NodeKind::Llm => Color::new(0.40, 0.80, 0.66, 1.0),            // teal-green (LLM/нейро)
+        NodeKind::SynCheckpoint => Color::new(0.68, 0.56, 0.90, 1.0),  // violet (источник модели)
         NodeKind::SortformerDiarizer => Color::new(0.31, 0.78, 0.94, 1.0), // cyan (диаризация)
         // ACE-Step семейство — единая палитра в фиолетово-розовой гамме,
         // так визуально граф «AceStep — Text2Music» легко выделить.

@@ -644,6 +644,20 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = position.get();
             let _ = out_version.get();
         }
+        NodeRuntime::SynCheckpoint {
+            model_path,
+            device_idx,
+            storage_idx,
+            compute_idx,
+            resident,
+            ..
+        } => {
+            let _ = model_path.get();
+            let _ = device_idx.get();
+            let _ = storage_idx.get();
+            let _ = compute_idx.get();
+            let _ = resident.get();
+        }
         NodeRuntime::LtxCheckpoint {
             model_path,
             gemma_dir,

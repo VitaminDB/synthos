@@ -73,5 +73,23 @@ pub mod minimax_h3;
 pub mod omnivoice;
 pub mod scalar;
 pub mod sortformer_diarizer;
+pub mod syn_checkpoint;
 pub mod text_view;
 pub mod voxcpm2;
+
+/// Хэндл «Syn Checkpoint», подключённый к входу `model` ноды `node_id`.
+/// Общий для всех слот-семейств (LLM/TTS/ASR/диаризация): если порт не
+/// подключён — None, нода работает от собственных полей (legacy-графы).
+pub fn current_input_syn_model(
+    ctx: &super::state::NodeEditorCtx,
+    node_id: super::types::NodeId,
+) -> Option<std::sync::Arc<super::types::SynModelHandle>> {
+    let conns = ctx.connections.get_untracked();
+    let src = conns
+        .iter()
+        .find(|c| c.to_node == node_id && c.to_port == "model")?;
+    let values = ctx.values.get_untracked();
+    values
+        .get(&(src.from_node, src.from_port))
+        .and_then(|pv| pv.as_syn_model())
+}

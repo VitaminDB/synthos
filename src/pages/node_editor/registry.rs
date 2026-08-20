@@ -13,7 +13,8 @@ use syngui::audio::{Biquad, BiquadMode, SchroederReverb};
 use crate::icons::{
     MI_ADD, MI_APPS, MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTORENEW, MI_AUTO_AWESOME, MI_BLUR_ON,
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
-    MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
+    MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
+    MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
     MI_CROP_SQUARE, MI_TRANSLATE, MI_TUNE,
 };
@@ -22,7 +23,7 @@ use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, llm, ltx, markdown_view,
-    minimax_h3, omnivoice, scalar, sortformer_diarizer, text_view, voxcpm2,
+    minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, voxcpm2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
@@ -187,6 +188,8 @@ static LTX_IC_LORA_EXEC: ltx::ic_lora::IcLoraExec = ltx::ic_lora::IcLoraExec;
 static LTX_AUDIO_INPUT_EXEC: ltx::audio_input::AudioInputExec = ltx::audio_input::AudioInputExec;
 static LTX_LIPDUB_EXEC: ltx::lipdub::LipdubExec = ltx::lipdub::LipdubExec;
 static LTX_A2V_EXEC: ltx::a2v::A2vExec = ltx::a2v::A2vExec;
+static SYN_CHECKPOINT_EXEC: syn_checkpoint::SynCheckpointExec =
+    syn_checkpoint::SynCheckpointExec;
 
 const NUMBER_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "out", label: "out", kind: PortKind::Data },
@@ -237,14 +240,21 @@ const SAVE_TO_FILE_INPUTS: &[PortSchema] = &[
 
 // ── ASR / Транскрибация ──────────────────────────────────────────────────
 const ASR_GIGAAM_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "in", label: "audio", kind: PortKind::Audio },
 ];
 const ASR_GIGAAM_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "out", label: "text", kind: PortKind::Text },
 ];
 
+// ── Syn Checkpoint: универсальный источник модели для слот-семейств ──────
+const SYN_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+];
+
 // ── LLM (synaptix Qwen3 / Hybrid): prompt + system? → answer (Text) ──────
 const LLM_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
     PortSchema { name: "system", label: "system", kind: PortKind::Text },
 ];
@@ -253,6 +263,7 @@ const LLM_OUTPUTS: &[PortSchema] = &[
 ];
 
 const VOXCPM2_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "text", label: "text", kind: PortKind::Text },
     PortSchema { name: "ref_audio", label: "ref audio", kind: PortKind::Audio },
     PortSchema { name: "prompt_audio", label: "prompt audio", kind: PortKind::Audio },
@@ -264,6 +275,7 @@ const VOXCPM2_OUTPUTS: &[PortSchema] = &[
 
 // ── Диаризация спикеров (Sortformer): Audio → Text(JSON) ─────────────────
 const SORTFORMER_DIARIZER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "in", label: "audio", kind: PortKind::Audio },
 ];
 const SORTFORMER_DIARIZER_OUTPUTS: &[PortSchema] = &[
@@ -284,6 +296,7 @@ const TEXT_VIEW_OUTPUTS: &[PortSchema] = &[
 // активируют Clone-mode (voice cloning). Если ref_audio нет — mode
 // определяется наличием instruct (Design) или авто-голосом (Auto).
 const OMNIVOICE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model",     label: "model",     kind: PortKind::Data },
     PortSchema { name: "text",      label: "text",      kind: PortKind::Text },
     PortSchema { name: "ref_audio", label: "ref audio", kind: PortKind::Audio },
     PortSchema { name: "ref_text",  label: "ref text",  kind: PortKind::Text },
@@ -919,6 +932,30 @@ const LLM: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(llm::busy_signal),
 };
 
+// ── Syn Checkpoint: путь + предпочтения + резидентность → SynModelHandle ─
+//
+// Единый стиль с LTX/H3/ACE-Step: чекпойнт-нода не грузит веса, а публикует
+// конфиг-хэндл в порт `model`. Потребители — LLM/VoxCPM2/OmniVoice/ASR/
+// Sortformer (у них появился вход `model`; без него работают от своих
+// полей — legacy-графы не ломаются). Чекбокс «Держать в памяти» —
+// слотовое поведение (модель живёт между прогонами).
+const SYN_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SynCheckpoint,
+    icon: MI_MEMORY,
+    title: "Syn Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: None,
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(SYN_CHECKPOINT_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(super::nodes::syn_checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SYN_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
 // ── Sortformer диаризация: Audio → Text(JSON) ────────────────────────────
 //
 // Аналог AsrGigaam (категория «Нейро»), но в подкатегории «Диаризация».
@@ -1451,6 +1488,7 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     OMNIVOICE,
     VOXCPM2,
     LLM,
+    SYN_CHECKPOINT,
     ACESTEP_VAE_ENCODE,
     ACESTEP_CHECKPOINT,
     ACESTEP_GENERATE,
@@ -1762,6 +1800,15 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             loaded_name: use_signal(None),
             output_buf: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
+        },
+        NodeKind::SynCheckpoint => NodeRuntime::SynCheckpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            storage_idx: use_signal(0_usize),
+            compute_idx: use_signal(0_usize),
+            // Дефолт — слотовое поведение: так слот-ноды жили всегда.
+            resident: use_signal(true),
+            handle_cache: Arc::new(Mutex::new(None)),
         },
         NodeKind::Llm => NodeRuntime::Llm {
             model_path: use_signal(None),

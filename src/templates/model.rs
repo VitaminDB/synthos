@@ -240,6 +240,7 @@ pub enum NodeStateData {
     AceStepCheckpoint(AceStepCheckpointStateData),
     AceStepGenerate(AceStepGenerateStateData),
     FfmpegPlayer(FfmpegPlayerStateData),
+    SynCheckpoint(SynCheckpointStateData),
     LtxCheckpoint(LtxCheckpointStateData),
     LtxTextEncoder(LtxTextEncoderStateData),
     LtxNagPrompt(LtxNagPromptStateData),
@@ -431,6 +432,36 @@ impl Default for LtxImageStateData {
 
 fn default_ltx_image_strength() -> f32 {
     1.0
+}
+
+/// State универсальной «Syn Checkpoint»-ноды: путь + предпочтения
+/// device/storage/compute (индекс 0 = Auto) + резидентность.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SynCheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default)]
+    pub storage_idx: usize,
+    #[serde(default)]
+    pub compute_idx: usize,
+    /// Слотовое поведение (держать модель после прогона). Дефолт true —
+    /// исторически так вели себя все слот-ноды.
+    #[serde(default = "default_enabled_true")]
+    pub resident: bool,
+}
+
+impl Default for SynCheckpointStateData {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            device_idx: 0,
+            storage_idx: 0,
+            compute_idx: 0,
+            resident: true,
+        }
+    }
 }
 
 /// State Checkpoint-ноды LTX-2.3: пути подмоделей + device/quant/compute.

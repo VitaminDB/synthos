@@ -333,6 +333,9 @@ pub enum NodeKind {
     /// Play и кэшируется в runtime до удаления ноды или смены настроек.
     OmniVoice,
     VoxCpm2,
+    /// Универсальный чекпойнт .syn/HF для слот-семейств (LLM/TTS/ASR/
+    /// диаризация): публикует [`SynModelHandle`] в порт `model`.
+    SynCheckpoint,
     /// Нода диаризации спикеров на базе NVIDIA Streaming Sortformer v2.1
     /// (FastConformer encoder + Sortformer head, до 4 спикеров). Audio in
     /// → Text(JSON) out. Параметры (`.syn`, device, storage/compute, threshold,
@@ -448,6 +451,7 @@ impl NodeKind {
         NodeKind::TextView,
         NodeKind::OmniVoice,
         NodeKind::VoxCpm2,
+        NodeKind::SynCheckpoint,
         NodeKind::SortformerDiarizer,
         NodeKind::Llm,
         NodeKind::AceStepCheckpoint,
@@ -606,6 +610,8 @@ pub enum DataBlob {
     Ltx(LtxBlob),
     /// Хэндлы и тензоры пайплайна MiniMax-H3 (synaptix).
     H3(H3Blob),
+    /// Хэндл универсальной «Syn Checkpoint»-ноды (LLM/TTS/ASR-модели).
+    SynModel(Arc<SynModelHandle>),
 }
 
 /// Типизированный payload одной из стадий MiniMax-H3.
@@ -721,6 +727,27 @@ pub enum LtxBlob {
     /// Путь к аудио (речь) для lipdub. Загрузка (16k→mel→audio-VAE encode)
     /// делает нода-потребитель.
     AudioInput(PathBuf),
+}
+
+/// Конфиг универсальной «Syn Checkpoint»-ноды: один .syn-бандл (или
+/// HF-каталог) + предпочтения device/storage/compute + резидентность.
+/// Дешёвый POD в стиле [`LtxModelHandle`] — грузит модель потребитель
+/// (LLM/TTS/ASR-нода), маппя индексы «Auto/…» на свои family-опции
+/// (Auto = дефолт семейства). Индексы — по спискам опций в
+/// `nodes::syn_checkpoint` (DEVICE/STORAGE/COMPUTE_PREF_OPTIONS).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SynModelHandle {
+    pub model_path: PathBuf,
+    /// 0=Auto, 1=CUDA, 2=CPU.
+    pub device_idx: usize,
+    /// 0=Auto, 1=F16, 2=BF16, 3=FP8, 4=NVFP4.
+    pub storage_idx: usize,
+    /// 0=Auto, 1=F16, 2=BF16, 3=F32.
+    pub compute_idx: usize,
+    /// «Слотовое» поведение: держать модель в памяти после прогона
+    /// (как это всегда делали LLM/TTS/ASR-ноды). false — потребитель
+    /// очищает свой слот по завершении прогона, освобождая VRAM.
+    pub resident: bool,
 }
 
 /// Конфиг LTX-чекпойнта: пути подмоделей + device/quant/compute. Дешёвый
@@ -912,6 +939,14 @@ impl std::fmt::Debug for PortValue {
                 DataBlob::Ltx(LtxBlob::AudioInput(p)) => {
                     write!(f, "Data(Ltx::AudioInput({:?}))", p.file_name().unwrap_or_default())
                 }
+                DataBlob::SynModel(h) => {
+                    write!(
+                        f,
+                        "Data(SynModel({:?}, resident={}))",
+                        h.model_path.file_name().unwrap_or_default(),
+                        h.resident
+                    )
+                }
             },
         }
     }
@@ -1041,6 +1076,16 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::Ltx(LtxBlob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_syn_model(&self) -> Option<Arc<SynModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::SynModel(h) => Some(h.clone()),
                 _ => None,
             },
             _ => None,
@@ -1614,6 +1659,21 @@ pub enum NodeRuntime {
     ///   пишет JSON в `output_json` (идёт в порт) и pretty-text в `output_pretty`;
     /// - `text_version` бампается через `run_on_main_thread`, Reactive в
     ///   body пересоздаёт статус-строку.
+    /// Универсальная «Syn Checkpoint»-нода: не грузит веса, публикует
+    /// [`SynModelHandle`] (путь + предпочтения + резидентность) в порт
+    /// `model`. Потребители — слот-семейства (LLM/TTS/ASR/диаризация).
+    SynCheckpoint {
+        /// .syn-бандл или HF-каталог (LLM-нода умеет оба).
+        model_path: RwSignal<Option<PathBuf>>,
+        /// Индексы по спискам `nodes::syn_checkpoint::*_PREF_OPTIONS`.
+        device_idx: RwSignal<usize>,
+        storage_idx: RwSignal<usize>,
+        compute_idx: RwSignal<usize>,
+        /// Держать модель в памяти после прогона (слотовое поведение).
+        resident: RwSignal<bool>,
+        /// Стабильный Arc, пока параметры не менялись (ptr_eq downstream).
+        handle_cache: Arc<Mutex<Option<Arc<SynModelHandle>>>>,
+    },
     SortformerDiarizer {
         model_path: RwSignal<Option<PathBuf>>,
         device_idx: RwSignal<usize>,
@@ -2137,6 +2197,7 @@ impl NodeRuntime {
                 v
             }
             R::H3Checkpoint { model_path, .. }
+            | R::SynCheckpoint { model_path, .. }
             | R::Llm { model_path, .. }
             | R::AsrGigaam { model_path, .. }
             | R::OmniVoice { model_path, .. }
@@ -2307,6 +2368,14 @@ impl std::fmt::Debug for NodeRuntime {
                 let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
                 let run = running.get_untracked();
                 write!(f, "NodeRuntime::SortformerDiarizer{{name={name}, running={run}}}")
+            }
+            NodeRuntime::SynCheckpoint { model_path, resident, .. } => {
+                let p = model_path
+                    .get_untracked()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let r = resident.get_untracked();
+                write!(f, "NodeRuntime::SynCheckpoint{{path={p}, resident={r}}}")
             }
             NodeRuntime::Llm { loaded_name, running, .. } => {
                 let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());

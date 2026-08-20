@@ -25,7 +25,7 @@ use super::model::{
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
     LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
     LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
-    LtxVideoInputStateData, LtxVideoSaveStateData,
+    LtxVideoInputStateData, LtxVideoSaveStateData, SynCheckpointStateData,
     MarkdownViewStateData, MixerStateData, NodeData, NodeStateData, NodeStyleData,
     OmniVoiceStateData, PointData, ReverbStateData, SaveToFileStateData, Template,
     TextViewStateData, ViewportData, VoxCpm2StateData,
@@ -475,6 +475,22 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             compute_idx: compute_idx.get_untracked(),
             chunk_seconds: chunk_seconds.get_untracked(),
             overlap_seconds: overlap_seconds.get_untracked(),
+        })),
+        NodeRuntime::SynCheckpoint {
+            model_path,
+            device_idx,
+            storage_idx,
+            compute_idx,
+            resident,
+            ..
+        } => Some(NodeStateData::SynCheckpoint(SynCheckpointStateData {
+            model_path: model_path
+                .get_untracked()
+                .map(|p| p.to_string_lossy().to_string()),
+            device_idx: device_idx.get_untracked(),
+            storage_idx: storage_idx.get_untracked(),
+            compute_idx: compute_idx.get_untracked(),
+            resident: resident.get_untracked(),
         })),
         NodeRuntime::LtxCheckpoint {
             model_path,
@@ -1112,6 +1128,23 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             aspect_idx.set(data.aspect_idx);
         }
         (
+            NodeRuntime::SynCheckpoint {
+                model_path,
+                device_idx,
+                storage_idx,
+                compute_idx,
+                resident,
+                ..
+            },
+            NodeStateData::SynCheckpoint(data),
+        ) => {
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx);
+            storage_idx.set(data.storage_idx);
+            compute_idx.set(data.compute_idx);
+            resident.set(data.resident);
+        }
+        (
             NodeRuntime::LtxCheckpoint {
                 model_path,
                 gemma_dir,
@@ -1534,6 +1567,60 @@ mod tests {
             nodes,
             connections: Vec::new(),
             viewport: None,
+        }
+    }
+
+    #[test]
+    fn roundtrip_syn_checkpoint_state() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::SynCheckpoint,
+            pos: PointData { x: 10.0, y: 20.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::SynCheckpoint(SynCheckpointStateData {
+                model_path: Some("/tmp/qwen3.syn".into()),
+                device_idx: 1,
+                storage_idx: 4,
+                compute_idx: 2,
+                resident: false,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        match &*rt {
+            NodeRuntime::SynCheckpoint {
+                model_path,
+                device_idx,
+                storage_idx,
+                compute_idx,
+                resident,
+                ..
+            } => {
+                assert_eq!(
+                    model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                    Some("/tmp/qwen3.syn".into())
+                );
+                assert_eq!(device_idx.get_untracked(), 1);
+                assert_eq!(storage_idx.get_untracked(), 4);
+                assert_eq!(compute_idx.get_untracked(), 2);
+                assert!(!resident.get_untracked());
+            }
+            other => panic!("не SynCheckpoint: {other:?}"),
+        }
+    }
+
+    /// Старый JSON без поля resident получает дефолт true (слотовое
+    /// поведение).
+    #[test]
+    fn syn_checkpoint_state_resident_defaults_true() {
+        let json = r#"{ "kind": "SynCheckpoint", "data": { "model_path": "/x.syn" } }"#;
+        let s: NodeStateData = serde_json::from_str(json).unwrap();
+        match s {
+            NodeStateData::SynCheckpoint(d) => assert!(d.resident),
+            other => panic!("не SynCheckpoint: {other:?}"),
         }
     }
 

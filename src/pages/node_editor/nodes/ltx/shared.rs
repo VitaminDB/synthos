@@ -124,6 +124,11 @@ fn gemma_label(h: &LtxModelHandle) -> String {
 static CKPT_CACHE: OnceLock<Mutex<HashMap<LtxModelKey, Weak<LtxCheckpoint>>>> = OnceLock::new();
 static AVDIT_CACHE: OnceLock<Mutex<HashMap<LtxModelKey, Weak<AvDitShared>>>> = OnceLock::new();
 static GEMMA_CACHE: OnceLock<Mutex<HashMap<LtxModelKey, Weak<GemmaPipeline>>>> = OnceLock::new();
+/// Depth Anything V2 (IC-LoRA control). Ключ — (каталог модели, метка
+/// устройства): Device не Hash. Раньше грузилась заново на КАЖДЫЙ прогон.
+static DEPTH_CACHE: OnceLock<
+    Mutex<HashMap<(std::path::PathBuf, String), Weak<synaptix_depth_anything::DepthAnything>>>,
+> = OnceLock::new();
 
 /// Зарегистрировать compute-backend'ы synaptix (one-shot). CUDA — под
 /// фичей `ltx-cuda` (зонтик `cuda` synthos).
@@ -520,8 +525,26 @@ pub fn apply_depth_frames(
     model_dir: &std::path::Path,
     dev: Device,
 ) -> Result<synaptix_core::tensor::Tensor, String> {
-    let m = synaptix_depth_anything::DepthAnything::load(model_dir, dev)
-        .map_err(|e| format!("depth model: {e}"))?;
+    // Weak-кэш, как у остальных компонентов семейства: пока Arc жив у
+    // текущего прогона (или запинен резидентностью), повторный IC-LoRA не
+    // платит загрузку заново.
+    let m = get_or_load(
+        &DEPTH_CACHE,
+        (model_dir.to_path_buf(), crate::models::device_label(dev)),
+        Reg {
+            component: "Depth Anything",
+            label: model_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| model_dir.display().to_string()),
+            device: dev,
+            unload: || {},
+        },
+        |_| {
+            synaptix_depth_anything::DepthAnything::load(model_dir, dev)
+                .map_err(|e| format!("depth model: {e}"))
+        },
+    )?;
     let (f, h, w) = (frames.dims()[2], frames.dims()[3], frames.dims()[4]);
     let mut out = Vec::with_capacity(f);
     for fi in 0..f {

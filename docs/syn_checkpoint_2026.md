@@ -8,7 +8,7 @@
 |---|---|---|
 | LTX-2.3 | LtxCheckpoint | да: hold DiT переживает VAE-decode (на 24 ГБ может не влезть — опт-ин) |
 | MiniMax-H3 | H3Checkpoint | да: hold DiT переживает decode |
-| ACE-Step | AceStepCheckpoint | пока декоративный (generate_music — sequential-drop) |
+| ACE-Step | AceStepCheckpoint | да: MusicComponentCache в generate_music (LM/TE/DiT/VAE между прогонами) |
 | LLM / VoxCPM2 / OmniVoice / ASR GigaAM / Sortformer | **SynCheckpoint** (новая) | да: выкл → слот очищается после прогона |
 
 ## SynCheckpoint (`nodes/syn_checkpoint.rs`)
@@ -27,6 +27,11 @@ GPU у ASR/TTS, дефолтные dtype семейства). Хэндл пер�
 
 ## Резидентность (чекбокс «Держать в памяти»)
 
+- ACE-Step: движковый `MusicComponentCache` (synaptix) — владеет
+  Generate-нода (`resident_cache()`-слот, виден в панели «Модели в
+  памяти» как «ACE-Step · Resident»); ключ валидности — пути бандлов +
+  device/dtype'ы, LM перезагружается при нехватке rope-ёмкости. Без
+  чекбокса — прежний sequential-drop под 24 ГБ.
 - Слот-семейства: по умолчанию ON (исторически слот жил всегда).
   OFF → после прогона воркер очищает слот (pipeline + loaded_cfg) и
   трим-ит пул — VRAM возвращается. Полезно перед тяжёлым видео-прогоном.

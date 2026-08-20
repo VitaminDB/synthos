@@ -181,11 +181,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Quant DiT", make_dropdown(QUANT_OPTIONS, quant_dit_idx)),
         field_row("Quant Enc", make_dropdown(QUANT_OPTIONS, quant_enc_idx)),
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
-        // Пока декоративный для ACE-Step: Generate-монолит грузит и дропает
-        // компоненты последовательно внутри generate_music (sequential-drop
-        // под 24 ГБ), а VaeEncode берёт VAE из глобальных настроек. Чекбокс
-        // здесь ради единого стиля чекпойнтов; заработает, когда движок
-        // научится держать компоненты между вызовами.
+        // Generate передаёт в generate_music резидентный кэш компонентов
+        // (LM/TE/DiT/VAE): повторный прогон не платит загрузку и
+        // квантизацию. Выключение чекбокса освобождает кэш на следующем
+        // запуске; выгрузка — и из панели «Модели в памяти».
         field_row("Держать в памяти", make_toggle(resident)),
     ];
     Box::new(

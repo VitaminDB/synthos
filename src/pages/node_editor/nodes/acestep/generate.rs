@@ -26,7 +26,8 @@ use synaptix_core::tensor::Tensor;
 use synaptix_music_acestep::ar::CodesGenOptions;
 use synaptix_music_acestep::dcw::DcwCorrector;
 use synaptix_music_acestep::pipeline::{
-    generate_music, EditMode, EditOptions, GenExtras, MusicPaths, NormMode, SamplerOptions,
+    generate_music, EditMode, EditOptions, GenExtras, MusicComponentCache, MusicPaths, NormMode,
+    SamplerOptions,
 };
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
@@ -41,6 +42,15 @@ use super::{
     device_from_idx, field_row, make_int_slider_row, make_seed_slider, make_slider_row,
     make_toggle, quant_from_idx, status_row,
 };
+
+/// Слот резидентного кэша компонентов ACE-Step — один на приложение, в
+/// формате `models::register_slot` (панель «Модели в памяти» видит его и
+/// умеет выгружать). Сам кэш валидирует пути/девайс/кванты по ключу.
+fn resident_cache() -> &'static Arc<Mutex<Option<MusicComponentCache>>> {
+    static CACHE: std::sync::OnceLock<Arc<Mutex<Option<MusicComponentCache>>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Arc::new(Mutex::new(None)))
+}
 
 /// Дефолтные имена 4 бандлов в каталоге `--models` (зеркалит CLI `music`).
 const LM_NAME: &str = "acestep_5hz_lm_1.7b.syn";
@@ -741,6 +751,33 @@ fn worker(
         .unwrap_or_else(|| dit.display().to_string());
     loaded_name.set(Some(name));
 
+    // «Держать в памяти» на ACE-Step Checkpoint: резидентный кэш компонентов
+    // (LM/TE/DiT/VAE) переживает прогоны — повторная генерация не платит
+    // загрузку и квантизацию. Lock держится на весь прогон: второй
+    // параллельный Generate подождёт (одновременно им VRAM всё равно не
+    // хватит). Выключенная резидентность освобождает прежний кэш.
+    let resident = p.handle.resident;
+    let cache_slot = resident_cache().clone();
+    let mut cache_guard = if resident {
+        cache_slot.lock().ok()
+    } else {
+        if let Ok(mut g) = cache_slot.lock() {
+            if g.take().is_some() {
+                crate::models::trim_all();
+                tracing::info!("[acestep] резидентный кэш освобождён (чекбокс выключен)");
+            }
+        }
+        None
+    };
+    let cache_was_empty = cache_guard
+        .as_ref()
+        .map(|g| g.is_none())
+        .unwrap_or(false);
+    let vram_before_cache = crate::models::cuda_allocated();
+    let cache_ref: Option<&mut MusicComponentCache> = cache_guard
+        .as_mut()
+        .map(|g| g.get_or_insert_with(MusicComponentCache::default));
+
     let paths = MusicPaths { lm: &lm, text_encoder: &te, dit: &dit, vae: &vae };
     let opts = SamplerOptions {
         steps: p.steps,
@@ -829,6 +866,7 @@ fn worker(
         p.use_cot,
         &edit,
         &extras,
+        cache_ref,
     ) {
         Ok(r) => r,
         Err(e) => {
@@ -837,6 +875,34 @@ fn worker(
             return;
         }
     };
+
+    // Резидентный кэш заполнился в этом прогоне — показать в панели
+    // «Модели в памяти» (unload оттуда очистит слот).
+    if resident {
+        let filled = cache_guard
+            .as_ref()
+            .map(|g| g.as_ref().map(|c| c.is_loaded()).unwrap_or(false))
+            .unwrap_or(false);
+        drop(cache_guard.take());
+        if filled && cache_was_empty {
+            let bytes = crate::models::cuda_allocated().saturating_sub(vram_before_cache);
+            let label = dit
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| dit.display().to_string());
+            crate::models::register_slot(
+                "acestep/resident-cache".to_string(),
+                "ACE-Step",
+                "Resident (LM+TE+DiT+VAE)",
+                label,
+                device,
+                bytes,
+                cache_slot.clone(),
+                || {},
+            );
+        }
+    }
+
     let dur = samples.len() as f32 / sr.max(1) as f32;
     tracing::info!(
         "[acestep] Generate ✓ {dur:.1}s аудио за {:.1}s (steps={}, cfg={:.1})",

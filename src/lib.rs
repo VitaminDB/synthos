@@ -89,7 +89,11 @@ pub fn run_desktop() {
         .with_window_state(ctx.appearance.window_state)
         .run(move |_| {
             provide_context(ctx.clone());
-            provide_context(build_code_editor_ctx());
+            let code_ctx = build_code_editor_ctx();
+            provide_context(code_ctx);
+            // Семплер занятости терминалов — для бейджей на плитках сессий
+            // в нав-рейле (см. pages::code_editor::terminal_activity).
+            pages::code_editor::terminal_activity::start_sampler(code_ctx);
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
@@ -143,7 +147,11 @@ fn android_main(app: syngui::app::AndroidApp) {
         .with_dynamic_theme(theme_mss)
         .run(move |_| {
             provide_context(ctx.clone());
-            provide_context(build_code_editor_ctx());
+            let code_ctx = build_code_editor_ctx();
+            provide_context(code_ctx);
+            // Семплер занятости терминалов — для бейджей на плитках сессий
+            // в нав-рейле (см. pages::code_editor::terminal_activity).
+            pages::code_editor::terminal_activity::start_sampler(code_ctx);
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());

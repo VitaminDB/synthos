@@ -215,22 +215,49 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
         "nav-rail-session-label"
     };
 
+    let btn = ToolButton::new(icon)
+        .tooltip(label.clone())
+        .on_click(move || {
+            let app = use_context::<AppCtx>();
+            let code = use_context::<CodeEditorCtx>();
+            code.switch_to(id);
+            if app.current_route.get_untracked() != "code" {
+                app.router.lock().unwrap().navigate("code");
+                app.current_route.set("code".to_string());
+            }
+        })
+        .class(btn_class);
+
+    // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
+    // Цвет по занятости (busy_count пишет семплер terminal_activity):
+    // все заняты — зелёный, все простаивают — красный, смешанно — оранжевый.
+    // Реактивность — через .get() в scope Reactive'а sessions_segment.
+    let term_count = session.terminals.tabs.get().len();
+    let busy_count = session.terminals.busy_count.get();
+    let mut btn_stack = Stack::new().child(btn);
+    if term_count > 0 {
+        let tone = if busy_count == 0 {
+            "idle"
+        } else if busy_count >= term_count {
+            "busy"
+        } else {
+            "mixed"
+        };
+        btn_stack = btn_stack.child(
+            Positioned::new(
+                Badge::new(term_count.to_string())
+                    .small()
+                    .class(format!("nav-rail-term-badge {tone}")),
+            )
+            .at(22.0, -2.0),
+        );
+    }
+
     let tile = mgui! {
         Column::new()
             .gap(2.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                ToolButton::new(icon)
-                    .tooltip(label.clone())
-                    .on_click(move || {
-                        let app = use_context::<AppCtx>();
-                        let code = use_context::<CodeEditorCtx>();
-                        code.switch_to(id);
-                        if app.current_route.get_untracked() != "code" {
-                            app.router.lock().unwrap().navigate("code");
-                            app.current_route.set("code".to_string());
-                        }
-                    })
-                    .class(btn_class),
+                btn_stack,
                 Text::new(label).max_lines(1).class(label_class),
             ]
     };

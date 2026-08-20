@@ -75,6 +75,24 @@
     color: var(--primary);
 }
 
+/* Бейдж количества открытых терминалов на плитке code-сессии.
+ * Цвет — сводка занятости терминалов (busy = выполняется команда ИЛИ
+ * вывод обновлялся за последнюю секунду, см. terminal_activity):
+ *   busy  — все заняты        → зелёный;
+ *   idle  — все простаивают   → красный;
+ *   mixed — часть занята      → оранжевый. */
+.nav-rail-term-badge.busy {
+    background-color: var(--presence-online);
+}
+
+.nav-rail-term-badge.idle {
+    background-color: var(--error);
+}
+
+.nav-rail-term-badge.mixed {
+    background-color: var(--warning);
+}
+
 /* Подпись под иконкой проекта. line-clamp:1 + ellipsis даёт «autosize»
  * (растёт по содержимому до доступной ширины Column'а) и «clamp len»
  * (длинные имена обрезаются многоточием в одну строку).

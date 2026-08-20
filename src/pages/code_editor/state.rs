@@ -651,6 +651,12 @@ pub struct TerminalsState {
     pub active_id: RwSignal<Option<u32>>,
     /// Монотонный счётчик id'ов терминалов внутри одной сессии.
     pub next_id: RwSignal<u32>,
+    /// Число «занятых» терминалов сессии: выполняется команда
+    /// (`TerminalSession::is_busy`) ИЛИ вывод обновлялся с прошлого тика
+    /// (`revision()` изменился). Пишется семплером
+    /// [`super::terminal_activity`] раз в секунду; nav-rail по соотношению
+    /// busy/total красит бейдж количества терминалов на плитке сессии.
+    pub busy_count: RwSignal<usize>,
 }
 
 impl TerminalsState {
@@ -659,6 +665,7 @@ impl TerminalsState {
             tabs: use_signal(Vec::new()),
             active_id: use_signal(None),
             next_id: use_signal(1u32),
+            busy_count: use_signal(0usize),
         }
     }
 }

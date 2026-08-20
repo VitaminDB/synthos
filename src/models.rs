@@ -109,6 +109,14 @@ pub fn cuda_allocated() -> u64 {
     synaptix_core::memory::cuda_pool::cuda_allocated_bytes() as u64
 }
 
+/// Свободная VRAM по драйверу, МБ (0, если CUDA недоступна). Нужна для
+/// логов «до/после» вокруг выгрузки — по ней видно, вернул ли прогон память.
+pub fn cuda_free_mb() -> u64 {
+    synaptix_core::device::cuda::mem_info(0)
+        .map(|(free, _total)| (free / (1024 * 1024)) as u64)
+        .unwrap_or(0)
+}
+
 /// Замерить прирост CUDA-пула на загрузке модели.
 pub fn measure<T>(
     f: impl FnOnce() -> std::result::Result<T, String>,

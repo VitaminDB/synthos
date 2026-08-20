@@ -26,7 +26,7 @@ use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::visual::{video_player_view, StaticWaveform};
 
 use crate::context::AppCtx;
-use crate::icons::{MI_DOWNLOAD, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW};
+use crate::icons::{MI_DOWNLOAD, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW};
 use crate::syn_chat::attach::{self, blobs};
 use crate::syn_chat::state::{AttachmentKind, MsgAttachment};
 
@@ -45,12 +45,16 @@ pub fn media_card<F>(a: &MsgAttachment, on_open: F) -> Box<dyn Widget>
 where
     F: Fn() + Send + Sync + 'static,
 {
+    let on_open = Arc::new(on_open);
     let stage: Box<dyn Widget> = match a.kind {
-        AttachmentKind::Video => video_stage(a, on_open),
+        AttachmentKind::Video => video_stage(a),
         AttachmentKind::Audio => audio_stage(a),
-        _ => image_stage(a, on_open),
+        _ => image_stage(a, {
+            let on_open = on_open.clone();
+            move || on_open()
+        }),
     };
-    let actions = actions_row(a);
+    let actions = actions_row(a, on_open);
     Box::new(
         DecoratedBox::new().class("chat-media-card").child(
             Column::new()
@@ -62,7 +66,7 @@ where
 }
 
 /// Нижняя строка: подпись и действия над файлом.
-fn actions_row(a: &MsgAttachment) -> Box<dyn Widget> {
+fn actions_row(a: &MsgAttachment, on_open: Arc<dyn Fn() + Send + Sync>) -> Box<dyn Widget> {
     let name = if a.original_name.is_empty() {
         a.kind.label().to_string()
     } else {
@@ -82,6 +86,10 @@ fn actions_row(a: &MsgAttachment) -> Box<dyn Widget> {
                     Text::new(meta).class("chat-media-meta"),
                 ],
                 Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    ToolButton::new(MI_FIT_SCREEN)
+                        .tooltip("Открыть на весь экран")
+                        .on_click(move || on_open())
+                        .class("chat-media-btn"),
                     ToolButton::new(MI_DOWNLOAD)
                         .tooltip("Сохранить как…")
                         .on_click(move || save_as(&save))
@@ -99,21 +107,16 @@ fn actions_row(a: &MsgAttachment) -> Box<dyn Widget> {
 /// Видео: постер с кнопкой ⏵, по нажатию — настоящий плеер на том же месте.
 /// Ленивость намеренная: декодер на каждое видео в ленте съел бы память и
 /// GPU, а большинство роликов пользователь не переоткрывает.
-fn video_stage<F>(a: &MsgAttachment, on_open: F) -> Box<dyn Widget>
-where
-    F: Fn() + Send + Sync + 'static,
-{
+fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
     let started = use_signal(false);
     let path = blobs::source_path(a).display().to_string();
     let poster = blobs::preview_path(a).map(|p| p.display().to_string());
     let duration = (a.duration_ms > 0).then(|| attach::format_duration(a.duration_ms));
     // Плеер создаём один раз и держим вне реактивного дерева.
     let player: Arc<Mutex<Option<Arc<Mutex<VideoPlayer>>>>> = Arc::new(Mutex::new(None));
-    let on_open = Arc::new(on_open);
 
     Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if !started.get() {
-            let on_open = on_open.clone();
             let poster: Box<dyn Widget> = match &poster {
                 Some(p) => Box::new(
                     Image::new(p.clone())
@@ -134,10 +137,12 @@ where
             if let Some(d) = &duration {
                 layers.push(Box::new(badge(d.clone())));
             }
+            // Клик по кадру = запустить: именно этого ждут от постера с ⏵.
+            // Полноэкранный просмотр — отдельной кнопкой в строке действий.
             return vec![Box::new(
                 GestureDetector::new()
                     .cursor(syngui::input::CursorIcon::Pointer)
-                    .on_click(move || on_open())
+                    .on_click(move || started.set(true))
                     .child(
                         DecoratedBox::new()
                             .class("chat-media-stage")
@@ -151,7 +156,10 @@ where
             Err(_) => return vec![],
         };
         if guard.is_none() {
-            match VideoPlayer::open_with_hwaccel(&path, HwAccel::platform_default()) {
+            // Программный декодер намеренно: NVDEC держит контекст в той же
+            // VRAM, куда возвращается чат-LLM после прогона, и превью ролика
+            // в ленте не стоит отнятых у модели мегабайт.
+            match VideoPlayer::open_with_hwaccel(&path, HwAccel::None) {
                 Ok(p) => *guard = Some(Arc::new(Mutex::new(p))),
                 Err(e) => {
                     return vec![Box::new(

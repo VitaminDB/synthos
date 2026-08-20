@@ -56,6 +56,11 @@ pub fn view(
             _ => Box::new(tool_result_row(msg, msg_idx, tool_name, *error, false)),
         },
         ChatMsgKind::Text => match msg.role {
+            // Медиа-результат прогона: тела нет, есть вложения — рисуем один
+            // ряд карточек без пустого пузыря с аватаром.
+            ChatMsgRole::Assistant if msg.body.trim().is_empty() && !msg.attachments.is_empty() => {
+                Box::new(attachments_only_row(msg))
+            }
             ChatMsgRole::System => Box::new(system_line(&msg.body, msg.error)),
             ChatMsgRole::User => Box::new(chat_row(msg, msg_idx, true, false, false)),
             ChatMsgRole::Assistant => {

@@ -249,10 +249,32 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    // 1. Bundle path — обязателен, должен указывать на `.syn`.
-    let Some(bundle_path) = model_path.get_untracked() else {
-        error_sig.set(Some("Выберите .syn bundle OmniVoice".into()));
-        return;
+    // 1. Модель: хэндл Syn Checkpoint (вход `model`) переопределяет
+    //    собственные поля; оттуда же — резидентность. Без хэндла —
+    //    legacy-поведение слота.
+    let handle = super::current_input_syn_model(ctx, node.id);
+    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
+    let cfg = match &handle {
+        Some(h) => OmniLoadedCfg {
+            bundle_path: h.model_path.clone(),
+            device_idx: map_handle_device(h.device_idx),
+            storage_idx: map_handle_storage(h.storage_idx),
+            compute_idx: map_handle_compute(h.compute_idx),
+        },
+        None => {
+            let Some(bundle_path) = model_path.get_untracked() else {
+                error_sig.set(Some(
+                    "Выберите .syn bundle OmniVoice или подключите Syn Checkpoint".into(),
+                ));
+                return;
+            };
+            OmniLoadedCfg {
+                bundle_path,
+                device_idx: device_idx.get_untracked(),
+                storage_idx: storage_idx.get_untracked(),
+                compute_idx: compute_idx.get_untracked(),
+            }
+        }
     };
 
     // 2. Target-text — обязателен.
@@ -278,12 +300,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let instruct_text = instruct.get_untracked();
     let language_text = language.get_untracked();
 
-    let cfg = OmniLoadedCfg {
-        bundle_path,
-        device_idx: device_idx.get_untracked(),
-        storage_idx: storage_idx.get_untracked(),
-        compute_idx: compute_idx.get_untracked(),
-    };
     let gen_cfg = GenerationConfig {
         num_step: num_step.get_untracked(),
         guidance_scale: guidance_scale.get_untracked(),
@@ -314,8 +330,39 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 loaded_name,
                 output_buf,
                 output_version,
+                resident,
             );
         });
+}
+
+/// Маппинг предпочтений Syn Checkpoint на индексы опций семейства
+/// (Auto → дефолт). DEVICE: ["CPU","GPU (auto)"], STORAGE/COMPUTE:
+/// ["f16","bf16","f32","nvfp4","mxfp8"].
+fn map_handle_device(pref: usize) -> usize {
+    match pref {
+        1 => 1, // CUDA → GPU (auto)
+        2 => 0, // CPU
+        _ => 1,
+    }
+}
+
+fn map_handle_storage(pref: usize) -> usize {
+    match pref {
+        1 => 0, // F16
+        2 => 1, // BF16
+        3 => 4, // FP8 → mxfp8
+        4 => 3, // NVFP4
+        _ => default_storage_idx(),
+    }
+}
+
+fn map_handle_compute(pref: usize) -> usize {
+    match pref {
+        1 => 0, // F16
+        2 => 1, // BF16
+        3 => 2, // F32
+        _ => default_compute_idx(),
+    }
 }
 
 // ── Worker ────────────────────────────────────────────────────────────────
@@ -336,6 +383,7 @@ fn synth_worker(
     loaded_name: RwSignal<Option<String>>,
     output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
     output_version: RwSignal<u32>,
+    resident: bool,
 ) {
     // 1. Lazy-load pipeline'а при несовпадении snapshot'а.
     let needs_load = match loaded_cfg.lock() {
@@ -459,6 +507,18 @@ fn synth_worker(
         Err(e) => {
             error_sig.set(Some(format!("Ошибка синтеза: {e}")));
         }
+    }
+    // Хэндл без резидентности («Держать в памяти» выключен у Syn
+    // Checkpoint): слот очищается сразу после прогона, VRAM возвращается.
+    if !resident {
+        if let Ok(mut g) = pipeline.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = loaded_cfg.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+        crate::models::trim_all();
     }
     running.set(false);
 }

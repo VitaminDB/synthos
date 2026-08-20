@@ -270,9 +270,32 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
             Err(_) => return,
         };
 
-    let Some(model) = model_path.get_untracked() else {
-        error_sig.set(Some("Выберите модель (HF-каталог или .syn)".into()));
-        return;
+    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля
+    // ноды; оттуда же — резидентность. Без хэндла нода работает от своих
+    // полей и держит слот всегда (legacy-поведение).
+    let handle = super::current_input_syn_model(ctx, node.id);
+    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
+    let cfg = match &handle {
+        Some(h) => LlmLoadedCfg {
+            model_path: h.model_path.clone(),
+            device_idx: map_handle_device(h.device_idx),
+            quant_idx: map_handle_quant(h.storage_idx),
+            compute_idx: map_handle_compute(h.compute_idx),
+        },
+        None => {
+            let Some(model) = model_path.get_untracked() else {
+                error_sig.set(Some(
+                    "Выберите модель (HF-каталог или .syn) или подключите Syn Checkpoint".into(),
+                ));
+                return;
+            };
+            LlmLoadedCfg {
+                model_path: model,
+                device_idx: device_idx.get_untracked(),
+                quant_idx: quant_idx.get_untracked(),
+                compute_idx: compute_idx.get_untracked(),
+            }
+        }
     };
 
     let question = match current_input_text(ctx, node.id, "prompt") {
@@ -290,13 +313,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
             let t = system_prompt.get_untracked();
             (!t.trim().is_empty()).then_some(t)
         });
-
-    let cfg = LlmLoadedCfg {
-        model_path: model,
-        device_idx: device_idx.get_untracked(),
-        quant_idx: quant_idx.get_untracked(),
-        compute_idx: compute_idx.get_untracked(),
-    };
     let gen = GenParams {
         context,
         think,
@@ -330,8 +346,40 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 loaded_name,
                 output_text,
                 text_version,
+                resident,
             );
         });
+}
+
+/// Маппинг предпочтений Syn Checkpoint на индексы опций этого семейства.
+/// Prefs: device 0=Auto,1=CUDA,2=CPU; storage 0=Auto,1=F16,2=BF16,3=FP8,
+/// 4=NVFP4; compute 0=Auto,1=F16,2=BF16,3=F32. Auto → дефолт семейства.
+fn map_handle_device(pref: usize) -> usize {
+    match pref {
+        1 => 0, // CUDA
+        2 => 1, // CPU
+        _ => default_device_idx(),
+    }
+}
+
+fn map_handle_quant(pref: usize) -> usize {
+    // QUANT_OPTIONS: ["none", "nvfp4", "mxfp8"].
+    match pref {
+        1 | 2 => 0, // F16/BF16 → без квантизации
+        3 => 2,     // FP8 → mxfp8
+        4 => 1,     // NVFP4
+        _ => default_quant_idx(),
+    }
+}
+
+fn map_handle_compute(pref: usize) -> usize {
+    // COMPUTE_OPTIONS: ["bf16", "f16", "f32"].
+    match pref {
+        1 => 1, // F16
+        2 => 0, // BF16
+        3 => 2, // F32
+        _ => default_compute_idx(),
+    }
 }
 
 struct GenParams {
@@ -362,6 +410,7 @@ fn gen_worker(
     loaded_name: RwSignal<Option<String>>,
     output_text: RwSignal<String>,
     text_version: RwSignal<u32>,
+    resident: bool,
 ) {
     ensure_kernels_registered();
 
@@ -514,6 +563,18 @@ fn gen_worker(
                 error_sig.set(Some(format!("Ошибка генерации: {e}")));
             }
         }
+    }
+    // Хэндл без резидентности («Держать в памяти» выключен у Syn
+    // Checkpoint): слот очищается сразу после прогона, VRAM возвращается.
+    if !resident {
+        if let Ok(mut g) = pipeline.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = loaded_cfg.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+        crate::models::trim_device(device_from_idx(cfg.device_idx));
     }
     running.set(false);
 }

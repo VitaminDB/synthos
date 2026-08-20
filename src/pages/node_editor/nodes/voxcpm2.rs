@@ -163,9 +163,29 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    let Some(bundle_path) = model_path.get_untracked() else {
-        error_sig.set(Some("Выберите .syn bundle VoxCPM2".into()));
-        return;
+    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля;
+    // оттуда же — резидентность. Без хэндла — legacy-поведение слота.
+    let handle = super::current_input_syn_model(ctx, node.id);
+    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
+    let cfg = match &handle {
+        Some(h) => VoxCpm2LoadedCfg {
+            bundle_path: h.model_path.clone(),
+            device_idx: map_handle_device(h.device_idx),
+            compute_idx: map_handle_compute(h.compute_idx),
+        },
+        None => {
+            let Some(bundle_path) = model_path.get_untracked() else {
+                error_sig.set(Some(
+                    "Выберите .syn bundle VoxCPM2 или подключите Syn Checkpoint".into(),
+                ));
+                return;
+            };
+            VoxCpm2LoadedCfg {
+                bundle_path,
+                device_idx: device_idx.get_untracked(),
+                compute_idx: compute_idx.get_untracked(),
+            }
+        }
     };
 
     let text = match current_input_text(ctx, node.id, "text") {
@@ -190,11 +210,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    let cfg = VoxCpm2LoadedCfg {
-        bundle_path,
-        device_idx: device_idx.get_untracked(),
-        compute_idx: compute_idx.get_untracked(),
-    };
     let opts = GenerateOptions {
         cfg_value: cfg_value.get_untracked(),
         n_timesteps: n_timesteps.get_untracked() as usize,
@@ -223,8 +238,29 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 loaded_name,
                 output_buf,
                 output_version,
+                resident,
             );
         });
+}
+
+/// Маппинг предпочтений Syn Checkpoint на индексы опций семейства
+/// (Auto → дефолт). Storage-предпочтение семейству не нужно.
+fn map_handle_device(pref: usize) -> usize {
+    match pref {
+        1 => 0, // CUDA
+        2 => 1, // CPU
+        _ => default_device_idx(),
+    }
+}
+
+fn map_handle_compute(pref: usize) -> usize {
+    // COMPUTE_OPTIONS: ["bf16", "f16", "f32"].
+    match pref {
+        1 => 1,
+        2 => 0,
+        3 => 2,
+        _ => default_compute_idx(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -242,6 +278,7 @@ fn synth_worker(
     loaded_name: RwSignal<Option<String>>,
     output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
     output_version: RwSignal<u32>,
+    resident: bool,
 ) {
     ensure_kernels_registered();
 
@@ -350,6 +387,18 @@ fn synth_worker(
         Err(e) => {
             error_sig.set(Some(format!("Ошибка синтеза: {e}")));
         }
+    }
+    // Хэндл без резидентности («Держать в памяти» выключен у Syn
+    // Checkpoint): слот очищается сразу после прогона, VRAM возвращается.
+    if !resident {
+        if let Ok(mut g) = pipeline.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = loaded_cfg.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+        crate::models::trim_device(device_from_idx(cfg.device_idx));
     }
     running.set(false);
 }

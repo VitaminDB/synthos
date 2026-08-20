@@ -175,16 +175,31 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    let Some(mp) = model_path.get_untracked() else {
-        error_sig.set(Some("Выберите .syn модель Sortformer".into()));
-        return;
-    };
-
-    let cfg = SortformerLoadedCfg {
-        model_path: mp,
-        device_idx: device_idx.get_untracked(),
-        storage_idx: storage_idx.get_untracked(),
-        compute_idx: compute_idx.get_untracked(),
+    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля;
+    // оттуда же — резидентность. Без хэндла — legacy-поведение слота.
+    let handle = super::current_input_syn_model(ctx, node.id);
+    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
+    let cfg = match &handle {
+        Some(h) => SortformerLoadedCfg {
+            model_path: h.model_path.clone(),
+            device_idx: map_handle_device(h.device_idx),
+            storage_idx: map_handle_storage(h.storage_idx),
+            compute_idx: map_handle_compute(h.compute_idx),
+        },
+        None => {
+            let Some(mp) = model_path.get_untracked() else {
+                error_sig.set(Some(
+                    "Выберите .syn модель Sortformer или подключите Syn Checkpoint".into(),
+                ));
+                return;
+            };
+            SortformerLoadedCfg {
+                model_path: mp,
+                device_idx: device_idx.get_untracked(),
+                storage_idx: storage_idx.get_untracked(),
+                compute_idx: compute_idx.get_untracked(),
+            }
+        }
     };
     let threshold_v = threshold.get_untracked();
     let allow_overlap_v = allow_overlap.get_untracked();
@@ -215,8 +230,38 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 output_pretty,
                 output_json,
                 text_version,
+                resident,
             );
         });
+}
+
+/// Маппинг предпочтений Syn Checkpoint на индексы опций семейства.
+/// DEVICE: ["CPU","GPU (auto)"] — Auto → GPU; STORAGE/COMPUTE:
+/// ["f16","bf16","f32","nvfp4","mxfp8"] — Auto → дефолт семейства.
+fn map_handle_device(pref: usize) -> usize {
+    match pref {
+        2 => 0, // CPU
+        _ => 1, // Auto/CUDA → GPU (auto)
+    }
+}
+
+fn map_handle_storage(pref: usize) -> usize {
+    match pref {
+        1 => 0, // F16
+        2 => 1, // BF16
+        3 => 4, // FP8 → mxfp8
+        4 => 3, // NVFP4
+        _ => default_storage_idx(),
+    }
+}
+
+fn map_handle_compute(pref: usize) -> usize {
+    match pref {
+        1 => 0, // F16
+        2 => 1, // BF16
+        3 => 2, // F32
+        _ => default_compute_idx(),
+    }
 }
 
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
@@ -411,6 +456,7 @@ fn play_worker(
     output_pretty: RwSignal<String>,
     output_json: RwSignal<String>,
     text_version: RwSignal<u32>,
+    resident: bool,
 ) {
     let needs_load = match loaded_cfg.lock() {
         Ok(g) => match &*g {
@@ -500,6 +546,18 @@ fn play_worker(
         Err(e) => {
             error_sig.set(Some(format!("Ошибка диаризации: {e}")));
         }
+    }
+    // Хэндл без резидентности («Держать в памяти» выключен у Syn
+    // Checkpoint): слот очищается сразу после прогона, VRAM возвращается.
+    if !resident {
+        if let Ok(mut g) = diarizer.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = loaded_cfg.lock() {
+            *g = None;
+        }
+        loaded_name.set(None);
+        crate::models::trim_all();
     }
     running.set(false);
 }

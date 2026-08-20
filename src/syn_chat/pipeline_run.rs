@@ -153,14 +153,23 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
     }
 
     // Пустые чекпойнты ловим ДО прогона (и до выгрузки LLM): нода всё равно
-    // упадёт, а агент потеряет ход и цикл unload/reload.
+    // упадёт, а агент потеряет ход и цикл unload/reload. Слот-нодам с
+    // подключённым входом `model` (Syn Checkpoint) собственный model_path
+    // не нужен — хэндл его переопределяет.
+    let conns = ctx.connections.get_untracked();
     let mut missing: Vec<String> = Vec::new();
     for n in &nodes {
         if !n.enabled.get_untracked() {
             continue;
         }
+        let has_model_input = conns
+            .iter()
+            .any(|c| c.to_node == n.id && c.to_port == "model");
         if let Ok(rt) = n.runtime.lock() {
             for field in rt.missing_model_paths() {
+                if field == "model_path" && has_model_input {
+                    continue;
+                }
                 missing.push(format!(
                     "нода {} ({}): {field}",
                     n.id.0,

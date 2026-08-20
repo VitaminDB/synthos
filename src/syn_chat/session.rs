@@ -1900,7 +1900,13 @@ async fn run_pipeline_tool(
     };
 
     let (content, error) =
-        pr::format_envelope(outcome.as_ref(), &artifact_lines, llm_note.as_deref(), aborted);
+        pr::format_envelope(
+            outcome.as_ref(),
+            &artifact_lines,
+            llm_note.as_deref(),
+            aborted,
+            &prepared.warnings,
+        );
     PipelineToolResult {
         model,
         content,

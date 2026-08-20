@@ -122,6 +122,46 @@ pub struct Prepared {
     pub planned: Vec<PlannedArtifact>,
     /// Сколько enabled-нод с on_run в графе.
     pub runnable: usize,
+    /// Замечания, которые не мешают запуску, но объясняют плохой результат
+    /// заранее (например, dev-чекпойнт LTX на distilled-расписании).
+    pub warnings: Vec<String>,
+}
+
+/// Замечания по графу перед прогоном.
+///
+/// LTX-стадии в synaptix идут по **distilled**-расписанию (`DISTILLED_SIGMAS`
+/// — 8 Euler-шагов на stage1, 3 на stage2). Недистиллированный чекпойнт
+/// (`ltx-2.3-22b-dev`) на восьми шагах даёт мутную картинку — «как будто
+/// шагов не хватает». Число шагов у ноды не настраивается, поэтому чекпойнт
+/// и расписание обязаны совпадать; ловим несовпадение до прогона.
+fn graph_warnings(nodes: &[crate::pages::node_editor::types::NodeInstance]) -> Vec<String> {
+    let mut out = Vec::new();
+    for n in nodes {
+        if !n.enabled.get_untracked() {
+            continue;
+        }
+        let Ok(rt) = n.runtime.lock() else { continue };
+        let NodeRuntime::LtxCheckpoint { model_path, .. } = &*rt else {
+            continue;
+        };
+        let Some(path) = model_path.get_untracked() else {
+            continue;
+        };
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if !name.contains("distilled") {
+            out.push(format!(
+                "нода {} (LTX Checkpoint): «{name}» — стадии LTX идут по \
+                 distilled-расписанию (8 шагов stage1 + 3 stage2), и \
+                 недистиллированный чекпойнт на нём даёт размытое видео. \
+                 Возьми ltx-2.3-22b-distilled-1.1.syn.",
+                n.id.0
+            ));
+        }
+    }
+    out
 }
 
 /// Ctx служебной вкладки текущего чата (main thread).
@@ -291,7 +331,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             pre,
         });
     }
-    Ok(Prepared { planned, runnable })
+    Ok(Prepared { planned, runnable, warnings: graph_warnings(&nodes) })
 }
 
 /// Запустить прогон служебной вкладки. Возвращает receiver итога и число
@@ -544,6 +584,7 @@ pub fn format_envelope(
     artifact_lines: &[String],
     llm_note: Option<&str>,
     aborted: bool,
+    warnings: &[String],
 ) -> (String, bool) {
     let mut out = String::new();
     let mut error = false;
@@ -599,6 +640,13 @@ pub fn format_envelope(
             out.push_str(&format!("- {l}\n"));
         }
     }
+    if !warnings.is_empty() {
+        out.push_str("--- Замечания ---\n");
+        for w in warnings {
+            out.push_str(&format!("- {w}\n"));
+        }
+    }
+
     if let Some(note) = llm_note {
         out.push_str(&format!("---\n{note}\n"));
     }
@@ -653,10 +701,10 @@ mod tests {
                 error: Some("нет входа".into()),
             }],
         };
-        let (text, err) = format_envelope(Some(&o), &[], None, false);
+        let (text, err) = format_envelope(Some(&o), &[], None, false, &[]);
         assert!(err);
         assert!(text.contains("ОШИБКА"));
-        let (text2, err2) = format_envelope(None, &[], Some("LLM перезагружена"), true);
+        let (text2, err2) = format_envelope(None, &[], Some("LLM перезагружена"), true, &[]);
         assert!(err2);
         assert!(text2.contains("отменён"));
         assert!(text2.contains("LLM перезагружена"));

@@ -104,6 +104,33 @@ impl NodeExecutor for CheckpointExec {
     }
 }
 
+/// Предупреждение о несовпадении чекпойнта и расписания.
+///
+/// Стадии идут по `DISTILLED_SIGMAS` (8 шагов stage1 + 3 stage2) — числа
+/// шагов у ноды нет. На `ltx-2.3-22b-dev` восьми шагов не хватает, и видео
+/// выходит размытым; по одному имени файла в пикере это не очевидно.
+fn distilled_hint(model_path: RwSignal<Option<std::path::PathBuf>>) -> Box<dyn Widget> {
+    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(p) = model_path.get() else {
+            return vec![];
+        };
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if name.contains("distilled") {
+            return vec![];
+        }
+        vec![Box::new(
+            Text::new(
+                "Стадии рассчитаны на distilled-чекпойнт (8+3 шага). \
+                 С dev-моделью видео выйдет размытым.",
+            )
+            .class("node-card-field-error"),
+        )]
+    }))
+}
+
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
@@ -192,6 +219,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             ),
         ),
         field_row("LoRA strength", make_slider_row(lora_strength, 0.0, 2.0, 0.05, 2)),
+        distilled_hint(model_path),
         field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)),
         field_row("Quant DiT", make_dropdown(QUANT_DIT_OPTIONS, quant_dit_idx)),
         field_row("Quant Gemma", make_dropdown(QUANT_ENC_OPTIONS, quant_enc_idx)),

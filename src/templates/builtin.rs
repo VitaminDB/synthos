@@ -347,7 +347,9 @@ fn ltx_text_to_video_template() -> Template {
              Stage2-refine → VAE Decode + Audio Decode → Video Save (mp4) и Видеоплеер \
              (кадры+звук из памяти, параллельно Save). В Checkpoint-ноде укажите \
              чекпойнт LTX-2.3, Gemma и upscaler — .syn-бандлы из каталога моделей \
-             (или .safetensors + HF-каталог Gemma)."
+             (или .safetensors + HF-каталог Gemma). Чекпойнт нужен ИМЕННО \
+             distilled (ltx-2.3-22b-distilled-*): стадии идут по \
+             distilled-расписанию 8+3 шага, на dev-модели видео выйдет размытым."
                 .into(),
         kind: TemplateKind::Full,
         nodes: vec![

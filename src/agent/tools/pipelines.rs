@@ -127,6 +127,20 @@ fn agent_ctx_ensure(title: &str) -> Result<NodeEditorCtx, String> {
 // list
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Описание шаблона в одну строку: длинные тексты builtin-шаблонов (до 600
+/// символов) раздували `list` за лимит истории хода — агент видел обрезок
+/// без раздела моделей и уходил искать `.syn` через bash.
+fn clip_desc(s: &str) -> String {
+    const MAX: usize = 90;
+    let s = s.replace('\n', " ");
+    if s.chars().count() <= MAX {
+        return s;
+    }
+    let cut: String = s.chars().take(MAX).collect();
+    let cut = cut.rsplit_once(' ').map(|(h, _)| h.to_string()).unwrap_or(cut);
+    format!("{cut}…")
+}
+
 fn list_impl() -> Result<String, String> {
     let mut out = String::new();
 
@@ -141,7 +155,7 @@ fn list_impl() -> Result<String, String> {
             if t.description.is_empty() {
                 String::new()
             } else {
-                format!(" · {}", t.description)
+                format!(" · {}", clip_desc(&t.description))
             }
         ));
     }
@@ -153,15 +167,22 @@ fn list_impl() -> Result<String, String> {
     // страницы Hugging Face, лежат там, и агент, знающий только первый,
     // честно докладывал «такой модели нет».
     for (label, dir) in models_dirs() {
-        out.push_str(&format!("--- Модели в каталоге {} ({label}) ---\n", dir.display()));
+        let dir_s = dir.display().to_string();
+        out.push_str(&format!(
+            "--- Модели в каталоге {dir_s} ({label}) --- (пути: {dir_s}/<имя>)\n"
+        ));
         let inventory = models_inventory(&dir);
         if inventory.is_empty() {
             out.push_str(
                 "(пусто или каталог не существует — путь задаётся в Настройки → AI-модели)\n",
             );
         } else {
+            // Имена относительно каталога: полный путь в каждой строке — это
+            // ~40 лишних символов × десятки моделей, а собрать его агент
+            // может из шапки раздела.
+            let prefix = format!("{dir_s}/");
             for l in &inventory {
-                out.push_str(l);
+                out.push_str(l.strip_prefix(&prefix).unwrap_or(l));
                 out.push('\n');
             }
         }
@@ -184,7 +205,9 @@ fn list_impl() -> Result<String, String> {
 
     out.push_str("--- Служебная вкладка ---\n");
     match agent_ctx()? {
-        Some(ctx) => out.push_str(&graph_summary(&ctx)?),
+        // Без state и связей: полный снимок — action=graph. В list он дублировал
+        // ответ open и съедал бюджет, вытесняя инвентарь моделей.
+        Some(ctx) => out.push_str(&graph_brief(&ctx)?),
         None => out.push_str("(ещё не создана — открой шаблон через action=open)\n"),
     }
     Ok(out)
@@ -562,6 +585,27 @@ fn graph_impl() -> Result<String, String> {
 /// Текстовый snapshot графа: ноды с id/kind/state и связи. `state`-строки
 /// обрезаются — envelope должен оставаться компактным (в историю агента
 /// tool-result уходит клипованным).
+/// Сводка графа для `list`: ноды без state, связи числом. Полный снимок с
+/// state и связями — `action=graph`.
+fn graph_brief(ctx: &NodeEditorCtx) -> Result<String, String> {
+    let (nodes, conns, _viewport) = convert::snapshot(ctx);
+    let mut out = format!(
+        "граф: нод {}, связей {} (полный снимок — action=graph)\n",
+        nodes.len(),
+        conns.len()
+    );
+    for n in &nodes {
+        out.push_str(&format!(
+            "[{}] {} · {}{}\n",
+            n.id,
+            kind_slug(n.kind),
+            registry::meta(n.kind).title,
+            if n.enabled { "" } else { " · ВЫКЛ" }
+        ));
+    }
+    Ok(out)
+}
+
 fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
     const STATE_CLIP: usize = 700;
     let (nodes, conns, _viewport) = convert::snapshot(ctx);
@@ -964,6 +1008,40 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Описания шаблонов в `list` подрезаются: полный `list` обязан влезать
+    /// в лимит истории хода, иначе из него вырезается раздел моделей.
+    #[test]
+    fn template_descriptions_are_clipped() {
+        let long = "с".repeat(400);
+        let clipped = clip_desc(&long);
+        assert!(clipped.chars().count() <= 91, "{}", clipped.chars().count());
+        assert!(clipped.ends_with('…'));
+        assert_eq!(clip_desc("коротко"), "коротко");
+    }
+
+    /// Раздел шаблонов в `list` держится в бюджете: вместе с инвентарём
+    /// моделей и сводкой графа весь ответ должен влезать в лимит истории
+    /// хода (`session::HISTORY_TOOL_RESULT_CHARS` = 8000), иначе из середины
+    /// вырезается именно то, ради чего инструмент звали.
+    #[test]
+    fn templates_section_fits_history_budget() {
+        let len: usize = templates::list_all()
+            .iter()
+            .map(|t| {
+                format!(
+                    "{} · «{}» · нод: {} · {}\n",
+                    t.id,
+                    t.name,
+                    t.nodes.len(),
+                    clip_desc(&t.description)
+                )
+                .chars()
+                .count()
+            })
+            .sum();
+        assert!(len < 4500, "раздел шаблонов раздулся до {len} символов");
+    }
 
     /// Фильтр — набор токенов: перечисление нод возвращает их все.
     #[test]

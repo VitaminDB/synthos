@@ -2113,6 +2113,27 @@ impl NodeRuntime {
         }
     }
 
+    /// Сигнал прогресса воркера (0..1) — для живой карточки прогона в чате.
+    /// У части нод он есть, но не пишется (ACE-Step Generate; Lipdub пишет
+    /// вехи 0.1/0.5/1.0) — потребитель должен переживать «застывший» 0.
+    pub fn run_progress_signal(&self) -> Option<RwSignal<f32>> {
+        use NodeRuntime as R;
+        match self {
+            R::AceStepGenerate { progress_pct, .. }
+            | R::LtxTextEncoder { progress_pct, .. }
+            | R::LtxSamplerStage1 { progress_pct, .. }
+            | R::LtxSamplerStage2 { progress_pct, .. }
+            | R::LtxVaeDecode { progress_pct, .. }
+            | R::LtxVideoSave { progress_pct, .. }
+            | R::LtxRetake { progress_pct, .. }
+            | R::LtxIcLora { progress_pct, .. }
+            | R::LtxLipdub { progress_pct, .. }
+            | R::LtxA2V { progress_pct, .. }
+            | R::H3Sampler { progress_pct, .. } => Some(*progress_pct),
+            _ => None,
+        }
+    }
+
     /// Cooperative-cancel флаг воркера — для отмены прогона извне
     /// (`run_controls::cancel_active_run`). У нод без флага (в т.ч.
     /// ACE-Step Generate) воркер не отменяется и досчитывает до конца.

@@ -636,6 +636,35 @@ pub fn cancel_active_run() -> bool {
     stop_run(true)
 }
 
+/// Статус активных нод текущего прогона: (заголовок, прогресс 0..1 если у
+/// ноды есть сигнал). Для живой карточки прогона в чате. Только main
+/// thread; прогресс читается tracked (`.get()`) — вызов из `Reactive`
+/// подпишет карточку на обновления.
+pub fn active_nodes_status() -> Vec<(String, Option<f32>)> {
+    let Ok(g) = run_queue().lock() else {
+        return Vec::new();
+    };
+    let Some(q) = g.as_ref() else {
+        return Vec::new();
+    };
+    let nodes = q.ctx.nodes.get_untracked();
+    let mut out: Vec<(String, Option<f32>)> = Vec::new();
+    for id in &q.active {
+        let Some(n) = nodes.iter().find(|n| n.id == *id) else {
+            continue;
+        };
+        let pct = n
+            .runtime
+            .try_lock()
+            .ok()
+            .and_then(|rt| rt.run_progress_signal())
+            .map(|s| s.get());
+        out.push((registry::meta(n.kind).title.to_string(), pct));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
 /// Сборка pill — фиксированный размер в MSS (`min-width` / `height`).
 ///
 /// `editor_ctx` передаётся явно потому что `run_controls` живёт в

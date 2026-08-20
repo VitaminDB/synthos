@@ -457,3 +457,73 @@
     font-size: 12px;
     color: var(--text-subtle);
 }
+
+/* ────────────── Пайплайны: живая карточка прогона и ссылка на граф ──────────
+ * Рендерится под tool-call `pipelines` пока идёт прогон (message_bubble::
+ * pipeline_live_card) и в карточке результата (ссылка «Открыть граф»). */
+
+.pipeline-live-card {
+    background-color: var(--bg-panel);
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: var(--border);
+    padding: 8px 12px;
+    animation: bubble-pop-in var(--duration-med) var(--ease-standard);
+}
+
+.pipeline-live-spinner {
+    color: var(--primary);
+    icon-size: 16px;
+    animation: pipeline-spin 1.2s linear infinite;
+}
+
+@keyframes pipeline-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.pipeline-live-text {
+    font-size: 12px;
+    color: var(--text);
+}
+
+.pipeline-live-cancel {
+    border-radius: 8px;
+    padding: 3px 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.pipeline-live-cancel:hover {
+    border-color: var(--error);
+}
+
+.pipeline-live-cancel-text {
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+
+.pipeline-live-cancel:hover .pipeline-live-cancel-text {
+    color: var(--error);
+}
+
+.pipeline-link {
+    border-radius: 8px;
+    padding: 3px 8px;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.pipeline-link:hover {
+    background-color: var(--surface-hover);
+}
+
+.pipeline-link-icon {
+    color: var(--primary);
+    icon-size: 15px;
+}
+
+.pipeline-link-text {
+    font-size: 12px;
+    color: var(--primary);
+}

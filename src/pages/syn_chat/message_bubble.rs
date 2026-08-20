@@ -15,10 +15,14 @@ use syngui::widgets::visual::MarkdownView;
 use syngui::widgets::{AnimatedSize, AnimationAxis, Reactive};
 
 use crate::agent::tools::Tool;
+use crate::context::AppCtx;
 use crate::icons::{
-    MI_AUTORENEW, MI_CHECK, MI_CONTENT_COPY, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY,
-    MI_REPORT, MI_TERMINAL,
+    MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CONTENT_COPY, MI_EXPAND_LESS, MI_EXPAND_MORE,
+    MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
 };
+use crate::pages::node_editor::run_controls;
+use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
+use crate::pages::node_editor::timing;
 use crate::syn_chat::session;
 use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, SynChatCtx};
 
@@ -44,7 +48,10 @@ pub fn view(
         ChatMsgKind::ToolResult {
             tool_name, error, ..
         } => match tool_mode {
-            "hidden" => Box::new(DecoratedBox::new()),
+            // Медиа-результаты пайплайна показываем даже в hidden-режиме —
+            // иначе сгенерированное видео просто исчезает из чата.
+            "hidden" if msg.attachments.is_empty() => Box::new(DecoratedBox::new()),
+            "hidden" => Box::new(attachments_only_row(msg)),
             "minimal" => Box::new(tool_result_row(msg, msg_idx, tool_name, *error, true)),
             _ => Box::new(tool_result_row(msg, msg_idx, tool_name, *error, false)),
         },
@@ -674,10 +681,27 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
         )
     };
 
+    let mut meta_children: Vec<Box<dyn Widget>> =
+        vec![Box::new(author_row) as Box<dyn Widget>, card_with_actions];
+    // Живой статус прогона — под последним tool-call `pipelines`: пока
+    // результат не пришёл, вызов остаётся хвостом ленты.
+    if tool_name == "pipelines" {
+        let chat = use_context::<SynChatCtx>();
+        let is_tail = chat
+            .messages
+            .get_untracked()
+            .len()
+            .saturating_sub(1)
+            == msg_idx;
+        if is_tail {
+            meta_children.push(pipeline_live_card());
+        }
+    }
+
     let meta = Column::new()
         .gap(4.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
-        .children(vec![Box::new(author_row) as Box<dyn Widget>, card_with_actions]);
+        .children(meta_children);
 
     mgui! {
         Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start).main_axis_alignment(MainAxisAlignment::Start) => [
@@ -756,7 +780,7 @@ pub(super) fn tool_result_card_only(
         ))
     };
 
-    let card_children: Vec<Box<dyn Widget>> = if compact {
+    let mut card_children: Vec<Box<dyn Widget>> = if compact {
         let full_body = display_body.clone();
         vec![
             clickable_header(msg_idx, header),
@@ -790,11 +814,134 @@ pub(super) fn tool_result_card_only(
         vec![Box::new(header), body_wrap(display_body)]
     };
 
+    // Медиа-результаты пайплайна (mp4/wav из save-нод) — плитками ВНЕ
+    // collapsible: результат видно сразу, полноэкранный просмотр работает
+    // тем же media_viewer'ом, что и у пользовательских вложений.
+    if !msg.attachments.is_empty() {
+        card_children.push(super::attachments::bubble_grid(&msg.attachments));
+    }
+    if tool_name == "pipelines" {
+        card_children.push(Box::new(open_graph_link()));
+    }
+
     DecoratedBox::new().class(card_class).child(
         Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(card_children),
+    )
+}
+
+/// Строка «Результат» без карточки — для `tool_display_mode = hidden`, где
+/// прячется всё, кроме медиа-плиток пайплайна.
+fn attachments_only_row(msg: &ChatMsg) -> impl Widget {
+    let avatar_placeholder = DecoratedBox::new()
+        .class("tool-result-avatar")
+        .child(Center::new().child(Icon::new(MI_CHECK).class("tool-result-avatar-icon")));
+    let meta = Column::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .children(vec![super::attachments::bubble_grid(&msg.attachments)]);
+    mgui! {
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start).main_axis_alignment(MainAxisAlignment::Start) => [
+            avatar_placeholder,
+            meta,
+        ]
+    }
+}
+
+/// Ссылка «Открыть граф» — раскрывает служебную вкладку агента текущего
+/// чата и переключает роут на нодовый редактор.
+fn open_graph_link() -> impl Widget {
+    let link = mgui! {
+        Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Icon::new(MI_ACCOUNT_TREE).class("pipeline-link-icon"),
+            Text::new("Открыть граф").class("pipeline-link-text"),
+        ]
+    };
+    GestureDetector::new()
+        .on_click(|| {
+            let chat = use_context::<SynChatCtx>();
+            let Some(chat_id) = chat.active_chat_id.get_untracked() else {
+                return;
+            };
+            let ws = use_context::<EditorWorkspace>();
+            let Some(tab) = ws.agent_tab_for_chat(&chat_id) else {
+                return;
+            };
+            ws.reveal(tab);
+            let app = use_context::<AppCtx>();
+            if let Ok(mut r) = app.router.lock() {
+                r.navigate("nodes");
+            }
+            app.current_route.set("nodes".to_string());
+        })
+        .child(DecoratedBox::new().class("pipeline-link").child(link))
+}
+
+/// Живая карточка прогона пайплайна — рендерится под tool-call `pipelines`,
+/// пока секвенсер работает: «нод 2/5 · LTX Sampler Stage1 43% · 3:12»,
+/// ссылка на граф и отмена (abort хода → cancel-флаги нод). Сам ticker
+/// держим здесь же: бейдж нодовой страницы не смонтирован, пока открыт чат,
+/// и без него elapsed бы замирал.
+fn pipeline_live_card() -> Box<dyn Widget> {
+    let status = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let ws = use_context::<EditorWorkspace>();
+        if ws.run_state.get() != RunState::Running {
+            return vec![];
+        }
+        let done = ws.run_done.get();
+        let total = ws.run_total.get();
+        let elapsed = ws
+            .run_timer
+            .display_ms()
+            .map(timing::fmt_elapsed)
+            .unwrap_or_default();
+        let active = run_controls::active_nodes_status();
+        let active_txt = active
+            .iter()
+            .map(|(title, pct)| match pct {
+                Some(p) if *p > 0.0 => format!("{title} {:.0}%", (p * 100.0).min(100.0)),
+                _ => title.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut line = format!("Прогон: нод {done}/{total}");
+        if !active_txt.is_empty() {
+            line.push_str(&format!(" · {active_txt}"));
+        }
+        if !elapsed.is_empty() {
+            line.push_str(&format!(" · {elapsed}"));
+        }
+
+        let cancel = GestureDetector::new()
+            .on_click(session::abort_current)
+            .child(
+                DecoratedBox::new()
+                    .class("pipeline-live-cancel")
+                    .child(Text::new("Отменить").class("pipeline-live-cancel-text")),
+            );
+
+        vec![Box::new(
+            DecoratedBox::new().class("pipeline-live-card").child(mgui! {
+                Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Icon::new(MI_AUTORENEW).class("pipeline-live-spinner"),
+                    Text::new(line).class("pipeline-live-text"),
+                    open_graph_link(),
+                    cancel,
+                ]
+            }),
+        )]
+    });
+    let ws = use_context::<EditorWorkspace>();
+    Box::new(
+        Column::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .children(vec![
+                Box::new(status) as Box<dyn Widget>,
+                timing::ticker(ws.run_timer),
+            ]),
     )
 }
 

@@ -424,6 +424,32 @@ fn category_path(meta: &'static registry::NodeKindMeta) -> String {
     }
 }
 
+/// Компакт-список всех видов нод по категориям — ответ на пустой фильтр и на
+/// фильтр без совпадений.
+fn compact_kind_list() -> String {
+    let mut out = String::new();
+    let mut current_cat: Option<NodeCategory> = None;
+    for kind in NodeKind::ALL {
+        let meta = registry::meta(*kind);
+        if current_cat != Some(meta.category) {
+            current_cat = Some(meta.category);
+            out.push_str(&format!("--- {} ---\n", meta.category.label()));
+        }
+        out.push_str(&format!(
+            "{} · {} · есть запуск: {}\n",
+            kind_slug(*kind),
+            meta.title,
+            if meta.on_run.is_some() { "да" } else { "нет" }
+        ));
+    }
+    out
+}
+
+const FILTER_HINT: &str = "filter ищет по kind/названию/категории (не по именам \
+     полей — те смотри в примере state). Несколько значений через пробел или \
+     запятую объединяются: «ltx_checkpoint ltx_sampler_stage1» вернёт обе ноды, \
+     «ltx» — всё семейство.";
+
 fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
     let filter = v
         .get("filter")
@@ -431,29 +457,22 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         .unwrap_or("")
         .trim()
         .to_lowercase();
+    // Фильтр — набор токенов, а не одна подстрока: модели пишут туда список
+    // нужных нод (и заодно имена полей), и матч по всей строке целиком не
+    // давал совпадений — инструмент отвечал ошибкой без данных, а агент
+    // крутил вариации фильтра, пока не упирался в guard повторов.
+    let tokens: Vec<&str> = filter
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .filter(|t| !t.is_empty())
+        .collect();
 
     let mut out = String::new();
-    if filter.is_empty() {
-        out.push_str(
+    if tokens.is_empty() {
+        out.push_str(&format!(
             "Все виды нод (kind · название · категория). Детали (порты, \
-             state-JSON, расшифровка *_idx) — повтори с filter по \
-             kind/названию/категории. filter — подстрока: «h3» или «ltx» \
-             отдаёт всё семейство за один вызов.\n",
-        );
-        let mut current_cat: Option<NodeCategory> = None;
-        for kind in NodeKind::ALL {
-            let meta = registry::meta(*kind);
-            if current_cat != Some(meta.category) {
-                current_cat = Some(meta.category);
-                out.push_str(&format!("--- {} ---\n", meta.category.label()));
-            }
-            out.push_str(&format!(
-                "{} · {} · есть запуск: {}\n",
-                kind_slug(*kind),
-                meta.title,
-                if meta.on_run.is_some() { "да" } else { "нет" }
-            ));
-        }
+             state-JSON, расшифровка *_idx) — повтори с filter. {FILTER_HINT}\n"
+        ));
+        out.push_str(&compact_kind_list());
         return Ok(out);
     }
 
@@ -468,7 +487,7 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
             meta.category.label().to_lowercase(),
             meta.subcategory.unwrap_or("").to_lowercase()
         );
-        if !hay.contains(&filter) {
+        if !tokens.iter().any(|t| hay.contains(t)) {
             continue;
         }
         matched += 1;
@@ -501,8 +520,11 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         }
     }
     if matched == 0 {
-        return Err(format!(
-            "по фильтру «{filter}» нод не найдено; вызови без filter за полным списком"
+        // Не ошибка: пустой ответ гонит агента по кругу с вариациями фильтра.
+        // Отдаём то, ради чего он и звал инструмент, — список видов нод.
+        return Ok(format!(
+            "по фильтру «{filter}» нод не найдено. {FILTER_HINT}\n{}",
+            compact_kind_list()
         ));
     }
     Ok(out)
@@ -942,6 +964,28 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Фильтр — набор токенов: перечисление нод возвращает их все.
+    #[test]
+    fn nodes_filter_matches_any_token() {
+        let out = nodes_impl(&serde_json::json!({
+            "filter": "ltx_checkpoint ltx_sampler_stage1 quant_dit_idx width"
+        }))
+        .expect("nodes");
+        assert!(out.contains("«LTX Checkpoint»"), "{out}");
+        assert!(out.contains("«LTX Sampler Stage1»"), "{out}");
+        assert!(!out.contains("«H3 Checkpoint»"), "{out}");
+    }
+
+    /// Промах фильтра — не ошибка, а список видов нод: иначе агент крутит
+    /// вариации фильтра до guard'а повторов.
+    #[test]
+    fn nodes_filter_miss_returns_catalog() {
+        let out = nodes_impl(&serde_json::json!({"filter": "quant_dit_idx keep_gemma"}))
+            .expect("промах не ошибка");
+        assert!(out.contains("нод не найдено"), "{out}");
+        assert!(out.contains("ltx_checkpoint · LTX Checkpoint"), "{out}");
+    }
 
     #[test]
     fn node_ref_accepts_number_and_numeric_string() {

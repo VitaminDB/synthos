@@ -1,0 +1,117 @@
+# Агент Syn-чата ↔ нодовые пайплайны (2026-08-20)
+
+Агент чата получил полный доступ к нодовому редактору: находит пайплайн
+(встроенный или кастомный шаблон), сочиняет сценарий, заполняет ноды
+(промпты, параметры, ref-входы из вложений чата), проверяет VRAM/RAM, при
+нехватке VRAM выгружает сам себя на время прогона, запускает граф, показывает
+живой статус и отдаёт результаты (видео/аудио) прямо в чат.
+
+## Два новых инструмента
+
+### `system` (`agent/tools/system.rs`)
+
+- `action=status` — VRAM всего / свободно по драйверу / доступно (свободно +
+  слабина пула активаций — по ней принимаются решения о памяти), RAM,
+  нодовые модели из `crate::models` (с id) и состояние чат-LLM.
+- `action=unload` — выгрузка нодовых моделей (`id` из status или `all=true`)
+  + `trim_all`. Чат-LLM отсюда НЕ выгружается: worker хода держит
+  `Arc<LoadedSynModel>` — веса не освободятся. Для неё `free_vram` у run.
+
+### `pipelines` (`agent/tools/pipelines.rs`)
+
+Работает со СЛУЖЕБНОЙ вкладкой редактора: одна на чат, скрытая из полосы
+вкладок (`OpenTab.agent_chat`/`hidden`, `EditorWorkspace::ensure_agent_tab`),
+раскрывается ссылкой «Открыть граф» из чата (`reveal` + роут `nodes`).
+
+| action | Что делает |
+|---|---|
+| `list` | шаблоны (builtin + custom), вложения чата, состояние вкладки |
+| `nodes` | схемы видов нод из `REGISTRY`: порты, поля, пример state-JSON (снят с `default_runtime` → `runtime_to_state`); без `filter` — компакт-список |
+| `open` | загрузить шаблон в служебную вкладку (`load_into_ctx`) |
+| `graph` | снимок графа (ноды + state + связи), state клипуется до 700 симв. |
+| `apply` | `graph` (Template-JSON, mode=replace/merge; id/pos автозаполняются), `set_state=[{node,state}]` (вариант state сверяется с kind — mismatch это ошибка, а не молчаливый no-op), `connect`/`disconnect` (резолв портов по registry, самосвязи/дубли отбрасываются) |
+| `save_template` | граф вкладки → кастомный шаблон (`templates::create` + `bump_revision`) |
+| `run` | прогон — см. ниже |
+
+Строки `attachment:<имя|sha-префикс|last>` в payload'е apply резолвятся в
+путь blob'а вложения текущего чата через `blobs::model_path` (derived-PNG
+для GIF/HEIC и т.п. — формат, читаемый `synaptix-io`).
+
+## Прогон (`pipelines action=run`)
+
+`run` перехватывается agent-loop'ом ДО `tools::execute`
+(`pipeline_run::parse_run_call` в `session.rs`) — он завязан на жизненный
+цикл LLM. Subagent'ам run недоступен (явная ошибка в `pipelines.rs`).
+
+Последовательность (`session::run_pipeline_tool` + `syn_chat/pipeline_run.rs`):
+
+1. **prepare** (main thread, ДО выгрузки LLM): в графе есть enabled-ноды с
+   `on_run`; пустые/относительные пути save-нод (`LtxVideoSave`,
+   `H3VideoSave`, `SaveToFile`) автозаполняются в
+   `~/.local/share/synthos/outputs/<chat_id>/<run_id>/node<N>.<ext>`;
+   снимается (len, mtime) существующих файлов — отличать свежую запись.
+2. **free_vram=true**: `*kv_slot = None` СВОИМ guard'ом (иначе
+   `drop_kv_session` из `unload()` отложил бы дроп до конца хода) → дроп
+   последней `Arc` хода (upfront-клон `model_for_compact` убран — пост-
+   ходовой автокомпакт берёт модель из реестра заново) →
+   `SynModelRegistry::unload()` → `reclaim_vram`. Ограничение: media-
+   эмбеддинги текущего хода (`Vec<MediaEmbedding>`) не освобождаются.
+3. **start**: `run_controls::start_run(ctx, Some(oneshot))`. Итог
+   (`RunOutcome`) стреляет в трёх местах: очередь опустела, Stop/отмена,
+   замещение новым Run. Синхронно упавшие ноды (hook вышел, не тронув
+   `running` — например sampler без входа) дренируются `advance()`-циклом
+   и не вешают очередь.
+4. **wait**: `tokio::select!` c `wait_abort`; abort хода →
+   `cancel_active_run()` — сброс очереди + взвод cancel-флагов активных нод
+   (`NodeRuntime::run_cancel_flag`; ACE-Step Generate флага не имеет и
+   досчитывает).
+5. **артефакты**: файлы save-нод, появившиеся/изменившиеся за прогон →
+   `attach::ingest` (CAS + thumbnail) → вложения tool-result сообщения
+   (`push_tool_result_with`). В промпт не утекают (`build_history` отдаёт
+   ToolResult без attachments; vision-башня не поднимается), в ленте —
+   плитки + полноэкранный `media_viewer`; при `tool_display_mode=hidden`
+   медиа всё равно показывается.
+6. **reload**: `model_registry::load_with_notify(path, policy, tx)` —
+   worker ждёт oneshot. Ошибка reload'а → внятная ошибка хода ПОСЛЕ пуша
+   результатов. Следующий ход — полный префилл (prefix-KV сброшен,
+   `KERNEL_CACHES_WARM` сброшен — штатно).
+
+Ошибки нод собираются в итог через новый generic-хук
+`NodeRuntime::run_error_signal` (watcher их не видит — downstream упавшей
+ноды всё равно стреляет, поэтому «успех» прогона определяется по отчётам).
+
+## Живой статус в чате
+
+`message_bubble::pipeline_live_card` — под последним tool-call `pipelines`,
+пока `run_state == Running`: «нод N/M · <активные ноды с %> · elapsed»,
+кнопка отмены (= abort хода) и «Открыть граф». Прогресс — из
+`NodeRuntime::run_progress_signal` через `run_controls::active_nodes_status`
+(подписка внутри Reactive). Свой `timing::ticker` — бейдж нодовой страницы
+в чате не смонтирован. Известные дыры прогресса: ACE-Step Generate не пишет
+`progress_pct` вовсе, Lipdub пишет вехи — карточка показывает только имя.
+
+## Guard повторов и промпт
+
+- Повторный запуск того же графа — новое значение `run_id` в аргументах
+  (иначе guard consecutive-повторов срежет вызов).
+- Правила пайплайнов добавляются в system prompt только при активном
+  инструменте `pipelines` (текст зависит лишь от набора инструментов —
+  префикс-KV стабилен).
+
+## Проверка
+
+- `cargo test --lib` — юниты: схема нод/Template-JSON (`tools::pipelines`),
+  parse_run_call/envelope (`syn_chat::pipeline_run`), service-вкладки
+  (`node_editor::persist`), промпт (`system_prompt`).
+- E2E: чат с Qwen3.8-27B → «сгенерируй 5-сек видео заката» → system status
+  → open builtin-ltx-text-to-video → apply (промпт) → run(free_vram=true)
+  → живая карточка → mp4 в чате → LLM перезагружена. Лёгкий путь: ACE-Step
+  без free_vram.
+
+## Известные ограничения
+
+- Прогон в subagent'е запрещён; статус-поллинг не нужен (run блокирующий).
+- `system unload` не ждёт занятых воркеров (честно сообщает «удерживается»).
+- Отмена не останавливает ACE-Step Generate (нет hooks в `generate_music`).
+- Порты при `connect` резолвятся по имени, но типы PortKind не
+  валидируются (как и в UI) — несоответствие всплывёт на evaluate.

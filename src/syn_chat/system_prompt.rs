@@ -93,6 +93,29 @@ pub fn build(env: &PromptEnv) -> String {
              установка пакетов, сетевые запросы с побочными эффектами) в одном \
              предложении скажи, что собираешься сделать.\n",
         );
+        // Правила пайплайнов — только когда инструмент активен: текст
+        // зависит лишь от набора инструментов (как и строка со списком),
+        // поэтому префикс-KV между сообщениями не страдает.
+        if env.tools.iter().any(|t| t == "pipelines") {
+            s.push_str(
+                "\nПайплайны (`pipelines`) — генерация видео/музыки/речи в \
+                 нодовом редакторе:\n\
+                 - Порядок: list → open (шаблон) → nodes с filter (точная \
+                 схема нужных нод) → apply (промпты, параметры, ref-входы) → \
+                 run. Сценарий/промпт сочиняй сам и клади в state нод.\n\
+                 - Перед тяжёлым прогоном (LTX, MiniMax-H3) проверь `system \
+                 status`: если модели пайплайна не влезают рядом с тобой — \
+                 запускай run с free_vram=true (тебя выгрузят на время \
+                 прогона и вернут; истории это не вредит).\n\
+                 - run блокирует ход до конца прогона и может идти десятки \
+                 минут — это нормально, пользователь видит живой статус. \
+                 Результаты (видео/аудио) сами прикладываются к сообщению.\n\
+                 - Повторный запуск того же графа — с новым run_id.\n\
+                 - Ref-картинки из чата подключай ссылкой \
+                 attachment:<имя|sha|last> в путях state (список — в \
+                 pipelines list).\n",
+            );
+        }
     }
 
     s.push_str(
@@ -178,5 +201,17 @@ mod tests {
     #[test]
     fn budget_note_mentions_remaining_turns() {
         assert!(budget_note(2).contains("осталось ходов агента — 2"));
+    }
+
+    #[test]
+    fn pipeline_rules_only_with_pipelines_tool() {
+        let s = build(&env());
+        assert!(!s.contains("Пайплайны"));
+        let mut e = env();
+        e.tools.push("pipelines".to_string());
+        let s = build(&e);
+        assert!(s.contains("Пайплайны"));
+        assert!(s.contains("free_vram"));
+        assert!(s.contains("attachment:"));
     }
 }

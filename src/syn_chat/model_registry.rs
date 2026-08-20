@@ -117,11 +117,38 @@ impl SynModelRegistry {
     }
 
     pub fn load(&self, path: PathBuf, policy: QuantPolicy) {
+        self.load_inner(path, policy, None);
+    }
+
+    /// Как [`Self::load`], но по завершении (успех или ошибка) сигналит в
+    /// `notify`. Нужен агентскому `pipelines run` с free_vram: worker-поток
+    /// после прогона синхронно ждёт, пока модель реально встанет обратно.
+    pub fn load_with_notify(
+        &self,
+        path: PathBuf,
+        policy: QuantPolicy,
+        notify: tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>,
+    ) {
+        self.load_inner(path, policy, Some(notify));
+    }
+
+    fn load_inner(
+        &self,
+        path: PathBuf,
+        policy: QuantPolicy,
+        notify: Option<tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>>,
+    ) {
         if self.loading.get_untracked() {
+            if let Some(tx) = notify {
+                let _ = tx.send(Err("загрузка модели уже идёт".to_string()));
+            }
             return;
         }
         if let Some(loaded) = self.current.get_untracked() {
             if loaded.path == path {
+                if let Some(tx) = notify {
+                    let _ = tx.send(Ok(loaded));
+                }
                 return;
             }
         }
@@ -189,11 +216,17 @@ impl SynModelRegistry {
                         path,
                         supports_media,
                     });
-                    registry.current.set_always(Some(loaded));
+                    registry.current.set_always(Some(loaded.clone()));
+                    if let Some(tx) = notify {
+                        let _ = tx.send(Ok(loaded));
+                    }
                 }
                 Err(e) => {
                     eprintln!("[syn_chat] ошибка загрузки модели: {e:#}");
                     registry.error.set(Some(format!("{e:#}")));
+                    if let Some(tx) = notify {
+                        let _ = tx.send(Err(format!("{e:#}")));
+                    }
                 }
             }
             registry.loading.set(false);

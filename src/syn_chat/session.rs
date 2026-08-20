@@ -572,7 +572,6 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
                 return;
             }
         };
-        let model_for_compact = model.clone();
         let abort_for_compact = abort.clone();
         let result = rt.block_on(async {
             let r = run_agent_loop(
@@ -596,17 +595,29 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             .await;
             // Автокомпакт — строго после хода: генерация закончилась, guard
             // KV-слота отпущен, VRAM свободна под summary-запрос.
+            //
+            // Модель берём из реестра ЗАДНИМ ЧИСЛОМ, а не клоном до цикла:
+            // upfront-клон жил бы весь ход и не давал `pipelines run` с
+            // free_vram реально освободить веса. После free_vram-прогона
+            // здесь уже лежит перезагруженная модель.
             if r.is_ok()
                 && autocompact_enabled
                 && abort_for_compact.load(Ordering::Relaxed) == abort_snapshot
             {
-                crate::syn_chat::compact::maybe_autocompact(
-                    &model_for_compact,
-                    &abort_for_compact,
-                    abort_snapshot,
-                    autocompact_threshold,
-                )
-                .await;
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                run_on_main_thread(move || {
+                    let cur = use_context::<SynModelRegistry>().current.get_untracked();
+                    let _ = tx.send(cur);
+                });
+                if let Ok(Some(model_for_compact)) = rx.await {
+                    crate::syn_chat::compact::maybe_autocompact(
+                        &model_for_compact,
+                        &abort_for_compact,
+                        abort_snapshot,
+                        autocompact_threshold,
+                    )
+                    .await;
+                }
             }
             r
         });
@@ -843,7 +854,7 @@ async fn rebuild_history(
 }
 
 async fn run_agent_loop(
-    model: Arc<LoadedSynModel>,
+    mut model: Arc<LoadedSynModel>,
     items: Vec<HistoryItem>,
     caps: MediaCaps,
     tool_schemas: Vec<serde_json::Value>,
@@ -1415,6 +1426,50 @@ async fn run_agent_loop(
                 ToolDecision::Allow => {}
             }
 
+            // ── pipelines action=run — особый путь: прогон завязан на
+            // жизненный цикл LLM (free_vram выгружает её и грузит обратно),
+            // поэтому исполняется обёрткой цикла, а не tools::execute.
+            if let Some(req) = crate::syn_chat::pipeline_run::parse_run_call(chat_call) {
+                let res = run_pipeline_tool(
+                    req,
+                    model,
+                    &mut kv_slot,
+                    &abort,
+                    abort_snapshot,
+                )
+                .await;
+                push_tool_result_with(
+                    &ctx,
+                    chat_call,
+                    res.content.clone(),
+                    res.error,
+                    res.attachments,
+                );
+                if res.aborted {
+                    return Ok(());
+                }
+                match res.model {
+                    Some(m) => model = m,
+                    None => {
+                        // Результаты прогона уже в ленте — падаем с внятной
+                        // ошибкой хода, чат остаётся без модели не молча.
+                        anyhow::bail!(
+                            "Прогон выполнен, но модель чата не перезагрузилась: {}. \
+                             Загрузите её кнопкой в правой панели.",
+                            res.reload_error
+                                .unwrap_or_else(|| "неизвестная ошибка".to_string())
+                        );
+                    }
+                }
+                let mut for_history = clip_for_history(&res.content);
+                let turns_left = max_turns.saturating_sub(turn + 1);
+                if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
+                    for_history.push_str(&system_prompt::budget_note(turns_left));
+                }
+                history.push(Message::tool_named(tool_name(chat_call), for_history));
+                continue;
+            }
+
             // Исполнение с возможностью прерывания на длинных tool'ах
             // (web fetch может висеть 30+ сек).
             let outcome = tokio::select! {
@@ -1699,14 +1754,186 @@ fn tool_name(call: &ChatToolCall) -> String {
     call.function.name.clone().unwrap_or_default()
 }
 
+/// Итог [`run_pipeline_tool`]. `model: None` — free_vram-прогон прошёл, но
+/// LLM не перезагрузилась (подробность в `reload_error`); ход должен
+/// завершиться ошибкой ПОСЛЕ пуша результатов прогона в ленту.
+struct PipelineToolResult {
+    model: Option<Arc<LoadedSynModel>>,
+    content: String,
+    error: bool,
+    attachments: Vec<crate::agent::state::MsgAttachment>,
+    reload_error: Option<String>,
+    aborted: bool,
+}
+
+/// `pipelines action=run` — обёртка уровня agent-loop.
+///
+/// Принимает `model` ПО ЗНАЧЕНИЮ: при `free_vram` цикл отдаёт своё
+/// владение, функция дропает последнюю strong-ссылку (плюс KV-слот — своим
+/// guard'ом, т.к. `drop_kv_session()` из `unload()` при занятом мьютексе
+/// лишь отложил бы дроп до конца хода) и после прогона возвращает свежую
+/// модель из `load_with_notify`.
+async fn run_pipeline_tool(
+    req: crate::syn_chat::pipeline_run::RunRequest,
+    model: Arc<LoadedSynModel>,
+    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
+    abort: &Arc<AtomicU64>,
+    abort_snapshot: u64,
+) -> PipelineToolResult {
+    use crate::syn_chat::pipeline_run as pr;
+
+    let fail = |model: Option<Arc<LoadedSynModel>>, msg: String| PipelineToolResult {
+        model,
+        content: msg,
+        error: true,
+        attachments: Vec::new(),
+        reload_error: None,
+        aborted: false,
+    };
+
+    // 1. Валидация графа и автозаполнение путей save-нод — ДО выгрузки LLM:
+    //    если запускать нечего, гонять модель туда-обратно незачем.
+    let prepared = match pr::prepare(&req.run_label).await {
+        Ok(p) => p,
+        Err(e) => return fail(Some(model), e),
+    };
+
+    // 2. free_vram: освободить всё, что держит ход.
+    let mut model_opt = Some(model);
+    let mut model_path: Option<std::path::PathBuf> = None;
+    if req.free_vram {
+        let m = model_opt.take().expect("model взята выше");
+        model_path = Some(m.path.clone());
+        let device = *m.model.device();
+        **kv_slot = None;
+        drop(m);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        run_on_main_thread(move || {
+            use_context::<SynModelRegistry>().unload();
+            let _ = tx.send(());
+        });
+        let _ = rx.await;
+        let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(device);
+        log::info!(
+            "[syn_chat] pipelines run: LLM выгружена (+{} MB, {} дескрипторов), \
+             VRAM доступно {} MB",
+            freed,
+            descs,
+            crate::syn_chat::model_registry::vram_available_mb()
+        );
+    }
+
+    // 3. Старт прогона.
+    let started = pr::start().await;
+    let (outcome_rx, started_n) = match started {
+        Ok(v) => v,
+        Err(e) => {
+            let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
+            let mut r = fail(model, format!("прогон не стартовал: {e}"));
+            r.reload_error = reload_error;
+            return r;
+        }
+    };
+    log::info!(
+        "[syn_chat] pipelines run «{}»: стартовало корней {}, save-нод {}",
+        req.run_label,
+        started_n,
+        prepared.planned.len()
+    );
+
+    // 4. Ожидание итога. Abort хода отменяет прогон (cancel-флаги нод).
+    let mut aborted = false;
+    let outcome = tokio::select! {
+        o = outcome_rx => o.ok(),
+        _ = wait_abort(abort, abort_snapshot) => {
+            pr::cancel_current().await;
+            aborted = true;
+            None
+        }
+    };
+
+    // 5. Артефакты: файлы save-нод → CAS-вложения (worker-поток, диск).
+    let (attachments, artifact_lines) = pr::collect_artifacts(&prepared.planned);
+
+    // 6. Вернуть LLM (и после abort тоже — чат не должен молча остаться
+    //    без модели).
+    let was_freed = model_path.is_some();
+    let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
+    let llm_note = if was_freed {
+        Some(match (&model, &reload_error) {
+            (Some(_), _) => {
+                "LLM была выгружена на время прогона и загружена обратно; \
+                 следующий ход считает историю полным префиллом."
+                    .to_string()
+            }
+            (None, Some(e)) => format!("LLM выгружалась на время прогона, reload не удался: {e}"),
+            (None, None) => "LLM выгружалась на время прогона, reload не удался".to_string(),
+        })
+    } else {
+        None
+    };
+
+    let (content, error) =
+        pr::format_envelope(outcome.as_ref(), &artifact_lines, llm_note.as_deref(), aborted);
+    PipelineToolResult {
+        model,
+        content,
+        error,
+        attachments,
+        reload_error,
+        aborted,
+    }
+}
+
+/// Вернуть модель после free_vram-прогона. `existing` = Some — выгрузки не
+/// было (free_vram=false), возвращаем как есть.
+async fn reload_if_needed(
+    existing: Option<Arc<LoadedSynModel>>,
+    path: Option<std::path::PathBuf>,
+) -> (Option<Arc<LoadedSynModel>>, Option<String>) {
+    if existing.is_some() {
+        return (existing, None);
+    }
+    let Some(path) = path else {
+        return (None, Some("путь модели неизвестен".to_string()));
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    run_on_main_thread(move || {
+        let app_ctx = use_context::<AppCtx>();
+        let policy = app_ctx.syn_chat_quant.get_untracked().to_policy();
+        use_context::<SynModelRegistry>().load_with_notify(path, policy, tx);
+    });
+    match rx.await {
+        Ok(Ok(m)) => (Some(m), None),
+        Ok(Err(e)) => (None, Some(e)),
+        Err(e) => (None, Some(e.to_string())),
+    }
+}
+
 /// Пушит tool_result-бабл в ленту.
 fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, error: bool) {
+    push_tool_result_with(ctx, call, content, error, Vec::new());
+}
+
+/// Как [`push_tool_result`], но с медиа-вложениями (результаты пайплайна:
+/// mp4/wav из save-нод). В промпт они не попадают — `build_history` для
+/// ToolResult отдаёт `attachments: Vec::new()` — а в ленте рендерятся
+/// плитками с полноэкранным просмотрщиком.
+fn push_tool_result_with(
+    ctx: &SynChatCtx,
+    call: &ChatToolCall,
+    content: String,
+    error: bool,
+    attachments: Vec<crate::agent::state::MsgAttachment>,
+) {
     let id = call.id.clone();
     let name = call.function.name.clone().unwrap_or_default();
     let ctx = ctx.clone();
     run_on_main_thread(move || {
         ctx.messages.update(|m| {
-            m.push(ChatMsg::tool_result(id, name, content, error));
+            let mut msg = ChatMsg::tool_result(id, name, content, error);
+            msg.attachments = attachments;
+            m.push(msg);
         });
     });
 }

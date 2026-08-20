@@ -60,6 +60,12 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             "graph" => graph_impl(),
             "apply" => apply_impl(&v),
             "save_template" => save_template_impl(&v),
+            // В основном чате run перехватывается agent-loop'ом ДО
+            // tools::execute (он управляет жизненным циклом LLM). Сюда run
+            // доходит только из subagent'а — там прогоны запрещены.
+            "run" => Err(
+                "action=run доступен только основному агенту чата (не subagent)".to_string(),
+            ),
             other => Err(format!(
                 "неизвестный action «{other}» (list | nodes | open | graph | apply | save_template | run)"
             )),

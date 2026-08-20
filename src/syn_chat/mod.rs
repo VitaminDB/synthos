@@ -10,6 +10,7 @@ pub mod channel_parser;
 pub mod compact;
 pub mod model_registry;
 pub mod params;
+pub mod pipeline_run;
 pub mod registry;
 pub mod session;
 pub mod state;

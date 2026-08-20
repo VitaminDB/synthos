@@ -662,7 +662,8 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
 
     if let Some(graph) = v.get("graph") {
         let mode = v.get("mode").and_then(|x| x.as_str()).unwrap_or("replace");
-        let template = template_from_value(graph)?;
+        let graph = unwrap_json_string(graph, "graph")?;
+        let template = template_from_value(&graph)?;
         match mode {
             "replace" => convert::load_into_ctx(&ctx, &template),
             "merge" => convert::apply_to_ctx(&ctx, &template, Point::new(0.0, 0.0)),
@@ -675,62 +676,45 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         ));
     }
 
-    if let Some(items) = v.get("set_state").and_then(|x| x.as_array()) {
-        for item in items {
-            let node_ref = item
-                .get("node")
-                .ok_or("set_state[]: нужно поле node (id ноды или имя вида)")?;
-            let node_id = resolve_node_ref(node_ref, &ctx)
-                .map_err(|e| format!("set_state[]: {e}"))?;
-            let state_v = item
-                .get("state")
-                .cloned()
-                .ok_or("set_state[]: нужно поле state")?;
-            let state: NodeStateData = serde_json::from_value(state_v)
-                .map_err(|e| format!("set_state[{node_id}]: не разобрать state: {e}"))?;
-            let nodes = ctx.nodes.get_untracked();
-            let node = nodes
-                .iter()
-                .find(|n| n.id.0 == node_id)
-                .ok_or_else(|| format!("set_state: ноды {node_id} нет в графе"))?;
-            // Совпадение варианта state с kind ноды проверяем заранее:
-            // apply_state_to_runtime при несовпадении молча no-op'ает, а
-            // агенту нужна честная ошибка.
-            let expected = registry::default_runtime(node.kind)
-                .lock()
-                .ok()
-                .and_then(|g| convert::runtime_to_state(&g))
-                .and_then(|s| variant_tag(&s));
-            let got = variant_tag(&state);
-            if expected != got {
-                return Err(format!(
-                    "set_state: нода {node_id} ({}) ждёт state kind={}, а пришёл {}",
-                    kind_slug(node.kind),
-                    expected.unwrap_or_else(|| "—".into()),
-                    got.unwrap_or_else(|| "—".into())
-                ));
+    // Ошибки по отдельным элементам не отменяют весь apply: половина графа,
+    // применённая из четырёх нод, — это прогресс, а полный откат заставлял
+    // агента пересобирать вызов целиком и терять уже верные куски.
+    let mut problems: Vec<String> = Vec::new();
+
+    if let Some(items) = coerce_array(&v, "set_state")? {
+        for (i, item) in items.iter().enumerate() {
+            match apply_one_state(&ctx, item) {
+                Ok(note) => notes.push(note),
+                Err(e) => problems.push(format!("set_state[{i}]: {e}")),
             }
-            if let Ok(rt) = node.runtime.lock() {
-                convert::apply_state_to_runtime(&rt, &state);
-            }
-            notes.push(format!("state ноды {node_id} обновлён"));
         }
     }
 
-    if let Some(items) = v.get("connect").and_then(|x| x.as_array()) {
-        for item in items {
-            let c = conn_from_value(item, &ctx)?;
-            add_connection(&ctx, &c)?;
-            notes.push(format!(
-                "связь {}.{} → {}.{}",
-                c.from_node, c.from_port, c.to_node, c.to_port
-            ));
+    if let Some(items) = coerce_array(&v, "connect")? {
+        for (i, item) in items.iter().enumerate() {
+            let res = conn_from_value(item, &ctx).and_then(|c| {
+                add_connection(&ctx, &c)?;
+                Ok(format!(
+                    "связь {}.{} → {}.{}",
+                    c.from_node, c.from_port, c.to_node, c.to_port
+                ))
+            });
+            match res {
+                Ok(note) => notes.push(note),
+                Err(e) => problems.push(format!("connect[{i}]: {e}")),
+            }
         }
     }
 
-    if let Some(items) = v.get("disconnect").and_then(|x| x.as_array()) {
-        for item in items {
-            let c = conn_from_value(item, &ctx)?;
+    if let Some(items) = coerce_array(&v, "disconnect")? {
+        for item in &items {
+            let c = match conn_from_value(item, &ctx) {
+                Ok(c) => c,
+                Err(e) => {
+                    problems.push(format!("disconnect: {e}"));
+                    continue;
+                }
+            };
             let mut conns = ctx.connections.get_untracked();
             let before = conns.len();
             conns.retain(|e| {
@@ -748,14 +732,38 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         }
     }
 
+    if notes.is_empty() && !problems.is_empty() {
+        return Err(problems.join("\n"));
+    }
+
     if notes.is_empty() {
-        return Err(
-            "apply без изменений: передай graph, set_state, connect или disconnect".into(),
-        );
+        // Перечисляем полученные ключи: «ты ничего не передал» на вызов с
+        // непустым set_state — это тупик, из которого агент не выберется.
+        let got = v
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .map(|(k, val)| format!("{k}: {}", json_type_name(val)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        return Err(format!(
+            "apply без изменений: передай graph, set_state, connect или disconnect. \
+             Пришло — {got}. Формат set_state: \
+             [{{\"node\": <id|имя вида>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]"
+        ));
     }
 
     let mut out = notes.join("\n");
     out.push('\n');
+    if !problems.is_empty() {
+        out.push_str("⚠ не применено:\n");
+        for p in &problems {
+            out.push_str(p);
+            out.push('\n');
+        }
+    }
     out.push_str(&graph_summary(&ctx)?);
     Ok(out)
 }
@@ -804,6 +812,56 @@ fn template_from_value(graph: &serde_json::Value) -> Result<Template, String> {
     Ok(t)
 }
 
+/// JSON-аргумент, который модель могла завернуть в строку.
+///
+/// Qwen и родственники регулярно сериализуют вложенную структуру как текст:
+/// `"set_state": "[{\"node\": 13, …}]"`. Раньше такой вызов молча пролетал
+/// мимо `as_array()` и получал «apply без изменений: передай … set_state» —
+/// ошибку, отрицающую то, что агент видит в собственном вызове.
+fn unwrap_json_string(v: &serde_json::Value, field: &str) -> Result<serde_json::Value, String> {
+    let Some(raw) = v.as_str() else {
+        return Ok(v.clone());
+    };
+    let text = raw.trim();
+    serde_json::from_str(text).map_err(|e| {
+        format!(
+            "{field} пришёл строкой, и это не разбирается как JSON: {e}. \
+             Передавай значение структурой, а не текстом."
+        )
+    })
+}
+
+/// Массив-аргумент: принимает массив, одиночный объект и строку с JSON.
+fn coerce_array(
+    v: &serde_json::Value,
+    field: &str,
+) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let Some(raw) = v.get(field) else {
+        return Ok(None);
+    };
+    let val = unwrap_json_string(raw, field)?;
+    match val {
+        serde_json::Value::Array(a) => Ok(Some(a)),
+        // Один элемент без обёртки — тоже понятное намерение.
+        serde_json::Value::Object(_) => Ok(Some(vec![val])),
+        other => Err(format!(
+            "{field}: ожидался массив объектов, пришло {}",
+            json_type_name(&other)
+        )),
+    }
+}
+
+fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "число",
+        serde_json::Value::String(_) => "строка",
+        serde_json::Value::Array(_) => "массив",
+        serde_json::Value::Object(_) => "объект",
+    }
+}
+
 /// Числовая часть ссылки на ноду: `2` или `"2"` (модели любят строки).
 fn node_ref_as_number(v: &serde_json::Value) -> Option<u64> {
     if let Some(n) = v.as_u64() {
@@ -849,6 +907,45 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
 }
 
 /// Связь: `from_node`/`to_node` принимают то же, что и `set_state[].node`.
+/// Один элемент `set_state`: резолв ноды, разбор state, проверка kind,
+/// применение. Ошибка описывает конкретный элемент, а не весь вызов.
+fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
+    let node_ref = item
+        .get("node")
+        .ok_or("нужно поле node (id ноды или имя вида)")?;
+    let node_id = resolve_node_ref(node_ref, ctx)?;
+    let state_v = item.get("state").cloned().ok_or("нужно поле state")?;
+    let state_v = unwrap_json_string(&state_v, "state")?;
+    let state: NodeStateData = serde_json::from_value(state_v)
+        .map_err(|e| format!("нода {node_id}: не разобрать state: {e}"))?;
+    let nodes = ctx.nodes.get_untracked();
+    let node = nodes
+        .iter()
+        .find(|n| n.id.0 == node_id)
+        .ok_or_else(|| format!("ноды {node_id} нет в графе"))?;
+    // Совпадение варианта state с kind ноды проверяем заранее:
+    // apply_state_to_runtime при несовпадении молча no-op'ает, а агенту
+    // нужна честная ошибка.
+    let expected = registry::default_runtime(node.kind)
+        .lock()
+        .ok()
+        .and_then(|g| convert::runtime_to_state(&g))
+        .and_then(|s| variant_tag(&s));
+    let got = variant_tag(&state);
+    if expected != got {
+        return Err(format!(
+            "нода {node_id} ({}) ждёт state kind={}, а пришёл {}",
+            kind_slug(node.kind),
+            expected.unwrap_or_else(|| "—".into()),
+            got.unwrap_or_else(|| "—".into())
+        ));
+    }
+    if let Ok(rt) = node.runtime.lock() {
+        convert::apply_state_to_runtime(&rt, &state);
+    }
+    Ok(format!("state ноды {node_id} обновлён"))
+}
+
 fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnData, String> {
     let mut v = v.clone();
     for field in ["from_node", "to_node"] {
@@ -1008,6 +1105,34 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `set_state` строкой с JSON — типовая манера моделей; принимаем.
+    #[test]
+    fn coerce_array_unwraps_json_string_and_single_object() {
+        let v = serde_json::json!({
+            "set_state": "[{\"node\": 13, \"state\": {\"kind\": \"TextView\"}}]"
+        });
+        let items = coerce_array(&v, "set_state").expect("строка разбирается").expect("есть");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["node"], 13);
+
+        // Одиночный объект без массива — тоже понятное намерение.
+        let v = serde_json::json!({"set_state": {"node": 2, "state": {}}});
+        assert_eq!(coerce_array(&v, "set_state").unwrap().unwrap().len(), 1);
+
+        // Поля нет — не ошибка.
+        assert!(coerce_array(&serde_json::json!({}), "set_state").unwrap().is_none());
+    }
+
+    /// Битый JSON внутри строки объясняется, а не прячется за «apply без
+    /// изменений»: агенту нужна позиция ошибки, иначе он уходит в перебор.
+    #[test]
+    fn coerce_array_reports_broken_json_string() {
+        let v = serde_json::json!({"set_state": "[{\"prompt\", \"\"}]"});
+        let err = coerce_array(&v, "set_state").expect_err("битый JSON");
+        assert!(err.contains("set_state пришёл строкой"), "{err}");
+        assert!(err.contains("column"), "{err}");
+    }
 
     /// Описания шаблонов в `list` подрезаются: полный `list` обязан влезать
     /// в лимит истории хода, иначе из него вырезается раздел моделей.

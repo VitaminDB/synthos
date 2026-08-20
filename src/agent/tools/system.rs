@@ -154,8 +154,21 @@ async fn status() -> Result<String, ToolError> {
 }
 
 fn unload(v: &serde_json::Value) -> Result<String, ToolError> {
-    let all = v.get("all").and_then(|x| x.as_bool()).unwrap_or(false);
-    let id = v.get("id").and_then(|x| x.as_u64());
+    // Модели шлют флаги строками («true») и id — тоже строкой; принимаем оба.
+    let all = v
+        .get("all")
+        .map(|x| match x {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::String(s) => {
+                matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "да")
+            }
+            serde_json::Value::Number(n) => n.as_i64().is_some_and(|i| i != 0),
+            _ => false,
+        })
+        .unwrap_or(false);
+    let id = v
+        .get("id")
+        .and_then(|x| x.as_u64().or_else(|| x.as_str()?.trim().parse::<u64>().ok()));
 
     let mut out = String::new();
     let before_mb = vram_available_mb();

@@ -2193,6 +2193,18 @@ impl NodeRuntime {
     /// бессмысленно, нода упадёт. ACE-Step здесь не проверяется — его
     /// чекпойнт умеет fallback на глобальные настройки бандлов; LoRA и
     /// LTX-upscaler опциональны; encoder H3 подхватывается из бандла.
+    /// Пуст ли `upscaler_path` LTX-чекпойнта. Отдельно от
+    /// [`missing_model_paths`](Self::missing_model_paths): upscaler нужен
+    /// только графам со стадией `LtxUpscale`, и требовать его от всех
+    /// (retake, a2v, lipdub) было бы ложной тревогой.
+    pub fn ltx_upscaler_missing(&self) -> bool {
+        matches!(
+            self,
+            NodeRuntime::LtxCheckpoint { upscaler_path, .. }
+                if upscaler_path.get_untracked().is_none()
+        )
+    }
+
     pub fn missing_model_paths(&self) -> Vec<&'static str> {
         use NodeRuntime as R;
         let empty = |p: &RwSignal<Option<PathBuf>>| p.get_untracked().is_none();

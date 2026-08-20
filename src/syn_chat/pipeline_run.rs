@@ -24,7 +24,7 @@ use crate::pages::node_editor::registry;
 use crate::pages::node_editor::run_controls::{self, RunEnd, RunOutcome, StartRunError};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::tabs::EditorWorkspace;
-use crate::pages::node_editor::types::NodeRuntime;
+use crate::pages::node_editor::types::{NodeKind, NodeRuntime};
 use crate::syn_chat::attach::ingest;
 use crate::syn_chat::SynChatCtx;
 
@@ -58,7 +58,18 @@ pub fn parse_run_call(call: &ChatToolCall) -> Option<RunRequest> {
     if v.get("action").and_then(|x| x.as_str()) != Some("run") {
         return None;
     }
-    let free_vram = v.get("free_vram").and_then(|x| x.as_bool()).unwrap_or(false);
+    // Строковые «true»/«1» — та же манера моделей, что и JSON-в-строке у apply.
+    let free_vram = v
+        .get("free_vram")
+        .map(|x| match x {
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::String(s) => {
+                matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "да")
+            }
+            serde_json::Value::Number(n) => n.as_i64().is_some_and(|i| i != 0),
+            _ => false,
+        })
+        .unwrap_or(false);
     let run_label = v
         .get("run_id")
         .and_then(|x| x.as_str())
@@ -187,6 +198,28 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             }
         }
     }
+    // Upscaler нужен только графам со стадией Upscale — проверяем по факту
+    // её наличия, а не в missing_model_paths (там он был бы ложной тревогой
+    // для retake/a2v/lipdub). Ловим до прогона: иначе граф падает уже после
+    // выгрузки LLM и загрузки 46-гигабайтного DiT.
+    let needs_upscaler = nodes
+        .iter()
+        .any(|n| n.enabled.get_untracked() && n.kind == NodeKind::LtxUpscale);
+    if needs_upscaler {
+        for n in &nodes {
+            if !n.enabled.get_untracked() {
+                continue;
+            }
+            if n.runtime.lock().is_ok_and(|rt| rt.ltx_upscaler_missing()) {
+                missing.push(format!(
+                    "нода {} ({}): upscaler_path — в графе есть стадия Upscale ×2",
+                    n.id.0,
+                    registry::meta(n.kind).title
+                ));
+            }
+        }
+    }
+
     if !missing.is_empty() {
         return Err(format!(
             "не заполнены пути моделей:\n{}\nВозьми пути из pipelines list \
@@ -444,6 +477,10 @@ mod tests {
         // Модель обрамила значения переводами строк — это всё ещё run.
         assert!(parse_run_call(&mk("pipelines", "{\"action\":\"\\nrun\\n\"}")).is_some());
         assert!(parse_run_call(&mk("x.pipelines", r#"{"action":"run","free_vram":true}"#))
+            .map(|r| r.free_vram)
+            .unwrap_or(false));
+        // free_vram строкой — тоже да.
+        assert!(parse_run_call(&mk("pipelines", r#"{"action":"run","free_vram":"true"}"#))
             .map(|r| r.free_vram)
             .unwrap_or(false));
         assert!(parse_run_call(&mk("pipelines", r#"{"action":"list"}"#)).is_none());

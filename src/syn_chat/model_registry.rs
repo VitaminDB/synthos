@@ -184,8 +184,13 @@ impl SynModelRegistry {
                     // Запас (KV_RESERVE_MB в session.rs) вычитаем, иначе цифра
                     // обманывает на размер активаций префилла.
                     let kv_per_token = model.kv_bytes_per_token();
+                    // Ring-окна sliding-слоёв не растут с контекстом, но VRAM
+                    // держат — вычитаем их до деления на ставку «на токен».
+                    let kv_fixed_mb =
+                        model.kv_fixed_bytes(model.config().max_seq_len) / (1024 * 1024);
                     let ctx_ceiling = if kv_per_token > 0 {
-                        (vram_available_mb().saturating_sub(1280) * 1024 * 1024) / kv_per_token
+                        (vram_available_mb().saturating_sub(1280 + kv_fixed_mb) * 1024 * 1024)
+                            / kv_per_token
                     } else {
                         model.config().max_seq_len
                     };

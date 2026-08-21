@@ -295,7 +295,12 @@ impl RingPlan {
         let vram_available_mb =
             crate::syn_chat::model_registry::vram_available_mb() + session_held_mb;
         let by_mem = if kv_per_token > 0 {
-            let budget = vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024;
+            // Sliding-слои на ring-KV держат окно постоянного размера — оно не
+            // входит в ставку «на токен», но VRAM занимает; вычитаем до
+            // деления, иначе бюджет завышен ровно на сумму окон.
+            let fixed = model.model.kv_fixed_bytes(cap);
+            let budget = (vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024)
+                .saturating_sub(fixed);
             budget / kv_per_token
         } else {
             cap

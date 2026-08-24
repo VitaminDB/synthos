@@ -217,6 +217,7 @@ pub enum NodeStateData {
     AsrGigaam(AsrGigaamStateData),
     OmniVoice(OmniVoiceStateData),
     VoxCpm2(VoxCpm2StateData),
+    VibeVoice(VibeVoiceStateData),
     Llm(LlmStateData),
     SortformerDiarizer(SortformerDiarizerStateData),
     MarkdownView(MarkdownViewStateData),
@@ -837,6 +838,36 @@ pub struct VoxCpm2StateData {
     pub max_len: u32,
     #[serde(default = "default_voxcpm_seed")]
     pub seed: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct VibeVoiceStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default)]
+    pub compute_idx: usize,
+    #[serde(default)]
+    pub script: String,
+    #[serde(default = "default_vibevoice_cfg")]
+    pub cfg_value: f32,
+    #[serde(default = "default_vibevoice_steps")]
+    pub ddpm_steps: u32,
+    #[serde(default = "default_vibevoice_max_len_times")]
+    pub max_length_times: f32,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+fn default_vibevoice_cfg() -> f32 {
+    1.3
+}
+fn default_vibevoice_steps() -> u32 {
+    20
+}
+fn default_vibevoice_max_len_times() -> f32 {
+    2.0
 }
 
 fn default_voxcpm_steps() -> u32 {

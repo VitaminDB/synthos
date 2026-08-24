@@ -23,7 +23,8 @@ use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, llm, ltx, markdown_view,
-    minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, voxcpm2,
+    minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
+    voxcpm2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
@@ -151,6 +152,7 @@ static ASR_GIGAAM_EXEC: asr_gigaam::AsrGigaamExec = asr_gigaam::AsrGigaamExec;
 static TEXT_VIEW_EXEC: text_view::TextViewExec = text_view::TextViewExec;
 static OMNIVOICE_EXEC: omnivoice::OmniVoiceExec = omnivoice::OmniVoiceExec;
 static VOXCPM2_EXEC: voxcpm2::VoxCpm2Exec = voxcpm2::VoxCpm2Exec;
+static VIBEVOICE_EXEC: vibevoice::VibeVoiceExec = vibevoice::VibeVoiceExec;
 static LLM_EXEC: llm::LlmExec = llm::LlmExec;
 static SORTFORMER_DIARIZER_EXEC: sortformer_diarizer::SortformerDiarizerExec =
     sortformer_diarizer::SortformerDiarizerExec;
@@ -270,6 +272,18 @@ const VOXCPM2_INPUTS: &[PortSchema] = &[
     PortSchema { name: "prompt_text", label: "prompt text", kind: PortKind::Text },
 ];
 const VOXCPM2_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
+];
+
+const VIBEVOICE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "script", label: "script", kind: PortKind::Text },
+    PortSchema { name: "voice1", label: "voice 1", kind: PortKind::Audio },
+    PortSchema { name: "voice2", label: "voice 2", kind: PortKind::Audio },
+    PortSchema { name: "voice3", label: "voice 3", kind: PortKind::Audio },
+    PortSchema { name: "voice4", label: "voice 4", kind: PortKind::Audio },
+];
+const VIBEVOICE_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
 ];
 
@@ -907,6 +921,23 @@ const VOXCPM2: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(voxcpm2::busy_signal),
 };
 
+const VIBEVOICE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::VibeVoice,
+    icon: MI_CAMPAIGN,
+    title: "VibeVoice (диалоги)",
+    category: NodeCategory::Neuro,
+    subcategory: Some("Синтез речи"),
+    inputs: PortsSpec::Static(VIBEVOICE_INPUTS),
+    outputs: PortsSpec::Static(VIBEVOICE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(super::nodes::vibevoice::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &VIBEVOICE_EXEC,
+    on_run: Some(vibevoice::on_run),
+    busy_signal: Some(vibevoice::busy_signal),
+};
+
 // ── LLM (synaptix): prompt + system? → answer (Text) ─────────────────────
 //
 // Нативный synaptix-LLM-стек (Qwen3 dense/MoE либо Qwen3-Next-Hybrid, арх
@@ -1487,6 +1518,7 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     TEXT_VIEW,
     OMNIVOICE,
     VOXCPM2,
+    VIBEVOICE,
     LLM,
     SYN_CHECKPOINT,
     ACESTEP_VAE_ENCODE,
@@ -1798,6 +1830,24 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             running: use_signal(false),
             error: use_signal(None),
             loaded_name: use_signal(None),
+            output_buf: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::VibeVoice => NodeRuntime::VibeVoice {
+            model_path: use_signal(None),
+            device_idx: use_signal(vibevoice::default_device_idx()),
+            compute_idx: use_signal(vibevoice::default_compute_idx()),
+            script_field: use_signal(String::new()),
+            cfg_value: use_signal(1.3_f32),
+            ddpm_steps: use_signal(20_u32),
+            max_length_times: use_signal(2.0_f32),
+            seed: use_signal(0_u64),
+            pipeline: Arc::new(Mutex::new(None)),
+            loaded_cfg: Arc::new(Mutex::new(None)),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress: use_signal(0_u32),
             output_buf: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
         },

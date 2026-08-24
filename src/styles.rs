@@ -114,6 +114,8 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/voxcpm_node.mss"),
         "\n",
+        include_str!("../styles/components/vibevoice_node.mss"),
+        "\n",
         include_str!("../styles/components/acestep_nodes.mss"),
         "\n",
         include_str!("../styles/components/h3_nodes.mss"),

@@ -574,6 +574,36 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = loaded_name.get();
             let _ = output_version.get();
         }
+        NodeRuntime::VibeVoice {
+            model_path,
+            device_idx,
+            compute_idx,
+            script_field,
+            cfg_value,
+            ddpm_steps,
+            max_length_times,
+            seed,
+            running,
+            error,
+            loaded_name,
+            progress,
+            output_version,
+            ..
+        } => {
+            let _ = model_path.get();
+            let _ = device_idx.get();
+            let _ = compute_idx.get();
+            let _ = script_field.get();
+            let _ = cfg_value.get();
+            let _ = ddpm_steps.get();
+            let _ = max_length_times.get();
+            let _ = seed.get();
+            let _ = running.get();
+            let _ = error.get();
+            let _ = loaded_name.get();
+            let _ = progress.get();
+            let _ = output_version.get();
+        }
         NodeRuntime::SortformerDiarizer {
             model_path,
             device_idx,

@@ -28,7 +28,7 @@ use super::model::{
     LtxVideoInputStateData, LtxVideoSaveStateData, SynCheckpointStateData,
     MarkdownViewStateData, MixerStateData, NodeData, NodeStateData, NodeStyleData,
     OmniVoiceStateData, PointData, ReverbStateData, SaveToFileStateData, Template,
-    TextViewStateData, ViewportData, VoxCpm2StateData,
+    TextViewStateData, VibeVoiceStateData, ViewportData, VoxCpm2StateData,
 };
 use crate::pages::node_editor::registry::{self, default_fields, meta};
 use crate::pages::node_editor::state::NodeEditorCtx;
@@ -371,6 +371,28 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             cfg_value: cfg_value.get_untracked(),
             n_timesteps: n_timesteps.get_untracked(),
             max_len: max_len.get_untracked(),
+            seed: seed.get_untracked(),
+        })),
+        NodeRuntime::VibeVoice {
+            model_path,
+            device_idx,
+            compute_idx,
+            script_field,
+            cfg_value,
+            ddpm_steps,
+            max_length_times,
+            seed,
+            ..
+        } => Some(NodeStateData::VibeVoice(VibeVoiceStateData {
+            model_path: model_path
+                .get_untracked()
+                .map(|p| p.to_string_lossy().to_string()),
+            device_idx: device_idx.get_untracked(),
+            compute_idx: compute_idx.get_untracked(),
+            script: script_field.get_untracked(),
+            cfg_value: cfg_value.get_untracked(),
+            ddpm_steps: ddpm_steps.get_untracked(),
+            max_length_times: max_length_times.get_untracked(),
             seed: seed.get_untracked(),
         })),
         NodeRuntime::MarkdownView {
@@ -887,6 +909,29 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             cfg_value.set(data.cfg_value);
             n_timesteps.set(data.n_timesteps);
             max_len.set(data.max_len);
+            seed.set(data.seed);
+        }
+        (
+            NodeRuntime::VibeVoice {
+                model_path,
+                device_idx,
+                compute_idx,
+                script_field,
+                cfg_value,
+                ddpm_steps,
+                max_length_times,
+                seed,
+                ..
+            },
+            NodeStateData::VibeVoice(data),
+        ) => {
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx);
+            compute_idx.set(data.compute_idx);
+            script_field.set(data.script.clone());
+            cfg_value.set(data.cfg_value);
+            ddpm_steps.set(data.ddpm_steps);
+            max_length_times.set(data.max_length_times);
             seed.set(data.seed);
         }
         (
@@ -1621,6 +1666,57 @@ mod tests {
                 assert!(!resident.get_untracked());
             }
             other => panic!("не SynCheckpoint: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_vibevoice_state() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::VibeVoice,
+            pos: PointData { x: 10.0, y: 20.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::VibeVoice(VibeVoiceStateData {
+                model_path: Some("/tmp/vibevoice-1.5b.syn".into()),
+                device_idx: 1,
+                compute_idx: 2,
+                script: "Speaker 1: Привет.".into(),
+                cfg_value: 1.7,
+                ddpm_steps: 12,
+                max_length_times: 3.5,
+                seed: 99,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        match &*rt {
+            NodeRuntime::VibeVoice {
+                model_path,
+                device_idx,
+                compute_idx,
+                script_field,
+                cfg_value,
+                ddpm_steps,
+                max_length_times,
+                seed,
+                ..
+            } => {
+                assert_eq!(
+                    model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                    Some("/tmp/vibevoice-1.5b.syn".into())
+                );
+                assert_eq!(device_idx.get_untracked(), 1);
+                assert_eq!(compute_idx.get_untracked(), 2);
+                assert_eq!(script_field.get_untracked(), "Speaker 1: Привет.");
+                assert!((cfg_value.get_untracked() - 1.7).abs() < 1e-6);
+                assert_eq!(ddpm_steps.get_untracked(), 12);
+                assert!((max_length_times.get_untracked() - 3.5).abs() < 1e-6);
+                assert_eq!(seed.get_untracked(), 99);
+            }
+            other => panic!("не VibeVoice: {other:?}"),
         }
     }
 

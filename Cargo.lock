@@ -6983,11 +6983,14 @@ dependencies = [
 name = "synaptix-io"
 version = "0.1.1"
 dependencies = [
+ "hound",
  "image",
  "memmap2",
+ "rubato",
  "safetensors",
  "serde",
  "serde_json",
+ "symphonia",
  "synaptix-bundle",
  "synaptix-core",
  "thiserror 2.0.19",
@@ -7201,6 +7204,24 @@ dependencies = [
 
 [[package]]
 name = "synaptix-tts-omnivoice"
+version = "0.1.1"
+dependencies = [
+ "safetensors",
+ "serde",
+ "serde_json",
+ "synaptix-audio",
+ "synaptix-bundle",
+ "synaptix-config",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-tts-vibevoice"
 version = "0.1.1"
 dependencies = [
  "safetensors",
@@ -7444,6 +7465,7 @@ dependencies = [
  "synaptix-music-acestep",
  "synaptix-rag",
  "synaptix-tokenizer",
+ "synaptix-tts-vibevoice",
  "synaptix-tts-voxcpm",
  "synaptix-video-ltx23",
  "synaptix-video-minimax-h3",

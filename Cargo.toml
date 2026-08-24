@@ -122,6 +122,9 @@ synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = fals
 synaptix-depth-anything = { path = "../synaptix/crates/synaptix-models/image/depth_anything", default-features = false }
 # Нативный synaptix-порт VoxCPM2 для TTS-ноды (node_editor/nodes/voxcpm2).
 synaptix-tts-voxcpm = { path = "../synaptix/crates/synaptix-models/tts/voxcpm", default-features = false }
+# Нативный synaptix-порт VibeVoice — многоголосый длинный синтез
+# (node_editor/nodes/vibevoice). audio-decode нужен для mp3/ogg/flac-референсов.
+synaptix-tts-vibevoice = { path = "../synaptix/crates/synaptix-models/tts/vibevoice" }
 
 # Нативный synaptix-порт ACE-Step v1.5 (node_editor/nodes/acestep). Backend-
 # агностичен: считает на зарегистрированном synaptix-kernels-{cpu,cuda}.

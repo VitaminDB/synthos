@@ -188,6 +188,7 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
         }
         match kind {
             NodeKind::VoxCpm2 => classes.push("voxcpm-node".to_string()),
+            NodeKind::VibeVoice => classes.push("vibevoice-node".to_string()),
             NodeKind::Llm => classes.push("llm-node".to_string()),
             NodeKind::AceStepVaeEncode => classes.push("acestep-vae-encode-node".to_string()),
             NodeKind::AceStepCheckpoint => classes.push("acestep-checkpoint-node".to_string()),

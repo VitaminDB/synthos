@@ -333,6 +333,7 @@ pub enum NodeKind {
     /// Play и кэшируется в runtime до удаления ноды или смены настроек.
     OmniVoice,
     VoxCpm2,
+    VibeVoice,
     /// Универсальный чекпойнт .syn/HF для слот-семейств (LLM/TTS/ASR/
     /// диаризация): публикует [`SynModelHandle`] в порт `model`.
     SynCheckpoint,
@@ -451,6 +452,7 @@ impl NodeKind {
         NodeKind::TextView,
         NodeKind::OmniVoice,
         NodeKind::VoxCpm2,
+        NodeKind::VibeVoice,
         NodeKind::SynCheckpoint,
         NodeKind::SortformerDiarizer,
         NodeKind::Llm,
@@ -1657,6 +1659,24 @@ pub enum NodeRuntime {
         output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
         output_version: RwSignal<u32>,
     },
+    VibeVoice {
+        model_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        compute_idx: RwSignal<usize>,
+        script_field: RwSignal<String>,
+        cfg_value: RwSignal<f32>,
+        ddpm_steps: RwSignal<u32>,
+        max_length_times: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        pipeline: Arc<Mutex<Option<synaptix_tts_vibevoice::VibeVoicePipeline>>>,
+        loaded_cfg: Arc<Mutex<Option<VibeVoiceLoadedCfg>>>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        progress: RwSignal<u32>,
+        output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
+        output_version: RwSignal<u32>,
+    },
     /// Runtime ноды диаризации (NVIDIA Streaming Sortformer v2.1).
     ///
     /// Жизненный цикл — близкая копия `AsrGigaam`:
@@ -2161,6 +2181,7 @@ impl NodeRuntime {
             R::AsrGigaam { error, .. }
             | R::OmniVoice { error, .. }
             | R::VoxCpm2 { error, .. }
+            | R::VibeVoice { error, .. }
             | R::SortformerDiarizer { error, .. }
             | R::Llm { error, .. }
             | R::AceStepVaeEncode { error, .. }
@@ -2229,6 +2250,7 @@ impl NodeRuntime {
             | R::AsrGigaam { model_path, .. }
             | R::OmniVoice { model_path, .. }
             | R::VoxCpm2 { model_path, .. }
+            | R::VibeVoice { model_path, .. }
             | R::SortformerDiarizer { model_path, .. } => {
                 if empty(model_path) {
                     vec!["model_path"]
@@ -2312,6 +2334,13 @@ pub struct VoxCpm2LoadedCfg {
     pub compute_idx: usize,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct VibeVoiceLoadedCfg {
+    pub bundle_path: PathBuf,
+    pub device_idx: usize,
+    pub compute_idx: usize,
+}
+
 /// Снимок конфига, с которым загружен synaptix `LlmPipeline` LLM-ноды.
 /// Сравнивается перед каждым Run: если путь/device/quant/compute изменились —
 /// pipeline сбрасывается и перезагружается.
@@ -2385,6 +2414,11 @@ impl std::fmt::Debug for NodeRuntime {
                 let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
                 let run = running.get_untracked();
                 write!(f, "NodeRuntime::OmniVoice{{name={name}, running={run}}}")
+            }
+            NodeRuntime::VibeVoice { loaded_name, running, .. } => {
+                let name = loaded_name.get_untracked().unwrap_or_else(|| "—".into());
+                let run = running.get_untracked();
+                write!(f, "NodeRuntime::VibeVoice{{name={name}, running={run}}}")
             }
             NodeRuntime::VoxCpm2 { loaded_name, running, .. } => {
                 let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());

@@ -346,7 +346,7 @@ fn ports_line(spec: PortsSpec) -> String {
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
         acestep, asr_gigaam, ffmpeg_player, llm, ltx, minimax_h3, omnivoice, sortformer_diarizer,
-        syn_checkpoint, voxcpm2,
+        syn_checkpoint, vibevoice, voxcpm2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
@@ -368,6 +368,10 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("device_idx", omnivoice::DEVICE_OPTIONS),
             ("storage_idx", omnivoice::STORAGE_OPTIONS),
             ("compute_idx", omnivoice::COMPUTE_OPTIONS),
+        ],
+        NodeKind::VibeVoice => vec![
+            ("device_idx", vibevoice::DEVICE_OPTIONS),
+            ("compute_idx", vibevoice::COMPUTE_OPTIONS),
         ],
         NodeKind::VoxCpm2 => vec![
             ("device_idx", voxcpm2::DEVICE_OPTIONS),

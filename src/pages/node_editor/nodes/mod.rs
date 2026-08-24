@@ -75,6 +75,7 @@ pub mod scalar;
 pub mod sortformer_diarizer;
 pub mod syn_checkpoint;
 pub mod text_view;
+pub mod vibevoice;
 pub mod voxcpm2;
 
 /// Хэндл «Syn Checkpoint», подключённый к входу `model` ноды `node_id`.

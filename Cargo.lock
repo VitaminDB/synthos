@@ -7231,6 +7231,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-config",
  "synaptix-core",
+ "synaptix-infer",
  "synaptix-io",
  "synaptix-nn",
  "synaptix-ops",

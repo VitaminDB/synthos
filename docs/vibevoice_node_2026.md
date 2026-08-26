@@ -89,8 +89,8 @@ VibeVoice держит контекст на десятки минут и сам
 
 ## Бандлы
 
-- `/run/media/storage/syn_models/vibevoice-1.5b.syn` — 5.4 ГБ.
-- `/run/media/storage/syn_models/vibevoice-7b.syn` — 18.7 ГБ.
+- `/path/to/syn_models/vibevoice-1.5b.syn` — 5.4 ГБ.
+- `/path/to/syn_models/vibevoice-7b.syn` — 18.7 ГБ.
 - `vibevoice-large.syn` — симлинк на 7B (веса microsoft/VibeVoice-Large и
   microsoft/VibeVoice-7B побайтово идентичны).
 

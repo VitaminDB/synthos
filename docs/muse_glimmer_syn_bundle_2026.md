@@ -32,14 +32,14 @@ reasoning-канал `to=self`, `Reasoning strength: low|medium|high|xhigh` в �
 
 ## Расположение
 
-- Бандл: `/run/media/storage/syn_models/muse-glimmer-30b.syn`
-- Исходный HF-каталог: `/run/media/storage/LLM_models/meta-models/Muse-Glimmer-30B`
+- Бандл: `/path/to/syn_models/muse-glimmer-30b.syn`
+- Исходный HF-каталог: `/path/to/hf/Muse-Glimmer-30B`
 
 ## Упаковка
 
 ```sh
-SRC=/run/media/storage/LLM_models/meta-models/Muse-Glimmer-30B
-OUT=/run/media/storage/syn_models/muse-glimmer-30b.syn
+SRC=/path/to/hf/Muse-Glimmer-30B
+OUT=/path/to/syn_models/muse-glimmer-30b.syn
 ~/Projects/2027/synaptix/target/release/syn-pack "$SRC" -o "$OUT" \
   --id "muse-glimmer-30b" --version 1.0.0 --arch muse_glimmer --purpose text-generation
 ```

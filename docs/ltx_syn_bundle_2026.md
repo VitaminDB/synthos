@@ -40,7 +40,7 @@ Gemma продолжают работать: раскладка определя
 ```sh
 PACK=~/Projects/2027/synaptix/target/release/syn-pack
 SRC=~/models/ltx2.3_v1.1
-OUT=/home/master/Storage/syn_models
+OUT=/path/to/syn_models
 STAGE=~/models/.syn_pack_staging      # hardlink'и, та же ФС — копий нет
 
 mkdir -p "$STAGE/ltx-2.3-22b-dev"

@@ -37,7 +37,7 @@ Qwen3-VL-32B (66.7 ГБ) вынесен в **отдельный** бандл: о
 
 ```sh
 SRC=~/models/MiniMax-H3/FL2VA
-OUT=/run/media/storage/syn_models
+OUT=/path/to/syn_models
 PACK=~/Projects/2027/synaptix/target/release/syn-pack
 
 # модель: DiT + оба VAE + конфиги/токенайзер (77 ГБ)

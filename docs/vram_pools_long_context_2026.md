@@ -1,7 +1,7 @@
 # VRAM-пулы и длинный контекст (Qwen3.8-27B на 24 ГБ) — раунд 2026-08-17
 
 Железо: RTX 5090 Laptop 24 ГБ (24463 МиБ), бандл
-`/home/master/Storage/syn_models/qwen3.8-27b.syn`, NVFP4-веса, compute F16.
+`/path/to/syn_models/qwen3.8-27b.syn`, NVFP4-веса, compute F16.
 Замеры: `synaptix run … --quant nvfp4 --lm-head-dtype fp8 --embed-dtype fp8
 --mtp --temperature 0`, префилл чанками по 256.
 

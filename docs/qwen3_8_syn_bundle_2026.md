@@ -19,14 +19,14 @@ partial rotary 0.25, словарь 248 320, контекст 262 144. MTP-го�
 
 ## Расположение
 
-- Бандл: `/run/media/storage/syn_models/qwen3.8-27b.syn`
-- Исходный HF-каталог: `/run/media/storage/models/Qwen3.8-27B`
+- Бандл: `/path/to/syn_models/qwen3.8-27b.syn`
+- Исходный HF-каталог: `/path/to/hf/Qwen3.8-27B`
 
 ## Упаковка
 
 ```sh
-SRC=/run/media/storage/models/Qwen3.8-27B
-OUT=/run/media/storage/syn_models/qwen3.8-27b.syn
+SRC=/path/to/hf/Qwen3.8-27B
+OUT=/path/to/syn_models/qwen3.8-27b.syn
 ~/Projects/2027/synaptix/target/release/syn-pack "$SRC" -o "$OUT" \
   --id "qwen3.8-27b" --version 1.0.0 --arch qwen3.8 --purpose multimodal_llm
 ```
@@ -41,7 +41,7 @@ OUT=/run/media/storage/syn_models/qwen3.8-27b.syn
 
 ```sh
 SYN=~/Projects/2027/synaptix/target/release/synaptix
-$SYN run /run/media/storage/syn_models/qwen3.8-27b.syn "Столица Франции —" \
+$SYN run /path/to/syn_models/qwen3.8-27b.syn "Столица Франции —" \
   --quant nvfp4 --max-tokens 32 --temperature 0
 ```
 

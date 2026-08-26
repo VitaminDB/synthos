@@ -53,9 +53,9 @@ fn empty_state() -> impl Widget {
                 DecoratedBox::new().class("models-empty-bubble") => [
                     Center::new().child(Icon::new(MI_HEADSET_MIC).class("models-empty-icon")),
                 ],
-                Text::new("Выберите аудио-модель").class("models-empty-title"),
+                Text::new(tr!("settings.audio_models.empty.title")).class("models-empty-title"),
                 Padding::symmetric(32.0, 0.0).child(
-                    Text::new("Справа — список ASR-моделей. Нажмите «+», чтобы добавить новую модель распознавания речи. Модель указывается в виде .syn bundle'а — упаковка папки с весами и tokenizer делается командой `syn-pack <dir> -o <out.syn>`.")
+                    Text::new(tr!("settings.audio_models.empty.text"))
                         .class("models-empty-text"),
                 ),
             ]
@@ -97,7 +97,7 @@ fn editor(idx: usize, model: AudioModelConfig) -> impl Widget {
             Padding::all(32.0) => [
                 Column::new().gap(24.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                     // ── глобальная секция: микрофон (общая для всех моделей) ──
-                    section_card("Микрофон", vec![input_device_row()]),
+                    section_card(tr!("settings.audio_models.section.microphone"), vec![input_device_row()]),
 
                     // ── header: имя модели + chip «по умолчанию» + кнопка удалить ──
                     DecoratedBox::new().class("models-card models-card-header") => [
@@ -108,9 +108,9 @@ fn editor(idx: usize, model: AudioModelConfig) -> impl Widget {
                                 ],
                                 DecoratedBox::new().class("grow") => [
                                     Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                                        Text::new("Имя модели").class("models-field-label"),
+                                        Text::new(tr!("settings.audio_models.name")).class("models-field-label"),
                                         TextField::with_text(name_initial)
-                                            .placeholder("Например: Whisper Large v3 Turbo")
+                                            .placeholder(tr!("settings.audio_models.name.placeholder"))
                                             .on_change(move |s| {
                                                 let s = s.to_string();
                                                 let ctx = use_context::<AppCtx>();
@@ -129,7 +129,7 @@ fn editor(idx: usize, model: AudioModelConfig) -> impl Widget {
                                     ]
                                 ],
                                 default_chip(),
-                                Button::new("Удалить")
+                                Button::new(tr!("app.delete"))
                                     .icon(MI_DELETE)
                                     .on_click(move || {
                                         let ctx = use_context::<AppCtx>();
@@ -148,7 +148,7 @@ fn editor(idx: usize, model: AudioModelConfig) -> impl Widget {
                     ],
 
                     // ── секция: модель ──
-                    section_card("Модель", vec![
+                    section_card(tr!("settings.audio_models.section.model"), vec![
                         kind_row(idx, kind_initial),
                         path_row(idx, path_initial),
                         language_row(idx, lang_initial),
@@ -176,7 +176,7 @@ fn default_chip() -> impl Widget {
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .child(Icon::new(MI_CHECK))
-                .child(Text::new("по умолчанию")),
+                .child(Text::new(tr!("settings.audio_models.default_chip"))),
         ),
     )
 }
@@ -214,8 +214,8 @@ fn kind_row(idx: usize, current: AsrEngineKind) -> Box<dyn Widget> {
     );
     row_frame(
         MI_HEADSET_MIC,
-        "Тип движка",
-        "Whisper — универсальный многоязычный, GigaAM — заточен под русский.",
+        tr!("settings.audio_models.engine"),
+        tr!("settings.audio_models.engine.desc"),
         control,
     )
 }
@@ -236,7 +236,7 @@ fn path_row(idx: usize, initial: String) -> Box<dyn Widget> {
 
     let browse = ToolButton::new(MI_FOLDER_OPEN)
         .on_click(move || {
-            let dlg = rfd::FileDialog::new().add_filter("Syn model bundle", &["syn"]);
+            let dlg = rfd::FileDialog::new().add_filter(tr!("settings.audio_models.file.filter"), &["syn"]);
             if let Some(path) = dlg.pick_file() {
                 let ctx = use_context::<AppCtx>();
                 let s = path.display().to_string();
@@ -259,8 +259,8 @@ fn path_row(idx: usize, initial: String) -> Box<dyn Widget> {
 
     row_frame(
         MI_FOLDER_OPEN,
-        "Файл модели (.syn)",
-        ".syn bundle с весами и tokenizer — упакуйте папку через `syn-pack <dir> -o <out.syn>`.",
+        tr!("settings.audio_models.file"),
+        tr!("settings.audio_models.file.desc"),
         Box::new(control),
     )
 }
@@ -280,7 +280,7 @@ fn input_device_row() -> Box<dyn Widget> {
         current.clone()
     };
 
-    let mut items = vec![DropdownItem::new("auto", "Авто (default + перебор)")];
+    let mut items = vec![DropdownItem::new("auto", tr!("settings.audio_models.input_device.auto"))];
     for name in syngui::audio::list_input_devices() {
         let label = name.clone();
         items.push(DropdownItem::new(name, label));
@@ -300,22 +300,22 @@ fn input_device_row() -> Box<dyn Widget> {
 
     row_frame(
         MI_HEADSET_MIC,
-        "Микрофон",
-        "Если выбранное устройство недоступно — система автоматически переключится на работающее и запомнит его.",
+        tr!("settings.audio_models.input_device"),
+        tr!("settings.audio_models.input_device.desc"),
         control,
     )
 }
 
 fn language_row(idx: usize, current: String) -> Box<dyn Widget> {
     let items = vec![
-        DropdownItem::new("auto", "Авто (auto)"),
-        DropdownItem::new("ru", "Русский (ru)"),
-        DropdownItem::new("en", "Английский (en)"),
-        DropdownItem::new("uk", "Украинский (uk)"),
-        DropdownItem::new("de", "Немецкий (de)"),
-        DropdownItem::new("fr", "Французский (fr)"),
-        DropdownItem::new("es", "Испанский (es)"),
-        DropdownItem::new("zh", "Китайский (zh)"),
+        DropdownItem::new("auto", tr!("settings.audio_models.lang.auto")),
+        DropdownItem::new("ru", tr!("settings.audio_models.lang.ru")),
+        DropdownItem::new("en", tr!("settings.audio_models.lang.en")),
+        DropdownItem::new("uk", tr!("settings.audio_models.lang.uk")),
+        DropdownItem::new("de", tr!("settings.audio_models.lang.de")),
+        DropdownItem::new("fr", tr!("settings.audio_models.lang.fr")),
+        DropdownItem::new("es", tr!("settings.audio_models.lang.es")),
+        DropdownItem::new("zh", tr!("settings.audio_models.lang.zh")),
     ];
     let control: Box<dyn Widget> = Box::new(
         Dropdown::with_items(items)
@@ -333,8 +333,8 @@ fn language_row(idx: usize, current: String) -> Box<dyn Widget> {
     );
     row_frame(
         MI_TRANSLATE,
-        "Язык распознавания",
-        "Hint для Whisper. «Авто» — детектится моделью. GigaAM игнорирует.",
+        tr!("settings.audio_models.language"),
+        tr!("settings.audio_models.language.desc"),
         control,
     )
 }
@@ -342,7 +342,7 @@ fn language_row(idx: usize, current: String) -> Box<dyn Widget> {
 fn device_row(idx: usize, current: String) -> Box<dyn Widget> {
     let items = vec![
         DropdownItem::new("cpu", "CPU"),
-        DropdownItem::new("gpu_auto", "GPU (авто: CUDA → Metal → CPU)"),
+        DropdownItem::new("gpu_auto", tr!("settings.audio_models.device.gpu_auto")),
     ];
     let control: Box<dyn Widget> = Box::new(
         Dropdown::with_items(items)
@@ -360,8 +360,8 @@ fn device_row(idx: usize, current: String) -> Box<dyn Widget> {
     );
     row_frame(
         MI_MEMORY,
-        "Устройство",
-        "CPU — стабильно везде. GPU (авто) пробует CUDA, затем Metal, иначе откатится на CPU.",
+        tr!("settings.audio_models.device"),
+        tr!("settings.audio_models.device.desc"),
         control,
     )
 }
@@ -370,11 +370,11 @@ fn storage_dtype_row(idx: usize, current: String) -> Box<dyn Widget> {
     // Storage dtype — формат хранения весов в VRAM. Может отличаться от
     // compute (например storage=fp8e4m3, compute=bf16).
     let items = vec![
-        DropdownItem::new("f32", "F32 — без квантизации"),
-        DropdownItem::new("bf16", "BF16 — без квантизации"),
-        DropdownItem::new("f16", "F16 — без квантизации"),
+        DropdownItem::new("f32", tr!("settings.dtype.storage.f32")),
+        DropdownItem::new("bf16", tr!("settings.dtype.storage.bf16")),
+        DropdownItem::new("f16", tr!("settings.dtype.storage.f16")),
         DropdownItem::new("q8_0", "Q8_0 — 8-bit (GGML)"),
-        DropdownItem::new("q4_0", "Q4_0 — 4-bit (GGML, любая CUDA / CPU)"),
+        DropdownItem::new("q4_0", tr!("settings.dtype.storage.q4_0")),
         DropdownItem::new("fp8e4m3", "FP8 E4M3 — native FP8 Tensor Cores (Hopper / Ada / Blackwell)"),
         DropdownItem::new("nvfp4", "NVFP4 — native FP4 Tensor Cores (Blackwell sm_120)"),
     ];
@@ -394,8 +394,8 @@ fn storage_dtype_row(idx: usize, current: String) -> Box<dyn Widget> {
     );
     row_frame(
         MI_MEMORY,
-        "Storage dtype (веса в VRAM)",
-        "Формат хранения весов. F16/BF16/F32 — без квантизации. Q8_0/Q4_0 — GGML (~2-4x VRAM-drop, реальный inference на k_quants kernels). FP8/MXFP4/NF4 — низкоточные форматы. Внимание: после выгрузки модели в VRAM остаётся ~250 MB CUDA driver context + pool — это не утечка, освобождается при выходе из процесса.",
+        tr!("settings.audio_models.storage_dtype"),
+        tr!("settings.audio_models.storage_dtype.desc"),
         control,
     )
 }
@@ -405,16 +405,16 @@ fn compute_dtype_row(idx: usize, current: String) -> Box<dyn Widget> {
     // - F32/BF16/F16: eager dequant path (accuracy сохраняется).
     // - FP8/NVFP4: native cuBLASLt path (throughput-win, FP8≈100%, FP4 degraded).
     let items = vec![
-        DropdownItem::new("f32", "F32 — максимальная точность"),
-        DropdownItem::new("bf16", "BF16 — широкий диапазон, GPU"),
-        DropdownItem::new("f16", "F16 — быстрее на GPU (по умолчанию)"),
+        DropdownItem::new("f32", tr!("settings.dtype.compute.f32")),
+        DropdownItem::new("bf16", tr!("settings.dtype.compute.bf16")),
+        DropdownItem::new("f16", tr!("settings.dtype.compute.f16")),
         DropdownItem::new(
             "fp8e4m3",
             "FP8 E4M3 — native FP8 Tensor Cores (Hopper+/Ada/Blackwell, 2-4× speed)",
         ),
         DropdownItem::new(
             "nvfp4",
-            "NVFP4 — native FP4 Tensor Cores (Blackwell sm_120, экспериментально — нужна SmoothQuant)",
+            tr!("settings.dtype.compute.nvfp4_asr"),
         ),
     ];
     let control: Box<dyn Widget> = Box::new(
@@ -433,8 +433,8 @@ fn compute_dtype_row(idx: usize, current: String) -> Box<dyn Widget> {
     );
     row_frame(
         MI_BOLT,
-        "Compute dtype (активации)",
-        "Точность вычислений: активации и matmul accumulator. F16 — компромисс скорость/качество.",
+        tr!("settings.audio_models.compute_dtype"),
+        tr!("settings.audio_models.compute_dtype.desc"),
         control,
     )
 }
@@ -452,30 +452,30 @@ fn load_control_card() -> impl Widget {
             let error = ctx.audio.error.get();
 
             let (status_label, modifier) = if loading {
-                ("Загрузка…", "starting")
+                (tr!("settings.audio_models.status.loading"), "starting")
             } else if loaded_name.is_some() {
-                ("Загружена", "running")
+                (tr!("settings.audio_models.status.loaded"), "running")
             } else if error.is_some() {
-                ("Ошибка", "error")
+                (tr!("settings.audio_models.status.error"), "error")
             } else {
-                ("Не загружена", "stopped")
+                (tr!("settings.audio_models.status.unloaded"), "stopped")
             };
             let pill_class = format!("llama-status-pill llama-status-pill-{modifier}");
 
             let action = action_button(loaded_name.is_some(), loading);
 
             let info_text = match (&loaded_name, &error, loading) {
-                (_, _, true) => "Загружаем модель в память — это может занять до минуты".to_string(),
-                (Some(name), _, _) => format!("Активная модель: {name}"),
+                (_, _, true) => tr!("settings.audio_models.load.info.loading"),
+                (Some(name), _, _) => tr!("settings.audio_models.load.info.active", name = name),
                 (_, Some(err), _) => err.clone(),
-                _ => "Нажмите «Загрузить», чтобы инициализировать ASR-движок".to_string(),
+                _ => tr!("settings.audio_models.load.info.idle"),
             };
 
             let info_col: Box<dyn Widget> = Box::new(DecoratedBox::new().class("grow").child(
                 Column::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Start)
-                    .child(Text::new("ASR движок").class("settings-row-title"))
+                    .child(Text::new(tr!("settings.audio_models.load.title")).class("settings-row-title"))
                     .child(Text::new(info_text).class("settings-row-desc")),
             ));
             let icon_box: Box<dyn Widget> = Box::new(
@@ -500,20 +500,20 @@ fn load_control_card() -> impl Widget {
 fn action_button(loaded: bool, loading: bool) -> Box<dyn Widget> {
     if loading {
         Box::new(
-            Button::new("Загрузка…")
+            Button::new(tr!("settings.audio_models.status.loading"))
                 .icon(MI_BOLT)
                 .class("models-delete-btn"),
         )
     } else if loaded {
         Box::new(
-            Button::new("Выгрузить")
+            Button::new(tr!("settings.audio_models.load.unload"))
                 .icon(MI_STOP)
                 .on_click(audio::unload_model)
                 .class("models-delete-btn"),
         )
     } else {
         Box::new(
-            Button::new("Загрузить")
+            Button::new(tr!("settings.audio_models.load.load"))
                 .icon(MI_PLAY_ARROW)
                 .on_click(audio::load_selected_model)
                 .class("models-delete-btn"),
@@ -527,8 +527,8 @@ fn action_button(loaded: bool, loading: bool) -> Box<dyn Widget> {
 
 fn row_frame(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     control: Box<dyn Widget>,
 ) -> Box<dyn Widget> {
     let inner = Row::new()
@@ -544,8 +544,8 @@ fn row_frame(
                 Column::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Start)
-                    .child(Text::new(title).class("settings-row-title"))
-                    .child(Text::new(desc).class("settings-row-desc")),
+                    .child(Text::new(title.into()).class("settings-row-title"))
+                    .child(Text::new(desc.into()).class("settings-row-desc")),
             ),
         )
         .children(vec![control]);
@@ -557,7 +557,7 @@ fn row_frame(
     )
 }
 
-fn section_card(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
+fn section_card(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> impl Widget {
     let card = DecoratedBox::new().class("settings-card").child(
         Column::new()
             .gap(0.0)
@@ -567,6 +567,6 @@ fn section_card(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget 
     Column::new()
         .gap(12.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new(title).class("settings-section-title"))
+        .child(Text::new(title.into()).class("settings-section-title"))
         .child(card)
 }

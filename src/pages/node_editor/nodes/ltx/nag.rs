@@ -99,16 +99,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((prompt_field, scale, alpha, tau, running, error)) = snapshot else {
-        return Box::new(Text::new("LtxNagPrompt: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxNagPrompt")).class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row("NAG промпт", make_text_field(prompt_field, "пусто = NAG выкл")),
+        field_row(
+            &tr!("node.ltx_nag.field.prompt_label"),
+            make_text_field(prompt_field, tr!("node.ltx_nag.field.prompt_placeholder")),
+        ),
         field_row("Scale", make_slider_row(scale, 1.0, 20.0, 0.5, 1)),
         field_row("Alpha", make_slider_row(alpha, 0.0, 1.0, 0.05, 2)),
         field_row("Tau", make_slider_row(tau, 1.0, 5.0, 0.1, 1)),
         field_row(
-            "Статус",
+            &tr!("nodes.common.status"),
             status_row(running, error, loaded_name, "NAG encode…", "ltx-node-running"),
         ),
     ];
@@ -140,7 +145,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     let prompt = current_input_text(ctx, node.id, "text")
@@ -194,9 +199,9 @@ fn worker(
         let ckpt = shared::load_ckpt(handle)?;
         let ckpt_gpu = ckpt.view_on(dev);
         let enc = VideoTextConditioner::load(&ckpt_gpu, dev, compute)
-            .map_err(|e| format!("video-коннектор: {e}"))?
+            .map_err(|e| tr!("node.ltx.common.video_connector", error = e))?
             .forward(&states, &mask)
-            .map_err(|e| format!("video-коннектор forward: {e}"))?;
+            .map_err(|e| tr!("node.ltx.common.video_connector_forward", error = e))?;
         if let Ok(mut g) = out.lock() {
             *g = Some(enc);
         }

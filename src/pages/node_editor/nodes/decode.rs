@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use syngui::audio::AudioBuffer;
+use syngui::prelude::*;
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
@@ -20,7 +21,8 @@ use symphonia::core::probe::Hint;
 /// Декодировать файл с диска в `AudioBuffer`. Расширение используется как
 /// hint для symphonia (быстрее выбирает demuxer'а), но не обязательно.
 pub fn decode_file(path: &Path) -> std::result::Result<AudioBuffer, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("не удалось открыть файл: {e}"))?;
+    let file = std::fs::File::open(path)
+        .map_err(|e| tr!("node.decode.open_file_failed", error = e))?;
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -52,27 +54,27 @@ fn decode_inner(
             &FormatOptions::default(),
             &MetadataOptions::default(),
         )
-        .map_err(|e| format!("не удалось определить формат: {e}"))?;
+        .map_err(|e| tr!("node.decode.probe_failed", error = e))?;
     let mut format = probed.format;
 
     let track = format
         .tracks()
         .iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or_else(|| "файл не содержит audio-треков".to_string())?;
+        .ok_or_else(|| tr!("node.decode.no_audio_tracks"))?;
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
     let sample_rate = codec_params
         .sample_rate
-        .ok_or_else(|| "неизвестный sample rate".to_string())?;
+        .ok_or_else(|| tr!("node.decode.unknown_sample_rate"))?;
     let channels_count = codec_params
         .channels
-        .ok_or_else(|| "неизвестное число каналов".to_string())?
+        .ok_or_else(|| tr!("node.decode.unknown_channel_count"))?
         .count() as u16;
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&codec_params, &DecoderOptions::default())
-        .map_err(|e| format!("codec не поддерживается: {e}"))?;
+        .map_err(|e| tr!("node.decode.codec_unsupported", error = e))?;
 
     let mut interleaved: Vec<f32> = Vec::new();
     // Reserve по estimated n_frames * channels (если известно).
@@ -104,7 +106,7 @@ fn decode_inner(
     }
 
     if interleaved.is_empty() {
-        return Err("файл декодирован, но не содержит сэмплов".to_string());
+        return Err(tr!("node.decode.no_samples"));
     }
 
     Ok(AudioBuffer::new(

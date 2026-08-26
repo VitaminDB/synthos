@@ -35,25 +35,25 @@ pub fn view(active: OpenBundle) -> impl Widget {
                 Column::new()
                     .gap(14.0)
                     .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        field_row("id", "Стабильный идентификатор модели", TextField::with_text(id_v)
+                        field_row("id", tr!("explorer.metadata.id.hint"), TextField::with_text(id_v)
                             .on_change(move |s| {
                                 let v = s.to_string();
                                 active_id.meta.update(|m| m.id = v);
                             })
                             .class("syn-meta-input")),
-                        field_row("version", "Семвер версии", TextField::with_text(version_v)
+                        field_row("version", tr!("explorer.metadata.version.hint"), TextField::with_text(version_v)
                             .on_change(move |s| {
                                 let v = s.to_string();
                                 active_version.meta.update(|m| m.version = v);
                             })
                             .class("syn-meta-input")),
-                        field_row("arch", "Архитектура (xlm-roberta, llama, …)", TextField::with_text(arch_v)
+                        field_row("arch", tr!("explorer.metadata.arch.hint"), TextField::with_text(arch_v)
                             .on_change(move |s| {
                                 let v = s.to_string();
                                 active_arch.meta.update(|m| m.arch = v);
                             })
                             .class("syn-meta-input")),
-                        field_row("purpose", "Назначение (embed, asr, tts, music, …)", TextField::with_text(purpose_v)
+                        field_row("purpose", tr!("explorer.metadata.purpose.hint"), TextField::with_text(purpose_v)
                             .on_change(move |s| {
                                 let v = s.to_string();
                                 active_purpose.meta.update(|m| m.purpose = v);
@@ -61,7 +61,7 @@ pub fn view(active: OpenBundle) -> impl Widget {
                             .class("syn-meta-input")),
                         components_section(&meta),
                         refs_section(&meta),
-                        Text::new("LoRA-overlays и SHA/Blake3-manifest сейчас отображаются на табе «Обзор» в read-only. Изменения вступают в силу после кнопки «Сохранить».")
+                        Text::new(tr!("explorer.metadata.readonly_hint"))
                             .class("syn-meta-hint"),
                     ]
             };
@@ -70,9 +70,9 @@ pub fn view(active: OpenBundle) -> impl Widget {
     ))
 }
 
-fn field_row<W: Widget + 'static>(label: &str, hint: &str, field: W) -> impl Widget {
+fn field_row<W: Widget + 'static>(label: &str, hint: impl Into<String>, field: W) -> impl Widget {
     let label_owned = label.to_string();
-    let hint_owned = hint.to_string();
+    let hint_owned = hint.into();
     mgui! {
         Column::new()
             .gap(4.0)
@@ -100,7 +100,7 @@ fn components_section(meta: &synaptix_bundle::BundleMeta) -> impl Widget {
             Column::new()
                 .gap(4.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Компоненты (tensor_prefix)").class("syn-property-label"),
+                    Text::new(tr!("explorer.metadata.components_label")).class("syn-property-label"),
                     Text::new(body).class("syn-meta-readonly-text"),
                 ]
         ]

@@ -140,7 +140,7 @@ impl SynModelRegistry {
     ) {
         if self.loading.get_untracked() {
             if let Some(tx) = notify {
-                let _ = tx.send(Err("загрузка модели уже идёт".to_string()));
+                let _ = tx.send(Err(tr!("chat.model_registry.error.load_in_progress")));
             }
             return;
         }

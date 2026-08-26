@@ -74,7 +74,7 @@ fn load_cached(
         }
     }
     let img = synaptix_io::image::load_image(path, Device::Cpu)
-        .map_err(|e| format!("загрузка изображения: {e}"))?;
+        .map_err(|e| tr!("node.ltx_image.err.load_image", error = e))?;
     if let Ok(mut g) = cache.lock() {
         *g = Some((path.clone(), img.clone()));
     }
@@ -92,26 +92,32 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((image_path, strength, frame_idx, error)) = snapshot else {
-        return Box::new(Text::new("LtxImage: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxImage"))
+                .class("node-card-field-error"),
+        );
     };
     let status = syngui::widgets::Reactive::new(move || -> Vec<Box<dyn Widget>> {
         match error.get() {
-            Some(e) => vec![Box::new(Text::new(format!("Ошибка: {e}")).class("audio-node-error")) as Box<dyn Widget>],
+            Some(e) => vec![Box::new(Text::new(tr!("nodes.common.error", error = e)).class("audio-node-error")) as Box<dyn Widget>],
             None => vec![],
         }
     });
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Изображение",
+            &tr!("node.ltx_image.field.image"),
             node_file_picker(
-                "Изображение для кадра 0 (png/jpeg/webp)",
+                tr!("node.ltx_image.picker.image"),
                 image_path,
-                &[("Изображение", &["png", "jpg", "jpeg", "webp", "bmp"])],
+                &[("nodes.filter.images", &["png", "jpg", "jpeg", "webp", "bmp"])],
                 |_| {},
             ),
         ),
-        field_row("Сила", make_slider_row(strength, 0.0, 1.0, 0.05, 2)),
-        field_row("Кадр (0=старт)", super::super::acestep::make_int_slider_row(frame_idx, 0, 240, 1)),
+        field_row(&tr!("node.ltx_image.field.strength"), make_slider_row(strength, 0.0, 1.0, 0.05, 2)),
+        field_row(
+            &tr!("node.ltx_image.field.frame_start"),
+            super::super::acestep::make_int_slider_row(frame_idx, 0, 240, 1),
+        ),
         Box::new(status),
     ];
     Box::new(

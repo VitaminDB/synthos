@@ -31,24 +31,24 @@ pub fn view(active: OpenBundle) -> impl Widget {
 }
 
 fn header_card(meta: &BundleMeta, stats: &BundleStats) -> impl Widget {
-    let header = Text::new(if meta.id.is_empty() { "Без id".to_string() } else { meta.id.clone() })
+    let header = Text::new(if meta.id.is_empty() { tr!("explorer.overview.no_id") } else { meta.id.clone() })
         .class("syn-overview-title");
-    let version = Text::new(format!("Версия: {}", display_or_dash(&meta.version)))
+    let version = Text::new(tr!("explorer.overview.version", value = display_or_dash(&meta.version)))
         .class("syn-overview-line");
-    let arch = Text::new(format!("Архитектура: {}", display_or_dash(&meta.arch)))
+    let arch = Text::new(tr!("explorer.overview.arch", value = display_or_dash(&meta.arch)))
         .class("syn-overview-line");
-    let purpose = Text::new(format!("Назначение: {}", display_or_dash(&meta.purpose)))
+    let purpose = Text::new(tr!("explorer.overview.purpose", value = display_or_dash(&meta.purpose)))
         .class("syn-overview-line");
-    let size = Text::new(format!("Размер: {}", humanize_bytes(stats.total_size)))
+    let size = Text::new(tr!("explorer.overview.size", value = humanize_bytes(stats.total_size)))
         .class("syn-overview-line");
     let format = Text::new(format!(
-        "Формат: v{}.{}",
-        stats.format_version.0, stats.format_version.1
+        "{}: v{}.{}",
+        tr!("explorer.overview.format"), stats.format_version.0, stats.format_version.1
     ))
     .class("syn-overview-line");
     let created = match meta.created_at {
-        Some(ts) => format!("Создан: {}", format_timestamp(ts)),
-        None => "Создан: —".to_string(),
+        Some(ts) => tr!("explorer.overview.created", value = format_timestamp(ts)),
+        None => tr!("explorer.overview.created", value = "—"),
     };
     let created = Text::new(created).class("syn-overview-line");
     mgui! {
@@ -74,29 +74,29 @@ fn chunks_section(stats: &BundleStats) -> impl Widget {
             Column::new()
                 .gap(8.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Чанки").class("syn-overview-subtitle"),
+                    Text::new(tr!("explorer.overview.chunks_title")).class("syn-overview-subtitle"),
                     Row::new()
                         .gap(8.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            stat_chip("Тензоры", stats.tensor_chunks),
-                            stat_chip("Quantized", stats.quantized_chunks),
-                            stat_chip("Файлы", stats.file_chunks),
-                            stat_chip("Refs", stats.ref_chunks),
-                            stat_chip("Tombstones", stats.tombstoned_chunks),
+                            stat_chip(tr!("explorer.overview.chunks.tensors"), stats.tensor_chunks),
+                            stat_chip("Quantized".to_string(), stats.quantized_chunks),
+                            stat_chip(tr!("explorer.overview.chunks.files"), stats.file_chunks),
+                            stat_chip("Refs".to_string(), stats.ref_chunks),
+                            stat_chip("Tombstones".to_string(), stats.tombstoned_chunks),
                         ],
                 ]
         ]
     }
 }
 
-fn stat_chip(label: &str, n: usize) -> impl Widget {
+fn stat_chip(label: impl Into<String>, n: usize) -> impl Widget {
     mgui! {
         DecoratedBox::new().class("syn-stat-chip") => [
             Column::new()
                 .gap(2.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Text::new(format!("{n}")).class("syn-stat-value"),
-                    Text::new(label.to_string()).class("syn-stat-label"),
+                    Text::new(label.into()).class("syn-stat-label"),
                 ]
         ]
     }
@@ -141,7 +141,7 @@ fn capabilities_section(meta: &BundleMeta) -> impl Widget {
                     Text::new("Capabilities").class("syn-overview-subtitle"),
                     Text::new(format!("Required: {required}")).class("syn-overview-line"),
                     Text::new(format!("Optional: {optional}")).class("syn-overview-line"),
-                    Text::new(format!("Компоненты: {components}")).class("syn-overview-line"),
+                    Text::new(tr!("explorer.overview.components", value = components)).class("syn-overview-line"),
                     Text::new(format!("Refs: {refs_label}")).class("syn-overview-line"),
                     Text::new(overlays).class("syn-overview-line"),
                 ]

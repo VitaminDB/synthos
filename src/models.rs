@@ -341,16 +341,16 @@ pub fn trim_all() {
 /// «12.4 ГБ» / «834 МБ» / «—» для нулевого размера.
 pub fn human_bytes(b: u64) -> String {
     if b == 0 {
-        return "—".to_string();
+        return tr!("models.size.unknown");
     }
     const KB: f64 = 1024.0;
     let f = b as f64;
     if f >= KB * KB * KB {
-        format!("{:.1} ГБ", f / (KB * KB * KB))
+        tr!("models.size.gb", value = format!("{:.1}", f / (KB * KB * KB)))
     } else if f >= KB * KB {
-        format!("{:.0} МБ", f / (KB * KB))
+        tr!("models.size.mb", value = format!("{:.0}", f / (KB * KB)))
     } else {
-        format!("{:.0} КБ", f / KB)
+        tr!("models.size.kb", value = format!("{:.0}", f / KB))
     }
 }
 
@@ -360,9 +360,9 @@ mod tests {
 
     #[test]
     fn human_bytes_scales() {
-        assert_eq!(human_bytes(0), "—");
-        assert_eq!(human_bytes(2 * 1024 * 1024 * 1024), "2.0 ГБ");
-        assert_eq!(human_bytes(5 * 1024 * 1024), "5 МБ");
+        assert_eq!(human_bytes(0), tr!("models.size.unknown"));
+        assert_eq!(human_bytes(2 * 1024 * 1024 * 1024), tr!("models.size.gb", value = "2.0"));
+        assert_eq!(human_bytes(5 * 1024 * 1024), tr!("models.size.mb", value = "5"));
     }
 
     /// Мёртвая запись не должна показываться: панель обещает «что реально

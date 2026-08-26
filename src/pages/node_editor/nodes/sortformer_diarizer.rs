@@ -188,9 +188,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         },
         None => {
             let Some(mp) = model_path.get_untracked() else {
-                error_sig.set(Some(
-                    "Выберите .syn модель Sortformer или подключите Syn Checkpoint".into(),
-                ));
+                error_sig.set(Some(tr!("node.sortformer_diarizer.err.select_model")));
                 return;
             };
             SortformerLoadedCfg {
@@ -306,7 +304,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 diarizer.clone(),
                 loaded_cfg.clone(),
             ),
-            _ => return error_widget("SortformerDiarizer: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "SortformerDiarizer")),
         },
         Err(_) => return error_widget("SortformerDiarizer: lock error"),
     };
@@ -316,9 +314,9 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let on_pick_error = error_sig;
     let on_pick_loaded_name = loaded_name;
     let model_control: Box<dyn Widget> = node_file_picker(
-        "Выбрать модель Sortformer (.syn)",
+        tr!("node.sortformer_diarizer.pick_model_tooltip"),
         model_path,
-        &[("Syn bundle", &["syn"]), ("Все файлы", &["*"])],
+        &[("Syn bundle", &["syn"]), ("nodes.filter.all_files", &["*"])],
         move |_p| {
             if let Ok(mut g) = diarizer_h_pick.lock() {
                 *g = None;
@@ -356,14 +354,14 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let status_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         if running.get() {
             return vec![
                 Box::new(
-                    Text::new("Диаризация…")
+                    Text::new(tr!("node.sortformer_diarizer.status.diarizing"))
                         .class("audio-node-meta sortformer-node-running"),
                 ) as Box<dyn Widget>,
             ];
@@ -382,19 +380,19 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(0.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row("Модель", model_control),
+            node_field_row(&tr!("nodes.common.model"), model_control),
             node_field_row("Device", device_dd),
             node_field_row("Storage", storage_dd),
             node_field_row("Compute", compute_dd),
             node_field_row("Threshold", threshold_slider),
             node_field_row("Overlap", allow_toggle),
-            node_field_row("Статус", status_control),
+            node_field_row(&tr!("nodes.common.status"), status_control),
         ]);
 
     Box::new(col)
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
 }
 
@@ -408,18 +406,18 @@ fn current_input_audio(
     let src = conns
         .iter()
         .find(|c| c.to_node == node_id && c.to_port == "in")
-        .ok_or_else(|| "Подключите audio на вход".to_string())?;
+        .ok_or_else(|| tr!("nodes.common.connect_audio_input"))?;
     let values = ctx.values.get_untracked();
     let pv = values
         .get(&(src.from_node, src.from_port))
         .cloned()
-        .ok_or_else(|| "Источник не имеет значения".to_string())?;
+        .ok_or_else(|| tr!("nodes.common.source_no_value"))?;
     match pv {
         PortValue::Audio(b) => Ok(b),
         PortValue::AudioStream(_) => {
-            Err("Live-stream пока не поддерживается. Остановите запись.".into())
+            Err(tr!("nodes.common.live_stream_unsupported"))
         }
-        _ => Err("На входе нет audio-данных".into()),
+        _ => Err(tr!("nodes.common.no_audio_input_data")),
     }
 }
 
@@ -493,7 +491,7 @@ fn play_worker(
                 }
                 loaded_name.set(Some(name.clone()));
                 register_in_panel(
-                    "Диаризация",
+                    "Diarization",
                     "Sortformer",
                     name,
                     device_from_idx(cfg.device_idx),
@@ -504,7 +502,7 @@ fn play_worker(
                 );
             }
             Err(e) => {
-                error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));
+                error_sig.set(Some(tr!("nodes.common.model_load_failed", error = e)));
                 running.set(false);
                 return;
             }
@@ -521,7 +519,7 @@ fn play_worker(
     let result = match diarizer.lock() {
         Ok(mut g) => {
             let Some(d) = g.as_mut() else {
-                error_sig.set(Some("Модель не загружена".into()));
+                error_sig.set(Some(tr!("nodes.common.model_not_loaded")));
                 running.set(false);
                 return;
             };
@@ -544,7 +542,7 @@ fn play_worker(
             error_sig.set(None);
         }
         Err(e) => {
-            error_sig.set(Some(format!("Ошибка диаризации: {e}")));
+            error_sig.set(Some(tr!("node.sortformer_diarizer.err.diarization_failed", error = e)));
         }
     }
     // Хэндл без резидентности («Держать в памяти» выключен у Syn

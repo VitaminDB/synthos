@@ -255,7 +255,7 @@ fn actions_row(body: String, regen_allowed: bool) -> impl Fn() -> syngui::Styled
         }
         let body_for_copy = body.clone();
         let copy = ToolButton::new(MI_CONTENT_COPY)
-            .tooltip("Скопировать сообщение")
+            .tooltip(tr!("chat.msg.actions.copy.tooltip"))
             .on_click(move || {
                 let plain = syngui::widgets::visual::markdown_view::linearize_markdown_source(
                     &body_for_copy,
@@ -267,7 +267,7 @@ fn actions_row(body: String, regen_allowed: bool) -> impl Fn() -> syngui::Styled
         let regen: Option<_> = if regen_allowed {
             Some(
                 ToolButton::new(MI_AUTORENEW)
-                    .tooltip("Сгенерировать заново")
+                    .tooltip(tr!("chat.regenerate.tooltip"))
                     .on_click(session::regenerate_last)
                     .class("msg-action-regen"),
             )
@@ -330,7 +330,7 @@ fn thinking_block(msg_idx: usize, thinking: String, default_open: bool) -> impl 
     let header = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Icon::new(MI_PSYCHOLOGY).class("msg-thinking-icon"),
-            Text::new("Размышления").class("msg-thinking-title"),
+            Text::new(tr!("chat.msg.thinking.title")).class("msg-thinking-title"),
             DecoratedBox::new().class("grow"),
             chevron_reactive,
         ]
@@ -388,7 +388,7 @@ fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_op
     let header = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Icon::new(MI_PSYCHOLOGY).class("msg-thinking-icon"),
-            Text::new("Размышления").class("msg-thinking-title"),
+            Text::new(tr!("chat.msg.thinking.title")).class("msg-thinking-title"),
             DecoratedBox::new().class("grow"),
             chevron_reactive,
         ]
@@ -452,14 +452,14 @@ fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_op
 fn streaming_tool_preview(raw: &str) -> Box<dyn Widget> {
     let (icon, label) = match extract_streaming_tool_name(raw) {
         Some(name) => tool_visuals(&name),
-        None => (MI_TERMINAL.to_string(), "Инструмент".to_string()),
+        None => (MI_TERMINAL.to_string(), tr!("chat.msg.tool.unknown")),
     };
     let header = mgui! {
         Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Icon::new(icon).class("tool-call-icon"),
             Text::new(label).class("tool-call-name"),
             DecoratedBox::new().class("grow"),
-            Text::new("пишет команду…").class("tool-call-hint"),
+            Text::new(tr!("chat.msg.tool.writing")).class("tool-call-hint"),
         ]
     };
     let text = raw.trim_start();
@@ -518,7 +518,7 @@ fn tool_visuals(tool_name: &str) -> (String, String) {
         .map(|t| t.icon.to_string())
         .unwrap_or_else(|| MI_TERMINAL.to_string());
     let label = Tool::by_key(tool_name)
-        .map(|t| t.label.to_string())
+        .map(crate::i18n::tool_label)
         .unwrap_or_else(|| tool_name.to_string());
     (icon, label)
 }
@@ -603,7 +603,7 @@ pub(super) fn tool_call_card_only(
             return Box::new(Text::new("•••").class("msg-typing"));
         }
         let md = if args_body.trim().is_empty() {
-            "(без аргументов)".to_string()
+            tr!("chat.msg.tool.no_args")
         } else {
             fence_plain_text(&unescape_persisted_json_newlines(&args_body), "json")
         };
@@ -665,7 +665,7 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
     let author_row = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Text::new(msg.author.clone()).class("msg-author"),
-            Text::new("→ вызов инструмента").class("tool-call-hint"),
+            Text::new(tr!("chat.msg.tool_call.hint")).class("tool-call-hint"),
         ]
     };
 
@@ -752,7 +752,7 @@ pub(super) fn tool_result_card_only(
     header_children.push(Box::new(Text::new(tool_label).class("tool-result-name")));
     if truncatable || (compact && total_lines > 1) {
         header_children.push(Box::new(
-            Text::new(format!("{total_lines} строк")).class("tool-result-lines"),
+            Text::new(trn!("chat.msg.tool_result.lines_count", total_lines)).class("tool-result-lines"),
         ));
     }
     header_children.push(Box::new(DecoratedBox::new().class("grow")));
@@ -861,7 +861,7 @@ fn open_graph_link() -> impl Widget {
     let link = mgui! {
         Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Icon::new(MI_ACCOUNT_TREE).class("pipeline-link-icon"),
-            Text::new("Открыть граф").class("pipeline-link-text"),
+            Text::new(tr!("chat.msg.pipeline.open_graph")).class("pipeline-link-text"),
         ]
     };
     GestureDetector::new()
@@ -911,7 +911,7 @@ fn pipeline_live_card() -> Box<dyn Widget> {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let mut line = format!("Прогон: нод {done}/{total}");
+        let mut line = tr!("chat.msg.pipeline.progress", done = done, total = total);
         if !active_txt.is_empty() {
             line.push_str(&format!(" · {active_txt}"));
         }
@@ -924,7 +924,7 @@ fn pipeline_live_card() -> Box<dyn Widget> {
             .child(
                 DecoratedBox::new()
                     .class("pipeline-live-cancel")
-                    .child(Text::new("Отменить").class("pipeline-live-cancel-text")),
+                    .child(Text::new(tr!("chat.msg.pipeline.cancel")).class("pipeline-live-cancel-text")),
             );
 
         vec![Box::new(
@@ -954,9 +954,9 @@ fn pipeline_live_card() -> Box<dyn Widget> {
 fn tool_result_toggle(msg_idx: usize, total_lines: usize) -> impl Widget {
     let label_reactive = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let (icon, text) = if body_open(msg_idx) {
-            (MI_EXPAND_LESS, "Свернуть".to_string())
+            (MI_EXPAND_LESS, tr!("chat.msg.tool_result.collapse"))
         } else {
-            (MI_EXPAND_MORE, format!("Показать всё ({total_lines} строк)"))
+            (MI_EXPAND_MORE, trn!("chat.msg.tool_result.show_all", total_lines))
         };
         vec![Box::new(DecoratedBox::new().class("tool-result-more").child(mgui! {
             Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
@@ -1001,7 +1001,7 @@ fn tool_result_row(
 
     let header_row = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Text::new("Результат").class("msg-author"),
+            Text::new(tr!("chat.msg.tool_result.author")).class("msg-author"),
             Text::new(msg.time.clone()).class("msg-time"),
         ]
     };

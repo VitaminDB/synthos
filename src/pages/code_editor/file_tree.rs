@@ -59,7 +59,7 @@ fn header() -> impl Widget {
                                 p.file_name().map(|n| n.to_string_lossy().to_string())
                             })
                         })
-                        .unwrap_or_else(|| String::from("Проект не открыт"));
+                        .unwrap_or_else(|| tr!("code.tree.header.no_project"));
                     vec![Box::new(Text::new(name).class("code-editor-tree-folder-name"))]
                 }),
                 // Растягивающийся spacer прижимает ToolButton к правому краю.
@@ -121,8 +121,8 @@ fn empty_state() -> impl Widget {
             .gap(12.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_FOLDER_OPEN).class("code-editor-empty-icon"),
-                Text::new("Папка не выбрана").class("code-editor-empty-title"),
-                Text::new("Нажмите «Открыть папку» вверху, чтобы начать").class("code-editor-empty-hint"),
+                Text::new(tr!("code.tree.empty.title")).class("code-editor-empty-title"),
+                Text::new(tr!("code.tree.empty.hint")).class("code-editor-empty-hint"),
             ]
     })
 }
@@ -156,14 +156,14 @@ fn tree_widget(
 
 fn menu_items() -> Vec<MenuItem> {
     vec![
-        MenuItem::new("new_file", "Новый файл").icon(MI_NOTE_ADD),
-        MenuItem::new("new_folder", "Новая папка").icon(MI_CREATE_NEW_FOLDER),
+        MenuItem::new("new_file", tr!("code.dialog.new_file.title")).icon(MI_NOTE_ADD),
+        MenuItem::new("new_folder", tr!("code.dialog.new_folder.title")).icon(MI_CREATE_NEW_FOLDER),
         MenuItem::separator(),
-        MenuItem::new("rename", "Переименовать").icon(MI_DRIVE_FILE_RENAME_OUTLINE),
-        MenuItem::new("delete", "Удалить").icon(MI_DELETE),
+        MenuItem::new("rename", tr!("code.dialog.rename.title")).icon(MI_DRIVE_FILE_RENAME_OUTLINE),
+        MenuItem::new("delete", tr!("app.delete")).icon(MI_DELETE),
         MenuItem::separator(),
-        MenuItem::new("copy_path", "Скопировать путь").icon(MI_CONTENT_COPY),
-        MenuItem::new("reveal", "Открыть в файл-менеджере").icon(MI_LAUNCH),
+        MenuItem::new("copy_path", tr!("code.tree.menu.copy_path")).icon(MI_CONTENT_COPY),
+        MenuItem::new("reveal", tr!("code.tree.menu.reveal")).icon(MI_LAUNCH),
     ]
 }
 
@@ -190,7 +190,7 @@ fn handle_menu(session: CodeSession, action: &str) {
                 None => match root {
                     Some(r) => r,
                     None => {
-                        code.show_notice("Сначала откройте папку проекта");
+                        code.show_notice(tr!("code.tree.notice.open_project_first"));
                         return;
                     }
                 },
@@ -204,21 +204,21 @@ fn handle_menu(session: CodeSession, action: &str) {
         }
         "rename" => {
             let Some(path) = selected else {
-                code.show_notice("Выделите файл или папку для переименования");
+                code.show_notice(tr!("code.tree.notice.select_for_rename"));
                 return;
             };
             code.open_dialog(DialogKind::Rename { path });
         }
         "delete" => {
             let Some(path) = selected else {
-                code.show_notice("Выделите файл или папку для удаления");
+                code.show_notice(tr!("code.tree.notice.select_for_delete"));
                 return;
             };
             code.open_dialog(DialogKind::Delete { path });
         }
         "copy_path" => {
             let Some(path) = selected else {
-                code.show_notice("Выделите файл для копирования пути");
+                code.show_notice(tr!("code.tree.notice.select_for_copy_path"));
                 return;
             };
             fs_actions::copy_path_to_clipboard(&path);
@@ -226,7 +226,7 @@ fn handle_menu(session: CodeSession, action: &str) {
         "reveal" => {
             let target = selected.or(root);
             let Some(path) = target else {
-                code.show_notice("Нет пути для открытия");
+                code.show_notice(tr!("code.tree.notice.no_path"));
                 return;
             };
             fs_actions::reveal_in_files(&path);
@@ -244,9 +244,7 @@ fn handle_select(session: CodeSession, id: &str) {
     if id.starts_with(GHOST_PREFIX) {
         let code = use_context::<CodeEditorCtx>();
         session.selected_node.set(Some(id.to_string()));
-        code.show_notice(
-            "Файл удалён. Восстановите через `git checkout` или вернитесь на коммит.",
-        );
+        code.show_notice(tr!("code.tree.notice.ghost_file_deleted"));
         return;
     }
     // Сначала фиксируем выделение — для UX-фидбека всегда (и для папок,

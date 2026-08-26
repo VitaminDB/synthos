@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use syngui::async_runtime::{run_on_main_thread, spawn};
 use syngui::widgets::feedback::NotificationCtx;
+use syngui::{tr, trn};
 use synaptix_rag::doc::ChunkConfig;
 
 use crate::config::KbConfig;
@@ -35,14 +36,12 @@ pub fn start(
     let embedder = match kb.get_embedder() {
         Some(e) => e,
         None => {
-            notifications.warning(
-                "Эмбеддер не загружен. Сначала «Загрузить» в Settings → Базы знаний.",
-            );
+            notifications.warning(tr!("kb.runner.embedder_not_loaded"));
             return false;
         }
     };
     if sources.is_empty() {
-        notifications.info("Нет источников для индексации.");
+        notifications.info(tr!("kb.runner.no_sources"));
         return false;
     }
 
@@ -50,7 +49,7 @@ pub fn start(
     let collection_meta = match registry_snapshot.get(&collection_id) {
         Some(m) => m.clone(),
         None => {
-            notifications.error("Коллекция не найдена.");
+            notifications.error(tr!("kb.runner.collection_not_found"));
             return false;
         }
     };
@@ -79,7 +78,7 @@ pub fn start(
         let tokenizer = match tokenizers::Tokenizer::from_file(&tokenizer_path) {
             Ok(t) => t,
             Err(e) => {
-                let msg = format!("ошибка tokenizer.json: {e}");
+                let msg = tr!("kb.runner.tokenizer_error", error = e);
                 let n = notifications_for_progress.clone();
                 run_on_main_thread(move || {
                     n.error(msg);
@@ -91,7 +90,7 @@ pub fn start(
         let store = match Store::open(&db_path) {
             Ok(s) => s,
             Err(e) => {
-                let msg = format!("не удалось открыть БД коллекции: {e}");
+                let msg = tr!("kb.runner.store_open_error", error = e);
                 let n = notifications_for_progress.clone();
                 run_on_main_thread(move || {
                     n.error(msg);
@@ -139,11 +138,9 @@ pub fn start(
             run_on_main_thread(move || {
                 kb_inner.ingest_progress.set(Some(p));
                 if stage == IngestStage::Done {
-                    n_inner.success(format!(
-                        "Готово: проиндексировано {total} источников"
-                    ));
+                    n_inner.success(trn!("kb.runner.ingest_done", total));
                 } else if stage == IngestStage::Cancelled {
-                    n_inner.info("Индексация отменена");
+                    n_inner.info(tr!("kb.runner.ingest_cancelled"));
                 }
             });
         };
@@ -173,7 +170,7 @@ pub fn start(
         if let Err(e) = result {
             let n_err = notifications_for_progress.clone();
             run_on_main_thread(move || {
-                n_err.error(format!("Ошибка ingest: {e}"));
+                n_err.error(tr!("kb.runner.ingest_error", error = e));
             });
         }
     });

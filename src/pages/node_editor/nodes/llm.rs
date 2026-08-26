@@ -284,9 +284,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         },
         None => {
             let Some(model) = model_path.get_untracked() else {
-                error_sig.set(Some(
-                    "Выберите модель (HF-каталог или .syn) или подключите Syn Checkpoint".into(),
-                ));
+                error_sig.set(Some(tr!("node.llm.err.select_model")));
                 return;
             };
             LlmLoadedCfg {
@@ -301,7 +299,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let question = match current_input_text(ctx, node.id, "prompt") {
         Some(s) if !s.trim().is_empty() => s,
         _ => {
-            error_sig.set(Some("Подключите Text на вход «prompt»".into()));
+            error_sig.set(Some(tr!("node.llm.err.connect_prompt")));
             return;
         }
     };
@@ -430,7 +428,7 @@ fn gen_worker(
         let precision = match precision_from_idx(cfg.quant_idx, cfg.compute_idx) {
             Ok(p) => p,
             Err(e) => {
-                error_sig.set(Some(format!("Неверная точность: {e}")));
+                error_sig.set(Some(tr!("node.llm.err.invalid_precision", error = e)));
                 running.set(false);
                 return;
             }
@@ -473,7 +471,7 @@ fn gen_worker(
                 );
             }
             Err(e) => {
-                error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));
+                error_sig.set(Some(tr!("nodes.common.model_load_failed", error = e)));
                 running.set(false);
                 return;
             }
@@ -502,7 +500,7 @@ fn gen_worker(
                     Ok(p) => p,
                     Err(e) => {
                         drop(g);
-                        error_sig.set(Some(format!("Шаблон чата: {e}")));
+                        error_sig.set(Some(tr!("node.llm.err.chat_template", error = e)));
                         running.set(false);
                         return;
                     }
@@ -511,7 +509,7 @@ fn gen_worker(
                     Ok(ids) => ids,
                     Err(e) => {
                         drop(g);
-                        error_sig.set(Some(format!("Токенизация: {e}")));
+                        error_sig.set(Some(tr!("node.llm.err.tokenization", error = e)));
                         running.set(false);
                         return;
                     }
@@ -543,7 +541,7 @@ fn gen_worker(
                 });
                 r.map(|_| ()).map_err(|e| e.to_string())
             }
-            None => Err("Pipeline не загружен".into()),
+            None => Err(tr!("nodes.common.pipeline_not_loaded")),
         },
         Err(_) => Err("Lock error pipeline".into()),
     };
@@ -560,7 +558,7 @@ fn gen_worker(
             if cancel.load(Ordering::Relaxed) {
                 error_sig.set(None);
             } else {
-                error_sig.set(Some(format!("Ошибка генерации: {e}")));
+                error_sig.set(Some(tr!("node.llm.err.generation_failed", error = e)));
             }
         }
     }
@@ -652,7 +650,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         cancel,
     )) = snapshot
     else {
-        return error_widget("Llm: некорректный runtime");
+        return error_widget(tr!("nodes.common.invalid_runtime", name = "Llm"));
     };
 
     // Доп. параметры (context/think/sampling) — отдельным локом.
@@ -667,7 +665,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 repetition_penalty,
                 ..
             } => (*context, *think, *top_k, *top_p, *min_p, *repetition_penalty),
-            _ => return error_widget("Llm: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "Llm")),
         },
         Err(_) => return error_widget("Llm: lock error"),
     };
@@ -677,9 +675,9 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let on_pick_error = error_sig;
     let on_pick_loaded_name = loaded_name;
     let model_control: Box<dyn Widget> = node_file_picker(
-        "Выбрать модель (config.json или .syn)",
+        tr!("node.llm.pick_model_tooltip"),
         model_path,
-        &[("Модель", &["syn", "json"]), ("Все файлы", &["*"])],
+        &[("nodes.filter.model", &["syn", "json"]), ("nodes.filter.all_files", &["*"])],
         move |_p| {
             if let Ok(mut g) = pipeline_h.lock() {
                 *g = None;
@@ -699,7 +697,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let system_field = Box::new(
         TextField::new()
             .text(system_prompt.get_untracked())
-            .placeholder("System-промпт (или подключите порт system)")
+            .placeholder(tr!("node.llm.system_placeholder"))
             .on_change(move |s| system_prompt.set(s.to_string()))
             .class("node-input-text"),
     ) as Box<dyn Widget>;
@@ -751,7 +749,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         if running.get() {
             let c = cancel_for_btn.clone();
             vec![Box::new(
-                Button::new("Отмена")
+                Button::new(tr!("app.cancel"))
                     .on_click(move || c.store(true, Ordering::Relaxed))
                     .class("node-input-button llm-node-cancel"),
             ) as Box<dyn Widget>]
@@ -763,13 +761,13 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let status_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         if running.get() {
             return vec![Box::new(
-                Text::new("Генерация…").class("audio-node-meta llm-node-running"),
+                Text::new(tr!("nodes.common.generating")).class("audio-node-meta llm-node-running"),
             ) as Box<dyn Widget>];
         }
         if let Some(name) = loaded_name.get() {
@@ -782,7 +780,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row("Модель", model_control),
+            node_field_row(&tr!("nodes.common.model"), model_control),
             node_field_row("Device", device_dd),
             node_field_row("Quant", quant_dd),
             node_field_row("Compute", compute_dd),
@@ -797,12 +795,12 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             node_field_row("Rep. penalty", rep_penalty_control),
             node_field_row("Seed", seed_widget),
             node_field_row("", Box::new(cancel_control) as Box<dyn Widget>),
-            node_field_row("Статус", Box::new(status_text) as Box<dyn Widget>),
+            node_field_row(&tr!("nodes.common.status"), Box::new(status_text) as Box<dyn Widget>),
         ]);
 
     Box::new(col)
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
 }

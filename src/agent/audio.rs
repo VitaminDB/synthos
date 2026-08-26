@@ -25,6 +25,7 @@
 //! **Запись** в `audio.error.set(...)` извне больше не работает (эффект
 //! перепишет): для очистки ошибки используйте `audio.session.error().set(None)`.
 
+use syngui::tr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -220,7 +221,7 @@ pub fn voice_start() {
             app.selected_audio_model.set(Some(first.name.clone()));
         } else {
             actx.session.error().set(Some(
-                "Сначала добавьте аудио-модель в Настройки → Аудио модели".into(),
+                tr!("voice.asr.add_model_first"),
             ));
             return;
         }
@@ -275,7 +276,7 @@ fn start_recording(actx: AudioCtx, app: AppCtx) {
         .map(|g| g.is_some())
         .unwrap_or(false);
     if !asr_loaded {
-        let msg = "Загрузите ASR-модель в Настройки → Аудио модели".to_string();
+        let msg = tr!("voice.asr.load_model_first");
         eprintln!("[synthos/audio] {msg}");
         actx.session.error().set(Some(msg));
         return;
@@ -293,7 +294,7 @@ fn start_recording(actx: AudioCtx, app: AppCtx) {
         Some(preferred.as_str())
     };
     if let Err(e) = actx.session.start_with_device(preferred_opt) {
-        let msg = format!("Не удалось начать запись: {e}");
+        let msg = tr!("voice.asr.record_start_failed", error = e);
         eprintln!("[synthos/audio] {msg}");
         actx.session.error().set(Some(msg));
         return;
@@ -336,7 +337,7 @@ fn stop_and_send_with_sink(actx: AudioCtx, app: AppCtx, sink: TranscriptSink) {
     let result = match actx.session.stop() {
         Ok(r) => r,
         Err(e) => {
-            let msg = format!("Не удалось остановить запись: {e}");
+            let msg = tr!("voice.asr.record_stop_failed", error = e);
             eprintln!("[synthos/audio] {msg}");
             actx.session.error().set(Some(msg));
             return;
@@ -375,7 +376,7 @@ fn fallback_transcribe(actx: AudioCtx, sink: TranscriptSink, wav: Vec<u8>) {
                 Err(e) => return Err(format!("ASR mutex poisoned: {e}")),
             };
             let Some(t) = guard.as_mut() else {
-                return Err("ASR-модель выгружена".into());
+                return Err(tr!("voice.asr.model_unloaded"));
             };
             t.transcribe_wav(&wav_for_asr).map_err(|e| e.to_string())
         })
@@ -405,7 +406,7 @@ pub fn on_transcription_done(
             if trimmed.is_empty() {
                 actx.session
                     .error()
-                    .set(Some("Не удалось распознать речь".into()));
+                    .set(Some(tr!("voice.asr.recognize_failed")));
                 return;
             }
             match sink {
@@ -452,7 +453,7 @@ pub fn on_transcription_done(
             }
         }
         Err(e) => {
-            let msg = format!("Ошибка распознавания: {e}");
+            let msg = tr!("voice.asr.recognize_error", error = e);
             eprintln!("[synthos/audio] {msg}");
             actx.session.error().set(Some(msg));
         }
@@ -524,7 +525,7 @@ pub fn load_selected_model() {
         app.audio
             .session
             .error()
-            .set(Some("Не выбрана ASR-модель".into()));
+            .set(Some(tr!("voice.asr.no_model_selected")));
         return;
     };
     if app.audio.asr_loading.get_untracked() {
@@ -534,7 +535,7 @@ pub fn load_selected_model() {
         app.audio
             .session
             .error()
-            .set(Some("Не указан путь к модели".into()));
+            .set(Some(tr!("voice.asr.no_model_path")));
         return;
     }
 
@@ -568,7 +569,7 @@ pub fn load_selected_model() {
                     actx2.asr_loaded_name.set(Some(model_name));
                 }
                 Ok(Err(e)) => {
-                    let msg = format!("Не удалось загрузить модель: {e}");
+                    let msg = tr!("voice.asr.load_failed", error = e);
                     eprintln!("[synthos/audio] {msg}");
                     actx2.session.error().set(Some(msg));
                 }

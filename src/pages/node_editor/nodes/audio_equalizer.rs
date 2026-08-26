@@ -259,7 +259,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 live_gains.clone(),
                 coeffs_dirty.clone(),
             ),
-            _ => return error_widget("Equalizer: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "Equalizer")),
         },
         Err(_) => return error_widget("Equalizer: lock error"),
     };
@@ -273,7 +273,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let reset_btn = DecoratedBox::new()
         .child(
             ToolButton::new(MI_AUTORENEW)
-                .tooltip("Сбросить все полосы")
+                .tooltip(tr!("node.audio_equalizer.reset_bands"))
                 .on_click(move || {
                     for sig in &reset_gains {
                         sig.set(0.0);
@@ -365,7 +365,7 @@ fn format_freq(hz: f32) -> String {
     }
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

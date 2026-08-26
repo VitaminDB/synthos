@@ -33,7 +33,7 @@ fn header() -> impl Widget {
                     Center::new().child(Icon::new(MI_HEADSET_MIC).class("skills-panel-header-icon")),
                 ],
                 DecoratedBox::new().class("grow").child(
-                    Text::new("Аудио модели").class("skills-panel-header-title"),
+                    Text::new(tr!("settings.audio_models.panel.title")).class("skills-panel-header-title"),
                 ),
                 ToolButton::new(MI_ADD)
                     .on_click(add_audio_model)
@@ -52,7 +52,7 @@ fn list_reactive() -> impl Widget {
         let body: Box<dyn Widget> = if models.is_empty() {
             Box::new(Center::new().child(
                 Padding::all(24.0).child(
-                    Text::new("Нет ASR-моделей — нажмите «+»")
+                    Text::new(tr!("settings.audio_models.panel.empty"))
                         .class("models-empty-list"),
                 ),
             ))
@@ -123,7 +123,7 @@ fn row(item: &ListItem, is_selected: bool, is_default: bool) -> Box<dyn Widget> 
                         .gap(4.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center)
                         .child(Icon::new(MI_CHECK))
-                        .child(Text::new("default")),
+                        .child(Text::new(tr!("settings.audio_models.panel.default_chip"))),
                 ),
             ),
         )
@@ -184,11 +184,11 @@ fn add_audio_model() {
         .map(|m| m.name.clone())
         .collect();
 
-    let mut name = "Новая аудио-модель".to_string();
+    let mut name = tr!("settings.audio_models.panel.new_name");
     if existing.contains(&name) {
         let mut n = 2;
         loop {
-            let candidate = format!("Новая аудио-модель {n}");
+            let candidate = tr!("settings.audio_models.panel.new_name_n", n = n);
             if !existing.contains(&candidate) {
                 name = candidate;
                 break;

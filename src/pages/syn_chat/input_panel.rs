@@ -69,9 +69,9 @@ fn attach_button() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 's
             .map(|m| m.supports_media)
             .unwrap_or(false);
         let tooltip = if vision {
-            "Прикрепить файлы (картинки, видео, документы)"
+            tr!("chat.input.attach.tooltip_vision")
         } else {
-            "Прикрепить файлы — модель без vision прочтёт только документы"
+            tr!("chat.input.attach.tooltip_text_only")
         };
         DecoratedBox::new().class("input-attach-wrap").child(
             ToolButton::new(MI_ATTACH_FILE)
@@ -89,7 +89,7 @@ fn editor_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 
         let initial = ctx.input.get_untracked();
         let editor = MultilineTextEdit::new()
             .text(initial)
-            .placeholder("Сообщение для модели…")
+            .placeholder(tr!("chat.input.placeholder"))
             .rows(2)
             .max_rows(8)
             .auto_height(true)
@@ -122,7 +122,7 @@ fn token_counter_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
             .child(mgui! {
                 Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_BOLT).class("input-token-chip-icon"),
-                    Text::new(format!("{} ток.", n)).class("input-token-chip-text"),
+                    Text::new(tr!("chat.input.token_chip", n = n)).class("input-token-chip-text"),
                 ]
             })
     }
@@ -154,7 +154,7 @@ fn continue_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send 
             return DecoratedBox::new().class("input-regen-empty");
         }
         let btn = ToolButton::new(MI_PLAY_ARROW)
-            .tooltip("Продолжить — дать агенту ещё ходов, не теряя историю")
+            .tooltip(tr!("chat.input.continue.tooltip"))
             .on_click(session::continue_last)
             .class("input-regen");
         DecoratedBox::new().class("input-regen-wrap").child(btn)
@@ -171,7 +171,7 @@ fn regen_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             return DecoratedBox::new().class("input-regen-empty");
         }
         let btn = ToolButton::new(MI_AUTORENEW)
-            .tooltip("Сгенерировать заново")
+            .tooltip(tr!("chat.regenerate.tooltip"))
             .on_click(session::regenerate_last)
             .class("input-regen");
         DecoratedBox::new().class("input-regen-wrap").child(btn)
@@ -188,7 +188,7 @@ fn send_or_stop_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let inner: Box<dyn Widget> = if pending {
             Box::new(
                 ToolButton::new(MI_CLOSE)
-                    .tooltip("Прервать")
+                    .tooltip(tr!("chat.input.stop.tooltip"))
                     .on_click(|| session::abort_current())
                     .class("input-send input-send-stop"),
             )
@@ -201,7 +201,7 @@ fn send_or_stop_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             };
             Box::new(
                 ToolButton::new(MI_SEND)
-                    .tooltip("Отправить")
+                    .tooltip(tr!("chat.input.send.tooltip"))
                     .on_click(move || {
                         if !model_loaded {
                             return;
@@ -228,16 +228,16 @@ fn pending_hint_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let pending = ctx.pending.get();
 
         let (txt, class) = if let Some(e) = err.as_ref() {
-            (format!("Ошибка: {}", e), "input-hint error")
+            (tr!("chat.input.hint.error", error = e), "input-hint error")
         } else if model_loading {
-            ("Загрузка модели…".to_string(), "input-hint info")
+            (tr!("chat.model.status.loading"), "input-hint info")
         } else if !model_loaded {
             (
-                "Выберите .syn в правой панели".to_string(),
+                tr!("chat.input.hint.pick_model"),
                 "input-hint info",
             )
         } else if pending {
-            ("Генерация ответа…".to_string(), "input-hint info")
+            (tr!("chat.input.hint.generating"), "input-hint info")
         } else {
             (String::new(), "input-hint")
         };

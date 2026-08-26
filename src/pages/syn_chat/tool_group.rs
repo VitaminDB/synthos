@@ -58,7 +58,7 @@ pub fn view(group: ToolGroup) -> impl Widget {
         .map(|t| t.icon.to_string())
         .unwrap_or_else(|| MI_TERMINAL.to_string());
     let tool_label = Tool::by_key(&tool_name)
-        .map(|t| t.label.to_string())
+        .map(crate::i18n::tool_label)
         .unwrap_or_else(|| tool_name.clone());
 
     let chevron_reactive = move || {
@@ -162,8 +162,8 @@ pub fn view(group: ToolGroup) -> impl Widget {
 
     let meta_header = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Text::new("Ассистент".to_string()).class("msg-author"),
-            Text::new(format!("→ цепочка из {count} вызовов")).class("tool-call-hint"),
+            Text::new(tr!("chat.msg.author.assistant")).class("msg-author"),
+            Text::new(tr!("chat.tool_group.chain_hint", count = count)).class("tool-call-hint"),
         ]
     };
 

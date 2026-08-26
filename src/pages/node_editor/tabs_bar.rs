@@ -33,7 +33,7 @@ pub fn view() -> impl Widget {
             row = row.child(tab_chip(ws, tab.clone(), is_active));
         }
         let add_btn = ToolButton::new(MI_ADD)
-            .tooltip("Шаблоны — новый граф")
+            .tooltip(tr!("nodes.tabs.new"))
             .on_click(move || {
                 ws.template_picker_open.set(true);
             })
@@ -81,7 +81,7 @@ fn tab_chip(ws: EditorWorkspace, tab: OpenTab, is_active: bool) -> impl Widget {
         .class("ne-tab-title");
 
     let close_btn = ToolButton::new(MI_CLOSE)
-        .tooltip("Закрыть")
+        .tooltip(tr!("nodes.tabs.close"))
         .on_click(move || {
             ws.close(id);
         })

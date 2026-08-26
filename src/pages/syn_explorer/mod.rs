@@ -142,10 +142,10 @@ fn empty_center_placeholder() -> impl Widget {
             .main_axis_alignment(MainAxisAlignment::Center)
             .class("syn-placeholder") => [
                 Text::new(MI_INVENTORY_2).class("syn-placeholder-icon"),
-                Text::new("Откройте .syn-пакет").class("syn-placeholder-title"),
-                Text::new("Добавьте папку в закладки или нажмите «Открыть» — выберите .syn-файл вручную.")
+                Text::new(tr!("explorer.placeholder.title")).class("syn-placeholder-title"),
+                Text::new(tr!("explorer.placeholder.hint"))
                     .class("syn-placeholder-hint"),
-                Button::new("Открыть .syn…")
+                Button::new(tr!("explorer.placeholder.open_button"))
                     .leading_icon(MI_FOLDER_OPEN)
                     .on_click(|| {
                         let ctx = use_context::<SynExplorerCtx>();

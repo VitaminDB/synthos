@@ -18,6 +18,7 @@
 //! Маркер превращается в `system`-сообщение для модели в
 //! `session::build_history`; свёрнутые сообщения в prompt не идут там же.
 
+use syngui::tr;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -246,18 +247,18 @@ pub fn serialize_for_summary(msgs: &[ChatMsg], range: Range<usize>) -> String {
         match &m.kind {
             ChatMsgKind::CompactionMarker { iteration, summary, .. } => {
                 buf.push_str(&format!(
-                    "[Ранее сжатый блок (итерация {iteration})]: {summary}\n\n"
+                    "[Previously compacted block (iteration {iteration})]: {summary}\n\n"
                 ));
             }
             ChatMsgKind::Text => {
                 let prefix = match m.role {
-                    ChatMsgRole::User => "Пользователь:",
-                    ChatMsgRole::Assistant => "Ассистент:",
-                    ChatMsgRole::System => "Система:",
+                    ChatMsgRole::User => "User:",
+                    ChatMsgRole::Assistant => "Assistant:",
+                    ChatMsgRole::System => "System:",
                 };
                 if !m.attachments.is_empty() {
                     buf.push_str(&format!(
-                        "{prefix} [приложил {} вложени(й)]\n",
+                        "{prefix} [attached {} attachment(s)]\n",
                         m.attachments.len()
                     ));
                 }
@@ -270,18 +271,18 @@ pub fn serialize_for_summary(msgs: &[ChatMsg], range: Range<usize>) -> String {
             ChatMsgKind::ToolCall { tool_name } => {
                 let args = storage::truncate_chars(m.body.trim(), 400);
                 buf.push_str(&format!(
-                    "Ассистент вызвал tool `{tool_name}`(args={args}).\n\n"
+                    "Assistant called tool `{tool_name}`(args={args}).\n\n"
                 ));
             }
             ChatMsgKind::ToolResult { tool_name, error, .. } => {
                 let body = m.body.trim();
                 let truncated = storage::truncate_chars(body, MAX_TOOL_BODY);
                 let suffix = if body.chars().count() > MAX_TOOL_BODY {
-                    format!(" [результат обрезан до {MAX_TOOL_BODY} символов]")
+                    format!(" [result truncated to {MAX_TOOL_BODY} characters]")
                 } else {
                     String::new()
                 };
-                let status = if *error { "ошибка" } else { "ok" };
+                let status = if *error { "error" } else { "ok" };
                 buf.push_str(&format!(
                     "Tool `{tool_name}` ({status}): {truncated}{suffix}\n\n"
                 ));
@@ -289,7 +290,7 @@ pub fn serialize_for_summary(msgs: &[ChatMsg], range: Range<usize>) -> String {
         }
 
         if buf.chars().count() > MAX_TOTAL {
-            buf.push_str("\n[…история обрезана для summary-запроса…]\n");
+            buf.push_str("\n[…history truncated for the summary request…]\n");
             break;
         }
     }
@@ -332,10 +333,20 @@ pub fn apply_compaction_to_messages(
 /// Промпт для модели-суммаризатора. Жёстко зашит — это часть контракта,
 /// чтобы поведение autocompact'а было предсказуемым независимо от
 /// пользовательского `system_prompt`.
-const SUMMARY_SYSTEM_PROMPT: &str = "Ты сжимаешь фрагмент диалога в краткое \
-техническое описание: ключевые решения, имена файлов, итоги tool-вызовов, \
-открытые вопросы. Сохраняй конкретику (числа, идентификаторы, имена). \
-Не пересказывай дословно. Пиши на русском, нейтрально, в 7–15 коротких абзацах.";
+const SUMMARY_SYSTEM_PROMPT: &str = "You compress a dialogue fragment into a brief \
+technical description: key decisions, file names, tool-call outcomes, \
+open questions. Keep the specifics (numbers, identifiers, names). \
+Don't retell verbatim. Write neutrally, in 7-15 short paragraphs.";
+
+fn summary_prompt() -> String {
+    let lang = syngui::i18n::language();
+    let name = syngui::i18n::languages()
+        .into_iter()
+        .find(|l| l.tag == lang)
+        .and_then(|l| l.english)
+        .unwrap_or_else(|| "English".to_string());
+    format!("{SUMMARY_SYSTEM_PROMPT} Write in {name}.")
+}
 
 /// Точка входа из ручной кнопки UI (main thread). Не блокирует UI: спавнит
 /// worker-поток с current-thread tokio runtime — как `start_agent_thread`,
@@ -348,7 +359,7 @@ pub fn compact_now() {
     }
     let registry = use_context::<crate::syn_chat::SynModelRegistry>();
     let Some(model) = registry.current.get_untracked() else {
-        ctx.error.set(Some("Модель не загружена".into()));
+        ctx.error.set(Some(tr!("chat.model.not_loaded")));
         return;
     };
     let abort = ctx.abort.clone();
@@ -517,7 +528,7 @@ async fn run_compaction_scoped(
         return false;
     }
 
-    push_snackbar(format!("Сжатие контекста (итерация {iteration})…"), false);
+    push_snackbar(tr!("chat.compact.running", iteration = iteration), false);
 
     // 2. Summary через in-process генерацию. Кэш префикс-KV сбрасываем до
     //    неё: после компактификации история всё равно перестанет совпадать с
@@ -527,9 +538,10 @@ async fn run_compaction_scoped(
     if matches!(scope, CompactScope::BetweenTurns) {
         session::drop_kv_session();
     }
+    let prompt = summary_prompt();
     let summary = match session::generate_summary(
         &model,
-        SUMMARY_SYSTEM_PROMPT,
+        &prompt,
         &block,
         &abort,
         snapshot,
@@ -537,7 +549,7 @@ async fn run_compaction_scoped(
         Ok(s) => s,
         Err(e) => {
             log::warn!("[syn_chat] autocompact: summary-запрос упал: {e:#}");
-            push_snackbar(format!("Не удалось сжать контекст: {e}"), true);
+            push_snackbar(tr!("chat.compact.failed", error = e), true);
             return false;
         }
     };
@@ -547,7 +559,7 @@ async fn run_compaction_scoped(
     if summary.is_empty() {
         log::warn!("[syn_chat] autocompact: модель вернула пустой summary");
         push_snackbar(
-            "Не удалось сжать контекст: модель вернула пустой ответ".to_string(),
+            tr!("chat.compact.empty"),
             true,
         );
         return false;
@@ -593,9 +605,9 @@ async fn run_compaction_scoped(
     if applied {
         let msg = if tokens_before > 0 {
             let saved = (tokens_before - tokens_after).max(0);
-            format!("Контекст сжат: {tokens_before} → {tokens_after} токенов (-{saved})")
+            tr!("chat.compact.done", before = tokens_before, after = tokens_after, saved = saved)
         } else {
-            format!("Контекст сжат: summary ≈{tokens_after} токенов")
+            tr!("chat.compact.done_short", after = tokens_after)
         };
         push_snackbar(msg, false);
     }
@@ -841,8 +853,8 @@ mod tests {
             tool_result("c1", "bash", &big),
         ];
         let s = serialize_for_summary(&msgs, 0..2);
-        assert!(s.contains("Пользователь:"));
-        assert!(s.contains("результат обрезан"));
+        assert!(s.contains("User:"));
+        assert!(s.contains("result truncated"));
         // Не должно содержать всю длинную строку.
         assert!(!s.contains(&"x".repeat(1800)));
     }

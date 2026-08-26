@@ -46,12 +46,12 @@ pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 
 fn save_path_row(path: RwSignal<String>) -> Box<dyn Widget> {
     let pick_btn = ToolButton::new(MI_SAVE)
-        .tooltip("Куда сохранить mp4")
+        .tooltip(tr!("nodes.common.save_mp4_path"))
         .on_click(move || {
             let dlg = rfd::FileDialog::new()
                 .add_filter("MP4", &["mp4"])
                 .set_file_name("ltx_video.mp4")
-                .set_title("Сохранить видео");
+                .set_title(tr!("node.ltx_video_save.dialog.save_video_title"));
             if let Some(p) = dlg.save_file() {
                 path.set(p.to_string_lossy().to_string());
             }
@@ -60,7 +60,7 @@ fn save_path_row(path: RwSignal<String>) -> Box<dyn Widget> {
     let name_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let p = path.get();
         let widget: Box<dyn Widget> = if p.is_empty() {
-            Box::new(Text::new("Файл не выбран").class("node-file-picker-empty"))
+            Box::new(Text::new(tr!("nodes.common.no_file_selected")).class("node-file-picker-empty"))
         } else {
             let name = PathBuf::from(&p)
                 .file_name()
@@ -94,27 +94,30 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((path, running, error, progress_pct, status)) = snapshot else {
-        return Box::new(Text::new("LtxVideoSave: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxVideoSave"))
+                .class("node-card-field-error"),
+        );
     };
     let saved_name = use_signal(None::<String>);
     let status_view = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let label: Box<dyn Widget> = match status.get() {
-            SaveStatus::Saved(p) => Box::new(
-                Text::new(format!(
-                    "Сохранено: {}",
-                    p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
-                ))
-                .class("audio-node-meta"),
-            ),
+            SaveStatus::Saved(p) => {
+                let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                Box::new(
+                    Text::new(tr!("node.ltx_video_save.status.saved", name = name))
+                        .class("audio-node-meta"),
+                )
+            }
             _ => Box::new(Text::new("").class("audio-node-meta")),
         };
         vec![label]
     });
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row("Файл", save_path_row(path)),
-        field_row("Прогресс", progress_row(running, progress_pct)),
+        field_row(&tr!("node.ltx_video_save.field.file"), save_path_row(path)),
+        field_row(&tr!("node.ltx.common.progress"), progress_row(running, progress_pct)),
         field_row(
-            "Статус",
+            &tr!("nodes.common.status"),
             status_row(running, error, saved_name, "ffmpeg mux…", "ltx-node-running"),
         ),
         Box::new(status_view),
@@ -146,13 +149,13 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(frames) = current_input_frames(ctx, node.id, "frames") else {
-        error.set(Some("Подключите frames от VAE Decode".into()));
+        error.set(Some(tr!("node.ltx_video_save.err.connect_frames")));
         return;
     };
     let audio = current_input_audio(ctx, node.id, "audio");
     let out_path = path.get_untracked();
     if out_path.trim().is_empty() {
-        error.set(Some("Выберите путь сохранения mp4".into()));
+        error.set(Some(tr!("node.ltx_video_save.err.choose_save_path")));
         return;
     }
     if running.get_untracked() {
@@ -205,7 +208,7 @@ pub fn encode_mp4(
     progress_pct: Option<RwSignal<f32>>,
 ) -> std::result::Result<(), String> {
     if frames.frames.is_empty() {
-        return Err("нет кадров".into());
+        return Err(tr!("node.ltx_video_save.err.no_frames"));
     }
     let wav_tmp = audio.map(|buf| {
         let p = out.with_extension("ltx_audio.tmp.wav");
@@ -233,8 +236,11 @@ pub fn encode_mp4(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("ffmpeg запуск: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("ffmpeg stdin недоступен")?;
+    let mut child = cmd.spawn().map_err(|e| tr!("node.ltx.shared.err_ffmpeg_run", error = e))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| tr!("node.ltx_video_save.err.ffmpeg_stdin_unavailable"))?;
     let total = frames.frames.len();
     let mut write_err: Option<String> = None;
     for (i, fr) in frames.frames.iter().enumerate() {
@@ -266,7 +272,8 @@ pub fn encode_mp4(
             .rev()
             .collect::<Vec<_>>()
             .join("\n");
-        return Err(format!("ffmpeg код {:?}:\n{tail}", output.status.code()));
+        let code = format!("{:?}", output.status.code());
+        return Err(tr!("node.ltx_video_save.err.ffmpeg_exit_code", code = code, tail = tail));
     }
     Ok(())
 }

@@ -101,15 +101,15 @@ fn status_text_reactive() -> impl Fn() -> StyledWidget<Text> + Send + Sync + 'st
         let label = if let Some(err) = error.as_deref() {
             err.to_string()
         } else if asr_loading {
-            "Загружаю модель…".to_string()
+            tr!("voice.fab.status.loading_model")
         } else if transcribing {
-            "Распознаю…".to_string()
+            tr!("voice.fab.status.transcribing")
         } else if recording {
-            "Слушаю…".to_string()
+            tr!("voice.fab.status.listening")
         } else if awaiting {
-            "Готово — выберите действие".to_string()
+            tr!("voice.fab.status.done")
         } else {
-            "На паузе. Нажмите «Записать», чтобы продолжить".to_string()
+            tr!("voice.fab.status.paused")
         };
         Text::new(label).class("voice-overlay-status")
     }
@@ -147,7 +147,7 @@ fn raw_section() -> impl Widget {
     Column::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new("Исходная речь").class("voice-overlay-section-title"))
+        .child(Text::new(tr!("voice.fab.raw.title")).class("voice-overlay-section-title"))
         .child(raw_field_reactive())
 }
 
@@ -162,7 +162,7 @@ fn raw_field_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
         DecoratedBox::new().class("voice-overlay-text-raw").child(
             MultilineTextEdit::new()
                 .text(initial)
-                .placeholder("Здесь появится распознанная речь…")
+                .placeholder(tr!("voice.fab.raw.placeholder"))
                 .rows(2)
                 .max_rows(4)
                 .soft_wrap(true)
@@ -181,7 +181,7 @@ fn refined_section() -> impl Widget {
     Column::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new("Отредактированный текст").class("voice-overlay-section-title"))
+        .child(Text::new(tr!("voice.fab.refined.title")).class("voice-overlay-section-title"))
         .child(refined_field_reactive())
 }
 
@@ -195,9 +195,9 @@ fn refine_button_reactive() -> impl Fn() -> StyledWidget<ToolButton> + Send + Sy
         let raw_empty = app.voice.accumulated.get().trim().is_empty();
         let icon = if refining { MI_HOURGLASS_TOP } else { MI_AUTORENEW };
         let tooltip = if refining {
-            "Постобработка…"
+            tr!("voice.fab.refine.busy")
         } else {
-            "Прогнать через модель"
+            tr!("voice.fab.refine.tooltip")
         };
         let disabled = refining || raw_empty;
 
@@ -219,7 +219,7 @@ fn refined_field_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
         DecoratedBox::new().class("voice-overlay-text-refined").child(
             MultilineTextEdit::new()
                 .text(initial)
-                .placeholder("Нажмите ⟲ чтобы пропустить через модель")
+                .placeholder(tr!("voice.fab.refined.placeholder"))
                 .rows(2)
                 .max_rows(4)
                 .soft_wrap(true)

@@ -34,7 +34,7 @@ pub fn view() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::Center) => [
                         ToolButton::new(MI_HOURGLASS_TOP)
-                            .tooltip("Распознавание…")
+                            .tooltip(tr!("voice.fab.action.transcribing"))
                             .on_click(|| {})
                             .class("voice-action-busy")
                     ]
@@ -45,8 +45,8 @@ pub fn view() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static
                     .gap(12.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::Center) => [
-                        action_button(MI_PAUSE, "Пауза", "voice-action-pause", on_pause),
-                        action_button(MI_STOP,  "Стоп", "voice-action-stop",  on_stop)
+                        action_button(MI_PAUSE, tr!("voice.fab.action.pause"), "voice-action-pause", on_pause),
+                        action_button(MI_STOP, tr!("voice.fab.action.stop"), "voice-action-stop", on_stop)
                     ]
             }
         } else if awaiting {
@@ -55,9 +55,9 @@ pub fn view() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static
                     .gap(12.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::Center) => [
-                        action_button(MI_CONTENT_COPY,  "Копировать",  "voice-action-copy",   on_copy),
-                        action_button(MI_CONTENT_PASTE, "Вставить",    "voice-action-paste",  on_paste),
-                        action_button(MI_AUTORENEW,     "Заново",      "voice-action-restart", on_restart)
+                        action_button(MI_CONTENT_COPY, tr!("app.copy"), "voice-action-copy", on_copy),
+                        action_button(MI_CONTENT_PASTE, tr!("app.paste"), "voice-action-paste", on_paste),
+                        action_button(MI_AUTORENEW, tr!("voice.fab.action.restart"), "voice-action-restart", on_restart)
                     ]
             }
         } else {
@@ -66,8 +66,8 @@ pub fn view() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static
                     .gap(12.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::Center) => [
-                        action_button(MI_MIC,  "Записать", "voice-action-resume", on_resume),
-                        action_button(MI_STOP, "Завершить", "voice-action-stop", on_finish_after_pause)
+                        action_button(MI_MIC, tr!("voice.fab.action.record"), "voice-action-resume", on_resume),
+                        action_button(MI_STOP, tr!("voice.fab.action.finish"), "voice-action-stop", on_finish_after_pause)
                     ]
             }
         };
@@ -78,7 +78,7 @@ pub fn view() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static
 
 fn action_button(
     icon: &'static str,
-    tooltip: &'static str,
+    tooltip: impl Into<String>,
     class: &'static str,
     handler: fn(),
 ) -> StyledWidget<ToolButton> {

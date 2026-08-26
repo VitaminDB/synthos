@@ -18,6 +18,7 @@
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
+use syngui::tr;
 
 use crate::context::AppCtx;
 use crate::kb::search::{hybrid_search_with_rerank, SearchHit, DEFAULT_RERANK_MULTIPLIER};
@@ -41,13 +42,9 @@ impl AugmentError {
     /// по KB-чипу в input-панели).
     pub fn user_message(&self) -> Option<String> {
         match self {
-            AugmentError::NoEmbedder => Some(
-                "Auto-augment пропущен: эмбеддер не загружен. \
-                 Settings → Базы знаний → Загрузить эмбеддер."
-                    .to_string(),
-            ),
+            AugmentError::NoEmbedder => Some(tr!("kb.augment.no_embedder_warning")),
             AugmentError::NoCollections => None,
-            AugmentError::Spawn(_) => Some("Auto-augment упал на worker-потоке.".to_string()),
+            AugmentError::Spawn(_) => Some(tr!("kb.augment.spawn_panic_warning")),
         }
     }
 }
@@ -322,8 +319,7 @@ mod tests {
     #[test]
     fn user_message_for_no_embedder_is_actionable() {
         let m = AugmentError::NoEmbedder.user_message().unwrap();
-        assert!(m.contains("эмбеддер"));
-        assert!(m.contains("Settings"));
+        assert_eq!(m, tr!("kb.augment.no_embedder_warning"));
     }
 
     #[test]

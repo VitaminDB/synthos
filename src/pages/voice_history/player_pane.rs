@@ -55,7 +55,7 @@ fn make_header(rec: &VoiceRecording) -> impl Widget {
     let model = rec
         .model_name
         .clone()
-        .unwrap_or_else(|| "Без модели".to_string());
+        .unwrap_or_else(|| tr!("voice.history.player.no_model"));
     let date_label = format_date(rec.created_at);
     let dur = format_duration(rec.duration_ms);
 
@@ -89,7 +89,7 @@ fn make_controls(
             mgui! {
                 Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     ToolButton::new(MI_STOP)
-                        .tooltip("Остановить")
+                        .tooltip(tr!("voice.history.player.stop_tooltip"))
                         .on_click(move || {
                             // Drop AudioPlayer внутри Mutex — освобождает stream.
                             if let Ok(mut g) = h.inner.lock() { *g = None; }
@@ -104,7 +104,7 @@ fn make_controls(
             mgui! {
                 Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     ToolButton::new(MI_PLAY_ARROW)
-                        .tooltip("Воспроизвести")
+                        .tooltip(tr!("voice.history.player.play_tooltip"))
                         .on_click(move || {
                             start_playback(&rec_for_play, &h);
                         })
@@ -167,9 +167,13 @@ fn format_duration(ms: u32) -> String {
     let m = total / 60;
     let s = total % 60;
     if m > 0 {
-        format!("{m}м {s:02}с")
+        tr!(
+            "voice.history.item.duration.min_sec",
+            min = m.to_string(),
+            sec = format!("{s:02}")
+        )
     } else {
-        format!("{s}с")
+        tr!("voice.history.item.duration.sec", sec = s.to_string())
     }
 }
 
@@ -182,5 +186,9 @@ fn format_date(unix_secs: u64) -> String {
     let h = (secs_in_day / 3600) as u32;
     let m = ((secs_in_day % 3600) / 60) as u32;
     let days = unix_secs / 86_400;
-    format!("Запись · день {days}, {h:02}:{m:02} UTC")
+    tr!(
+        "voice.history.player.date",
+        days = days.to_string(),
+        time = format!("{h:02}:{m:02}")
+    )
 }

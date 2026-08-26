@@ -116,16 +116,16 @@ pub fn view() -> impl Widget {
                 Row::new()
                     .gap(8.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                        Tooltip::new(btn_open, "Открыть .syn… — выбрать файл вручную"),
-                        Tooltip::new(btn_new, "Создать новый .syn пакет из папки safetensors"),
+                        Tooltip::new(btn_open, tr!("explorer.toolbar.open.tooltip")),
+                        Tooltip::new(btn_new, tr!("explorer.toolbar.new.tooltip")),
                         DecoratedBox::new().class("syn-toolbar-divider"),
-                        Tooltip::new(btn_save, "Сохранить изменения (метаданные + pending-операции)"),
-                        Tooltip::new(btn_reload, "Перечитать пакет с диска (drop mmap + open снова)"),
-                        Tooltip::new(btn_close, "Закрыть открытый пакет"),
+                        Tooltip::new(btn_save, tr!("explorer.toolbar.save.tooltip")),
+                        Tooltip::new(btn_reload, tr!("explorer.toolbar.reload.tooltip")),
+                        Tooltip::new(btn_close, tr!("explorer.toolbar.close.tooltip")),
                         DecoratedBox::new().class("syn-toolbar-divider"),
-                        Tooltip::new(btn_import, "Импортировать файл в пакет (добавит в pending-операции)"),
-                        Tooltip::new(btn_extract, "Извлечь выбранный в TreeView файл на диск"),
-                        Tooltip::new(btn_delete, "Удалить выбранный файл из пакета (tombstone)"),
+                        Tooltip::new(btn_import, tr!("explorer.toolbar.import.tooltip")),
+                        Tooltip::new(btn_extract, tr!("explorer.toolbar.extract.tooltip")),
+                        Tooltip::new(btn_delete, tr!("explorer.toolbar.delete.tooltip")),
                         DecoratedBox::new().class("syn-toolbar-spacer grow"),
                         status_label(load_state, dirty),
                     ]
@@ -138,14 +138,14 @@ fn status_label(state: LoadState, dirty: bool) -> impl Widget {
     let (text, cls) = match state {
         LoadState::Idle => {
             if dirty {
-                ("Несохранённые правки", "syn-toolbar-status dirty")
+                (tr!("explorer.unsaved_edits"), "syn-toolbar-status dirty")
             } else {
-                ("", "syn-toolbar-status")
+                (String::new(), "syn-toolbar-status")
             }
         }
-        LoadState::Loading => ("Загрузка…", "syn-toolbar-status busy"),
-        LoadState::Saving => ("Сохраняем…", "syn-toolbar-status busy"),
-        LoadState::Creating => ("Создаём…", "syn-toolbar-status busy"),
+        LoadState::Loading => (tr!("explorer.toolbar.status.loading"), "syn-toolbar-status busy"),
+        LoadState::Saving => (tr!("explorer.toolbar.status.saving"), "syn-toolbar-status busy"),
+        LoadState::Creating => (tr!("explorer.toolbar.status.creating"), "syn-toolbar-status busy"),
     };
     Text::new(text).class(cls)
 }

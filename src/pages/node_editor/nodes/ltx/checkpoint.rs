@@ -122,11 +122,8 @@ fn distilled_hint(model_path: RwSignal<Option<std::path::PathBuf>>) -> Box<dyn W
             return vec![];
         }
         vec![Box::new(
-            Text::new(
-                "Стадии рассчитаны на distilled-чекпойнт (8+3 шага). \
-                 С dev-моделью видео выйдет размытым.",
-            )
-            .class("node-card-field-error"),
+            Text::new(tr!("node.ltx_checkpoint.hint.distilled_mismatch"))
+                .class("node-card-field-error"),
         )]
     }))
 }
@@ -175,13 +172,16 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         resident,
     )) = snapshot
     else {
-        return Box::new(Text::new("LtxCheckpoint: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxCheckpoint"))
+                .class("node-card-field-error"),
+        );
     };
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Чекпойнт",
+            &tr!("node.ltx_checkpoint.field.checkpoint"),
             node_file_picker(
-                "LTX-2.3 .syn-бандл или .safetensors (DiT+VAE+vocoder+коннекторы)",
+                tr!("node.ltx_checkpoint.picker.checkpoint"),
                 model_path,
                 &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
@@ -190,20 +190,20 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row(
             "Gemma",
             node_file_picker(
-                "Gemma-3-12B (текст-энкодер) — .syn-бандл",
+                tr!("node.ltx_checkpoint.picker.gemma"),
                 gemma_dir,
                 &[("Syn bundle", &["syn"])],
                 |_| {},
             ),
         ),
         field_row(
-            "Gemma HF-каталог",
-            dir_picker_row("Или HF-каталог Gemma-3-12B (config.json + safetensors)", gemma_dir),
+            &tr!("node.ltx_checkpoint.field.gemma_hf_dir"),
+            dir_picker_row(tr!("node.ltx_checkpoint.picker.hf_gemma_dir"), gemma_dir),
         ),
         field_row(
             "Upscaler",
             node_file_picker(
-                "Spatial-upscaler ×2 — .syn-бандл или .safetensors (для two-stage)",
+                tr!("node.ltx_checkpoint.picker.upscaler"),
                 upscaler_path,
                 &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
@@ -212,7 +212,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row(
             "LoRA",
             node_file_picker(
-                "LoRA-адаптер для мерджа в DiT — .syn или .safetensors (опционально)",
+                tr!("node.ltx_checkpoint.picker.lora"),
                 lora_path,
                 &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
@@ -226,7 +226,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
         // Держать DiT в VRAM после прогона: на 24 ГБ рядом с VAE-decode
         // может не хватить памяти — осознанный опт-ин.
-        field_row("Держать в памяти", make_toggle(resident)),
+        field_row(&tr!("nodes.common.keep_in_memory"), make_toggle(resident)),
     ];
     Box::new(
         Column::new()

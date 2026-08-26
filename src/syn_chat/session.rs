@@ -396,14 +396,14 @@ pub fn send_message(text: String) {
     let registry = use_context::<SynModelRegistry>();
 
     let Some(model) = registry.current.get_untracked() else {
-        ctx.error.set(Some("Модель не загружена".into()));
+        ctx.error.set(Some(tr!("chat.model.not_loaded")));
         return;
     };
     if ctx.pending.get_untracked() {
         return;
     }
     if ctx.attach_busy.get_untracked() > 0 {
-        ctx.error.set(Some("Дождитесь обработки вложений".into()));
+        ctx.error.set(Some(tr!("chat.session.error.attachments_busy")));
         return;
     }
 
@@ -445,7 +445,7 @@ pub fn regenerate_last() {
     }
     let registry = use_context::<SynModelRegistry>();
     let Some(model) = registry.current.get_untracked() else {
-        ctx.error.set(Some("Модель не загружена".into()));
+        ctx.error.set(Some(tr!("chat.model.not_loaded")));
         return;
     };
 
@@ -496,7 +496,7 @@ pub fn continue_last() {
     }
     let registry = use_context::<SynModelRegistry>();
     let Some(model) = registry.current.get_untracked() else {
-        ctx.error.set(Some("Модель не загружена".into()));
+        ctx.error.set(Some(tr!("chat.model.not_loaded")));
         return;
     };
     let msgs = ctx.messages.get_untracked();
@@ -570,7 +570,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
                 eprintln!("[syn_chat] не удалось создать tokio runtime: {e:#}");
                 let ctx = ctx_for_worker.clone();
                 run_on_main_thread(move || {
-                    ctx.error.set(Some(format!("tokio runtime: {e:#}")));
+                    ctx.error.set(Some(tr!("chat.session.error.tokio_runtime", error = format!("{e:#}"))));
                     ctx.commit_streaming_tail();
                     ctx.pending.set(false);
                 });
@@ -1411,7 +1411,7 @@ async fn run_agent_loop(
                     push_tool_result(
                         &ctx,
                         chat_call,
-                        "Отменено пользователем".to_string(),
+                        tr!("chat.session.tool.cancelled"),
                         true,
                     );
                     history.push(Message::tool_named(
@@ -1458,12 +1458,10 @@ async fn run_agent_loop(
                     None => {
                         // Результаты прогона уже в ленте — падаем с внятной
                         // ошибкой хода, чат остаётся без модели не молча.
-                        anyhow::bail!(
-                            "Прогон выполнен, но модель чата не перезагрузилась: {}. \
-                             Загрузите её кнопкой в правой панели.",
-                            res.reload_error
-                                .unwrap_or_else(|| "неизвестная ошибка".to_string())
-                        );
+                        let reason = res
+                            .reload_error
+                            .unwrap_or_else(|| tr!("chat.session.error.unknown"));
+                        anyhow::bail!(tr!("chat.session.error.reload_failed", reason = reason));
                     }
                 }
                 let mut for_history = clip_for_history(&res.content);
@@ -1572,8 +1570,8 @@ async fn run_agent_loop(
             // агенту ещё попытку, уже с заметками guard'а в контексте.
             ctx_stop.turn_cap_reached.set(true);
             ctx_stop.error.set(Some(format!(
-                "{reason} Генерация остановлена, история цела. Уточните задачу \
-                 или нажмите «Продолжить»."
+                "{reason}{}",
+                tr!("chat.session.error.stopped_suffix")
             )));
         });
     } else if !answered {
@@ -1595,10 +1593,9 @@ async fn run_agent_loop(
                 }
             });
             ctx_cap.turn_cap_reached.set(true);
-            ctx_cap.error.set(Some(format!(
-                "остановлено на лимите {max_turns} ходов агента — модель \
-                 всё время вызывала инструменты. Нажмите «Продолжить», чтобы \
-                 дать ещё ходов"
+            ctx_cap.error.set(Some(tr!(
+                "chat.session.error.turn_cap_reached",
+                max_turns = max_turns
             )));
         });
     }
@@ -1834,7 +1831,7 @@ async fn run_pipeline_tool(
         Ok(v) => v,
         Err(e) => {
             let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
-            let mut r = fail(model, format!("прогон не стартовал: {e}"));
+            let mut r = fail(model, tr!("chat.session.pipeline.start_failed", error = e));
             r.reload_error = reload_error;
             return r;
         }
@@ -1892,13 +1889,9 @@ async fn run_pipeline_tool(
     let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
     let llm_note = if was_freed {
         Some(match (&model, &reload_error) {
-            (Some(_), _) => {
-                "LLM была выгружена на время прогона и загружена обратно; \
-                 следующий ход считает историю полным префиллом."
-                    .to_string()
-            }
-            (None, Some(e)) => format!("LLM выгружалась на время прогона, reload не удался: {e}"),
-            (None, None) => "LLM выгружалась на время прогона, reload не удался".to_string(),
+            (Some(_), _) => tr!("chat.session.pipeline.llm_reloaded"),
+            (None, Some(e)) => tr!("chat.session.pipeline.llm_reload_failed", error = e),
+            (None, None) => tr!("chat.session.pipeline.llm_reload_failed_unknown"),
         })
     } else {
         None
@@ -1932,7 +1925,7 @@ async fn reload_if_needed(
         return (existing, None);
     }
     let Some(path) = path else {
-        return (None, Some("путь модели неизвестен".to_string()));
+        return (None, Some(tr!("chat.session.error.model_path_unknown")));
     };
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
@@ -2197,7 +2190,7 @@ fn prepare_history(
     if let Err(reason) = tower {
         // Пустая причина — vision и не требовался (новых вложений нет).
         if !reason.is_empty() {
-            let msg = format!("Вложение не передано модели: {reason}");
+            let msg = tr!("chat.session.error.attachment_rejected", reason = reason);
             let ctx = ctx.clone();
             run_on_main_thread(move || ctx.error.set(Some(msg)));
             caps.vision_error = Some(reason);

@@ -70,7 +70,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let (session, device) = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::AudioRecorder { session, device } => (session.clone(), *device),
-            _ => return error_widget("AudioRecorder: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "AudioRecorder")),
         },
         Err(_) => return error_widget("AudioRecorder: lock error"),
     };
@@ -88,13 +88,13 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         let (icon, tooltip, class) = if active {
             (
                 MI_STOP,
-                "Остановить запись",
+                tr!("nodes.common.stop_recording"),
                 "audio-node-transport-btn audio-node-record-active",
             )
         } else {
             (
                 MI_MIC,
-                "Начать запись",
+                tr!("nodes.common.start_recording"),
                 "audio-node-transport-btn audio-node-record",
             )
         };
@@ -125,22 +125,22 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let status_label = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(err) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {err}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = err)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         let (label, class) = match state_sig.get() {
             RecordingState::Recording => (
-                "Идёт запись…".to_string(),
+                tr!("node.audio_recorder.status.recording"),
                 "audio-node-status audio-node-status-active",
             ),
             RecordingState::Paused => (
-                "Пауза".to_string(),
+                tr!("nodes.transport.pause"),
                 "audio-node-status audio-node-status-active",
             ),
-            RecordingState::Completed => ("Запись готова".to_string(), "audio-node-status"),
-            RecordingState::Failed => ("Ошибка".to_string(), "audio-node-status"),
-            RecordingState::Idle => ("Готов к записи".to_string(), "audio-node-status"),
+            RecordingState::Completed => (tr!("node.audio_recorder.status.completed"), "audio-node-status"),
+            RecordingState::Failed => (tr!("node.audio_recorder.status.failed"), "audio-node-status"),
+            RecordingState::Idle => (tr!("node.audio_recorder.status.idle"), "audio-node-status"),
         };
         vec![Box::new(Text::new(label).class(class)) as Box<dyn Widget>]
     });
@@ -163,7 +163,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 DecoratedBox::new()
                     .child(
                         Center::new().child(
-                            Text::new("Инициализация микрофона…")
+                            Text::new(tr!("node.audio_recorder.status.initializing_mic"))
                                 .class("audio-node-waveform-placeholder"),
                         ),
                     )
@@ -182,7 +182,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 DecoratedBox::new()
                     .child(
                         Center::new().child(
-                            Text::new("Нет записи").class("audio-node-waveform-placeholder"),
+                            Text::new(tr!("node.audio_recorder.waveform.no_recording")).class("audio-node-waveform-placeholder"),
                         ),
                     )
                     .class("audio-node-waveform-empty"),
@@ -214,7 +214,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

@@ -52,7 +52,7 @@ fn reactive_fab() -> impl Fn() -> StyledWidget<ToolButton> + Send + Sync + 'stat
         };
 
         ToolButton::new(MI_MIC)
-            .tooltip("Голосовой ввод")
+            .tooltip(tr!("voice.fab.tooltip"))
             .on_click(open_panel_and_record)
             .class(class)
     }

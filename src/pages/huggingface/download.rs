@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use syngui::async_runtime::{run_on_main_thread, spawn};
+use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
 
 use crate::config;
@@ -89,7 +90,7 @@ pub fn enqueue_download(
     let dest = dir.join(&repo_id).join(&filename);
     if let Some(parent) = dest.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            notif.error(format!("Не удалось создать папку {}: {e}", parent.display()));
+            notif.error(format!("{}: {e}", tr!("hf.error.create_dir", path = parent.display())));
             return;
         }
     }
@@ -300,7 +301,7 @@ fn spawn_one(
                         });
                         active_sig.update(|n| *n = n.saturating_sub(1));
                         control::clear(&key_f);
-                        notif_async.success(format!("Загружено: {fname_show} → {dest_show}"));
+                        notif_async.success(tr!("hf.notify.downloaded", name = fname_show, path = dest_show));
                         // Запускаем авто-верификацию SHA-256 (если HF дал
                         // expected hash; иначе verify_file просто посчитает
                         // и положит Match-без-expected). Drain очереди — до
@@ -420,7 +421,7 @@ fn spawn_one(
                         });
                         active_sig.update(|n| *n = n.saturating_sub(1));
                         control::clear(&key_f);
-                        notif_async.error(format!("Ошибка {fname_show}: {msg_q}"));
+                        notif_async.error(tr!("hf.error.download_failed", name = fname_show, error = msg_q));
                         try_drain_queue(ctx_done, notif_done);
                     });
                     return;

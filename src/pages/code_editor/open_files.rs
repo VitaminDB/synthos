@@ -72,9 +72,9 @@ fn header() -> impl Widget {
             .map(|s| s.open_files.get().len())
             .unwrap_or(0);
         let label = if count == 0 {
-            String::from("Открытые файлы")
+            tr!("code.open_files.header.title")
         } else {
-            format!("Открытые файлы · {}", count)
+            tr!("code.open_files.header.title_count", count = count.to_string())
         };
         Text::new(label).class("code-editor-files-title")
     })
@@ -107,8 +107,8 @@ fn empty_state() -> impl Widget {
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_DESCRIPTION).class("code-editor-files-empty-icon"),
-                Text::new("Нет открытых файлов").class("code-editor-files-empty-title"),
-                Text::new("Кликните файл в дереве слева").class("code-editor-files-empty-hint"),
+                Text::new(tr!("code.open_files.empty.title")).class("code-editor-files-empty-title"),
+                Text::new(tr!("code.open_files.empty.hint")).class("code-editor-files-empty-hint"),
             ]
     })
 }
@@ -206,7 +206,7 @@ fn list_widget(
                                     ),
                                     DecoratedBox::new().class(dirty_class),
                                     ToolButton::new(MI_CLOSE)
-                                        .tooltip("Закрыть файл")
+                                        .tooltip(tr!("code.open_files.item.close_tooltip"))
                                         .on_click(move || {
                                             state::close_file(session, close_path.clone());
                                         })

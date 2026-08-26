@@ -58,12 +58,12 @@ fn card(collection_id: String) -> impl Widget {
             let raw = url.get_untracked();
             let trimmed = raw.trim();
             if trimmed.is_empty() {
-                error.set(Some("Введите URL".into()));
+                error.set(Some(tr!("settings.knowledge_base.url_dialog.empty")));
                 return;
             }
             if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
                 error.set(Some(
-                    "URL должен начинаться с http:// или https://".into(),
+                    tr!("settings.knowledge_base.url_dialog.invalid"),
                 ));
                 return;
             }
@@ -79,8 +79,8 @@ fn card(collection_id: String) -> impl Widget {
     mgui! {
         DecoratedBox::new().class("kb-url-dialog-card") => [
             Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Text::new("Добавить URL-источник").class("kb-url-dialog-title"),
-                Text::new("Страница будет скачана, преобразована в Markdown и проиндексирована.")
+                Text::new(tr!("settings.knowledge_base.url_dialog.title")).class("kb-url-dialog-title"),
+                Text::new(tr!("settings.knowledge_base.url_dialog.hint"))
                     .class("kb-url-dialog-hint"),
                 TextField::new()
                     .placeholder("https://example.com/document.html")
@@ -103,11 +103,11 @@ fn card(collection_id: String) -> impl Widget {
                     }
                 }),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
-                    Button::new("Отмена")
+                    Button::new(tr!("app.cancel"))
                         .leading_icon(MI_CLOSE)
                         .on_click(cancel)
                         .class("skill-dialog-btn-secondary"),
-                    Button::new("Добавить")
+                    Button::new(tr!("settings.knowledge_base.url_dialog.add"))
                         .leading_icon(MI_CHECK)
                         .on_click(confirm)
                         .class("skill-dialog-btn-primary"),

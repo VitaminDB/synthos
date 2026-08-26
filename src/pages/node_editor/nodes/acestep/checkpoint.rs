@@ -153,29 +153,30 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )) = snapshot
     else {
         return Box::new(
-            Text::new("AceStepCheckpoint: некорректный runtime").class("node-card-field-error"),
+            Text::new(tr!("nodes.common.invalid_runtime", name = "AceStepCheckpoint"))
+                .class("node-card-field-error"),
         );
     };
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Каталог моделей",
-            dir_picker_row("Каталог с 4 .syn-бандлами (lm / text-enc / dit / vae)", models_dir),
+            &tr!("node.acestep_checkpoint.field.models_dir"),
+            dir_picker_row(tr!("node.acestep_checkpoint.tooltip.models_dir"), models_dir),
         ),
         field_row(
             "LM (override)",
-            node_file_picker("5Hz AR LM .syn (опц. — иначе из каталога)", lm_path, SYN_FILTER, |_| {}),
+            node_file_picker(tr!("node.acestep_checkpoint.tooltip.lm_override"), lm_path, SYN_FILTER, |_| {}),
         ),
         field_row(
             "Text-enc (override)",
-            node_file_picker("Text-encoder .syn (опц.)", text_encoder_path, SYN_FILTER, |_| {}),
+            node_file_picker(tr!("node.acestep_checkpoint.tooltip.text_enc_override"), text_encoder_path, SYN_FILTER, |_| {}),
         ),
         field_row(
             "DiT (override)",
-            node_file_picker("DiT-бандл .syn (опц.)", dit_path, SYN_FILTER, |_| {}),
+            node_file_picker(tr!("node.acestep_checkpoint.tooltip.dit_override"), dit_path, SYN_FILTER, |_| {}),
         ),
         field_row(
             "VAE (override)",
-            node_file_picker("VAE .syn (опц.)", vae_path, SYN_FILTER, |_| {}),
+            node_file_picker(tr!("node.acestep_checkpoint.tooltip.vae_override"), vae_path, SYN_FILTER, |_| {}),
         ),
         field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)),
         field_row("Quant DiT", make_dropdown(QUANT_OPTIONS, quant_dit_idx)),
@@ -185,7 +186,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         // (LM/TE/DiT/VAE): повторный прогон не платит загрузку и
         // квантизацию. Выключение чекбокса освобождает кэш на следующем
         // запуске; выгрузка — и из панели «Модели в памяти».
-        field_row("Держать в памяти", make_toggle(resident)),
+        field_row(&tr!("nodes.common.keep_in_memory"), make_toggle(resident)),
     ];
     Box::new(
         Column::new()

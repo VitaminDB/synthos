@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 use futures_util::StreamExt;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::RwSignal;
+use syngui::tr;
 use reqwest::Client;
 use std::collections::HashMap;
 
@@ -126,24 +127,24 @@ pub enum HfError {
 impl fmt::Display for HfError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HfError::Transport(e) => write!(f, "сеть: {e}"),
+            HfError::Transport(e) => write!(f, "{}: {e}", tr!("hf.error.network")),
             HfError::Status(code, body) => {
                 let hint = match code {
-                    401 => " — нужен токен HuggingFace (Настройки → HuggingFace → Токен)",
-                    403 => " — токен есть, но нет доступа: примите лицензию на странице модели (gated)",
-                    429 => " — лимит запросов: добавьте токен HuggingFace, чтобы снять anon rate-limit",
-                    _ => "",
+                    401 => tr!("hf.error.status_hint.401"),
+                    403 => tr!("hf.error.status_hint.403"),
+                    429 => tr!("hf.error.status_hint.429"),
+                    _ => String::new(),
                 };
                 let snippet: String = body.chars().take(160).collect();
                 write!(f, "HTTP {code}{hint}: {snippet}")
             }
-            HfError::Decode(msg) => write!(f, "разбор ответа: {msg}"),
-            HfError::Io(e) => write!(f, "файл: {e}"),
+            HfError::Decode(msg) => write!(f, "{}: {msg}", tr!("hf.error.decode")),
+            HfError::Io(e) => write!(f, "{}: {e}", tr!("hf.error.io")),
             HfError::Aborted(kind) => match kind {
-                AbortKind::Pause => write!(f, "приостановлено"),
-                AbortKind::Stop => write!(f, "остановлено"),
-                AbortKind::Cancel => write!(f, "отменено"),
-                AbortKind::GlobalPause => write!(f, "пауза всех"),
+                AbortKind::Pause => write!(f, "{}", tr!("hf.error.aborted.paused")),
+                AbortKind::Stop => write!(f, "{}", tr!("hf.error.aborted.stopped")),
+                AbortKind::Cancel => write!(f, "{}", tr!("hf.error.aborted.cancelled")),
+                AbortKind::GlobalPause => write!(f, "{}", tr!("hf.error.aborted.global_pause")),
             },
         }
     }
@@ -800,10 +801,7 @@ async fn download_segmented(
                 if status.as_u16() == 200 && (start_offset != 0 || to + 1 != total) {
                     return Err(HfError::Status(
                         200,
-                        format!(
-                            "сервер не поддерживает Range (вернул 200 OK на bytes={}-{})",
-                            start_offset, to
-                        ),
+                        tr!("hf.error.range_not_supported", start = start_offset, end = to),
                     ));
                 }
                 let mut stream = resp.bytes_stream();

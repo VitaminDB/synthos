@@ -49,7 +49,7 @@ pub fn editable_label(state: EditableLabelState, template_id: String, builtin: b
         let initial = state.display.get_untracked();
         let template_id_save = template_id.clone();
         let field = TextField::with_text(initial)
-            .placeholder("Имя шаблона")
+            .placeholder(tr!("templates.card.name.placeholder"))
             .on_submit(move |new_name: &str| {
                 let app = use_context::<AppCtx>();
                 let trimmed = new_name.trim();
@@ -60,11 +60,11 @@ pub fn editable_label(state: EditableLabelState, template_id: String, builtin: b
                 match templates::rename(&template_id_save, trimmed) {
                     Ok(updated) => {
                         state.display.set(updated.name.clone());
-                        app.notifications.success("Шаблон переименован");
+                        app.notifications.success(tr!("templates.notify.renamed"));
                         super::bump_revision();
                     }
                     Err(e) => {
-                        app.notifications.error(format!("Не удалось переименовать: {e}"));
+                        app.notifications.error(tr!("templates.notify.rename_failed", error = e));
                     }
                 }
                 state.editing.set(false);

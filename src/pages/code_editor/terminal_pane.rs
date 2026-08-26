@@ -214,14 +214,14 @@ fn active_terminal_inner() -> impl Widget {
                     let menu = ContextMenu::new()
                         .child(term.class("code-editor-terminal"))
                         .items(vec![
-                            MenuItem::new("copy", "Копировать")
+                            MenuItem::new("copy", tr!("app.copy"))
                                 .icon(MI_CONTENT_COPY)
                                 .shortcut("Ctrl+Shift+C"),
-                            MenuItem::new("paste", "Вставить")
+                            MenuItem::new("paste", tr!("app.paste"))
                                 .icon(MI_CONTENT_PASTE)
                                 .shortcut("Ctrl+Shift+V"),
                             MenuItem::separator(),
-                            MenuItem::new("clear", "Очистить").icon(MI_CLEAR_ALL),
+                            MenuItem::new("clear", tr!("code.terminal.menu.clear")).icon(MI_CLEAR_ALL),
                         ])
                         .on_select(move |id| {
                             let action = match id {
@@ -253,8 +253,8 @@ fn empty_placeholder() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(8.0)
             .child(Text::new(MI_TERMINAL).class("term-empty-icon"))
-            .child(Text::new("Нет открытых терминалов").class("term-empty-title"))
-            .child(Text::new("Нажмите + чтобы открыть новый").class("term-empty-hint")),
+            .child(Text::new(tr!("code.terminal.empty.title")).class("term-empty-title"))
+            .child(Text::new(tr!("code.terminal.empty.hint")).class("term-empty-hint")),
     )
 }
 

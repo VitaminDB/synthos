@@ -8,8 +8,12 @@ use syngui::i18n::Lang;
 use syngui::prelude::*;
 use syngui::widgets::overlay::menu::MenuItem;
 
+use crate::agent::tools::Tool;
 use crate::context::GeneralCtx;
 use crate::icons::MI_CHECK;
+use crate::pages::node_editor::registry::{NodeCategory, NodeKindMeta};
+use crate::pages::node_editor::types::NodeKind;
+use crate::templates::{Template, TemplateCategory};
 
 pub const AUTO: &str = "auto";
 
@@ -80,4 +84,55 @@ pub fn language_menu_items(current: &str) -> Vec<MenuItem> {
         items.push(mark(MenuItem::new(id.clone(), l.name), &id));
     }
     items
+}
+
+/// serde-имя варианта `NodeKind` (snake_case) — стабильный ключ каталога.
+pub fn node_kind_key(kind: NodeKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Заголовок ноды: `node.<kind>.title`, иначе английский литерал из реестра.
+pub fn node_title(meta: &NodeKindMeta) -> String {
+    syngui::i18n::try_tr(&format!("node.{}.title", node_kind_key(meta.kind)))
+        .unwrap_or_else(|| meta.title.to_string())
+}
+
+pub fn node_category_label(category: NodeCategory) -> String {
+    tr!(&format!("node.category.{}", category.key()))
+}
+
+pub fn node_subcategory_label(key: &str) -> String {
+    tr!(&format!("node.subcategory.{key}"))
+}
+
+pub fn template_category_label(category: TemplateCategory) -> String {
+    tr!(&format!("template.category.{}", category.key()))
+}
+
+/// Имя встроенного шаблона: `template.<id>.name`, иначе как в `builtin.rs`;
+/// пользовательские шаблоны показываются как названы.
+pub fn template_name(template: &Template) -> String {
+    if template.builtin {
+        syngui::i18n::try_tr(&format!("template.{}.name", template.id))
+            .unwrap_or_else(|| template.name.clone())
+    } else {
+        template.name.clone()
+    }
+}
+
+pub fn template_description(template: &Template) -> String {
+    if template.builtin {
+        syngui::i18n::try_tr(&format!("template.{}.desc", template.id))
+            .unwrap_or_else(|| template.description.clone())
+    } else {
+        template.description.clone()
+    }
+}
+
+/// Подпись инструмента агента: `tool.<key>.label`, иначе литерал из дескриптора.
+pub fn tool_label(tool: &Tool) -> String {
+    syngui::i18n::try_tr(&format!("tool.{}.label", tool.key)).unwrap_or_else(|| tool.label.to_string())
 }

@@ -189,7 +189,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 live_room.clone(),
                 params_dirty.clone(),
             ),
-            _ => return error_widget("Reverb: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "Reverb")),
         },
         Err(_) => return error_widget("Reverb: lock error"),
     };
@@ -253,7 +253,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

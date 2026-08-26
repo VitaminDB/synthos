@@ -34,8 +34,8 @@ pub fn view() -> impl Widget {
         let header = Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Start)
-            .child(Text::new("Квантование LLM: Qwen3.6/3.8, Muse Glimmer (чат)").class("settings-section-title"))
-            .child(Text::new("Политика хранения весов и кэшей модели. NVFP4 — главная экономия (~12 GB из 30 GB весов). FP8 KV-cache даёт −2 GB при длинном контексте. Изменения применяются после нажатия «Применить и перезагрузить модель».")
+            .child(Text::new(tr!("settings.ai_models.title")).class("settings-section-title"))
+            .child(Text::new(tr!("settings.ai_models.subtitle"))
                 .class("settings-row-desc"));
 
         let body = Column::new()
@@ -66,9 +66,9 @@ fn runtime_card() -> Box<dyn Widget> {
     let value = ctx.qwen36_attn_mode;
     let current = value.get_untracked();
     let items = vec![
-        DropdownItem::new("fa4", "FA-4 — FlashAttention + WMMA Tensor Cores (auto)"),
-        DropdownItem::new("fa2", "FA-2 — FlashAttention без Tensor Cores (скаляр)"),
-        DropdownItem::new("off", "Off — reference softmax (без CUDA flash)"),
+        DropdownItem::new("fa4", tr!("settings.ai_models.attn.fa4")),
+        DropdownItem::new("fa2", tr!("settings.ai_models.attn.fa2")),
+        DropdownItem::new("off", tr!("settings.ai_models.attn.off")),
     ];
     let dropdown: Box<dyn Widget> = Box::new(
         Dropdown::with_items(items)
@@ -121,12 +121,12 @@ fn runtime_card() -> Box<dyn Widget> {
 
     let chunk_signal = ctx.qwen36_prefill_chunk;
     let chunk_items = vec![
-        DropdownItem::new("64", "64 — для 24 GB GPU + 23K context"),
+        DropdownItem::new("64", tr!("settings.ai_models.prefill_chunk.64")),
         DropdownItem::new("128", "128"),
-        DropdownItem::new("256", "256 — компромисс скорость/VRAM"),
+        DropdownItem::new("256", tr!("settings.ai_models.prefill_chunk.256")),
         DropdownItem::new("512", "512"),
-        DropdownItem::new("1024", "1024 — default (короткие промпты)"),
-        DropdownItem::new("2048", "2048 — максимум throughput"),
+        DropdownItem::new("1024", tr!("settings.ai_models.prefill_chunk.1024")),
+        DropdownItem::new("2048", tr!("settings.ai_models.prefill_chunk.2048")),
     ];
     let chunk_current = chunk_signal.get_untracked().to_string();
     let chunk_dropdown: Box<dyn Widget> = Box::new(
@@ -145,12 +145,12 @@ fn runtime_card() -> Box<dyn Widget> {
     // как приложить к сообщению небольшую статью.
     let img_signal = ctx.syn_chat_max_image_tokens;
     let img_items = vec![
-        DropdownItem::new("256", "256 — эскиз: общий вид, крупные объекты"),
-        DropdownItem::new("512", "512 — экономно, крупный текст читается"),
-        DropdownItem::new("1024", "1024 — default: скриншоты и документы"),
-        DropdownItem::new("2048", "2048 — мелкий текст, схемы"),
-        DropdownItem::new("4096", "4096 — максимум качества, длинный prefill"),
-        DropdownItem::new("0", "Без ограничения — как в конфиге модели"),
+        DropdownItem::new("256", tr!("settings.ai_models.image_tokens.256")),
+        DropdownItem::new("512", tr!("settings.ai_models.image_tokens.512")),
+        DropdownItem::new("1024", tr!("settings.ai_models.image_tokens.1024")),
+        DropdownItem::new("2048", tr!("settings.ai_models.image_tokens.2048")),
+        DropdownItem::new("4096", tr!("settings.ai_models.image_tokens.4096")),
+        DropdownItem::new("0", tr!("settings.ai_models.image_tokens.unlimited")),
     ];
     let img_current = img_signal.get_untracked().to_string();
     let img_dropdown: Box<dyn Widget> = Box::new(
@@ -166,9 +166,9 @@ fn runtime_card() -> Box<dyn Widget> {
 
     let sync_signal = ctx.qwen36_layer_sync;
     let sync_items = vec![
-        DropdownItem::new("auto", "Auto — sync только на prefill (default)"),
-        DropdownItem::new("on", "On — sync всегда (макс. экономия VRAM, −5% decode)"),
-        DropdownItem::new("off", "Off — никогда (макс. скорость, риск OOM на long)"),
+        DropdownItem::new("auto", tr!("settings.ai_models.layer_sync.auto")),
+        DropdownItem::new("on", tr!("settings.ai_models.layer_sync.on")),
+        DropdownItem::new("off", tr!("settings.ai_models.layer_sync.off")),
     ];
     let sync_current = sync_signal.get_untracked();
     let sync_dropdown: Box<dyn Widget> = Box::new(
@@ -179,121 +179,72 @@ fn runtime_card() -> Box<dyn Widget> {
     );
 
     section_card(
-        "Inference (runtime)",
+        tr!("settings.ai_models.section.runtime"),
         vec![
             row_frame(
                 MI_SPEED,
-                "Attention режим (full-attention слои)",
-                "Управляет CUDA-путём в 16 full-attention слоях Qwen3.6. \
-                 FA-4 — самый быстрый (Split-K decode + WMMA Tensor Cores на \
-                 prefill hd=256): ×1.4 на 5K decode, ×4.3 на 23K decode, ×1.81 \
-                 на 5K prefill (1262 vs 705 tok/s), ×2.53 на 23K prefill. \
-                 FA-2 — тот же Split-K, но без WMMA (скалярный mma) — для \
-                 bisect-отладки или если Tensor Cores ведут себя нештатно. \
-                 Off — reference softmax (OOM на ≥10K токенов, baseline \
-                 для регрессионных бенчей). Применяется мгновенно к следующему \
-                 ответу, без перезагрузки модели.",
+                tr!("settings.ai_models.attn"),
+                tr!("settings.ai_models.attn.desc"),
                 dropdown,
             ),
             row_frame(
                 MI_AUTO_AWESOME,
-                "CUDA-graph decode (Phase D)",
-                "Capture одного decode-шага в CUDA Graph + replay для каждого \
-                 следующего токена. Убирает per-launch overhead на ~140 kernel \
-                 calls за token. Speedup: ×1.45 на коротком контексте \
-                 (17.8 → 25.8 tok/s), ×1.16 на 23K (19.4 → 22.6 tok/s) — на \
-                 длинном контексте flash-attention bandwidth доминирует над \
-                 launch overhead. Требует CUDA. Применяется мгновенно к \
-                 следующему ответу — нужна перезагрузка модели только если \
-                 устройство было создано без non-default stream (старые \
-                 сборки до Phase D — теперь делается автоматически в \
-                 `model_registry`).",
+                tr!("settings.ai_models.cuda_graph"),
+                tr!("settings.ai_models.cuda_graph.desc"),
                 graph_toggle,
             ),
             row_frame(
                 MI_BOLT,
-                "MTP (multi-token prediction)",
-                "Спекулятивный декод на встроенной nextn-голове модели: \
-                 голова предсказывает второй токен, основная модель \
-                 проверяет оба за один forward. Работает только для greedy \
-                 (temperature = 0) и только если в бандле есть тензоры \
-                 `mtp.*` (MTP-вариант GGUF). Выдача побитово совпадает с \
-                 обычным декодом. На RTX 5090 Laptop, NVFP4: 38.2 → 43.9 \
-                 tok/s при приёме черновиков 80-84%. Требует перезагрузки \
-                 модели — веса MTP-головы грузятся вместе с моделью.",
+                tr!("settings.ai_models.mtp"),
+                tr!("settings.ai_models.mtp.desc"),
                 mtp_toggle,
             ),
             row_frame(
                 MI_BOLT,
-                "DFlash (блочная спекуляция, Muse Glimmer)",
-                "Спекулятивный декод на драфтере-ассистенте (2.3B, 5 слоёв):                  драфтер видит hidden-состояния 5 слоёв основной модели и за                  один forward предлагает блок из 15 токенов, основная модель                  проверяет весь блок одним проходом. Работает только для                  greedy (temperature = 0) и только если в бандле есть                  компонент `dflash`. Выдача совпадает с обычным декодом —                  принимаются лишь токены, подтверждённые основной моделью.                  Требует перезагрузки модели: веса драфтера грузятся вместе                  с ней (+1.2 GB в NVFP4). Выключите, чтобы освободить VRAM                  или для сравнения скорости.",
+                tr!("settings.ai_models.dflash"),
+                tr!("settings.ai_models.dflash.desc"),
                 dflash_toggle,
             ),
             row_frame(
                 MI_BOLT,
-                "Fused linear_attn prep (Phase B-1)",
-                "Объединяет sigmoid + softplus + 3×repeat_interleave_cast в \
-                 один CUDA kernel (5 → 1 launch на каждом из 48 linear_attn \
-                 слоёв). Bit-exact с раздельным путём; default = ON. На \
-                 27B-модели win в пределах шума замера (compute kernels \
-                 крупнее launch overhead) — но это не вредит и удерживает \
-                 меньше kernel-нод в captured CUDA graph. Отключайте только \
-                 для bisect-отладки.",
+                tr!("settings.ai_models.la_fused"),
+                tr!("settings.ai_models.la_fused.desc"),
                 la_toggle,
             ),
             row_frame(
                 MI_BOLT,
-                "Fused gated_delta_rule + RmsNorm (Phase B-2)",
-                "Объединяет SSM-step и RmsNormGated в один kernel: SSM-выход \
-                 живёт в shared memory вместо global, RMS-фаза работает в том \
-                 же block. Устраняет 8 KB read+write traffic per head per \
-                 token. Требует hk == hv (true для Qwen3.6, 128 == 128). \
-                 Bit-exact; default = ON. Отключайте для bisect-отладки.",
+                tr!("settings.ai_models.gdr_fused"),
+                tr!("settings.ai_models.gdr_fused.desc"),
                 gdr_toggle,
             ),
             row_frame(
                 MI_TUNE,
-                "Prefill chunk size",
-                "Размер chunk'а в `prefill_chunked`. Default 1024 даёт \
-                 максимальный throughput на коротких промптах, но при ≥10K \
-                 tokens на 24 GB GPU пиковый KV-allocation \
-                 `(B,nh,1024,T) F32 ≈ 660 MB` сверху текущего KV-ring'а \
-                 приводит к OOM. Уменьшение до 64-256 разменивает -5-10% \
-                 prefill-скорости на VRAM headroom. Применяется к следующему \
-                 запуску `generate(...)` без reload.",
+                tr!("settings.ai_models.prefill_chunk"),
+                tr!("settings.ai_models.prefill_chunk.desc"),
                 chunk_dropdown,
             ),
             row_frame(
                 MI_MEMORY,
-                "Layer sync (память)",
-                "`cudaStreamSynchronize` после каждого decoder-слоя. Без sync \
-                 cudarc через `cudaMallocAsync` держит MLP intermediate \
-                 тензоры между слоями в pool без реального reclaim'а: на \
-                 prefill chunk=1024 это даёт +2-6 GB peak VRAM, что приводит \
-                 к OOM на длинных промптах. Auto (default) — sync только \
-                 когда T > 1 (т.е. prefill chunks): нулевая цена на decode, \
-                 ~4 GB free на длинном prefill. On — sync всегда: -5% decode, \
-                 -4% prefill, максимальная экономия памяти. Off — никогда: \
-                 максимальная скорость, риск OOM на ≥30K промптах. \
-                 Применяется к следующему `forward` без reload.",
+                tr!("settings.ai_models.layer_sync"),
+                tr!("settings.ai_models.layer_sync.desc"),
                 sync_dropdown,
             ),
             row_frame(
                 MI_BOLT,
-                "Native FP4 mma GEMV (Phase E.2)",
-                "Native FP4 Tensor Cores для decode M=1 на проекциях NVFP4 — заменяет cuBLASLt-NVFP4 путь на shapes с N+K кратными 64. Доступно только на Blackwell consumer (sm_120a); на старых GPU silent fallback на cuBLASLt.",
+                tr!("settings.ai_models.nvfp4_mma"),
+                tr!("settings.ai_models.nvfp4_mma.desc"),
                 mma_toggle,
             ),
             row_frame(
                 MI_BOLT,
-                "Scalar NVFP4 GEMV (Phase E.2 fallback)",
-                "Scalar GEMV-путь для decode M=1 на проекциях NVFP4 (без Tensor Cores). По умолчанию off — cuBLASLt-NVFP4 + Tensor Cores даёт лучшую пропускную. Включайте только для bug-bisect.",
+                tr!("settings.ai_models.nvfp4_gemv"),
+                tr!("settings.ai_models.nvfp4_gemv.desc"),
                 gemv_toggle,
             ),
             row_frame(
                 MI_IMAGE_ICON,
-                "Детализация картинок-вложений",
-                "Сколько vision-токенов тратить на одну картинку в чате.                  Токен покрывает участок 28×28 px, поэтому 1024 токена — это                  примерно 896×896 px после smart-resize: скриншот с обычным                  интерфейсным текстом читается целиком. Больше токенов —                  виден мелкий шрифт и детали схем, но каждая картинка                  съедает контекст и удлиняет prefill (4096 токенов с одной                  фотографии сопоставимы с приложенной статьёй). Работает                  только на мультимодальных бандлах (с vision-башней),                  применяется к следующей отправке — без перезагрузки модели.",
+                tr!("settings.ai_models.image_tokens"),
+                tr!("settings.ai_models.image_tokens.desc"),
                 img_dropdown,
             ),
         ],
@@ -302,16 +253,10 @@ fn runtime_card() -> Box<dyn Widget> {
 
 fn preset_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
     let items = vec![
-        DropdownItem::new("quality", "Quality — F16 KV, F16 lm_head/embed (макс. точность)"),
-        DropdownItem::new(
-            "balance",
-            "Balance — F16 KV + FP8 lm_head/embed (по умолчанию, 65K на 24 GB)",
-        ),
-        DropdownItem::new(
-            "vram_saver",
-            "VRAM-Saver — F16 KV + NVFP4 lm_head/embed (минимум VRAM)",
-        ),
-        DropdownItem::new("custom", "Custom — ручная настройка"),
+        DropdownItem::new("quality", tr!("settings.ai_models.preset.quality")),
+        DropdownItem::new("balance", tr!("settings.ai_models.preset.balance")),
+        DropdownItem::new("vram_saver", tr!("settings.ai_models.preset.vram_saver")),
+        DropdownItem::new("custom", tr!("settings.ai_models.preset.custom")),
     ];
     let current = q.preset.clone();
     let preset_control: Box<dyn Widget> = Box::new(
@@ -336,15 +281,11 @@ fn preset_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
     );
 
     section_card(
-        "Пресет",
+        tr!("settings.ai_models.section.preset"),
         vec![row_frame(
             MI_AUTO_AWESOME,
-            "Готовая политика квантования",
-            "Quality — всё в F16 (макс. точность). Balance — NVFP4 backbone + FP8 lm_head/embed: \
-             65K контекста на 24 GB GPU без потери качества (≈ F16). \
-             VRAM-Saver — NVFP4 lm_head/embed для минимального VRAM, но заметная просадка \
-             accuracy на vocab projection. Любое ручное изменение dropdown'а ниже переключит \
-             пресет на «Custom».",
+            tr!("settings.ai_models.preset"),
+            tr!("settings.ai_models.preset.desc"),
             preset_control,
         )],
     )
@@ -363,10 +304,10 @@ fn models_dir_card() -> Box<dyn Widget> {
         .on_change(move |s| sig.set(s.to_string()))
         .class("models-path-field");
 
-    let browse = Button::new("Выбрать…")
+    let browse = Button::new(tr!("app.browse"))
         .icon(MI_FOLDER_OPEN)
         .on_click(move || {
-            let dlg = rfd::FileDialog::new().set_title("Каталог моделей");
+            let dlg = rfd::FileDialog::new().set_title(tr!("settings.ai_models.section.models_dir"));
             if let Some(p) = dlg.pick_folder() {
                 sig.set(p.display().to_string());
             }
@@ -382,14 +323,11 @@ fn models_dir_card() -> Box<dyn Widget> {
         ]);
 
     section_card(
-        "Каталог моделей",
+        tr!("settings.ai_models.section.models_dir"),
         vec![row_frame(
             MI_FOLDER_OPEN,
-            "Где искать модели (.syn, LoRA, HF-каталоги)",
-            "Общая папка моделей для всех пайплайнов. Агент Syn-чата берёт \
-             отсюда пути к бандлам, когда заполняет чекпойнт-ноды \
-             (pipelines action=list показывает содержимое). По умолчанию — \
-             ~/Storage/syn_models.",
+            tr!("settings.ai_models.models_dir"),
+            tr!("settings.ai_models.models_dir.desc"),
             Box::new(control),
         )],
     )
@@ -405,8 +343,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_MEMORY,
-            "Веса attn/MLP (storage)",
-            "Формат хранения весов attention и MLP linear-слоёв в VRAM. NVFP4 — главная экономия (~12 GB из 30 GB), требует Blackwell sm_120. FP8 — альтернатива на Hopper/Ada/Blackwell. F16 — без квантизации.",
+            tr!("settings.ai_models.weights_storage"),
+            tr!("settings.ai_models.weights_storage.desc"),
             control,
         )
     });
@@ -418,8 +356,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_BOLT,
-            "Compute dtype (активации)",
-            "Точность активаций между слоями. F16 — стандарт для GPU. BF16 — шире динамический диапазон, полезно для prefill длинного контекста. F32 — отладка.",
+            tr!("settings.ai_models.compute_dtype"),
+            tr!("settings.ai_models.compute_dtype.desc"),
             control,
         )
     });
@@ -431,8 +369,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_DATA_OBJECT,
-            "KV-cache (full-attention слои)",
-            "Формат хранения K/V проекций между decode-шагами. FP8 — −50% VRAM от KV (~−2 GB при 13K tokens), один общий per-tensor scale, dequant перед matmul. F16 — без квантизации. Auto = compute dtype.",
+            tr!("settings.ai_models.kv_cache"),
+            tr!("settings.ai_models.kv_cache.desc"),
             control,
         )
     });
@@ -444,12 +382,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_ARTICLE,
-            "lm_head (vocab projection, 2.5 GB в F16)",
-            "Выходной слой в vocab=248K. F16 — стандартный Linear. \
-             FP8 E4M3 (default balance) — native cuBLASLt FP8 GEMM, экономит ~1.2 GB, \
-             accuracy ≈ F16. NVFP4 — экономия ~1.9 GB через chunked NVFP4 kernel, \
-             но заметная деградация качества на vocab projection (только для \
-             VRAM-Saver). Decode -10..15% против F16 из-за FP8 quantize overhead.",
+            tr!("settings.ai_models.lm_head"),
+            tr!("settings.ai_models.lm_head.desc"),
             control,
         )
     });
@@ -461,12 +395,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_ARTICLE,
-            "embed_tokens (vocab embedding, 2.5 GB в F16)",
-            "Таблица векторов токенов. F16/BF16/F32 — стандартный Embedding (gather из table). \
-             FP8 E4M3 (default balance) — packed FP8 bytes + per-tensor scale + custom gather kernel, \
-             экономит ~1.2 GB при vocab=248K, accuracy ≈ F16. NVFP4 (Phase F) — packed FP4 nibbles + \
-             tile-major scales, экономит ~1.8 GB, но деградация качества на embed заметна — только \
-             для VRAM-Saver. Q8_0/Q4_0 для embed не реализованы — fallback на F16.",
+            tr!("settings.ai_models.embed_tokens"),
+            tr!("settings.ai_models.embed_tokens.desc"),
             control,
         )
     });
@@ -478,12 +408,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_HUB,
-            "Tied embeddings (lm_head ↔ embed_tokens)",
-            "Auto — читает `tie_word_embeddings` из модельного config.json (для Qwen3.6 27B \
-             обычно false). Force On — lm_head переиспользует веса embed_tokens (экономит весь \
-             отдельный lm_head: ~2.4 GB F16 или ~0.4 GB NVFP4); на untied чекпоинте изменит \
-             числовой выход. Force Off — всегда отдельный lm_head. Применяется при следующей \
-             перезагрузке модели.",
+            tr!("settings.ai_models.tied_embeddings"),
+            tr!("settings.ai_models.tied_embeddings.desc"),
             control,
         )
     });
@@ -495,8 +421,8 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_MEMORY,
-            "SSM state (Gated DeltaNet)",
-            "Recurrence-state в 48 linear-attention слоях. По умолчанию F32 (HF `mamba_ssm_dtype`). BF16 экономит ~48 MB при потенциальной потере точности на длинных рекурренциях.",
+            tr!("settings.ai_models.ssm_state"),
+            tr!("settings.ai_models.ssm_state.desc"),
             control,
         )
     });
@@ -508,18 +434,18 @@ fn components_card(q: &SynChatQuantConfig) -> Box<dyn Widget> {
         });
         row_frame(
             MI_TUNE,
-            "Conv1d state (Gated DeltaNet)",
-            "Causal conv1d left-context в linear_attn слоях. Эффект на VRAM незначителен (тысячи элементов на слой), но влияет на точность conv-update.",
+            tr!("settings.ai_models.conv_state"),
+            tr!("settings.ai_models.conv_state.desc"),
             control,
         )
     });
 
-    section_card("Компоненты", rows)
+    section_card(tr!("settings.ai_models.section.components"), rows)
 }
 
 fn apply_card() -> Box<dyn Widget> {
     let apply_control: Box<dyn Widget> = Box::new(
-        Button::new("Применить и перезагрузить модель")
+        Button::new(tr!("settings.ai_models.apply.button"))
             .icon(MI_AUTORENEW)
             .on_click(|| {
                 let ctx = use_context::<AppCtx>();
@@ -527,31 +453,31 @@ fn apply_card() -> Box<dyn Widget> {
                 let cfg = crate::config::AppConfig::load();
                 let Some(path_str) = cfg.last_syn_model.clone() else {
                     ctx.notifications.warning(
-                        "Сначала откройте `.syn`-bundle в чате (правая панель → Загрузить модель).",
+                        tr!("settings.ai_models.apply.no_bundle"),
                     );
                     return;
                 };
                 let path = PathBuf::from(path_str);
                 if !path.exists() {
                     ctx.notifications
-                        .warning(format!("Файл не найден: {}", path.display()));
+                        .warning(tr!("settings.ai_models.apply.not_found", path = path.display()));
                     return;
                 }
                 let registry = use_context::<SynModelRegistry>();
                 registry.unload();
                 registry.load(path, policy);
                 ctx.notifications
-                    .info("Модель перезагружается с новой политикой квантования…");
+                    .info(tr!("settings.ai_models.apply.reloading"));
             })
             .class("ai-models-apply-button"),
     );
 
     section_card(
-        "Применение",
+        tr!("settings.ai_models.section.apply"),
         vec![row_frame(
             MI_PLAY_ARROW,
-            "Перезагрузить модель чата",
-            "Изменения dtype применяются только при следующей загрузке модели. Нажмите, чтобы выгрузить текущую модель и поднять её заново с актуальной политикой. Если `.syn`-bundle ещё не выбран — откройте Чат и нажмите «Загрузить модель».",
+            tr!("settings.ai_models.apply"),
+            tr!("settings.ai_models.apply.desc"),
             apply_control,
         )],
     )
@@ -586,24 +512,19 @@ fn acestep_paths_card() -> Box<dyn Widget> {
     let xl_sig = ctx.acestep_xl_bundle_path;
     let vae_sig = ctx.acestep_vae_bundle_path;
     section_card(
-        "ACE-Step bundles",
+        tr!("settings.ai_models.section.acestep"),
         vec![
             row_frame(
                 MI_FOLDER_OPEN,
-                "Encoder/DiT bundle (xl-base или xl-turbo)",
-                "Общий `.syn` bundle с DiT 32L, TextProjector, LyricEncoder 8L, \
-                 TimbreEncoder 4L, NullConditionEmb, FSQ и AudioTokenDetokenizer. \
-                 Один из `acestep_v15_xl_base.syn` (full quality) или \
-                 `acestep_v15_xl_turbo.syn` (8-step turbo). Используется нодами \
-                 TextEncoder/LyricEncoder/TimbreEncoder/Sampler/ArLm.",
-                bundle_picker(xl_sig, "Выбрать xl-base / xl-turbo bundle"),
+                tr!("settings.ai_models.acestep_xl"),
+                tr!("settings.ai_models.acestep_xl.desc"),
+                bundle_picker(xl_sig, tr!("settings.ai_models.acestep_xl.dialog_title")),
             ),
             row_frame(
                 MI_FOLDER_OPEN,
-                "VAE bundle (acestep_vae.syn)",
-                "ACE-Step VAE (encoder + decoder) — `acestep_vae.syn`. Используется \
-                 нодами VaeEncode (audio → latent) и VaeDecode (latent → audio).",
-                bundle_picker(vae_sig, "Выбрать VAE bundle"),
+                tr!("settings.ai_models.acestep_vae"),
+                tr!("settings.ai_models.acestep_vae.desc"),
+                bundle_picker(vae_sig, tr!("settings.ai_models.acestep_vae.dialog_title")),
             ),
         ],
     )
@@ -611,14 +532,15 @@ fn acestep_paths_card() -> Box<dyn Widget> {
 
 /// File picker для `.syn` bundle'а с привязкой к `RwSignal<Option<String>>`.
 /// Показывает имя файла справа от кнопки (или «Не выбран»).
-fn bundle_picker(sig: RwSignal<Option<String>>, title: &'static str) -> Box<dyn Widget> {
+fn bundle_picker(sig: RwSignal<Option<String>>, title: impl Into<String>) -> Box<dyn Widget> {
+    let title = title.into();
     let pick_btn: Box<dyn Widget> = Box::new(
-        Button::new("Выбрать…")
+        Button::new(tr!("app.browse"))
             .icon(MI_FOLDER_OPEN)
             .on_click(move || {
                 let dlg = rfd::FileDialog::new()
-                    .add_filter("Syn bundle", &["syn"])
-                    .set_title(title);
+                    .add_filter(tr!("settings.ai_models.bundle.filter"), &["syn"])
+                    .set_title(title.clone());
                 if let Some(p) = dlg.pick_file() {
                     sig.set(Some(p.to_string_lossy().to_string()));
                 }
@@ -626,7 +548,7 @@ fn bundle_picker(sig: RwSignal<Option<String>>, title: &'static str) -> Box<dyn 
             .class("ai-models-apply-button"),
     );
     let clear_btn: Box<dyn Widget> = Box::new(
-        Button::new("Очистить")
+        Button::new(tr!("settings.ai_models.bundle.clear"))
             .on_click(move || sig.set(None))
             .class("ai-models-apply-button"),
     );
@@ -639,7 +561,7 @@ fn bundle_picker(sig: RwSignal<Option<String>>, title: &'static str) -> Box<dyn 
                     .map(|f| f.to_string_lossy().to_string())
                     .unwrap_or(s)
             })
-            .unwrap_or_else(|| "Не выбран".to_string());
+            .unwrap_or_else(|| tr!("settings.ai_models.bundle.none"));
         vec![Box::new(Text::new(label).class("settings-row-desc")) as Box<dyn Widget>]
     });
     Box::new(

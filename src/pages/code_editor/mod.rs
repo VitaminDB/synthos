@@ -133,8 +133,8 @@ fn no_session_placeholder() -> impl Widget {
             .gap(12.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_CODE).class("code-editor-no-session-icon"),
-                Text::new("Нет открытых сессий").class("code-editor-no-session-title"),
-                Text::new("Нажмите «+» в боковой панели слева, чтобы создать сессию")
+                Text::new(tr!("code.mod.no_session.title")).class("code-editor-no-session-title"),
+                Text::new(tr!("code.mod.no_session.hint"))
                     .class("code-editor-no-session-hint"),
             ]
     })

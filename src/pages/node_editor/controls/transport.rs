@@ -23,7 +23,11 @@ pub fn node_transport_buttons(
         Reactive::new(move || -> Vec<Box<dyn Widget>> {
             let s = state.get();
             let icon = if s == TransportState::Playing { MI_PAUSE } else { MI_PLAY_ARROW };
-            let tooltip = if s == TransportState::Playing { "Пауза" } else { "Воспроизвести" };
+            let tooltip = if s == TransportState::Playing {
+                tr!("nodes.transport.pause")
+            } else {
+                tr!("nodes.transport.play")
+            };
             let class = if s == TransportState::Playing {
                 "node-transport-btn node-transport-pause"
             } else {
@@ -39,7 +43,7 @@ pub fn node_transport_buttons(
     };
 
     let stop_btn = ToolButton::new(MI_STOP)
-        .tooltip("Остановить")
+        .tooltip(tr!("nodes.transport.stop"))
         .on_click(move || on_stop())
         .class("node-transport-btn node-transport-stop");
 

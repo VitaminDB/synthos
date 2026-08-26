@@ -39,7 +39,7 @@ fn list_view() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Sync 
             return DecoratedBox::new()
                 .class("voice-history-list voice-history-list-empty")
                 .child(Center::new().child(
-                    Text::new("Ещё нет записей").class("voice-history-empty-text"),
+                    Text::new(tr!("voice.history.list.empty")).class("voice-history-empty-text"),
                 ));
         }
 
@@ -64,7 +64,7 @@ fn detail_view() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Syn
         let Some(id) = selected_id else {
             return DecoratedBox::new().class("voice-history-detail-empty").child(
                 Center::new().child(
-                    Text::new("Выберите запись слева").class("voice-history-empty-text"),
+                    Text::new(tr!("voice.history.detail.select_hint")).class("voice-history-empty-text"),
                 ),
             );
         };
@@ -73,7 +73,7 @@ fn detail_view() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Syn
         let Some(rec) = recordings.iter().find(|r| r.id == id).cloned() else {
             return DecoratedBox::new().class("voice-history-detail-empty").child(
                 Center::new().child(
-                    Text::new("Запись не найдена").class("voice-history-empty-text"),
+                    Text::new(tr!("voice.history.detail.not_found")).class("voice-history-empty-text"),
                 ),
             );
         };

@@ -35,10 +35,10 @@ fn header() -> impl Widget {
                 Center::new().child(Icon::new(MI_PSYCHOLOGY).class("skills-panel-header-icon")),
             ],
             DecoratedBox::new().class("grow").child(
-                Text::new("Скилы").class("skills-panel-header-title"),
+                Text::new(tr!("settings.skills.panel.title")).class("skills-panel-header-title"),
             ),
             ToolButton::new(MI_ADD)
-                .tooltip("Создать скил")
+                .tooltip(tr!("settings.skills.panel.create"))
                 .on_click(open_create_dialog)
                 .class("skills-panel-add-btn"),
         ]
@@ -107,9 +107,9 @@ fn empty_state() -> impl Widget {
             DecoratedBox::new().class("skill-empty-bubble") => [
                 Center::new().child(Icon::new(MI_PSYCHOLOGY).class("skill-empty-icon")),
             ],
-            Text::new("Скилов пока нет").class("skill-empty-title"),
+            Text::new(tr!("settings.skills.panel.empty.title")).class("skill-empty-title"),
             Padding::symmetric(20.0, 0.0).child(
-                Text::new("Нажмите «+» в шапке, чтобы добавить инструкцию.")
+                Text::new(tr!("settings.skills.panel.empty.text"))
                     .class("skill-empty-text"),
             ),
         ]
@@ -146,7 +146,7 @@ fn skill_row(item: &ListItem, id: String, name: String, is_selected: bool) -> Bo
                         ]
                     }),
                     ToolButton::new(MI_EDIT_NOTE)
-                        .tooltip("Редактировать имя и описание")
+                        .tooltip(tr!("settings.skills.edit_meta"))
                         .on_click(move || {
                             let ctx = use_context::<AppCtx>();
                             ctx.skills_dialog.set(Some(SkillDialogKind::Edit {
@@ -157,7 +157,7 @@ fn skill_row(item: &ListItem, id: String, name: String, is_selected: bool) -> Bo
                         })
                         .class("skill-list-action"),
                     ToolButton::new(MI_DELETE)
-                        .tooltip("Удалить")
+                        .tooltip(tr!("app.delete"))
                         .on_click(move || {
                             let ctx = use_context::<AppCtx>();
                             ctx.skills_dialog.set(Some(SkillDialogKind::Delete {

@@ -224,13 +224,15 @@ pub fn current_input_audio_input(
 
 /// Picker директории (Gemma-3-12B — каталог HF-модели, не файл).
 pub fn dir_picker_row(
-    tooltip: &'static str,
+    tooltip: impl Into<String>,
     sig: RwSignal<Option<PathBuf>>,
 ) -> Box<dyn Widget> {
+    let tooltip = tooltip.into();
+    let tooltip_for_dialog = tooltip.clone();
     let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
         .tooltip(tooltip)
         .on_click(move || {
-            let dlg = rfd::FileDialog::new().set_title(tooltip);
+            let dlg = rfd::FileDialog::new().set_title(&tooltip_for_dialog);
             if let Some(p) = dlg.pick_folder() {
                 sig.set(Some(p));
             }
@@ -245,7 +247,7 @@ pub fn dir_picker_row(
                     .unwrap_or_else(|| p.to_string_lossy().to_string());
                 Box::new(Text::new(name).class("node-file-picker-name"))
             }
-            None => Box::new(Text::new("Каталог не выбран").class("node-file-picker-empty")),
+            None => Box::new(Text::new(tr!("nodes.common.no_folder_selected")).class("node-file-picker-empty")),
         };
         vec![widget]
     });
@@ -276,7 +278,7 @@ pub fn cancel_button(
         vec![
             Box::new(
                 ToolButton::new(crate::icons::MI_STOP)
-                    .tooltip("Остановить генерацию")
+                    .tooltip(tr!("node.ltx.common.stop_generation"))
                     .on_click(move || {
                         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                     })
@@ -342,7 +344,7 @@ impl EtaState {
 fn fmt_eta(secs: f32) -> String {
     let s = secs.round().max(0.0) as u64;
     if s < 60 {
-        format!("{s} с")
+        tr!("nodes.common.eta_seconds", n = s)
     } else if s < 3600 {
         format!("{}:{:02}", s / 60, s % 60)
     } else {

@@ -12,6 +12,7 @@ use super::super::super::types::{
 };
 use super::super::acestep::{field_row, idx_in, make_slider_row};
 use crate::pages::node_editor::controls::keyframe_slot::KeyframeSlot;
+use crate::pages::node_editor::controls::utils::option_label;
 
 // ── Пропорции кадра ───────────────────────────────────────────────────────
 //
@@ -22,7 +23,7 @@ use crate::pages::node_editor::controls::keyframe_slot::KeyframeSlot;
 // 10:16, 3:4) — вертикальное видео.
 
 pub const ASPECT_OPTIONS: &[&str] =
-    &["Свободно", "16:9", "9:16", "16:10", "10:16", "4:3", "3:4", "1:1", "21:9"];
+    &["free", "16:9", "9:16", "16:10", "10:16", "4:3", "3:4", "1:1", "21:9"];
 
 const W_MIN: u32 = 256;
 const W_MAX: u32 = 1920;
@@ -157,7 +158,7 @@ fn aspect_dropdown(
     height: RwSignal<u32>,
 ) -> Box<dyn Widget> {
     let items: Vec<DropdownItem> =
-        ASPECT_OPTIONS.iter().map(|s| DropdownItem::simple(*s)).collect();
+        ASPECT_OPTIONS.iter().map(|s| DropdownItem::new(*s, option_label(s))).collect();
     let current = ASPECT_OPTIONS
         .get(aspect_idx.get_untracked())
         .copied()
@@ -196,9 +197,13 @@ pub fn empty_latent_body(node: &NodeInstance) -> Box<dyn Widget> {
     let info = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let g = geometry_of(width.get(), height.get(), duration.get());
         vec![Box::new(
-            Text::new(format!(
-                "{} кадров @24fps, латент {}×{}×{}, аудио {}",
-                g.frame_count, g.latent_t, g.latent_h, g.latent_w, g.audio_t
+            Text::new(tr!(
+                "node.minimax_h3_latent.info",
+                frames = g.frame_count,
+                t = g.latent_t,
+                h = g.latent_h,
+                w = g.latent_w,
+                audio = g.audio_t
             ))
             .class("h3-node-info"),
         )]
@@ -208,10 +213,10 @@ pub fn empty_latent_body(node: &NodeInstance) -> Box<dyn Widget> {
             .gap(3.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(vec![
-                field_row("Пропорции", aspect_dropdown(aspect_idx, width, height)),
-                field_row("Ширина", dim_slider(width, height, aspect_idx, true)),
-                field_row("Высота", dim_slider(height, width, aspect_idx, false)),
-                field_row("Длительность, с", make_slider_row(duration, 1.0, 15.0, 0.5, 1)),
+                field_row(&tr!("node.minimax_h3_latent.aspect_ratio"), aspect_dropdown(aspect_idx, width, height)),
+                field_row(&tr!("nodes.common.field_width"), dim_slider(width, height, aspect_idx, true)),
+                field_row(&tr!("nodes.common.field_height"), dim_slider(height, width, aspect_idx, false)),
+                field_row(&tr!("nodes.common.field_duration_seconds"), make_slider_row(duration, 1.0, 15.0, 0.5, 1)),
                 Box::new(info),
             ]),
     )
@@ -260,7 +265,7 @@ pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::N
         return;
     };
     let Some(p) = path.get_untracked() else {
-        error.set(Some("выберите изображение".into()));
+        error.set(Some(tr!("node.minimax_h3_latent.select_image")));
         return;
     };
     match synaptix_io::image::png::load_image(&p, synaptix_core::device::Device::Cpu) {
@@ -272,7 +277,7 @@ pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::N
             error.set(None);
             output_version.update(|v| *v = v.wrapping_add(1));
         }
-        Err(e) => error.set(Some(format!("не удалось открыть {}: {e}", p.display()))),
+        Err(e) => error.set(Some(tr!("node.minimax_h3_latent.open_failed", path = p.display(), error = e))),
     }
 }
 

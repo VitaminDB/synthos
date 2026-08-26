@@ -55,18 +55,18 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             NodeRuntime::AudioFile { buffer, loaded_path, load_error } => {
                 (*buffer, *loaded_path, *load_error)
             }
-            _ => return error_widget("AudioFile: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "AudioFile")),
         },
         Err(_) => return error_widget("AudioFile: lock error"),
     };
 
     let open_btn = ToolButton::new(MI_FOLDER_OPEN)
-        .tooltip("Открыть аудио-файл")
+        .tooltip(tr!("node.audio_file.open_tooltip"))
         .on_click(move || {
             let dlg = rfd::FileDialog::new()
-                .add_filter("Аудио", &["wav", "mp3", "flac", "ogg", "m4a", "aac"])
-                .add_filter("Все файлы", &["*"])
-                .set_title("Выберите аудио-файл");
+                .add_filter(tr!("node.audio_file.filter_audio"), &["wav", "mp3", "flac", "ogg", "m4a", "aac"])
+                .add_filter(tr!("node.audio_file.filter_all"), &["*"])
+                .set_title(tr!("node.audio_file.dialog_title"));
             let Some(path) = dlg.pick_file() else { return; };
             path_sig.set(Some(path.clone()));
             error_sig.set(None);
@@ -85,7 +85,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             .cross_axis_alignment(CrossAxisAlignment::Start);
 
         if let Some(err) = error_opt {
-            col = col.child(Text::new(format!("Ошибка: {err}")).class("audio-node-error"));
+            col = col.child(Text::new(tr!("nodes.common.error", error = err)).class("audio-node-error"));
         } else if let Some(path) = path_opt {
             let name = path
                 .file_name()
@@ -103,10 +103,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                     .class("audio-node-meta"),
                 );
             } else {
-                col = col.child(Text::new("Загрузка…").class("audio-node-meta"));
+                col = col.child(Text::new(tr!("nodes.common.loading")).class("audio-node-meta"));
             }
         } else {
-            col = col.child(Text::new("Файл не выбран").class("audio-node-empty"));
+            col = col.child(Text::new(tr!("nodes.common.no_file_selected")).class("audio-node-empty"));
         }
 
         vec![Box::new(col) as Box<dyn Widget>]
@@ -151,7 +151,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

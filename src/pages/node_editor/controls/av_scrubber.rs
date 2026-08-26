@@ -107,9 +107,10 @@ impl AvScrubber {
             let frame_idx = ((p * total_frames as f32) as usize).min(total_frames - 1);
             vec![Box::new(
                 Text::new(format!(
-                    "{} / {}  ·  кадр {}/{}  ·  {:.0} fps",
+                    "{} / {}  ·  {} {}/{}  ·  {:.0} fps",
                     fmt_mmss(cur),
                     fmt_mmss(duration),
+                    tr!("nodes.unit.frame"),
                     frame_idx + 1,
                     total_frames,
                     fps

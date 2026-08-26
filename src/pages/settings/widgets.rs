@@ -81,9 +81,9 @@ where
     F: Fn(String) + Send + Sync + 'static,
 {
     let items = vec![
-        DropdownItem::new("f32", "F32 — без квантизации"),
-        DropdownItem::new("bf16", "BF16 — без квантизации"),
-        DropdownItem::new("f16", "F16 — без квантизации"),
+        DropdownItem::new("f32", tr!("settings.dtype.storage.f32")),
+        DropdownItem::new("bf16", tr!("settings.dtype.storage.bf16")),
+        DropdownItem::new("f16", tr!("settings.dtype.storage.f16")),
         DropdownItem::new(
             "nvfp4",
             "NVFP4 — native FP4 Tensor Cores (Blackwell sm_120)",
@@ -108,9 +108,9 @@ where
     F: Fn(String) + Send + Sync + 'static,
 {
     let items = vec![
-        DropdownItem::new("f32", "F32 — максимальная точность"),
-        DropdownItem::new("bf16", "BF16 — широкий диапазон, GPU"),
-        DropdownItem::new("f16", "F16 — быстрее на GPU (по умолчанию)"),
+        DropdownItem::new("f32", tr!("settings.dtype.compute.f32")),
+        DropdownItem::new("bf16", tr!("settings.dtype.compute.bf16")),
+        DropdownItem::new("f16", tr!("settings.dtype.compute.f16")),
         DropdownItem::new(
             "nvfp4",
             "NVFP4 — native FP4 Tensor Cores (Blackwell sm_120)",
@@ -139,13 +139,13 @@ where
     let items = vec![
         DropdownItem::new(
             "auto",
-            "Auto — следовать `tie_word_embeddings` из config.json",
+            tr!("settings.dtype.tie.auto"),
         ),
         DropdownItem::new(
             "on",
-            "Force On — lm_head = embed.T (экономит весь lm_head, меняет выход на untied чекпоинте)",
+            tr!("settings.dtype.tie.on"),
         ),
-        DropdownItem::new("off", "Force Off — всегда отдельный lm_head"),
+        DropdownItem::new("off", tr!("settings.dtype.tie.off")),
     ];
     Box::new(
         Dropdown::with_items(items)
@@ -163,10 +163,10 @@ where
     F: Fn(String) + Send + Sync + 'static,
 {
     let items = vec![
-        DropdownItem::new("auto", "Auto — наследовать compute dtype"),
+        DropdownItem::new("auto", tr!("settings.dtype.kv.auto")),
         DropdownItem::new("f16", "F16"),
         DropdownItem::new("bf16", "BF16"),
-        DropdownItem::new("f32", "F32 — максимальная точность"),
+        DropdownItem::new("f32", tr!("settings.dtype.kv.f32")),
         DropdownItem::new(
             "fp8e4m3",
             "FP8 E4M3 — packed bytes (−50% VRAM, ~99% accuracy)",

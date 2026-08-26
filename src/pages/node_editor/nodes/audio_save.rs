@@ -156,7 +156,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                     *status,
                     *has_upstream,
                 ),
-                _ => return error_widget("SaveToFile: некорректный runtime"),
+                _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "SaveToFile")),
             },
             Err(_) => return error_widget("SaveToFile: lock error"),
         };
@@ -170,7 +170,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         });
 
     let browse_btn = ToolButton::new(MI_FOLDER_OPEN)
-        .tooltip("Выбрать файл…")
+        .tooltip(tr!("node.audio_save.tooltip.browse"))
         .on_click(move || {
             if let Some(p) = pick_save_path(&path_sig.get_untracked()) {
                 path_sig.set(p);
@@ -186,19 +186,19 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         let (icon, tooltip, class) = if writing {
             (
                 MI_STOP,
-                "Остановить запись",
+                tr!("nodes.common.stop_recording"),
                 "audio-node-transport-btn audio-node-record-active",
             )
         } else if !upstream_ok {
             (
                 MI_SAVE,
-                "Подключите AudioStream",
+                tr!("node.audio_save.tooltip.connect_stream"),
                 "audio-node-transport-btn audio-node-stop",
             )
         } else {
             (
                 MI_SAVE,
-                "Начать запись",
+                tr!("nodes.common.start_recording"),
                 "audio-node-transport-btn audio-node-record",
             )
         };
@@ -231,35 +231,35 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             SaveStatus::Idle => {
                 if has_upstream.get() {
                     (
-                        "Готов".to_string(),
+                        tr!("node.audio_save.status.ready"),
                         "save-node-status".to_string(),
                     )
                 } else {
                     (
-                        "Подключите источник".to_string(),
+                        tr!("node.audio_save.status.connect_source"),
                         "save-node-status".to_string(),
                     )
                 }
             }
             SaveStatus::Writing => (
-                format!(
-                    "Запись · {} · {:.1} КБ",
-                    fmt_mmss(secs),
-                    bytes as f64 / 1024.0
+                tr!(
+                    "node.audio_save.status.writing",
+                    time = fmt_mmss(secs),
+                    size = format!("{:.1}", bytes as f64 / 1024.0)
                 ),
                 "save-node-status save-node-status-active".to_string(),
             ),
             SaveStatus::Saved(p) => (
-                format!(
-                    "Сохранено · {} · {:.1} КБ",
-                    p.file_name()
+                tr!(
+                    "node.audio_save.status.saved",
+                    name = p.file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| p.display().to_string()),
-                    bytes as f64 / 1024.0
+                    size = format!("{:.1}", bytes as f64 / 1024.0)
                 ),
                 "save-node-status save-node-status-saved".to_string(),
             ),
-            SaveStatus::Error(msg) => (format!("Ошибка: {msg}"), "audio-node-error".to_string()),
+            SaveStatus::Error(msg) => (tr!("nodes.common.error", error = msg), "audio-node-error".to_string()),
         };
         vec![Box::new(Text::new(txt).class(class)) as Box<dyn Widget>]
     });
@@ -306,7 +306,7 @@ fn pick_save_path(current: &str) -> Option<String> {
     Some(path.to_string_lossy().to_string())
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

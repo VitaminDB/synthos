@@ -140,17 +140,20 @@ fn build_header(
     time: String,
 ) -> impl Widget {
     let tokens_label = if tokens_before > 0 {
-        format!(
-            "{} → {} токенов",
-            fmt_thousands(tokens_before),
-            fmt_thousands(tokens_after)
+        tr!(
+            "chat.compaction.tokens_range",
+            before = fmt_thousands(tokens_before),
+            after = fmt_thousands(tokens_after)
         )
     } else {
         // Manual-триггер без снимка usage — показываем только размер summary.
-        format!("≈{} токенов", fmt_thousands(tokens_after))
+        tr!("chat.compaction.tokens_approx", after = fmt_thousands(tokens_after))
     };
-    let primary = format!(
-        "Компактификация #{iteration} \u{2022} сжато {compacted_count} \u{2022} {tokens_label}"
+    let primary = tr!(
+        "chat.compaction.title",
+        iteration = iteration,
+        compacted_count = compacted_count,
+        tokens_label = tokens_label
     );
 
     let chevron_reactive = move || {

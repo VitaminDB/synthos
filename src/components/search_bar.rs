@@ -18,7 +18,7 @@ fn search_field() -> impl Widget {
     DecoratedBox::new().class("search-field").child(mgui! {
         Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             Icon::new(MI_SEARCH).class("search-icon"),
-            DecoratedBox::new().class("grow").child(Text::new("Search in inbox..").class("search-hint")),
+            DecoratedBox::new().class("grow").child(Text::new(tr!("chat.search.placeholder")).class("search-hint")),
             DecoratedBox::new().class("shortcut-chip").child(mgui! {
                 Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_KEYBOARD_COMMAND_KEY).class("shortcut-icon"),
@@ -36,7 +36,7 @@ fn actions() -> impl Widget {
             DecoratedBox::new().class("plan-button").child(mgui! {
                 Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_AUTORENEW).class("plan-button-icon"),
-                    Text::new("Usage and plan").class("plan-button-text"),
+                    Text::new(tr!("chat.search.plan")).class("plan-button-text"),
                     Icon::new(MI_EXPAND_MORE).class("plan-button-chev"),
                 ]
             }),

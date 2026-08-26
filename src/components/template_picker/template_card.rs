@@ -26,7 +26,7 @@ use super::editable_label::{editable_label, EditableLabelState};
 
 pub fn view(t: Template) -> impl Widget {
     // Per-card editing-сигнал — изолирован между карточками.
-    let edit_state = EditableLabelState::new(&t.name);
+    let edit_state = EditableLabelState::new(&crate::i18n::template_name(&t));
     // Confirm-delete dialog state — Dialog внутри уже Portal-овский overlay,
     // рендерится как сосед карточки. Карточка сама делает только
     // `delete_open.set(true)`.
@@ -37,10 +37,7 @@ pub fn view(t: Template) -> impl Widget {
         .child(template_preview::view(&t))
         .class("ne-template-card-preview");
 
-    let kind_chip_text = match t.kind {
-        TemplateKind::Full => "Full",
-        TemplateKind::Subgraph => "Subgraph",
-    };
+    let kind = t.kind;
     let kind_class = if t.kind == TemplateKind::Full {
         "ne-template-chip ne-template-chip--full"
     } else {
@@ -52,16 +49,19 @@ pub fn view(t: Template) -> impl Widget {
     let title_widget = editable_label(edit_state.clone(), t.id.clone(), t.builtin);
 
     let title_row_factory = {
-        let kind_chip_text = kind_chip_text.to_string();
         let kind_class = kind_class.to_string();
         move || -> Vec<Box<dyn Widget>> {
+            let kind_chip_text = match kind {
+                TemplateKind::Full => tr!("templates.card.kind.full"),
+                TemplateKind::Subgraph => tr!("templates.card.kind.subgraph"),
+            };
             let mut row = Row::new()
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::Start);
-            row = row.child(Text::new(&kind_chip_text).class(kind_class.clone()));
+            row = row.child(Text::new(kind_chip_text).class(kind_class.clone()));
             if has_badge {
-                row = row.child(Text::new("Builtin").class("ne-template-badge"));
+                row = row.child(Text::new(tr!("templates.card.badge.builtin")).class("ne-template-badge"));
             }
             vec![Box::new(row)]
         }
@@ -74,7 +74,7 @@ pub fn view(t: Template) -> impl Widget {
                 preview,
                 title_widget,
                 Reactive::new(title_row_factory),
-                description_text(&t.description),
+                description_text(&crate::i18n::template_description(&t)),
             ]
     };
 
@@ -88,16 +88,16 @@ pub fn view(t: Template) -> impl Widget {
     // только Open/Duplicate — Rename/Delete блокируем filter'ом ниже.
     let menu_items = if t.builtin {
         vec![
-            MenuItem::new("open", "Открыть в новой вкладке"),
-            MenuItem::new("duplicate", "Дублировать в Свои"),
+            MenuItem::new("open", tr!("templates.card.menu.open")),
+            MenuItem::new("duplicate", tr!("templates.card.menu.duplicate_to_custom")),
         ]
     } else {
         vec![
-            MenuItem::new("open", "Открыть в новой вкладке"),
-            MenuItem::new("rename", "Переименовать"),
-            MenuItem::new("duplicate", "Дублировать"),
+            MenuItem::new("open", tr!("templates.card.menu.open")),
+            MenuItem::new("rename", tr!("app.rename")),
+            MenuItem::new("duplicate", tr!("templates.card.menu.duplicate")),
             MenuItem::separator(),
-            MenuItem::new("delete", "Удалить"),
+            MenuItem::new("delete", tr!("app.delete")),
         ]
     };
 
@@ -128,11 +128,11 @@ pub fn view(t: Template) -> impl Widget {
                 }
                 "duplicate" => match templates::duplicate_to_custom(&t_for_menu) {
                     Ok(c) => {
-                        app.notifications.success(format!("Создан: {}", c.name));
+                        app.notifications.success(tr!("templates.notify.duplicated", name = c.name));
                         super::bump_revision();
                     }
                     Err(e) => {
-                        app.notifications.error(format!("Не удалось дублировать: {e}"));
+                        app.notifications.error(tr!("templates.notify.duplicate_failed", error = e));
                     }
                 },
                 "delete" => {
@@ -144,7 +144,7 @@ pub fn view(t: Template) -> impl Widget {
 
     // Confirm-dialog рендерим как сосед карточки — Dialog внутри уже
     // Portal-овский overlay, перекрывает всё окно при is_open=true.
-    let dialog = super::delete_dialog(delete_open, t.name.clone(), t.id.clone());
+    let dialog = super::delete_dialog(delete_open, crate::i18n::template_name(&t), t.id.clone());
 
     mgui! {
         Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [

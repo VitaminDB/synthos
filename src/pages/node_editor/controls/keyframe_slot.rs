@@ -8,8 +8,8 @@ use super::dropdown_field::node_dropdown_field;
 use super::field_row::node_field_row;
 use super::file_picker::node_file_picker;
 
-pub const FRAME_SLOTS: &[&str] = &["первый кадр", "последний кадр"];
-pub const RESIZE_MODES: &[&str] = &["растянуть", "кроп по центру"];
+pub const FRAME_SLOTS: &[&str] = &["first_frame", "last_frame"];
+pub const RESIZE_MODES: &[&str] = &["stretch", "center_crop"];
 
 pub struct KeyframeSlot {
     path: RwSignal<Option<PathBuf>>,
@@ -66,7 +66,7 @@ impl KeyframeSlot {
                         .class(preview_class),
                 )],
                 None => vec![Box::new(
-                    Text::new("кадр не выбран").class("h3-node-info"),
+                    Text::new(tr!("nodes.keyframe.no_frame")).class("h3-node-info"),
                 )],
             }
         });
@@ -74,7 +74,7 @@ impl KeyframeSlot {
         let badge = Reactive::new(move || -> Vec<Box<dyn Widget>> {
             let i = slot_idx.get().min(FRAME_SLOTS.len() - 1);
             vec![Box::new(
-                Text::new(format!("<Picture {}> · {}", i + 1, FRAME_SLOTS[i]))
+                Text::new(format!("<Picture {}> · {}", i + 1, super::utils::option_label(FRAME_SLOTS[i])))
                     .class("h3-keyframe-badge"),
             )]
         });
@@ -83,21 +83,24 @@ impl KeyframeSlot {
             Box::new(thumb),
             Box::new(badge),
             node_file_picker(
-                "Кадр-якорь (PNG/JPEG)",
+                tr!("nodes.keyframe.anchor_picker"),
                 path,
-                &[("Изображения", &["png", "jpg", "jpeg", "webp"])],
+                &[("nodes.filter.images", &["png", "jpg", "jpeg", "webp"])],
                 |_| {},
             ),
-            node_field_row("Слот", node_dropdown_field(FRAME_SLOTS, slot_idx)),
+            node_field_row(&tr!("nodes.keyframe.slot"), node_dropdown_field(FRAME_SLOTS, slot_idx)),
         ];
         if self.show_resize {
-            rows.push(node_field_row("Ресайз", node_dropdown_field(RESIZE_MODES, resize_idx)));
+            rows.push(node_field_row(
+                &tr!("nodes.keyframe.resize"),
+                node_dropdown_field(RESIZE_MODES, resize_idx),
+            ));
         }
         if let Some(e) = error {
             rows.push(Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
                 match e.get() {
                     Some(msg) => {
-                        vec![Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))]
+                        vec![Box::new(Text::new(tr!("nodes.status.error_prefix", msg = msg)).class("audio-node-error"))]
                     }
                     None => vec![],
                 }
@@ -137,9 +140,9 @@ impl ReferenceKind {
 
     pub fn filters(self) -> &'static [(&'static str, &'static [&'static str])] {
         match self {
-            ReferenceKind::Image => &[("Изображения", &["png", "jpg", "jpeg", "webp"])],
-            ReferenceKind::Video => &[("Видео", &["mp4", "mov", "mkv", "webm"])],
-            ReferenceKind::Audio => &[("Аудио", &["wav", "mp3", "flac", "ogg"])],
+            ReferenceKind::Image => &[("nodes.filter.images", &["png", "jpg", "jpeg", "webp"])],
+            ReferenceKind::Video => &[("nodes.filter.video", &["mp4", "mov", "mkv", "webm"])],
+            ReferenceKind::Audio => &[("nodes.filter.audio", &["wav", "mp3", "flac", "ogg"])],
         }
     }
 }
@@ -190,14 +193,14 @@ impl ReferenceTray {
                             .class("h3-node-info"),
                         )],
                         (_, None) => {
-                            vec![Box::new(Text::new("пусто").class("h3-node-info"))]
+                            vec![Box::new(Text::new(tr!("nodes.keyframe.empty")).class("h3-node-info"))]
                         }
                     }
                 });
                 let visual_w: Box<dyn Widget> = Box::new(visual);
                 let badge_w: Box<dyn Widget> =
                     Box::new(Text::new(kind.tag(ordinal)).class("h3-keyframe-badge"));
-                let picker_w = node_file_picker("Референс", path, kind.filters(), |_| {});
+                let picker_w = node_file_picker(tr!("nodes.keyframe.reference_picker"), path, kind.filters(), |_| {});
                 let cell: Box<dyn Widget> =
                     Box::new(Column::new().gap(2.0).children(vec![visual_w, badge_w, picker_w]));
                 cell

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use syngui::async_runtime::run_on_main_thread;
+use syngui::tr;
 use synaptix_bundle::FileTag;
 
 use super::bookmarks;
@@ -25,7 +26,7 @@ pub fn pick_and_open_bundle(ctx: SynExplorerCtx) {
     std::thread::spawn(move || {
         let path = rfd::FileDialog::new()
             .add_filter("Syn bundle", &["syn"])
-            .set_title("Открыть .syn пакет")
+            .set_title(tr!("explorer.dialog.rfd.open_title"))
             .pick_file();
         if let Some(p) = path {
             run_on_main_thread(move || bundle_io::open_async(ctx, p));
@@ -86,7 +87,7 @@ pub fn force_reload_active(ctx: SynExplorerCtx) {
 pub fn pick_and_add_bookmark(ctx: SynExplorerCtx) {
     std::thread::spawn(move || {
         let path = rfd::FileDialog::new()
-            .set_title("Добавить папку с .syn в закладки")
+            .set_title(tr!("explorer.dialog.rfd.add_bookmark_title"))
             .pick_folder();
         if let Some(p) = path {
             bookmarks::add_bookmark(ctx, p);
@@ -98,12 +99,12 @@ pub fn pick_and_add_bookmark(ctx: SynExplorerCtx) {
 /// — кладёт в pending_ops, не пишет на диск. Сохранение — кнопкой Save.
 pub fn pick_and_import_file(ctx: SynExplorerCtx) {
     let Some(active) = ctx.active_untracked() else {
-        ctx.show_error("Не выбран пакет", "Сначала откройте `.syn` пакет.");
+        ctx.show_error(tr!("explorer.error.no_bundle.title"), tr!("explorer.error.no_bundle.message"));
         return;
     };
     std::thread::spawn(move || {
         let picked = rfd::FileDialog::new()
-            .set_title("Импортировать файл в пакет")
+            .set_title(tr!("explorer.dialog.rfd.import_title"))
             .pick_file();
         let Some(path) = picked else {
             return;
@@ -115,7 +116,7 @@ pub fn pick_and_import_file(ctx: SynExplorerCtx) {
             .unwrap_or_default();
         if name.is_empty() {
             run_on_main_thread(move || {
-                ctx.show_error("Импорт файла", "Не удалось определить имя файла.");
+                ctx.show_error(tr!("explorer.error.import.title"), tr!("explorer.error.import.no_name"));
             });
             return;
         }
@@ -135,7 +136,7 @@ pub fn pick_and_import_file(ctx: SynExplorerCtx) {
             Err(e) => {
                 let msg = e.to_string();
                 run_on_main_thread(move || {
-                    ctx.show_error("Импорт файла", msg);
+                    ctx.show_error(tr!("explorer.error.import.title"), msg);
                 });
             }
         }
@@ -149,8 +150,8 @@ pub fn pick_and_extract_file(ctx: SynExplorerCtx) {
     };
     let Some(name) = active.selected_path.get_untracked() else {
         ctx.show_error(
-            "Извлечь файл",
-            "Сначала выберите файл в TreeView пакета справа.",
+            tr!("explorer.error.extract.title"),
+            tr!("explorer.error.extract.no_selection"),
         );
         return;
     };
@@ -162,7 +163,7 @@ pub fn pick_and_extract_file(ctx: SynExplorerCtx) {
         .to_string();
     std::thread::spawn(move || {
         let save_to = rfd::FileDialog::new()
-            .set_title(format!("Сохранить «{leaf}» как…"))
+            .set_title(tr!("explorer.dialog.rfd.save_as_title", name = leaf))
             .set_file_name(&leaf)
             .save_file();
         let Some(out) = save_to else {
@@ -173,15 +174,15 @@ pub fn pick_and_extract_file(ctx: SynExplorerCtx) {
                 if let Err(e) = std::fs::write(&out, bytes.as_ref()) {
                     let msg = e.to_string();
                     run_on_main_thread(move || {
-                        ctx.show_error("Извлечь файл", msg);
+                        ctx.show_error(tr!("explorer.error.extract.title"), msg);
                     });
                 }
             }
             None => {
                 run_on_main_thread(move || {
                     ctx.show_error(
-                        "Извлечь файл",
-                        format!("Не удалось прочитать `{name}` из пакета."),
+                        tr!("explorer.error.extract.title"),
+                        tr!("explorer.preview.read_failed", name = name),
                     );
                 });
             }
@@ -196,7 +197,7 @@ pub fn request_delete_selected(ctx: SynExplorerCtx) {
         return;
     };
     let Some(name) = active.selected_path.get_untracked() else {
-        ctx.show_error("Удалить файл", "Сначала выберите файл в правой панели.");
+        ctx.show_error(tr!("explorer.error.delete.title"), tr!("explorer.error.delete.no_selection"));
         return;
     };
     ctx.open_dialog(DialogKind::ConfirmDeleteFile { name });
@@ -237,7 +238,7 @@ pub fn pick_source_dir_for_component(
 ) {
     std::thread::spawn(move || {
         let p = match rfd::FileDialog::new()
-            .set_title("Папка с safetensors-моделью")
+            .set_title(tr!("explorer.dialog.rfd.pick_component_dir"))
             .pick_folder()
         {
             Some(p) => p,
@@ -294,7 +295,7 @@ pub fn pick_out_path_for_new(form: NewPackageForm) {
     std::thread::spawn(move || {
         let path = rfd::FileDialog::new()
             .add_filter("Syn bundle", &["syn"])
-            .set_title("Куда сохранить .syn")
+            .set_title(tr!("explorer.dialog.rfd.pick_out_title"))
             .set_file_name(&suggested)
             .save_file();
         if let Some(p) = path {

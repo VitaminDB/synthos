@@ -131,15 +131,17 @@ fn source_keys_exist_in_en_and_ru() {
 fn ru_matches_en_keys_and_placeholders() {
     let en = catalog("en");
     let ru = catalog("ru");
-    let en_keys: BTreeSet<&str> = en.keys().collect();
-    let ru_keys: BTreeSet<&str> = ru.keys().collect();
+    let en_keys: BTreeSet<&str> = en.keys().map(plural_base).collect();
+    let ru_keys: BTreeSet<&str> = ru.keys().map(plural_base).collect();
     let only_en: Vec<&&str> = en_keys.difference(&ru_keys).collect();
     let only_ru: Vec<&&str> = ru_keys.difference(&en_keys).collect();
     assert!(only_en.is_empty() && only_ru.is_empty(), "ru vs en: только в en {only_en:?}, только в ru {only_ru:?}");
-    for key in &en_keys {
-        let a: BTreeSet<&str> = placeholders(en.get(key).unwrap()).into_iter().collect();
-        let b: BTreeSet<&str> = placeholders(ru.get(key).unwrap()).into_iter().collect();
-        assert_eq!(a, b, "плейсхолдеры ключа {key} различаются");
+    for key in en.keys() {
+        if let Some(ru_value) = ru.get(key) {
+            let a: BTreeSet<&str> = placeholders(en.get(key).unwrap()).into_iter().collect();
+            let b: BTreeSet<&str> = placeholders(ru_value).into_iter().collect();
+            assert_eq!(a, b, "плейсхолдеры ключа {key} различаются");
+        }
     }
 }
 

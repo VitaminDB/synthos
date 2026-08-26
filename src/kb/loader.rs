@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use syngui::async_runtime::{run_on_main_thread, spawn};
+use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
 use synaptix::facade::embedding::{self as embeddings, Embedder, EmbedderConfig};
 use synaptix::facade::rerank::{self as rerank, Reranker, RerankerConfig};
@@ -28,13 +29,13 @@ pub fn ensure_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: KbConfig) {
     }
     let model_path = PathBuf::from(&cfg.embedder_model_path);
     if !model_path.is_dir() {
-        notifications.error(format!(
-            "Эмбеддер не найден: {}. Скачай BGE-M3 (BAAI/bge-m3) в этот каталог.",
-            model_path.display()
+        notifications.error(tr!(
+            "kb.loader.embedder_not_found",
+            path = model_path.display().to_string()
         ));
         return;
     }
-    notifications.info("Загружаю эмбеддер... (может занять минуту)");
+    notifications.info(tr!("kb.loader.embedder_loading"));
 
     spawn(async move {
         let device = parse_device(&cfg.embedder_device);
@@ -45,7 +46,7 @@ pub fn ensure_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: KbConfig) {
         emb_cfg.batch_size = 16;
         let result = tokio::task::spawn_blocking(move || embeddings::load_embedder(emb_cfg))
             .await
-            .map_err(|e| format!("spawn_blocking panic: {e}"))
+            .map_err(|e| tr!("kb.loader.spawn_blocking_panic", error = e))
             .and_then(|r| r.map_err(|e| e.to_string()));
 
         match result {
@@ -56,13 +57,13 @@ pub fn ensure_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: KbConfig) {
                 let n2 = notifications.clone();
                 run_on_main_thread(move || {
                     kb2.set_embedder(arc);
-                    n2.success(format!("Эмбеддер загружен (dim={dim})"));
+                    n2.success(tr!("kb.loader.embedder_loaded", dim = dim.to_string()));
                 });
             }
             Err(e) => {
                 let n2 = notifications.clone();
                 run_on_main_thread(move || {
-                    n2.error(format!("Ошибка загрузки эмбеддера: {e}"));
+                    n2.error(tr!("kb.loader.embedder_load_error", error = e));
                 });
             }
         }
@@ -72,7 +73,7 @@ pub fn ensure_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: KbConfig) {
 /// Выгружает эмбеддер (UI-кнопка «Освободить память»).
 pub fn unload(kb: &KbCtx, notifications: &NotificationCtx) {
     kb.drop_embedder();
-    notifications.success("Эмбеддер выгружен.");
+    notifications.success(tr!("kb.loader.embedder_unloaded"));
 }
 
 /// Стартует загрузку cross-encoder реранкера. Если уже загружен или
@@ -94,13 +95,13 @@ pub fn ensure_reranker_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: Kb
     }
     let model_path = PathBuf::from(&cfg.reranker_model_path);
     if !model_path.is_dir() {
-        notifications.error(format!(
-            "Реранкер не найден: {}. Скачай BAAI/bge-reranker-v2-m3 в этот каталог.",
-            model_path.display()
+        notifications.error(tr!(
+            "kb.loader.reranker_not_found",
+            path = model_path.display().to_string()
         ));
         return;
     }
-    notifications.info("Загружаю реранкер... (около 568 MB)");
+    notifications.info(tr!("kb.loader.reranker_loading"));
 
     spawn(async move {
         let device = parse_device_rerank(&cfg.reranker_device);
@@ -112,7 +113,7 @@ pub fn ensure_reranker_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: Kb
         r_cfg.batch_size = 8;
         let result = tokio::task::spawn_blocking(move || rerank::load_reranker(r_cfg))
             .await
-            .map_err(|e| format!("spawn_blocking panic: {e}"))
+            .map_err(|e| tr!("kb.loader.spawn_blocking_panic", error = e))
             .and_then(|r| r.map_err(|e| e.to_string()));
 
         match result {
@@ -123,13 +124,13 @@ pub fn ensure_reranker_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: Kb
                 let n2 = notifications.clone();
                 run_on_main_thread(move || {
                     kb2.set_reranker(arc);
-                    n2.success(format!("Реранкер загружен (max_tokens={max})"));
+                    n2.success(tr!("kb.loader.reranker_loaded", max_tokens = max.to_string()));
                 });
             }
             Err(e) => {
                 let n2 = notifications.clone();
                 run_on_main_thread(move || {
-                    n2.error(format!("Ошибка загрузки реранкера: {e}"));
+                    n2.error(tr!("kb.loader.reranker_load_error", error = e));
                 });
             }
         }
@@ -139,7 +140,7 @@ pub fn ensure_reranker_loaded(kb: KbCtx, notifications: NotificationCtx, cfg: Kb
 /// Выгрузить реранкер. UI-кнопка «Освободить память» для cross-encoder'а.
 pub fn unload_reranker(kb: &KbCtx, notifications: &NotificationCtx) {
     kb.drop_reranker();
-    notifications.success("Реранкер выгружен.");
+    notifications.success(tr!("kb.loader.reranker_unloaded"));
 }
 
 fn parse_device_rerank(s: &str) -> rerank::Device {

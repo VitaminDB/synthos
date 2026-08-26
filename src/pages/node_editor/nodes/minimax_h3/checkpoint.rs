@@ -149,19 +149,19 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Модель",
+            &tr!("nodes.common.model"),
             node_file_picker(
-                "Бандл MiniMax-H3 (.syn): DiT + video/audio VAE + конфиги",
+                tr!("node.minimax_h3_checkpoint.model_tooltip"),
                 model_path,
                 SYN_FILTER,
                 |_| {},
             ),
         ),
-        field_row("Вариант", make_dropdown(VARIANT_OPTIONS, variant_idx)),
+        field_row(&tr!("node.minimax_h3_checkpoint.variant"), make_dropdown(VARIANT_OPTIONS, variant_idx)),
         field_row(
-            "Энкодер",
+            &tr!("node.minimax_h3_checkpoint.encoder"),
             node_file_picker(
-                "Бандл Qwen3-VL (.syn) — опц., иначе энкодер из бандла модели",
+                tr!("node.minimax_h3_checkpoint.encoder_tooltip"),
                 encoder_path,
                 SYN_FILTER,
                 |_| {},
@@ -170,20 +170,20 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row(
             "LoRA",
             node_file_picker(
-                "Turbo LoRA (.safetensors) — 4-8 шагов",
+                tr!("node.minimax_h3_checkpoint.lora_tooltip"),
                 lora_path,
                 &[("Safetensors", &["safetensors"])],
                 |_| {},
             ),
         ),
-        field_row("Сила LoRA", make_slider_row(lora_strength, 0.0, 2.0, 0.05, 2)),
-        field_row("Устройство", make_dropdown(DEVICE_OPTIONS, device_idx)),
-        field_row("Квант DiT", make_dropdown(QUANT_DIT_OPTIONS, quant_dit_idx)),
-        field_row("Квант энкодера", make_dropdown(QUANT_ENC_OPTIONS, quant_enc_idx)),
+        field_row(&tr!("node.minimax_h3_checkpoint.lora_strength"), make_slider_row(lora_strength, 0.0, 2.0, 0.05, 2)),
+        field_row(&tr!("node.minimax_h3_checkpoint.device"), make_dropdown(DEVICE_OPTIONS, device_idx)),
+        field_row(&tr!("node.minimax_h3_checkpoint.quant_dit"), make_dropdown(QUANT_DIT_OPTIONS, quant_dit_idx)),
+        field_row(&tr!("node.minimax_h3_checkpoint.quant_enc"), make_dropdown(QUANT_ENC_OPTIONS, quant_enc_idx)),
         field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)),
         // Держать DiT в VRAM после прогона (decode пропустит release hold).
-        field_row("Держать в памяти", make_toggle(resident)),
-        field_row("Память", make_dropdown(MEMORY_MODE_OPTIONS, memory_mode_idx)),
+        field_row(&tr!("nodes.common.keep_in_memory"), make_toggle(resident)),
+        field_row(&tr!("node.minimax_h3_checkpoint.memory_mode"), make_dropdown(MEMORY_MODE_OPTIONS, memory_mode_idx)),
     ];
     Box::new(
         Column::new()

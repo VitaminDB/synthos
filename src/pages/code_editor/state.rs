@@ -991,8 +991,11 @@ pub fn open_file(session: CodeSession, path: PathBuf) {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.display().to_string());
                 let ctx = use_context::<CodeEditorCtx>();
-                ctx.show_notice(format!(
-                    "Файл «{name}» слишком большой ({mb:.1} MB). Лимит {limit_mb:.0} MB."
+                ctx.show_notice(tr!(
+                    "code.session.notice.file_too_large",
+                    name = name,
+                    mb = format!("{mb:.1}"),
+                    limit = format!("{limit_mb:.0}")
                 ));
                 return;
             }
@@ -1004,7 +1007,7 @@ pub fn open_file(session: CodeSession, path: PathBuf) {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.display().to_string());
                 let ctx = use_context::<CodeEditorCtx>();
-                ctx.show_notice(format!("Не удалось открыть «{name}»: {e}"));
+                ctx.show_notice(tr!("code.session.notice.open_failed", name = name, error = e));
                 return;
             }
         }
@@ -1029,12 +1032,12 @@ pub fn open_file(session: CodeSession, path: PathBuf) {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.display().to_string());
                 let kind_msg = if e.kind() == std::io::ErrorKind::InvalidData {
-                    "не текстовый файл (UTF-8 invalid)".to_string()
+                    tr!("code.session.error.not_text_file")
                 } else {
                     e.to_string()
                 };
                 let ctx = use_context::<CodeEditorCtx>();
-                ctx.show_notice(format!("Не удалось открыть «{name}»: {kind_msg}"));
+                ctx.show_notice(tr!("code.session.notice.open_failed", name = name, error = kind_msg));
                 return;
             }
         }

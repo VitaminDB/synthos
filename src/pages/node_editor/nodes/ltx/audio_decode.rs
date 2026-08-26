@@ -81,12 +81,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((running, error)) = snapshot else {
-        return Box::new(Text::new("LtxAudioDecode: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxAudioDecode"))
+                .class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![field_row(
-        "Статус",
-        status_row(running, error, loaded_name, "Вокодер…", "ltx-node-running"),
+        &tr!("nodes.common.status"),
+        status_row(
+            running,
+            error,
+            loaded_name,
+            tr!("node.ltx_audio_decode.status.busy"),
+            "ltx-node-running",
+        ),
     )];
     Box::new(
         Column::new()
@@ -114,11 +123,11 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     let Some(a_tok) = current_input_audio_tokens(ctx, node.id, "audio_tokens") else {
-        error.set(Some("Подключите audio_tokens от Sampler".into()));
+        error.set(Some(tr!("node.ltx_audio_decode.err.connect_audio_tokens")));
         return;
     };
     if running.get_untracked() {
@@ -156,7 +165,7 @@ fn worker(handle: &LtxModelHandle, a_tok: &synaptix_core::tensor::Tensor) -> std
         .map_err(|e| format!("audio decode: {e}"))?;
     let dims = wave.dims().to_vec();
     if dims.len() != 3 || dims[1] != 2 {
-        return Err(format!("ожидалась волна [1,2,L], получено {dims:?}"));
+        return Err(tr!("node.ltx_audio_decode.err.bad_wave_dims", dims = format!("{dims:?}")));
     }
     let len = dims[2];
     let v = wave

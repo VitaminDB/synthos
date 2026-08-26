@@ -179,7 +179,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let (gain_db_sig, live_gain) = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::Gain { gain_db, live_gain, .. } => (*gain_db, live_gain.clone()),
-            _ => return error_widget("Gain: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "Gain")),
         },
         Err(_) => return error_widget("Gain: lock error"),
     };
@@ -227,7 +227,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

@@ -40,7 +40,7 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
             Box::new(
                 DecoratedBox::new()
                     .class("tools-empty")
-                    .child(Text::new("Нет активных инструментов").class("tools-empty-text")),
+                    .child(Text::new(tr!("chat.right_panel.tools.empty_active")).class("tools-empty-text")),
             )
         } else {
             Box::new(chips_wrap(active_tools, ChipMode::Active))
@@ -50,7 +50,7 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
             Box::new(
                 DecoratedBox::new()
                     .class("tools-empty")
-                    .child(Text::new("Все доступные инструменты уже активны").class("tools-empty-text")),
+                    .child(Text::new(tr!("chat.right_panel.tools.all_active")).class("tools-empty-text")),
             )
         } else {
             Box::new(chips_wrap(available_tools, ChipMode::Available))
@@ -62,20 +62,20 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
             .child(mgui! {
                 Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_AUTO_AWESOME).class("tools-section-icon"),
-                    Text::new("Инструменты").class("tools-section-title"),
+                    Text::new(tr!("chat.right_panel.tools.title")).class("tools-section-title"),
                 ]
             })
             .child(
-                Text::new("Активные отправляются модели в каждом запросе. Клик по чипу — переключение.")
+                Text::new(tr!("chat.right_panel.tools.hint"))
                     .class("tools-section-hint"),
             )
-            .child(Text::new("Активные").class("tools-section-subtitle"))
+            .child(Text::new(tr!("chat.right_panel.active")).class("tools-section-subtitle"))
             .child(
                 Column::new()
                     .cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .children(vec![active_block]),
             )
-            .child(Text::new("Доступные").class("tools-section-subtitle"))
+            .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
             .child(
                 Column::new()
                     .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -124,7 +124,7 @@ fn make_chip(tool: &'static Tool, mode: ChipMode) -> Box<dyn Widget> {
         ChipMode::Active => ("tools-active-chip", tool.icon),
         ChipMode::Available => ("tools-available-chip", tool.icon),
     };
-    let chip = Chip::new(tool.label)
+    let chip = Chip::new(crate::i18n::tool_label(tool))
         .icon(icon)
         .on_click(move || toggle_tool(&key_for_click))
         .class(class);
@@ -162,13 +162,13 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
                 .child(mgui! {
                     Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                         Icon::new(MI_PSYCHOLOGY).class("tools-section-icon"),
-                        Text::new("Скилы").class("tools-section-title"),
+                        Text::new(tr!("chat.right_panel.skills.title")).class("tools-section-title"),
                     ]
                 })
                 .child(
                     DecoratedBox::new()
                         .class("tools-empty")
-                        .child(Text::new("Нет скилов. Создайте на вкладке «Настройки → Скилы».").class("tools-empty-text")),
+                        .child(Text::new(tr!("chat.right_panel.skills.none")).class("tools-empty-text")),
                 )
                 .child(navigate_to_skills_btn());
             return DecoratedBox::new().class("tools-section").child(column);
@@ -188,7 +188,7 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             Box::new(
                 DecoratedBox::new()
                     .class("tools-empty")
-                    .child(Text::new("Нет активных скилов").class("tools-empty-text")),
+                    .child(Text::new(tr!("chat.right_panel.skills.empty_active")).class("tools-empty-text")),
             )
         } else {
             Box::new(skill_chips_wrap(active_skills, ChipMode::Active))
@@ -197,7 +197,7 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             Box::new(
                 DecoratedBox::new()
                     .class("tools-empty")
-                    .child(Text::new("Все скилы уже активны").class("tools-empty-text")),
+                    .child(Text::new(tr!("chat.right_panel.skills.all_active")).class("tools-empty-text")),
             )
         } else {
             Box::new(skill_chips_wrap(available_skills, ChipMode::Available))
@@ -209,20 +209,20 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             .child(mgui! {
                 Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_PSYCHOLOGY).class("tools-section-icon"),
-                    Text::new("Скилы").class("tools-section-title"),
+                    Text::new(tr!("chat.right_panel.skills.title")).class("tools-section-title"),
                 ]
             })
             .child(
-                Text::new("Активные доступны tool'у `autoskill`. Клик по чипу — переключение.")
+                Text::new(tr!("chat.right_panel.skills.hint"))
                     .class("tools-section-hint"),
             )
-            .child(Text::new("Активные").class("tools-section-subtitle"))
+            .child(Text::new(tr!("chat.right_panel.active")).class("tools-section-subtitle"))
             .child(
                 Column::new()
                     .cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .children(vec![active_block]),
             )
-            .child(Text::new("Доступные").class("tools-section-subtitle"))
+            .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
             .child(
                 Column::new()
                     .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -281,7 +281,7 @@ fn toggle_skill(key: &str) {
 }
 
 fn navigate_to_skills_btn() -> impl Widget {
-    Button::new("Открыть настройки скилов")
+    Button::new(tr!("chat.right_panel.skills.open_settings"))
         .leading_icon(MI_PSYCHOLOGY)
         .on_click(|| {
             let ctx = use_context::<AppCtx>();

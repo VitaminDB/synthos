@@ -243,26 +243,27 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
         // Меню — items пересоздаются при каждом перестроении карточки,
         // что синхронизирует текст toggle-пунктов с текущим состоянием.
         let mut items = vec![
-            MenuItem::new("delete", "Удалить").icon(MI_CLOSE),
-            MenuItem::new("duplicate", "Дублировать").icon(MI_CONTENT_COPY),
-            MenuItem::new("disconnect", "Отключить связи").icon(MI_CIRCLE),
+            MenuItem::new("delete", tr!("app.delete")).icon(MI_CLOSE),
+            MenuItem::new("duplicate", tr!("nodes.menu.duplicate")).icon(MI_CONTENT_COPY),
+            MenuItem::new("disconnect", tr!("nodes.menu.disconnect")).icon(MI_CIRCLE),
         ];
         if matches!(kind, NodeKind::MarkdownView) {
-            items.push(MenuItem::new("md-edit", "Редактировать").icon(MI_EDIT_NOTE));
-            items.push(MenuItem::new("md-resize", "Изменить размер").icon(MI_ASPECT_RATIO));
+            items.push(MenuItem::new("md-edit", tr!("nodes.menu.edit")).icon(MI_EDIT_NOTE));
+            items.push(MenuItem::new("md-resize", tr!("nodes.menu.resize")).icon(MI_ASPECT_RATIO));
         }
         if matches!(kind, NodeKind::TextView) {
-            items.push(MenuItem::new("tv-resize", "Изменить размер").icon(MI_ASPECT_RATIO));
+            items.push(MenuItem::new("tv-resize", tr!("nodes.menu.resize")).icon(MI_ASPECT_RATIO));
         }
-        items.push(MenuItem::new("tint-open", "Цвет ноды…").icon(MI_PALETTE));
+        items.push(MenuItem::new("tint-open", tr!("nodes.menu.tint_open")).icon(MI_PALETTE));
         if style.tint.is_some() {
             items.push(
-                MenuItem::new("tint-reset", "Сбросить цвет").icon(MI_REMOVE_CIRCLE_OUTLINE),
+                MenuItem::new("tint-reset", tr!("nodes.menu.tint_reset")).icon(MI_REMOVE_CIRCLE_OUTLINE),
             );
         }
-        let shadow_label = if style.shadow { "Тень: ✓" } else { "Тень: ☐" };
+        let shadow_mark = if style.shadow { "✓" } else { "☐" };
+        let shadow_label = tr!("nodes.menu.shadow", mark = shadow_mark);
         items.push(MenuItem::new("shadow-toggle", shadow_label).icon(MI_WB_SHADE));
-        let enabled_label = if enabled { "Отключить" } else { "Включить" };
+        let enabled_label = if enabled { tr!("nodes.menu.disable") } else { tr!("nodes.menu.enable") };
         items.push(MenuItem::new("enabled-toggle", enabled_label).icon(MI_POWER_SETTINGS));
 
         let node_for_select = node_for_menu.clone();
@@ -303,7 +304,7 @@ fn header_widget(
     pos_signal: RwSignal<Point>,
     timing: super::timing::Stopwatch,
 ) -> impl Widget {
-    let title = meta.title.to_string();
+    let title = crate::i18n::node_title(meta);
     let icon = meta.icon;
     // Title-group слева (icon + title) и close-кнопка справа в общем Row
     // с MainAxisAlignment::SpaceBetween — распределение к краям не зависит
@@ -581,7 +582,7 @@ fn field_row(schema: FieldSchema, fields: Arc<Mutex<std::collections::HashMap<&'
             let initial = sig.get_untracked();
             Box::new(
                 TextField::new()
-                    .placeholder("Введите")
+                    .placeholder(tr!("nodes.field.text_placeholder"))
                     .text(initial)
                     .on_change(move |s| sig.set(s.to_string()))
                     .class("node-input-text"),

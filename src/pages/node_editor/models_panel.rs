@@ -78,7 +78,11 @@ fn head(count: usize, collapsed: RwSignal<bool>, is_collapsed: bool) -> Box<dyn 
     } else {
         MI_EXPAND_LESS
     })
-    .tooltip(if is_collapsed { "Развернуть" } else { "Свернуть" })
+    .tooltip(if is_collapsed {
+        tr!("nodes.models_panel.expand")
+    } else {
+        tr!("nodes.models_panel.collapse")
+    })
     .on_click(move || collapsed.set(!collapsed.get_untracked()))
     .class("ne-models-chevron");
 
@@ -86,7 +90,7 @@ fn head(count: usize, collapsed: RwSignal<bool>, is_collapsed: bool) -> Box<dyn 
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(Text::new(MI_MEMORY).class("ne-models-head-icon"))
-        .child(Text::new("Модели в памяти").class("ne-models-title"))
+        .child(Text::new(tr!("nodes.models_panel.title")).class("ne-models-title"))
         .child(Text::new(format!("{count}")).class("ne-models-count"));
 
     Box::new(
@@ -141,7 +145,7 @@ fn vram_line() -> Box<dyn Widget> {
 fn empty_hint() -> Box<dyn Widget> {
     Box::new(
         Padding::only(12.0, 0.0, 12.0, 12.0)
-            .child(Text::new("Ничего не загружено").class("ne-models-empty")),
+            .child(Text::new(tr!("nodes.models_panel.empty")).class("ne-models-empty")),
     )
 }
 
@@ -179,15 +183,14 @@ fn row(m: ModelInfo, app: AppCtx) -> Box<dyn Widget> {
 
     let label_for_msg = m.label.clone();
     let unload = ToolButton::new(MI_REMOVE_CIRCLE_OUTLINE)
-        .tooltip("Выгрузить из памяти")
+        .tooltip(tr!("nodes.models_panel.unload"))
         .on_click(move || {
             if models::unload(id) {
                 app.notifications
-                    .info(format!("Выгружено: {label_for_msg}"));
+                    .info(tr!("nodes.models_panel.unloaded", label = label_for_msg.clone()));
             } else {
-                app.notifications.info(format!(
-                    "{label_for_msg} ещё занята — идёт прогон, освободится по его завершении"
-                ));
+                app.notifications
+                    .info(tr!("nodes.models_panel.busy", label = label_for_msg.clone()));
             }
         })
         .class("ne-models-unload");

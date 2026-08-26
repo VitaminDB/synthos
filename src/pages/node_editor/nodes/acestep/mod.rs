@@ -239,14 +239,16 @@ pub fn syn_picker_row(
     model_path: RwSignal<Option<std::path::PathBuf>>,
     loaded_name: RwSignal<Option<String>>,
     error_sig: RwSignal<Option<String>>,
-    title: &'static str,
+    title: impl Into<String>,
 ) -> Box<dyn Widget> {
+    let title = title.into();
+    let title_for_dialog = title.clone();
     let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
         .tooltip(title)
         .on_click(move || {
             let dlg = rfd::FileDialog::new()
                 .add_filter("Syn bundle", &["syn"])
-                .set_title(title);
+                .set_title(&title_for_dialog);
             if let Some(p) = dlg.pick_file() {
                 model_path.set(Some(p));
                 loaded_name.set(None);
@@ -263,7 +265,7 @@ pub fn syn_picker_row(
                     .unwrap_or_else(|| p.to_string_lossy().to_string());
                 Box::new(Text::new(name).class("audio-node-filename"))
             }
-            None => Box::new(Text::new("Файл не выбран").class("audio-node-empty")),
+            None => Box::new(Text::new(tr!("nodes.common.no_file_selected")).class("audio-node-empty")),
         };
         vec![widget]
     });
@@ -282,13 +284,15 @@ pub fn syn_picker_row(
 /// в сигнал; справа — имя каталога (reactive). Дефолтные имена 4 бандлов
 /// резолвятся относительно него у Generate-ноды.
 pub fn dir_picker_row(
-    tooltip: &'static str,
+    tooltip: impl Into<String>,
     sig: RwSignal<Option<std::path::PathBuf>>,
 ) -> Box<dyn Widget> {
+    let tooltip = tooltip.into();
+    let tooltip_for_dialog = tooltip.clone();
     let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
         .tooltip(tooltip)
         .on_click(move || {
-            let dlg = rfd::FileDialog::new().set_title(tooltip);
+            let dlg = rfd::FileDialog::new().set_title(&tooltip_for_dialog);
             if let Some(p) = dlg.pick_folder() {
                 sig.set(Some(p));
             }
@@ -303,7 +307,7 @@ pub fn dir_picker_row(
                     .unwrap_or_else(|| p.to_string_lossy().to_string());
                 Box::new(Text::new(name).class("audio-node-filename"))
             }
-            None => Box::new(Text::new("Каталог не выбран").class("audio-node-empty")),
+            None => Box::new(Text::new(tr!("nodes.common.no_folder_selected")).class("audio-node-empty")),
         };
         vec![widget]
     });
@@ -411,11 +415,11 @@ pub fn make_seed_slider(sig: RwSignal<u64>) -> Box<dyn Widget> {
 }
 
 /// Текстовое поле (single-line) с привязкой к `RwSignal<String>`.
-pub fn make_text_field(sig: RwSignal<String>, placeholder: &'static str) -> Box<dyn Widget> {
+pub fn make_text_field(sig: RwSignal<String>, placeholder: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         TextField::new()
             .text(sig.get_untracked())
-            .placeholder(placeholder)
+            .placeholder(placeholder.into())
             .on_change(move |s| sig.set(s.to_string()))
             .class("node-input-text"),
     )
@@ -454,20 +458,21 @@ pub fn status_row(
     running: RwSignal<bool>,
     error_sig: RwSignal<Option<String>>,
     loaded_name: RwSignal<Option<String>>,
-    busy_label: &'static str,
+    busy_label: impl Into<String>,
     pulse_class: &'static str,
 ) -> Box<dyn Widget> {
+    let busy_label = busy_label.into();
     Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         if running.get() {
             let cls = format!("audio-node-meta {pulse_class}");
             return vec![
-                Box::new(Text::new(busy_label).class(cls.as_str())) as Box<dyn Widget>,
+                Box::new(Text::new(busy_label.clone()).class(cls.as_str())) as Box<dyn Widget>,
             ];
         }
         if let Some(name) = loaded_name.get() {
@@ -494,11 +499,12 @@ pub fn standard_body(
     running: RwSignal<bool>,
     error_sig: RwSignal<Option<String>>,
     loaded_name: RwSignal<Option<String>>,
-    picker_title: &'static str,
-    busy_label: &'static str,
-    model_hint: &'static str,
+    picker_title: impl Into<String>,
+    busy_label: impl Into<String>,
+    model_hint: impl Into<String>,
     extra_rows: Vec<Box<dyn Widget>>,
 ) -> Box<dyn Widget> {
+    let model_hint = model_hint.into();
     let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(6 + extra_rows.len());
     if !model_hint.is_empty() {
         rows.push(Box::new(
@@ -507,7 +513,7 @@ pub fn standard_body(
             ),
         ));
     }
-    rows.push(field_row("Модель", syn_picker_row(model_path, loaded_name, error_sig, picker_title)));
+    rows.push(field_row(&tr!("nodes.common.model"), syn_picker_row(model_path, loaded_name, error_sig, picker_title)));
     rows.push(field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)));
     // Quant — только на квантуемых нодах (Sampler/ArLm/TextEncoder); на прочих
     // дропдаун инертен (DiT/LM/text-enc — единственные с dtype-входом), скрываем.
@@ -517,7 +523,7 @@ pub fn standard_body(
     rows.push(field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)));
     rows.extend(extra_rows);
     rows.push(field_row(
-        "Статус",
+        &tr!("nodes.common.status"),
         status_row(running, error_sig, loaded_name, busy_label, "acestep-node-running"),
     ));
     Box::new(
@@ -541,10 +547,11 @@ pub fn standard_body_no_path(
     running: RwSignal<bool>,
     error_sig: RwSignal<Option<String>>,
     loaded_name: RwSignal<Option<String>>,
-    busy_label: &'static str,
-    model_hint: &'static str,
+    busy_label: impl Into<String>,
+    model_hint: impl Into<String>,
     extra_rows: Vec<Box<dyn Widget>>,
 ) -> Box<dyn Widget> {
+    let model_hint = model_hint.into();
     let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(5 + extra_rows.len());
     if !model_hint.is_empty() {
         rows.push(Box::new(
@@ -561,7 +568,7 @@ pub fn standard_body_no_path(
     rows.push(field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)));
     rows.extend(extra_rows);
     rows.push(field_row(
-        "Статус",
+        &tr!("nodes.common.status"),
         status_row(running, error_sig, loaded_name, busy_label, "acestep-node-running"),
     ));
     Box::new(

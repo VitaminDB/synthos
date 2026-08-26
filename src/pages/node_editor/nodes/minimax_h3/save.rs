@@ -49,7 +49,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
     let Some(frames) = current_input_frames(ctx, node.id, "frames") else {
-        error.set(Some("подключите H3 VAE Decode на вход frames".into()));
+        error.set(Some(tr!("node.minimax_h3_save.connect_frames")));
         return;
     };
     let audio = current_input_audio(ctx, node.id, "audio");
@@ -135,7 +135,7 @@ fn write_mp4(
 ) -> std::result::Result<(), String> {
     let dir = std::env::temp_dir().join("synthos_h3_frames");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("временный каталог: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| tr!("node.minimax_h3_save.tmp_dir_failed", error = e))?;
 
     let (w, h) = (frames.width as usize, frames.height as usize);
     for (i, fr) in frames.frames.iter().enumerate() {
@@ -147,7 +147,7 @@ fn write_mp4(
             ppm.push(fr.rgba[p * 4 + 2]);
         }
         std::fs::write(dir.join(format!("f{i:05}.ppm")), ppm)
-            .map_err(|e| format!("кадр {i}: {e}"))?;
+            .map_err(|e| tr!("node.minimax_h3_save.frame_write_failed", n = i, error = e))?;
     }
 
     let wav = dir.join("audio.wav");
@@ -176,7 +176,7 @@ fn write_mp4(
         .map_err(|e| format!("ffmpeg: {e}"))?;
     let _ = std::fs::remove_dir_all(&dir);
     if !status.success() {
-        return Err("ffmpeg завершился с ошибкой".into());
+        return Err(tr!("node.minimax_h3_save.ffmpeg_failed"));
     }
     Ok(())
 }
@@ -208,13 +208,13 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     });
     let status = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error.get() {
-            return vec![Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))];
+            return vec![Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))];
         }
         if running.get() {
-            return vec![Box::new(Text::new("Сохранение…").class("h3-node-running"))];
+            return vec![Box::new(Text::new(tr!("node.minimax_h3_save.saving")).class("h3-node-running"))];
         }
         match saved.get() {
-            Some(p) => vec![Box::new(Text::new(format!("Сохранено: {p}")).class("h3-node-info"))],
+            Some(p) => vec![Box::new(Text::new(tr!("node.minimax_h3_save.saved", path = p)).class("h3-node-info"))],
             None => vec![],
         }
     });
@@ -225,8 +225,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             .children(vec![
                 Box::new(scrubber),
                 field_row(
-                    "Файл",
-                    node_file_picker("Куда сохранить mp4", path, &[("MP4", &["mp4"])], |_| {}),
+                    &tr!("node.minimax_h3_save.file_label"),
+                    node_file_picker(tr!("nodes.common.save_mp4_path"), path, &[("MP4", &["mp4"])], |_| {}),
                 ),
                 Box::new(status),
             ]),

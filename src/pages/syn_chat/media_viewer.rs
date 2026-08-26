@@ -156,15 +156,15 @@ fn header(a: &MsgAttachment) -> impl Widget {
                 ],
                 DecoratedBox::new().class("grow"),
                 ToolButton::new(crate::icons::MI_DOWNLOAD)
-                    .tooltip("Сохранить как…")
+                    .tooltip(tr!("chat.media.save_as.tooltip"))
                     .on_click(move || super::media_inline::save_as(&for_save))
                     .class("media-viewer-action"),
                 ToolButton::new(MI_OPEN_IN_NEW)
-                    .tooltip("Открыть системным приложением")
+                    .tooltip(tr!("chat.media_viewer.open_external.tooltip"))
                     .on_click(move || open_externally(&source))
                     .class("media-viewer-action"),
                 ToolButton::new(MI_CLOSE)
-                    .tooltip("Закрыть (Esc)")
+                    .tooltip(tr!("chat.media_viewer.close.tooltip"))
                     .on_click(close_viewer)
                     .class("media-viewer-action media-viewer-close"),
             ]
@@ -183,20 +183,20 @@ fn footer(
     if zoomable {
         left.push(Box::new(
             ToolButton::new(MI_ZOOM_OUT)
-                .tooltip("Уменьшить")
+                .tooltip(tr!("chat.media_viewer.zoom_out.tooltip"))
                 .on_click(move || scale_by(signals, 1.0 / 1.25))
                 .class("media-viewer-action"),
         ));
         left.push(Box::new(zoom_label(signals)));
         left.push(Box::new(
             ToolButton::new(MI_ZOOM_IN)
-                .tooltip("Увеличить")
+                .tooltip(tr!("chat.media_viewer.zoom_in.tooltip"))
                 .on_click(move || scale_by(signals, 1.25))
                 .class("media-viewer-action"),
         ));
         left.push(Box::new(
             ToolButton::new(MI_FIT_SCREEN)
-                .tooltip("Вписать в окно")
+                .tooltip(tr!("chat.media_viewer.fit.tooltip"))
                 .on_click(move || reset_zoom(signals))
                 .class("media-viewer-action"),
         ));
@@ -241,7 +241,7 @@ fn nav_button(delta: isize, total: usize) -> Box<dyn Widget> {
     };
     Box::new(
         ToolButton::new(icon)
-            .tooltip(if delta < 0 { "Предыдущее" } else { "Следующее" })
+            .tooltip(if delta < 0 { tr!("chat.media_viewer.prev.tooltip") } else { tr!("chat.media_viewer.next.tooltip") })
             .on_click(move || step(delta))
             .class("media-viewer-nav"),
     )
@@ -294,7 +294,7 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
                 .class("media-viewer-video")
                 .child(video_player_view(Arc::new(Mutex::new(player)))),
         ),
-        Err(e) => Box::new(error_stage(format!("Не удалось открыть видео: {e}"))),
+        Err(e) => Box::new(error_stage(tr!("chat.media_viewer.video_open_error", error = e))),
     }
 }
 
@@ -315,7 +315,7 @@ fn audio_stage(
         let pos = signals.audio.pos.get();
         let Some(buf) = buf else {
             return vec![Box::new(
-                Text::new("Декодируем аудио…").class("media-viewer-hint"),
+                Text::new(tr!("chat.media.audio_decoding")).class("media-viewer-hint"),
             )];
         };
         let progress = {
@@ -337,7 +337,7 @@ fn audio_stage(
                     .class("media-viewer-waveform"),
                 Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).main_axis_alignment(MainAxisAlignment::Center) => [
                     ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
-                        .tooltip(if playing { "Пауза" } else { "Воспроизвести" })
+                        .tooltip(if playing { tr!("chat.media.pause.tooltip") } else { tr!("chat.media.play.tooltip") })
                         .on_click(move || super::media_audio::toggle(&player, signals.audio))
                         .class("media-viewer-play"),
                 ],
@@ -369,11 +369,12 @@ fn document_stage(a: &MsgAttachment) -> impl Widget {
             let s = String::from_utf8_lossy(&bytes).into_owned();
             let mut out: String = s.chars().take(DOC_PREVIEW_CHARS).collect();
             if s.chars().count() > DOC_PREVIEW_CHARS {
-                out.push_str("\n\n… документ показан частично");
+                out.push_str("\n\n");
+                out.push_str(&tr!("chat.media_viewer.doc_truncated"));
             }
             out
         }
-        Err(e) => format!("Не удалось прочитать файл: {e}"),
+        Err(e) => tr!("chat.media_viewer.doc_read_error", error = e),
     };
     DecoratedBox::new().class("media-viewer-doc").child(
         ScrollView::new()
@@ -393,7 +394,7 @@ fn unsupported_stage(a: &MsgAttachment) -> impl Widget {
                 Icon::new(icon).class("media-viewer-big-icon"),
                 Text::new(name).class("media-viewer-title"),
                 Text::new(meta).class("media-viewer-subtitle"),
-                Text::new("Предпросмотр для этого типа файлов недоступен")
+                Text::new(tr!("chat.media_viewer.unsupported"))
                     .class("media-viewer-hint"),
             ]
         ]

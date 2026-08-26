@@ -46,14 +46,17 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some(video_path) = video_path else {
-        return Box::new(Text::new("LtxVideoInput: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxVideoInput"))
+                .class("node-card-field-error"),
+        );
     };
     let rows: Vec<Box<dyn Widget>> = vec![field_row(
-        "Видео",
+        &tr!("node.ltx_video_input.field.video"),
         node_file_picker(
-            "Исходное видео (mp4/mkv/webm/mov)",
+            tr!("node.ltx_video_input.picker.video"),
             video_path,
-            &[("Видео", &["mp4", "mkv", "webm", "mov", "m4v", "avi"])],
+            &[("nodes.filter.video", &["mp4", "mkv", "webm", "mov", "m4v", "avi"])],
             |_| {},
         ),
     )];

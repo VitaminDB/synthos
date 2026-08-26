@@ -104,7 +104,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some((device_idx, storage_idx, compute_idx, running, error, loaded_name)) = snapshot
     else {
         return Box::new(
-            Text::new("AceStepVaeEncode: некорректный runtime").class("node-card-field-error"),
+            Text::new(tr!("nodes.common.invalid_runtime", name = "AceStepVaeEncode"))
+                .class("node-card-field-error"),
         );
     };
     standard_body_no_path(
@@ -116,7 +117,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         error,
         loaded_name,
         "VAE encode…",
-        "MusicVae encoder (48 kHz, 25 Hz латент)  ▸  Settings → AI Models → ACE-Step vae-bundle",
+        tr!("node.acestep_vae_encode.model_hint"),
         Vec::new(),
     )
 }
@@ -175,7 +176,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let audio = match current_input_audio(ctx, node.id, "audio") {
         Some(a) => a,
         None => {
-            error.set(Some("Подключите audio на вход".into()));
+            error.set(Some(tr!("nodes.common.connect_audio_input")));
             return;
         }
     };
@@ -233,7 +234,7 @@ fn vae_encode_worker(
     let vae = match load_vae(&bundle_path, device_idx, storage_idx, compute_idx) {
         Ok(v) => v,
         Err(e) => {
-            error.set(Some(format!("Загрузка VAE: {e}")));
+            error.set(Some(tr!("node.acestep_vae_encode.error.load_vae", error = e)));
             running.set(false);
             return;
         }
@@ -261,7 +262,7 @@ fn vae_encode_worker(
     };
     let n = stereo_48k.len();
     if n == 0 {
-        error.set(Some("Пустой аудио-буфер".into()));
+        error.set(Some(tr!("node.acestep_vae_encode.error.empty_audio_buffer")));
         running.set(false);
         return;
     }

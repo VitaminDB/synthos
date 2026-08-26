@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
+use syngui::tr;
 
 use crate::agent::schema::ChatToolCall;
 use crate::agent::state::MsgAttachment;
@@ -152,12 +153,10 @@ fn graph_warnings(nodes: &[crate::pages::node_editor::types::NodeInstance]) -> V
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         if !name.contains("distilled") {
-            out.push(format!(
-                "нода {} (LTX Checkpoint): «{name}» — стадии LTX идут по \
-                 distilled-расписанию (8 шагов stage1 + 3 stage2), и \
-                 недистиллированный чекпойнт на нём даёт размытое видео. \
-                 Возьми ltx-2.3-22b-distilled-1.1.syn.",
-                n.id.0
+            out.push(tr!(
+                "chat.pipeline.warning.ltx_non_distilled",
+                node_id = n.id.0,
+                name = name
             ));
         }
     }
@@ -170,17 +169,17 @@ fn agent_tab_ctx() -> Result<NodeEditorCtx, String> {
     let chat_id = chat
         .active_chat_id
         .get_untracked()
-        .ok_or("нет активного чата")?;
+        .ok_or_else(|| tr!("chat.pipeline.error.no_active_chat"))?;
     let ws = use_context::<EditorWorkspace>();
     let tab_id = ws
         .agent_tab_for_chat(&chat_id)
-        .ok_or("служебной вкладки нет — сначала pipelines open или apply")?;
+        .ok_or_else(|| tr!("chat.pipeline.error.no_agent_tab"))?;
     ws.tabs
         .get_untracked()
         .iter()
         .find(|t| t.id == tab_id)
         .map(|t| t.ctx)
-        .ok_or_else(|| "служебная вкладка пропала".to_string())
+        .ok_or_else(|| tr!("chat.pipeline.error.agent_tab_gone"))
 }
 
 /// Проверить граф и автозаполнить пути save-нод ДО выгрузки LLM — если
@@ -199,7 +198,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
     let chat_id = chat
         .active_chat_id
         .get_untracked()
-        .ok_or("нет активного чата")?;
+        .ok_or_else(|| tr!("chat.pipeline.error.no_active_chat"))?;
     let ctx = agent_tab_ctx()?;
     let nodes = ctx.nodes.get_untracked();
     let runnable = nodes
@@ -207,9 +206,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         .filter(|n| n.enabled.get_untracked() && registry::meta(n.kind).on_run.is_some())
         .count();
     if runnable == 0 {
-        return Err(
-            "в графе нет запускаемых нод — собери пайплайн (pipelines open/apply)".into(),
-        );
+        return Err(tr!("chat.pipeline.error.no_runnable_nodes"));
     }
 
     // Пустые чекпойнты ловим ДО прогона (и до выгрузки LLM): нода всё равно
@@ -230,10 +227,11 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
                 if field == "model_path" && has_model_input {
                     continue;
                 }
-                missing.push(format!(
-                    "нода {} ({}): {field}",
-                    n.id.0,
-                    registry::meta(n.kind).title
+                missing.push(tr!(
+                    "chat.pipeline.error.missing_field",
+                    node_id = n.id.0,
+                    node_title = registry::meta(n.kind).title,
+                    field = field
                 ));
             }
         }
@@ -251,21 +249,17 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
                 continue;
             }
             if n.runtime.lock().is_ok_and(|rt| rt.ltx_upscaler_missing()) {
-                missing.push(format!(
-                    "нода {} ({}): upscaler_path — в графе есть стадия Upscale ×2",
-                    n.id.0,
-                    registry::meta(n.kind).title
+                missing.push(tr!(
+                    "chat.pipeline.error.missing_upscaler",
+                    node_id = n.id.0,
+                    node_title = registry::meta(n.kind).title
                 ));
             }
         }
     }
 
     if !missing.is_empty() {
-        return Err(format!(
-            "не заполнены пути моделей:\n{}\nВозьми пути из pipelines list \
-             (раздел «Модели в каталоге») и проставь через apply set_state.",
-            missing.join("\n")
-        ));
+        return Err(tr!("chat.pipeline.error.missing_paths", list = missing.join("\n")));
     }
 
     let out_dir = outputs_dir().join(&chat_id).join(run_label);
@@ -313,7 +307,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         let needs_fill = cur.trim().is_empty() || !Path::new(cur.trim()).is_absolute();
         let final_path = if needs_fill {
             std::fs::create_dir_all(&out_dir).map_err(|e| {
-                format!("не создать каталог результатов {}: {e}", out_dir.display())
+                tr!("chat.pipeline.error.mkdir_failed", dir = out_dir.display(), error = e)
             })?;
             let p = out_dir.join(format!("node{}.{}", n.id.0, default_ext));
             path_sig.set(&p);
@@ -344,10 +338,10 @@ pub async fn start() -> Result<(tokio::sync::oneshot::Receiver<RunOutcome>, usiz
             let ctx = agent_tab_ctx()?;
             run_controls::start_run(ctx, Some(otx)).map_err(|e| match e {
                 StartRunError::NoRunnableNodes => {
-                    "в графе нет запускаемых нод".to_string()
+                    tr!("chat.pipeline.error.no_runnable_nodes_short")
                 }
                 StartRunError::CycleInGraph => {
-                    "в графе цикл — прогон невозможен".to_string()
+                    tr!("chat.pipeline.error.cycle_in_graph")
                 }
             })
         })();
@@ -468,7 +462,7 @@ pub async fn collect_viewer_outputs(
             ViewerOutput::Video { frames, audio } => {
                 let out = dir.join(format!("node{}_preview.mp4", p.node_id));
                 if let Err(e) = std::fs::create_dir_all(&dir) {
-                    lines.push(format!("{} (нода {}): {e}", p.title, p.node_id));
+                    lines.push(tr!("chat.pipeline.viewer.mkdir_failed", title = p.title, node_id = p.node_id, error = e));
                     continue;
                 }
                 match crate::pages::node_editor::nodes::ltx::video_save::encode_mp4(
@@ -479,7 +473,7 @@ pub async fn collect_viewer_outputs(
                 ) {
                     Ok(()) => out,
                     Err(e) => {
-                        lines.push(format!("{} (нода {}): не закодировать: {e}", p.title, p.node_id));
+                        lines.push(tr!("chat.pipeline.viewer.encode_failed", title = p.title, node_id = p.node_id, error = e));
                         continue;
                     }
                 }
@@ -487,13 +481,13 @@ pub async fn collect_viewer_outputs(
             ViewerOutput::Audio(buf) => {
                 let out = dir.join(format!("node{}_preview.wav", p.node_id));
                 if let Err(e) = std::fs::create_dir_all(&dir) {
-                    lines.push(format!("{} (нода {}): {e}", p.title, p.node_id));
+                    lines.push(tr!("chat.pipeline.viewer.mkdir_failed", title = p.title, node_id = p.node_id, error = e));
                     continue;
                 }
                 match crate::pages::node_editor::nodes::ltx::video_save::write_wav(&out, buf) {
                     Ok(()) => out,
                     Err(e) => {
-                        lines.push(format!("{} (нода {}): не записать WAV: {e}", p.title, p.node_id));
+                        lines.push(tr!("chat.pipeline.viewer.wav_write_failed", title = p.title, node_id = p.node_id, error = e));
                         continue;
                     }
                 }
@@ -502,20 +496,21 @@ pub async fn collect_viewer_outputs(
         };
         match ingest::ingest(&path) {
             Ok(a) => {
-                lines.push(format!(
-                    "{} (нода {}) → {} ({}) — приложено к сообщению",
-                    p.title,
-                    p.node_id,
-                    path.display(),
-                    models::human_bytes(a.size_bytes)
+                lines.push(tr!(
+                    "chat.pipeline.viewer.attached",
+                    title = p.title,
+                    node_id = p.node_id,
+                    path = path.display(),
+                    size = models::human_bytes(a.size_bytes)
                 ));
                 atts.push(a);
             }
-            Err(e) => lines.push(format!(
-                "{} (нода {}) → {}: не приложился: {e}",
-                p.title,
-                p.node_id,
-                path.display()
+            Err(e) => lines.push(tr!(
+                "chat.pipeline.viewer.attach_failed",
+                title = p.title,
+                node_id = p.node_id,
+                path = path.display(),
+                error = e
             )),
         }
     }
@@ -538,26 +533,28 @@ pub fn collect_artifacts(planned: &[PlannedArtifact]) -> (Vec<MsgAttachment>, Ve
             (Some(a), Some(b)) => a != b,
         };
         if !fresh {
-            lines.push(format!(
-                "{} (нода {}): файл не записан",
-                p.title, p.node_id
+            lines.push(tr!(
+                "chat.pipeline.artifact.not_written",
+                title = p.title,
+                node_id = p.node_id
             ));
             continue;
         }
         match ingest::ingest(&p.path) {
             Ok(a) => {
-                lines.push(format!(
-                    "{} → {} ({}) — приложено к сообщению",
-                    p.title,
-                    p.path.display(),
-                    models::human_bytes(a.size_bytes)
+                lines.push(tr!(
+                    "chat.pipeline.artifact.attached",
+                    title = p.title,
+                    path = p.path.display(),
+                    size = models::human_bytes(a.size_bytes)
                 ));
                 atts.push(a);
             }
-            Err(e) => lines.push(format!(
-                "{} → {}: файл есть, но не приложился: {e}",
-                p.title,
-                p.path.display()
+            Err(e) => lines.push(tr!(
+                "chat.pipeline.artifact.attach_failed",
+                title = p.title,
+                path = p.path.display(),
+                error = e
             )),
         }
     }
@@ -568,13 +565,13 @@ fn fmt_duration(ms: u64) -> String {
     let d = Duration::from_millis(ms);
     let s = d.as_secs();
     if s >= 3600 {
-        format!("{}ч {}м", s / 3600, (s % 3600) / 60)
+        tr!("chat.pipeline.duration.hm", h = s / 3600, m = (s % 3600) / 60)
     } else if s >= 60 {
-        format!("{}м {}с", s / 60, s % 60)
+        tr!("chat.pipeline.duration.ms", m = s / 60, sec = s % 60)
     } else if s >= 10 {
-        format!("{s}с")
+        tr!("chat.pipeline.duration.s", sec = s)
     } else {
-        format!("{:.1}с", d.as_secs_f32())
+        tr!("chat.pipeline.duration.s_frac", sec = format!("{:.1}", d.as_secs_f32()))
     }
 }
 
@@ -592,26 +589,27 @@ pub fn format_envelope(
     match outcome {
         Some(o) => {
             let end_label = match o.end {
-                RunEnd::Completed => "завершён",
-                RunEnd::Stopped => "остановлен",
-                RunEnd::Superseded => "замещён другим запуском",
+                RunEnd::Completed => tr!("chat.pipeline.status.completed"),
+                RunEnd::Stopped => tr!("chat.pipeline.status.stopped"),
+                RunEnd::Superseded => tr!("chat.pipeline.status.superseded"),
             };
             if o.end != RunEnd::Completed {
                 error = true;
             }
-            out.push_str(&format!(
-                "--- Прогон {} за {} ---\n",
-                end_label,
-                fmt_duration(o.total_ms)
+            out.push_str(&tr!(
+                "chat.pipeline.envelope.header",
+                status = end_label,
+                duration = fmt_duration(o.total_ms)
             ));
             for n in &o.nodes {
                 match &n.error {
                     Some(e) => {
                         error = true;
                         out.push_str(&format!(
-                            "- {} · {} · ОШИБКА: {e}\n",
+                            "- {} · {} · {}: {e}\n",
                             n.title,
-                            fmt_duration(n.elapsed_ms)
+                            fmt_duration(n.elapsed_ms),
+                            tr!("chat.pipeline.error_label")
                         ));
                     }
                     None => out.push_str(&format!(
@@ -624,24 +622,24 @@ pub fn format_envelope(
         }
         None if aborted => {
             error = true;
-            out.push_str("--- Прогон отменён пользователем (abort хода) ---\n");
+            out.push_str(&tr!("chat.pipeline.envelope.aborted"));
         }
         None => {
             error = true;
-            out.push_str("--- Итог прогона не получен ---\n");
+            out.push_str(&tr!("chat.pipeline.envelope.no_outcome"));
         }
     }
 
-    out.push_str("--- Артефакты ---\n");
+    out.push_str(&tr!("chat.pipeline.envelope.artifacts_header"));
     if artifact_lines.is_empty() {
-        out.push_str("(save-нод в графе нет — результаты остались в памяти нод)\n");
+        out.push_str(&tr!("chat.pipeline.envelope.artifacts_empty"));
     } else {
         for l in artifact_lines {
             out.push_str(&format!("- {l}\n"));
         }
     }
     if !warnings.is_empty() {
-        out.push_str("--- Замечания ---\n");
+        out.push_str(&tr!("chat.pipeline.envelope.warnings_header"));
         for w in warnings {
             out.push_str(&format!("- {w}\n"));
         }
@@ -703,10 +701,10 @@ mod tests {
         };
         let (text, err) = format_envelope(Some(&o), &[], None, false, &[]);
         assert!(err);
-        assert!(text.contains("ОШИБКА"));
+        assert!(text.contains(&tr!("chat.pipeline.error_label")));
         let (text2, err2) = format_envelope(None, &[], Some("LLM перезагружена"), true, &[]);
         assert!(err2);
-        assert!(text2.contains("отменён"));
+        assert!(text2.contains(&tr!("chat.pipeline.envelope.aborted")));
         assert!(text2.contains("LLM перезагружена"));
     }
 }

@@ -123,7 +123,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                     *volume,
                     *is_streaming,
                 ),
-                _ => return error_widget("AudioPlayer: некорректный runtime"),
+                _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "AudioPlayer")),
             },
             Err(_) => return error_widget("AudioPlayer: lock error"),
         };
@@ -173,7 +173,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 DecoratedBox::new()
                     .child(
                         Center::new().child(
-                            Text::new("Подключите источник аудио")
+                            Text::new(tr!("node.audio_player.waveform.connect_source"))
                                 .class("audio-node-waveform-placeholder"),
                         ),
                     )
@@ -189,7 +189,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         let paused = is_paused.get();
         let runtime_btn = runtime_btn.clone();
         let icon = if playing && !paused { MI_PAUSE } else { MI_PLAY_ARROW };
-        let tooltip = if playing && !paused { "Пауза" } else { "Воспроизвести" };
+        let tooltip = if playing && !paused { tr!("nodes.transport.pause") } else { tr!("nodes.transport.play") };
         let class = if playing && !paused {
             "audio-node-transport-btn audio-node-pause"
         } else {
@@ -213,7 +213,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 
     let runtime_stop = runtime.clone();
     let stop_btn = ToolButton::new(MI_STOP)
-        .tooltip("Остановить")
+        .tooltip(tr!("nodes.common.stop"))
         .on_click(move || {
             stop_player(&runtime_stop, is_playing, is_paused, progress_sig);
         })
@@ -282,7 +282,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

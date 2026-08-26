@@ -30,9 +30,9 @@ fn header_row() -> impl Widget {
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                Text::new("Чаты").class("chats-column-title"),
+                Text::new(tr!("chat.chats_column.title")).class("chats-column-title"),
                 ToolButton::new(MI_ADD)
-                    .tooltip("Новый чат")
+                    .tooltip(tr!("chat.chats_column.new_chat"))
                     .on_click(|| { registry::create_new(); })
                     .class("chats-header-add"),
             ]
@@ -45,7 +45,7 @@ fn filter_row() -> impl Widget {
             DecoratedBox::new().class("filter-chip").child(mgui! {
                 Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Icon::new(MI_FILTER_LIST).class("filter-chip-icon"),
-                    Text::new("Filter").class("filter-chip-text"),
+                    Text::new(tr!("chat.chats_column.filter")).class("filter-chip-text"),
                     DecoratedBox::new().class("filter-chip-dot"),
                 ]
             }),
@@ -57,10 +57,11 @@ fn group_header_reactive() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + 
     || {
         let ctx = use_context::<SynChatCtx>();
         let count = ctx.chats.get().len();
+        let label = tr!("chat.chats_column.group_label");
         let text = if count == 0 {
-            "Разговоры".to_string()
+            label
         } else {
-            format!("Разговоры ({})", count)
+            format!("{label} ({count})")
         };
         DecoratedBox::new().class("chats-group-wrap").child(mgui! {
             Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
@@ -115,5 +116,5 @@ fn chats_list_reactive() -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Se
 fn empty_hint() -> impl Widget {
     DecoratedBox::new()
         .class("chats-empty-hint")
-        .child(Text::new("Нажмите +, чтобы создать чат").class("chats-empty-hint-text"))
+        .child(Text::new(tr!("chat.chats_column.empty_hint")).class("chats-empty-hint-text"))
 }

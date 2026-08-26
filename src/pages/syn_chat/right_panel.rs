@@ -23,9 +23,9 @@ pub fn view() -> impl Widget {
     let tab = ctx.right_panel_tab;
 
     let tabbar = TabBar::new()
-        .tab(Tab::new("Инструменты", SYN_RIGHT_PANEL_TOOLS, &tab).icon(MI_AUTO_AWESOME))
-        .tab(Tab::new("Параметры", SYN_RIGHT_PANEL_PARAMS, &tab).icon(MI_TUNE))
-        .tab(Tab::new("Детали", SYN_RIGHT_PANEL_DETAILS, &tab).icon(MI_SPEED))
+        .tab(Tab::new(tr!("chat.right.tab.tools"), SYN_RIGHT_PANEL_TOOLS, &tab).icon(MI_AUTO_AWESOME))
+        .tab(Tab::new(tr!("chat.right.tab.params"), SYN_RIGHT_PANEL_PARAMS, &tab).icon(MI_TUNE))
+        .tab(Tab::new(tr!("chat.right.tab.details"), SYN_RIGHT_PANEL_DETAILS, &tab).icon(MI_SPEED))
         .class("right-panel-tabbar-inner");
 
     let body = DecoratedBox::new().class("right-panel-body").child(move || {
@@ -84,7 +84,7 @@ fn model_card() -> impl Widget {
         Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Модель"),
+                section_title(tr!("chat.right.model.title")),
                 model_status_reactive(),
                 pick_button_reactive(),
             ]
@@ -101,14 +101,14 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let (icon, title, subtitle, status_class) = if loading {
             (
                 MI_HOURGLASS_TOP,
-                "Загрузка модели…".to_string(),
-                "5-15 секунд".to_string(),
+                tr!("chat.model.status.loading"),
+                tr!("chat.right.model.loading_hint"),
                 "model-status loading",
             )
         } else if let Some(err) = error.as_ref() {
             (
                 MI_REPORT,
-                "Ошибка".to_string(),
+                tr!("chat.right.model.error_title"),
                 err.clone(),
                 "model-status error",
             )
@@ -118,7 +118,7 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "—".to_string());
-            (MI_CHECK, "Готово".to_string(), name, "model-status ready")
+            (MI_CHECK, tr!("chat.right.model.ready_title"), name, "model-status ready")
         } else {
             // Путь помним, но модель не поднимаем — показываем, что именно
             // поднимет кнопка «Загрузить модель».
@@ -126,8 +126,8 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 .last_path
                 .get()
                 .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
-                .unwrap_or_else(|| "Выберите .syn-bundle".to_string());
-            (MI_INFO, "Модель не загружена".to_string(), hint, "model-status idle")
+                .unwrap_or_else(|| tr!("chat.right.model.pick_hint"));
+            (MI_INFO, tr!("chat.model.not_loaded"), hint, "model-status idle")
         };
 
         // Бейдж мультимодальности: есть ли в бандле vision-башня. Отвечает
@@ -137,9 +137,9 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             // Кэш из LoadedSynModel, а не Llm::supports_media(): последний
             // берёт мьютекс пайплайна, занятый на всё время генерации.
             if loaded.supports_media {
-                "Мультимодальная · картинки и видео".to_string()
+                tr!("chat.right.model.badge.multimodal")
             } else {
-                "Текстовая · вложения уйдут описанием".to_string()
+                tr!("chat.right.model.badge.text_only")
             }
         });
 
@@ -150,10 +150,10 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let quant_badge = if current.is_some() {
             let q = use_context::<crate::context::AppCtx>().syn_chat_quant.get();
             let preset_label = match q.preset.as_str() {
-                "quality" => "Quality",
-                "balance" => "Balance",
-                "vram_saver" => "VRAM-Saver",
-                _ => "Custom",
+                "quality" => tr!("chat.right.model.preset.quality"),
+                "balance" => tr!("chat.right.model.preset.balance"),
+                "vram_saver" => tr!("chat.right.model.preset.vram_saver"),
+                _ => tr!("chat.right.model.preset.custom"),
             };
             let kv_label = if q.kv_dtype == "fp8e4m3" {
                 "FP8 KV".to_string()
@@ -206,15 +206,15 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         let has_loaded = reg.current.get().is_some();
 
         let pick = ToolButton::new(MI_FOLDER_OPEN)
-            .tooltip("Выбрать .syn-bundle")
+            .tooltip(tr!("chat.right.model.pick.tooltip"))
             .on_click(move || {
                 if reg.loading.get_untracked() {
                     return;
                 }
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .add_filter("Syn bundle", &["syn"])
-                        .set_title("Выберите .syn с LLM (Qwen3.6/3.8, Muse Glimmer)")
+                        .add_filter(tr!("chat.right.model.pick.filter_name"), &["syn"])
+                        .set_title(tr!("chat.right.model.pick.dialog_title"))
                         .pick_file();
                     if let Some(p) = path {
                         load_from_any_thread(p);
@@ -231,7 +231,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         // нет), поэтому кнопка двойная: пока ничего не загружено — поднимает
         // последний бандл, дальше — выгружает.
         let toggle = if has_loaded {
-            Button::new("Выгрузить модель")
+            Button::new(tr!("chat.right.model.unload"))
                 .leading_icon(MI_POWER_SETTINGS)
                 .disabled(loading)
                 .on_click(|| {
@@ -247,7 +247,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                 .class("right-model-btn right-model-btn-unload")
         } else {
             let last = reg.last_path.get();
-            Button::new("Загрузить модель")
+            Button::new(tr!("chat.right.model.load"))
                 .leading_icon(MI_POWER_SETTINGS)
                 .disabled(loading || last.is_none())
                 .on_click(move || {
@@ -281,7 +281,7 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
 
         DecoratedBox::new().class("sampling-card").child(mgui! {
             Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Sampling"),
+                section_title(tr!("chat.right.sampling.title")),
                 slider_row("Temperature", p.temperature, 0.0, 2.0, 0.05, 2, |v, q| q.temperature = v),
                 slider_row("top_p", p.top_p, 0.0, 1.0, 0.05, 2, |v, q| q.top_p = v),
                 slider_row("top_k", p.top_k as f32, 0.0, 200.0, 1.0, 0, |v, q| q.top_k = v.round() as u32),
@@ -385,7 +385,7 @@ fn spin_row(
 fn seed_row(seed: i64) -> impl Widget {
     let edit = TextField::new()
         .text(seed.to_string())
-        .placeholder("-1 = случайный")
+        .placeholder(tr!("chat.right.sampling.seed_placeholder"))
         .on_submit(move |s| {
             let parsed: i64 = s.trim().parse().unwrap_or(-1);
             let ctx = use_context::<SynChatCtx>();
@@ -410,7 +410,7 @@ fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let p = ctx.params.get();
         DecoratedBox::new().class("sampling-card").child(mgui! {
             Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Контекст"),
+                section_title(tr!("chat.right.context.title")),
                 slider_row(
                     "max_new_tokens",
                     p.max_new_tokens as f32,
@@ -448,7 +448,7 @@ fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
                 .gap(10.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                    Text::new("Thinking-режим").class("sampling-label"),
+                    Text::new(tr!("chat.right.thinking.label")).class("sampling-label"),
                     toggle,
                 ]
         })
@@ -463,7 +463,7 @@ fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Se
         let cur = ctx.system_prompt.get();
         let edit = syngui::widgets::MultilineTextEdit::new()
             .text(cur)
-            .placeholder("Системный prompt (опционально)")
+            .placeholder(tr!("chat.right.system.placeholder"))
             .rows(2)
             .max_rows(8)
             .auto_height(true)
@@ -474,7 +474,7 @@ fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Se
             .class("system-prompt-edit");
         DecoratedBox::new().class("sampling-card").child(mgui! {
             Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Система"),
+                section_title(tr!("chat.right.system.title")),
                 edit,
             ]
         })
@@ -485,7 +485,7 @@ fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Se
 
 fn reset_button() -> impl Widget {
     let btn = ToolButton::new(MI_AUTORENEW)
-        .tooltip("Сбросить к дефолтам")
+        .tooltip(tr!("chat.right.reset.tooltip"))
         .on_click(|| {
             let ctx = use_context::<SynChatCtx>();
             let defaults = crate::config::AppConfig::load().syn_chat_defaults;
@@ -524,21 +524,21 @@ fn stats_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Syn
 
         DecoratedBox::new().class("details-card").child(mgui! {
             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Последняя генерация"),
+                section_title(tr!("chat.right.details.last_gen.title")),
                 // prompt_tokens — промпт ПОСЛЕДНЕГО хода agent-loop'а: после
                 // tool-вызовов он в разы больше первого, и именно он определяет
                 // размер KV-ринга.
                 metric_row("prompt_tokens", prompt_t.to_string()),
                 // Сколько из промпта взято из кэша прошлого хода (префикс-KV):
                 // столько токенов не пришлось префиллить заново.
-                metric_row("из них из кэша", reused.to_string()),
+                metric_row(tr!("chat.right.details.from_cache"), reused.to_string()),
                 metric_row("gen_tokens", gen_t.to_string()),
                 metric_row("prefill_ms", prefill_ms.to_string()),
                 metric_row("decode_tps", format!("{tps:.1}")),
-                metric_row("ходов agent-loop", turns.to_string()),
-                metric_row("KV-ринг", format!("{ring_tokens} ток / {ring_mb} MB")),
-                metric_row("контекст по VRAM", format!("{ctx_budget} ток")),
-                metric_row("VRAM свободно", format!("{vram_free} MB")),
+                metric_row(tr!("chat.right.details.agent_turns"), turns.to_string()),
+                metric_row(tr!("chat.right.details.kv_ring"), tr!("chat.right.details.kv_ring.value", tokens = ring_tokens, mb = ring_mb)),
+                metric_row(tr!("chat.right.details.vram_context"), tr!("chat.right.details.vram_context.value", tokens = ctx_budget)),
+                metric_row(tr!("chat.right.details.vram_free"), format!("{vram_free} MB")),
             ]
         })
     }
@@ -552,7 +552,7 @@ fn chat_size_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send +
         let chars: usize = msgs.iter().map(|m| m.body.chars().count() + m.thinking.chars().count()).sum();
         DecoratedBox::new().class("details-card").child(mgui! {
             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title("Размер чата"),
+                section_title(tr!("chat.right.details.chat_size.title")),
                 metric_row("messages", n.to_string()),
                 metric_row("characters", chars.to_string()),
             ]
@@ -560,13 +560,13 @@ fn chat_size_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send +
     }
 }
 
-fn metric_row(label: &'static str, value: String) -> impl Widget {
+fn metric_row(label: impl Into<String>, value: String) -> impl Widget {
     DecoratedBox::new().class("details-metric-row").child(mgui! {
         Row::new()
             .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                Text::new(label).class("details-metric-label"),
+                Text::new(label.into()).class("details-metric-label"),
                 Text::new(value).class("details-metric-value"),
             ]
     })
@@ -574,8 +574,8 @@ fn metric_row(label: &'static str, value: String) -> impl Widget {
 
 // ─────────────────────── Общие хелперы ───────────────────────
 
-fn section_title(text: &'static str) -> impl Widget {
-    Text::new(text).class("right-panel-section-title")
+fn section_title(text: impl Into<String>) -> impl Widget {
+    Text::new(text.into()).class("right-panel-section-title")
 }
 
 /// Запуск `SynModelRegistry::load` из любого потока — get/set сигналов

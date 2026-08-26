@@ -29,12 +29,12 @@ pub enum TabKind {
 }
 
 impl TabKind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            TabKind::Overview => "Обзор",
-            TabKind::Files => "Файлы",
-            TabKind::Metadata => "Метаданные",
-            TabKind::Preview => "Просмотр",
+            TabKind::Overview => tr!("explorer.tab.overview"),
+            TabKind::Files => tr!("explorer.tab.files"),
+            TabKind::Metadata => tr!("explorer.tab.metadata"),
+            TabKind::Preview => tr!("explorer.tab.preview"),
         }
     }
 }

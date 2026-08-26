@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use synaptix_core::device::Device;
 use synaptix_core::dtype::DType;
 use synaptix_video_minimax_h3 as h3;
+use syngui::prelude::*;
 
 use super::super::super::types::H3ModelHandle;
 use super::{compute_of, device_of, memory_mode_of, quant_dit_of, quant_enc_of, variant_of};
@@ -79,7 +80,7 @@ fn get_or_load<T: Send + Sync + 'static>(
     loader: impl FnOnce() -> std::result::Result<T, String>,
 ) -> std::result::Result<Arc<T>, String> {
     let map = cache.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut g = map.lock().map_err(|_| "кэш моделей отравлен".to_string())?;
+    let mut g = map.lock().map_err(|_| tr!("node.minimax_h3_shared.cache_poisoned"))?;
     g.retain(|_, v| v.strong_count() > 0);
     if let Some(existing) = g.get(key).and_then(|w| w.upgrade()) {
         return Ok(existing);
@@ -117,9 +118,9 @@ pub fn encoder_source_of(
     match &handle.encoder_path {
         Some(p) => h3::H3EncoderSource::open(p).map_err(|e| e.to_string()),
         None => h3::H3EncoderSource::from_model(model).ok_or_else(|| {
-            format!(
-                "в {} нет text_encoder — выберите отдельный .syn энкодера",
-                model.path().display()
+            tr!(
+                "node.minimax_h3_shared.need_separate_encoder",
+                path = model.path().display()
             )
         }),
     }

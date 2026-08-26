@@ -80,8 +80,8 @@ fn empty_state() -> impl Widget {
                 .main_axis_alignment(MainAxisAlignment::Center)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .gap(8.0)
-                .child(Text::new("Нет открытых вкладок").class("ne-empty-title"))
-                .child(Text::new("Нажмите + чтобы создать").class("ne-empty-hint")),
+                .child(Text::new(tr!("nodes.empty.title")).class("ne-empty-title"))
+                .child(Text::new(tr!("nodes.empty.hint")).class("ne-empty-hint")),
         )
         .class("ne-empty")
 }
@@ -232,7 +232,7 @@ fn build_toolbar(ctx: NodeEditorCtx) -> Box<dyn Widget> {
             .gap(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 ToolButton::new(MI_ZOOM_OUT)
-                    .tooltip("Уменьшить")
+                    .tooltip(tr!("nodes.toolbar.zoom_out"))
                     .on_click(move || {
                         let z = (ctx_out.zoom.get_untracked() * 0.8).max(0.25);
                         ctx_out.zoom.set(z);
@@ -240,14 +240,14 @@ fn build_toolbar(ctx: NodeEditorCtx) -> Box<dyn Widget> {
                     .class("node-editor-toolbar-btn"),
                 label,
                 ToolButton::new(MI_ZOOM_IN)
-                    .tooltip("Увеличить")
+                    .tooltip(tr!("nodes.toolbar.zoom_in"))
                     .on_click(move || {
                         let z = (ctx_in.zoom.get_untracked() * 1.25).min(4.0);
                         ctx_in.zoom.set(z);
                     })
                     .class("node-editor-toolbar-btn"),
                 ToolButton::new(MI_FIT_SCREEN)
-                    .tooltip("Сбросить вид")
+                    .tooltip(tr!("nodes.toolbar.reset_view"))
                     .on_click(move || ctx_fit.reset_view())
                     .class("node-editor-toolbar-btn"),
             ]
@@ -284,7 +284,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
                         && m.subcategory.is_none()
                         && !(matches!(m.kind, NodeKind::Mixer) && *cat == NodeCategory::DspEffects)
                 })
-                .map(|m| MenuItem::new(format!("add:{}", m.title), m.title).icon(m.icon))
+                .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(m)).icon(m.icon))
                 .collect();
 
             // Submenu по subcategory.
@@ -295,14 +295,14 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
                     by_sub.entry(sub).or_default().push(m);
                 }
             }
-            for (sub_label, metas) in by_sub {
+            for (sub_key, metas) in by_sub {
                 let icon = metas.first().map(|m| m.icon).unwrap_or("");
                 let children: Vec<MenuItem> = metas
                     .iter()
-                    .map(|m| MenuItem::new(format!("add:{}", m.title), m.title).icon(m.icon))
+                    .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(*m)).icon(m.icon))
                     .collect();
                 top.push(
-                    MenuItem::new(format!("sub:{}:{}", cat.label(), sub_label), sub_label)
+                    MenuItem::new(format!("sub:{}:{}", cat.key(), sub_key), crate::i18n::node_subcategory_label(sub_key))
                         .icon(icon)
                         .children(children),
                 );
@@ -311,14 +311,14 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
             // Спец-обработка Mixer: 5 пресетов (2/3/4/5 + Custom).
             if *cat == NodeCategory::DspEffects {
                 let mixer_presets = vec![
-                    MenuItem::new("add_mixer:2", "2 источника"),
-                    MenuItem::new("add_mixer:3", "3 источника"),
-                    MenuItem::new("add_mixer:4", "4 источника"),
-                    MenuItem::new("add_mixer:5", "5 источников"),
-                    MenuItem::new("add_mixer:custom", "Custom"),
+                    MenuItem::new("add_mixer:2", trn!("nodes.menu.mixer_sources", 2)),
+                    MenuItem::new("add_mixer:3", trn!("nodes.menu.mixer_sources", 3)),
+                    MenuItem::new("add_mixer:4", trn!("nodes.menu.mixer_sources", 4)),
+                    MenuItem::new("add_mixer:5", trn!("nodes.menu.mixer_sources", 5)),
+                    MenuItem::new("add_mixer:custom", tr!("nodes.menu.mixer_custom")),
                 ];
                 top.push(
-                    MenuItem::new("sub:mixer", "Аудио микшеры")
+                    MenuItem::new("sub:mixer", tr!("nodes.menu.mixer_group"))
                         .icon(MI_MERGE_TYPE)
                         .children(mixer_presets),
                 );
@@ -328,7 +328,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
                 return None;
             }
             Some(
-                MenuItem::new(format!("cat:{:?}", cat), cat.label())
+                MenuItem::new(format!("cat:{:?}", cat), crate::i18n::node_category_label(*cat))
                     .icon(cat.icon())
                     .children(top),
             )

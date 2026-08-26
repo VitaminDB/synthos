@@ -28,7 +28,7 @@ fn header() -> impl Widget {
                     Center::new().child(Icon::new(MI_MENU_BOOK).class("skills-panel-header-icon")),
                 ],
                 DecoratedBox::new().class("grow").child(
-                    Text::new("Базы знаний").class("skills-panel-header-title"),
+                    Text::new(tr!("settings.knowledge_base.panel.title")).class("skills-panel-header-title"),
                 ),
                 ToolButton::new(MI_ADD)
                     .on_click(create_collection)
@@ -49,7 +49,7 @@ fn list_reactive() -> impl Widget {
             Box::new(
                 Center::new().child(
                     Padding::all(24.0).child(
-                        Text::new("Нет коллекций — нажми «+»").class("models-empty-list"),
+                        Text::new(tr!("settings.knowledge_base.panel.empty")).class("models-empty-list"),
                     ),
                 ),
             )
@@ -63,14 +63,14 @@ fn list_reactive() -> impl Widget {
                 let in_chat = active_in_chat.iter().any(|x| x == &id);
                 let class = if is_selected { "kb-coll-row selected" } else { "kb-coll-row" };
                 let badge = if in_chat {
-                    "● Активна в чате"
+                    tr!("settings.knowledge_base.panel.badge.active")
                 } else {
-                    "○ Не используется в чате"
+                    tr!("settings.knowledge_base.panel.badge.inactive")
                 };
                 let line1 = meta.name.clone();
-                let line2 = format!(
-                    "{} док · {} чанков · {}",
-                    meta.document_count, meta.chunk_count, badge
+                let line2 = tr!(
+                    "settings.knowledge_base.panel.subtitle",
+                    docs = meta.document_count, chunks = meta.chunk_count, badge = badge
                 );
                 let row: Box<dyn Widget> = Box::new(mgui! {
                     DecoratedBox::new().class(class) => [
@@ -85,7 +85,11 @@ fn list_reactive() -> impl Widget {
                                     Text::new(line2.clone()).class("kb-coll-subtitle"),
                                     Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                                         Button::new(
-                                            if in_chat { "Убрать из чата" } else { "Использовать в чате" }
+                                            if in_chat {
+                                                tr!("settings.knowledge_base.panel.remove_from_chat")
+                                            } else {
+                                                tr!("settings.knowledge_base.panel.use_in_chat")
+                                            }
                                         )
                                             .class("kb-coll-toggle")
                                             .on_click({
@@ -129,7 +133,7 @@ fn create_collection() {
     let slot2 = slot.clone();
     app.kb.registry.update(move |reg| {
         match reg.create(
-            "Новая коллекция".into(),
+            tr!("settings.knowledge_base.panel.new_name"),
             model_basename.clone(),
             dim,
             cfg.chunk_target_tokens as i32,
@@ -147,10 +151,10 @@ fn create_collection() {
     match created {
         Some(meta) => {
             app.kb.active_collection_id.set(Some(meta.id.clone()));
-            app.notifications.success(format!("Создана коллекция «{}»", meta.name));
+            app.notifications.success(tr!("settings.knowledge_base.panel.created", name = meta.name));
         }
         None => {
-            app.notifications.error("Не удалось создать коллекцию (см. лог).");
+            app.notifications.error(tr!("settings.knowledge_base.panel.create_failed"));
         }
     }
 }

@@ -103,15 +103,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((prompt_field, keep_gemma, running, error, progress_pct)) = snapshot else {
-        return Box::new(Text::new("LtxTextEncoder: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxTextEncoder"))
+                .class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row("Промпт (fallback)", make_text_field(prompt_field, "сцена + описание звука/речи")),
-        field_row("Держать Gemma", make_toggle(keep_gemma)),
-        field_row("Прогресс", progress_row(running, progress_pct)),
         field_row(
-            "Статус",
+            &tr!("node.ltx_text_encoder.field.prompt_fallback"),
+            make_text_field(prompt_field, tr!("node.ltx_text_encoder.placeholder.prompt")),
+        ),
+        field_row(&tr!("node.ltx_text_encoder.field.keep_gemma"), make_toggle(keep_gemma)),
+        field_row(&tr!("node.ltx.common.progress"), progress_row(running, progress_pct)),
+        field_row(
+            &tr!("nodes.common.status"),
             status_row(running, error, loaded_name, "Gemma encode…", "ltx-node-running"),
         ),
     ];
@@ -167,14 +173,14 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     let prompt = current_input_text(ctx, node.id, "prompt")
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| prompt_field.get_untracked());
     if prompt.trim().is_empty() {
-        error.set(Some("Пустой промпт: подключите Text или заполните fallback-поле".into()));
+        error.set(Some(tr!("node.ltx_text_encoder.err.empty_prompt")));
         return;
     }
     if running.get_untracked() {
@@ -253,15 +259,15 @@ fn worker(
         let ckpt = shared::load_ckpt(handle)?;
         let ckpt_gpu = ckpt.view_on(dev);
         let vtc = VideoTextConditioner::load(&ckpt_gpu, dev, compute)
-            .map_err(|e| format!("video-коннектор: {e}"))?;
+            .map_err(|e| tr!("node.ltx.common.video_connector", error = e))?;
         let v = vtc
             .forward(&states, &mask)
-            .map_err(|e| format!("video-коннектор forward: {e}"))?;
+            .map_err(|e| tr!("node.ltx.common.video_connector_forward", error = e))?;
         set_pct(0.8);
         let a = AudioTextConditioner::load(&ckpt_gpu, dev, compute)
-            .map_err(|e| format!("audio-коннектор: {e}"))?
+            .map_err(|e| tr!("node.ltx_text_encoder.err.audio_connector", error = e))?
             .forward(&states, &mask)
-            .map_err(|e| format!("audio-коннектор forward: {e}"))?;
+            .map_err(|e| tr!("node.ltx_text_encoder.err.audio_connector_forward", error = e))?;
         set_pct(1.0);
         if let Ok(mut g) = v_out.lock() {
             *g = Some(v);

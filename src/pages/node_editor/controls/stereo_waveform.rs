@@ -173,10 +173,12 @@ pub fn node_stereo_waveform(
     let frames = b.pcm.len() / (b.channels.max(1) as usize);
     let secs = frames as f32 / b.sample_rate.max(1) as f32;
     let label = format!(
-        "{} кГц · {} · {:.1} с",
+        "{} {} · {} · {:.1} {}",
         b.sample_rate as f32 / 1000.0,
-        if b.channels >= 2 { "стерео" } else { "моно" },
-        secs
+        tr!("nodes.unit.khz"),
+        if b.channels >= 2 { tr!("nodes.waveform.stereo") } else { tr!("nodes.waveform.mono") },
+        secs,
+        tr!("nodes.unit.seconds")
     );
     let wave: Box<dyn Widget> =
         Box::new(StereoWaveform::new().pcm(b).into_canvas().class(class));

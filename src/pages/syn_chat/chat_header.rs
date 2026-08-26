@@ -50,7 +50,7 @@ fn empty_header() -> StyledWidget<DecoratedBox> {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::Start) => [
                 Icon::new(MI_PSYCHOLOGY).class("chat-header-empty-icon"),
-                Text::new("Выберите или создайте чат").class("chat-header-empty-text"),
+                Text::new(tr!("chat.header.empty_hint")).class("chat-header-empty-text"),
             ]
     })
 }
@@ -72,12 +72,12 @@ fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<D
     let actions_row = mgui! {
         Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             ToolButton::new(MI_COMPRESS)
-                .tooltip("Сжать старые сообщения в краткое system-summary")
+                .tooltip(tr!("chat.header.compact.tooltip"))
                 .disabled(!can_compact)
                 .on_click(|| crate::syn_chat::compact::compact_now())
                 .class("chat-header-action"),
             ToolButton::new(MI_CLEAR_ALL)
-                .tooltip("Очистить ленту")
+                .tooltip(tr!("chat.header.clear.tooltip"))
                 .on_click(|| {
                     let ctx = use_context::<SynChatCtx>();
                     ctx.messages.set(Vec::new());
@@ -86,7 +86,7 @@ fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<D
                 })
                 .class("chat-header-action"),
             ToolButton::new(MI_DELETE)
-                .tooltip("Удалить чат")
+                .tooltip(tr!("chat.header.delete.tooltip"))
                 .on_click(move || registry::delete(&id))
                 .class("chat-header-action"),
         ]
@@ -164,11 +164,11 @@ fn subtitle_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "—".to_string())
         } else if loading {
-            "Загрузка модели…".to_string()
+            tr!("chat.model.status.loading")
         } else if err.is_some() {
-            "Ошибка загрузки".to_string()
+            tr!("chat.header.subtitle.error")
         } else {
-            "Модель не загружена".to_string()
+            tr!("chat.model.not_loaded")
         };
         DecoratedBox::new()
             .child(Text::new(text).max_lines(1).class("chat-header-subtitle"))

@@ -55,8 +55,9 @@ pub fn view(active: OpenBundle) -> impl Widget {
                             b
                         }
                         None => {
-                            return vec![Box::new(error_placeholder(&format!(
-                                "Не удалось прочитать `{name}` из пакета."
+                            return vec![Box::new(error_placeholder(&tr!(
+                                "explorer.preview.read_failed",
+                                name = name
                             )))];
                         }
                     }
@@ -98,10 +99,9 @@ fn render_preview(name: &str, bytes: &[u8]) -> Box<dyn Widget> {
         const PREVIEW_CAP: usize = 2 * 1024 * 1024;
         let text_str = if text.len() > PREVIEW_CAP {
             format!(
-                "{}\n\n…(показаны первые {} байт из {})",
+                "{}\n\n{}",
                 &text[..PREVIEW_CAP],
-                PREVIEW_CAP,
-                text.len()
+                tr!("explorer.preview.truncated", shown = PREVIEW_CAP, total = text.len())
             )
         } else {
             text.to_string()
@@ -126,7 +126,7 @@ fn render_preview(name: &str, bytes: &[u8]) -> Box<dyn Widget> {
             Column::new()
                 .gap(8.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new(format!("Бинарные данные • {} байт", bytes.len()))
+                    Text::new(trn!("explorer.preview.binary_header", bytes.len()))
                         .class("syn-preview-hex-header"),
                     Text::new(dump).class("syn-preview-hex-body"),
                 ]
@@ -137,7 +137,7 @@ fn render_preview(name: &str, bytes: &[u8]) -> Box<dyn Widget> {
 fn empty_placeholder() -> impl Widget {
     mgui! {
         Center::new().child(
-            Text::new("Выберите файл в правой панели, чтобы увидеть содержимое.")
+            Text::new(tr!("explorer.preview.empty_hint"))
                 .class("syn-empty-hint"),
         )
     }
@@ -177,11 +177,8 @@ fn hex_dump(bytes: &[u8], cap: usize) -> String {
         out.push('\n');
     }
     if bytes.len() > cap {
-        out.push_str(&format!(
-            "\n… показано {} из {} байт",
-            cap,
-            bytes.len()
-        ));
+        out.push('\n');
+        out.push_str(&tr!("explorer.preview.hex_truncated", shown = cap, total = bytes.len()));
     }
     out
 }

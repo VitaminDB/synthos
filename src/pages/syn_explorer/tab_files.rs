@@ -20,13 +20,13 @@ pub fn view(active: OpenBundle) -> impl Widget {
             }
 
             let columns = vec![
-                TableColumn::flex("Имя", 3.0),
-                TableColumn::fixed("Тип", 120.0),
-                TableColumn::fixed("Размер", 110.0),
+                TableColumn::flex(tr!("explorer.files.column.name"), 3.0),
+                TableColumn::fixed(tr!("explorer.files.column.type"), 120.0),
+                TableColumn::fixed(tr!("explorer.files.column.size"), 110.0),
                 TableColumn::fixed("Tag", 90.0),
                 TableColumn::fixed("CRC32C", 100.0),
                 TableColumn::fixed("SHA-256", 110.0),
-                TableColumn::fixed("Статус", 100.0),
+                TableColumn::fixed(tr!("explorer.files.column.status"), 100.0),
             ];
 
             let rows: Vec<Vec<String>> = files
@@ -111,7 +111,7 @@ fn humanize_bytes(n: u64) -> String {
 fn empty_placeholder() -> impl Widget {
     mgui! {
         Center::new().child(
-            Text::new("В пакете нет файлов.").class("syn-empty-hint"),
+            Text::new(tr!("explorer.files.empty")).class("syn-empty-hint"),
         )
     }
 }

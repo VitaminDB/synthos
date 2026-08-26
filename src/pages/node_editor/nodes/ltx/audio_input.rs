@@ -44,14 +44,17 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some(audio_path) = audio_path else {
-        return Box::new(Text::new("LtxAudioInput: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxAudioInput"))
+                .class("node-card-field-error"),
+        );
     };
     let rows: Vec<Box<dyn Widget>> = vec![field_row(
-        "Аудио",
+        &tr!("node.ltx_audio_input.field.audio"),
         node_file_picker(
-            "Речь (wav/mp3/m4a/flac)",
+            tr!("node.ltx_audio_input.picker.audio"),
             audio_path,
-            &[("Аудио", &["wav", "mp3", "m4a", "flac", "ogg", "opus"])],
+            &[("nodes.filter.audio", &["wav", "mp3", "m4a", "flac", "ogg", "opus"])],
             |_| {},
         ),
     )];

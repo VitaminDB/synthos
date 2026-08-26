@@ -40,31 +40,28 @@ pub fn view() -> impl Widget {
 
 fn card() -> impl Widget {
     let default_path = config::resolve_hf_cache_dir("").display().to_string();
-    let hint = format!(
-        "Будут сохраняться в {}. Можно выбрать другую папку.",
-        default_path
-    );
+    let hint = tr!("hf.dialog.cache_dir.hint", path = default_path);
 
     mgui! {
         DecoratedBox::new().class("hf-dialog-card") => [
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Куда сохранять модели HuggingFace?")
+                    Text::new(tr!("hf.dialog.cache_dir.title"))
                         .class("hf-dialog-title"),
                     Text::new(hint).class("hf-dialog-hint"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("hf-dialog-btn-secondary"),
-                            Button::new("Выбрать папку…")
+                            Button::new(tr!("hf.dialog.cache_dir.pick_folder"))
                                 .leading_icon(MI_FOLDER_OPEN)
                                 .on_click(pick_folder)
                                 .class("hf-dialog-btn-secondary"),
-                            Button::new("По умолчанию")
+                            Button::new(tr!("hf.dialog.cache_dir.use_default"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(accept_default)
                                 .class("hf-dialog-btn-primary"),
@@ -95,7 +92,7 @@ fn pick_folder() {
     let notifications = app.notifications.clone();
     spawn(async move {
         let result = AsyncFileDialog::new()
-            .set_title("Папка для моделей HuggingFace")
+            .set_title(tr!("hf.dialog.cache_dir.rfd_title"))
             .pick_folder()
             .await;
         let Some(folder) = result else { return };

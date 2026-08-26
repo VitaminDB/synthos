@@ -14,6 +14,7 @@
 //!   функция безопасно возвращает `None`/`Vec::new()` — так же, как
 //!   устроен [`crate::config::AppConfig`].
 
+use syngui::{tr, trn};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -49,7 +50,7 @@ impl Default for StoredChat {
     fn default() -> Self {
         Self {
             id: String::new(),
-            title: "Новый чат".to_string(),
+            title: tr!("chat.registry.new_chat_title"),
             created_at: 0,
             updated_at: 0,
             model_name: None,
@@ -220,14 +221,7 @@ fn attachments_preview(attachments: &[super::state::MsgAttachment]) -> String {
         }
         return a.kind.label().to_string();
     }
-    let n = attachments.len();
-    // 2–4 «вложения», 5+ «вложений»: русская форма множественного числа.
-    let tail = match (n % 10, n % 100) {
-        (_, 11..=14) => "вложений",
-        (2..=4, _) => "вложения",
-        _ => "вложений",
-    };
-    format!("{n} {tail}")
+    trn!("chat.attachments.count", attachments.len())
 }
 
 /// Обрезка строки до `max` **символов** (а не байтов) с сохранением

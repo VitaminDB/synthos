@@ -57,7 +57,7 @@ fn confirm_card(id: String, title: String) -> impl Widget {
         use_context::<SynChatCtx>().pending_delete.set(None);
     };
     let shown_title = if title.trim().is_empty() {
-        "Без названия".to_string()
+        tr!("chat.delete_dialog.untitled")
     } else {
         title
     };
@@ -67,19 +67,19 @@ fn confirm_card(id: String, title: String) -> impl Widget {
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Удалить чат?").class("code-editor-dialog-title"),
-                    Text::new(format!("«{shown_title}» — действие нельзя отменить."))
+                    Text::new(tr!("chat.delete_dialog.title")).class("code-editor-dialog-title"),
+                    Text::new(tr!("chat.delete_dialog.hint", title = shown_title))
                         .class("code-editor-dialog-hint"),
-                    Text::new("Переписка и вложения, на которые не ссылаются другие чаты, будут удалены с диска.")
+                    Text::new(tr!("chat.delete_dialog.detail"))
                         .class("code-editor-dialog-path"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new("Удалить")
+                            Button::new(tr!("app.delete"))
                                 .leading_icon(MI_DELETE)
                                 .on_click(confirm)
                                 .class("code-editor-dialog-btn-danger"),

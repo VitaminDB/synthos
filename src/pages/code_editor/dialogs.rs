@@ -103,16 +103,16 @@ pub fn view() -> impl Widget {
 
             let card: Box<dyn Widget> = match kind {
                 DialogKind::NewFile { parent } => Box::new(text_input_card(
-                    "Новый файл",
-                    &format!("Создать в {}", short_dir(&parent)),
-                    "имя_файла.rs",
+                    tr!("code.dialog.new_file.title"),
+                    tr!("code.dialog.create_in", dir = short_dir(&parent)),
+                    tr!("code.dialog.new_file.placeholder"),
                     String::new(),
                     move |name| fs_actions::create_file(session, parent.clone(), name),
                 )),
                 DialogKind::NewFolder { parent } => Box::new(text_input_card(
-                    "Новая папка",
-                    &format!("Создать в {}", short_dir(&parent)),
-                    "имя_папки",
+                    tr!("code.dialog.new_folder.title"),
+                    tr!("code.dialog.create_in", dir = short_dir(&parent)),
+                    tr!("code.dialog.new_folder.placeholder"),
                     String::new(),
                     move |name| fs_actions::create_folder(session, parent.clone(), name),
                 )),
@@ -123,9 +123,9 @@ pub fn view() -> impl Widget {
                         .unwrap_or_default();
                     let path_for_action = path.clone();
                     Box::new(text_input_card(
-                        "Переименовать",
-                        &format!("Текущее: {}", path.display()),
-                        "новое имя",
+                        tr!("code.dialog.rename.title"),
+                        tr!("code.dialog.rename.current", path = path.display().to_string()),
+                        tr!("code.dialog.rename.placeholder"),
                         initial,
                         move |name| fs_actions::rename(session, path_for_action.clone(), name),
                     ))
@@ -144,9 +144,9 @@ pub fn view() -> impl Widget {
 /// Reactive внутри title'а / hint'а не нужен — все три параметра
 /// фиксированы на момент открытия диалога.
 fn text_input_card<F>(
-    title: &str,
-    hint: &str,
-    placeholder: &str,
+    title: impl Into<String>,
+    hint: impl Into<String>,
+    placeholder: impl Into<String>,
     initial: String,
     on_confirm: F,
 ) -> impl Widget
@@ -156,9 +156,9 @@ where
     // Локальный сигнал значения. Перехватывается каждым keystroke в TextField,
     // на confirm читается через get_untracked.
     let value = use_signal(initial.clone());
-    let title = title.to_string();
-    let hint = hint.to_string();
-    let placeholder = placeholder.to_string();
+    let title = title.into();
+    let hint = hint.into();
+    let placeholder = placeholder.into();
 
     let on_confirm_btn = on_confirm.clone();
     let confirm_action = move || {
@@ -195,11 +195,11 @@ where
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel_action)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new("OK")
+                            Button::new(tr!("app.ok"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(confirm_action)
                                 .class("code-editor-dialog-btn-primary"),
@@ -224,26 +224,30 @@ fn delete_confirm_card(session: CodeSession, path: PathBuf) -> impl Widget {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string());
-    let kind_label = if path.is_dir() { "папку" } else { "файл" };
+    let kind_label = if path.is_dir() {
+        tr!("code.dialog.delete.kind_folder")
+    } else {
+        tr!("code.dialog.delete.kind_file")
+    };
 
     mgui! {
         DecoratedBox::new().class("code-editor-dialog-card code-editor-dialog-danger") => [
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new(format!("Удалить {kind_label}?")).class("code-editor-dialog-title"),
-                    Text::new(format!("«{name}» — действие нельзя отменить."))
+                    Text::new(tr!("code.dialog.delete.title", kind = kind_label)).class("code-editor-dialog-title"),
+                    Text::new(tr!("code.dialog.delete.hint", name = name))
                         .class("code-editor-dialog-hint"),
                     Text::new(path.display().to_string())
                         .class("code-editor-dialog-path"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new("Удалить")
+                            Button::new(tr!("app.delete"))
                                 .leading_icon(MI_DELETE)
                                 .on_click(confirm)
                                 .class("code-editor-dialog-btn-danger"),
@@ -322,26 +326,24 @@ fn external_conflict_card(session: CodeSession, path: PathBuf) -> impl Widget {
                         .gap(10.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
                             Icon::new(MI_SYNC_PROBLEM).class("code-editor-conflict-icon"),
-                            Text::new("Файл изменён извне").class("code-editor-dialog-title"),
+                            Text::new(tr!("code.dialog.conflict.title")).class("code-editor-dialog-title"),
                         ],
-                    Text::new(format!(
-                        "«{name}» изменён на диске, но есть несохранённые правки. Буфер уже сохранён в черновик."
-                    ))
+                    Text::new(tr!("code.dialog.conflict.hint", name = name))
                     .class("code-editor-dialog-hint"),
                     Text::new(path.display().to_string()).class("code-editor-dialog-path"),
                     diff_area,
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Показать diff")
+                            Button::new(tr!("code.dialog.conflict.show_diff"))
                                 .leading_icon(MI_MERGE_TYPE)
                                 .on_click(toggle_diff)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new("Перезагрузить с диска")
+                            Button::new(tr!("code.dialog.conflict.reload"))
                                 .leading_icon(MI_DOWNLOAD)
                                 .on_click(reload)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new("Оставить моё")
+                            Button::new(tr!("code.dialog.conflict.keep_mine"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(keep)
                                 .class("code-editor-dialog-btn-primary"),
@@ -381,7 +383,7 @@ fn history_card(session: CodeSession, path: PathBuf) -> impl Widget {
     let mut rows: Vec<Box<dyn Widget>> = Vec::new();
     if entries.is_empty() {
         rows.push(Box::new(
-            Text::new("Нет сохранённых версий").class("code-editor-history-empty"),
+            Text::new(tr!("code.dialog.history.empty")).class("code-editor-history-empty"),
         ));
     } else {
         for entry in entries {
@@ -402,7 +404,7 @@ fn history_card(session: CodeSession, path: PathBuf) -> impl Widget {
                         Icon::new(MI_HISTORY).class("code-editor-history-row-icon"),
                         Text::new(age).class("code-editor-history-row-age"),
                         DecoratedBox::new().class("grow"),
-                        Button::new("Восстановить")
+                        Button::new(tr!("code.dialog.history.restore"))
                             .leading_icon(MI_DOWNLOAD)
                             .on_click(restore)
                             .class("code-editor-dialog-btn-secondary"),
@@ -425,9 +427,9 @@ fn history_card(session: CodeSession, path: PathBuf) -> impl Widget {
                         .gap(10.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
                             Icon::new(MI_HISTORY).class("code-editor-history-icon"),
-                            Text::new("История версий").class("code-editor-dialog-title"),
+                            Text::new(tr!("code.history.title")).class("code-editor-dialog-title"),
                         ],
-                    Text::new(format!("«{name}» — последние сохранённые версии"))
+                    Text::new(tr!("code.dialog.history.hint", name = name))
                         .class("code-editor-dialog-hint"),
                     ScrollView::new()
                         .vertical()
@@ -441,7 +443,7 @@ fn history_card(session: CodeSession, path: PathBuf) -> impl Widget {
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Закрыть")
+                            Button::new(tr!("app.close"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(close)
                                 .class("code-editor-dialog-btn-secondary"),

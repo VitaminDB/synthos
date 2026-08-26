@@ -285,7 +285,7 @@ impl EditorWorkspace {
 
         let tab = OpenTab {
             id,
-            title: use_signal(t.name.clone()),
+            title: use_signal(crate::i18n::template_name(t)),
             source: use_signal(Some(t.id.clone())),
             dirty: use_signal(false),
             last_saved_fp: use_signal(0),
@@ -405,12 +405,13 @@ fn make_tab_from_state(ts: &TabState) -> OpenTab {
 pub fn next_untitled_name(tabs: &[OpenTab]) -> String {
     let titles: std::collections::HashSet<String> =
         tabs.iter().map(|t| t.title.get_untracked()).collect();
-    if !titles.contains("Untitled") {
-        return "Untitled".into();
+    let base = tr!("nodes.tabs.untitled");
+    if !titles.contains(&base) {
+        return base;
     }
     let mut n = 2usize;
     loop {
-        let candidate = format!("Untitled {n}");
+        let candidate = format!("{base} {n}");
         if !titles.contains(&candidate) {
             return candidate;
         }

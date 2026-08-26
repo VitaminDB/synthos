@@ -18,13 +18,13 @@ use super::super::types::{
     H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3VideoLatent, NodeId, PortValue,
 };
 
-pub const VARIANT_OPTIONS: &[&str] = &["FL2VA (t2va + first/last)", "Ref2VA (референсы)"];
+pub const VARIANT_OPTIONS: &[&str] = &["FL2VA", "Ref2VA"];
 pub const DEVICE_OPTIONS: &[&str] = &["CUDA", "CPU"];
 pub const QUANT_DIT_OPTIONS: &[&str] = &["nvfp4", "mxfp8", "dense (compute)"];
 pub const QUANT_ENC_OPTIONS: &[&str] = &["nvfp4", "mxfp8", "dense (compute)"];
 pub const COMPUTE_OPTIONS: &[&str] = &["bf16", "f16", "f32"];
 pub const MEMORY_MODE_OPTIONS: &[&str] =
-    &["auto", "предвычисленный adaLN", "блочный оффлоад"];
+    &["auto", "precomputed_adaln", "block_offload"];
 
 pub fn device_of(idx: usize) -> Device {
     match idx {
@@ -164,7 +164,7 @@ pub fn current_input_audio(
 }
 
 pub fn dir_picker_row(
-    tooltip: &'static str,
+    tooltip: impl Into<String>,
     sig: RwSignal<Option<PathBuf>>,
 ) -> Box<dyn Widget> {
     super::ltx::dir_picker_row(tooltip, sig)

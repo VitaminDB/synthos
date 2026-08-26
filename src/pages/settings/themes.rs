@@ -21,14 +21,14 @@ pub fn view() -> impl Widget {
     let content = Column::new()
         .gap(24.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new("Темы").class("settings-page-title"))
+        .child(Text::new(tr!("settings.themes.title")).class("settings-page-title"))
         .child(
-            Text::new("Выберите оформление приложения. Изменения применяются сразу.")
+            Text::new(tr!("settings.themes.subtitle"))
                 .class("settings-page-subtitle"),
         )
         .child(system_section())
-        .child(section("Светлые", &themes, false))
-        .child(section("Тёмные", &themes, true));
+        .child(section(tr!("settings.themes.section.light"), &themes, false))
+        .child(section(tr!("settings.themes.section.dark"), &themes, true));
 
     mgui! {
         ScrollView::new().vertical() => [
@@ -52,20 +52,20 @@ fn system_section() -> impl Widget {
     let rows: Vec<Box<dyn Widget>> = vec![
         switch_row(
             MI_PALETTE,
-            "Следовать системной теме",
-            "Светлая или тёмная выбирается по схеме рабочего стола",
+            tr!("settings.themes.follow_system"),
+            tr!("settings.themes.follow_system.desc"),
             a.follow_system,
         ),
         switch_row(
             MI_TUNE,
-            "Системный акцент",
-            "Использовать акцентный цвет рабочего стола вместо цвета темы",
+            tr!("settings.themes.system_accent"),
+            tr!("settings.themes.system_accent.desc"),
             a.use_system_accent,
         ),
         switch_row(
             MI_DESKTOP_WINDOWS,
-            "Системные кнопки окна",
-            "Рисовать кнопки титлбара темой декораций рабочего стола",
+            tr!("settings.themes.system_window_controls"),
+            tr!("settings.themes.system_window_controls.desc"),
             a.system_window_controls,
         ),
         blur_row(a.window_blur, a.window_opacity),
@@ -74,7 +74,7 @@ fn system_section() -> impl Widget {
 
     mgui! {
         Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-            Text::new("Системное оформление").class("settings-section-title"),
+            Text::new(tr!("settings.themes.section.system")).class("settings-section-title"),
             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .children(rows),
         ]
@@ -95,8 +95,8 @@ fn blur_row(blur: RwSignal<bool>, opacity: RwSignal<f32>) -> Box<dyn Widget> {
     );
     row_frame(
         MI_BLUR_ON,
-        "Размытие фона",
-        "Композитор размывает то, что видно сквозь полупрозрачные панели",
+        tr!("settings.themes.window_blur"),
+        tr!("settings.themes.window_blur.desc"),
         control,
     )
 }
@@ -114,8 +114,8 @@ fn opacity_row(value: RwSignal<f32>) -> Box<dyn Widget> {
     );
     row_frame(
         MI_TUNE,
-        "Непрозрачность панелей",
-        "1.0 — сплошной фон; меньше — сквозь окно виден рабочий стол",
+        tr!("settings.themes.window_opacity"),
+        tr!("settings.themes.window_opacity.desc"),
         control,
     )
 }
@@ -123,7 +123,7 @@ fn opacity_row(value: RwSignal<f32>) -> Box<dyn Widget> {
 /// Одна секция — «Светлые» или «Тёмные». Карточки строятся inline:
 /// `DecoratedBox::new().class("grow").child(<closure>)`. Замыкание реактивно читает
 /// `theme_mss` и перестраивает карточку при смене темы.
-fn section(title: &'static str, themes: &[SynthosTheme], dark: bool) -> impl Widget {
+fn section(title: impl Into<String>, themes: &[SynthosTheme], dark: bool) -> impl Widget {
     let mut row = Row::new().gap(16.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
 
     for t in themes.iter().filter(|t| t.is_dark == dark) {
@@ -161,14 +161,14 @@ fn section(title: &'static str, themes: &[SynthosTheme], dark: bool) -> impl Wid
                 Box::new(
                     DecoratedBox::new().class("theme-card-badge").child(
                         Center::new()
-                            .child(Text::new("Активна").class("theme-card-badge-text")),
+                            .child(Text::new(tr!("settings.themes.card.active")).class("theme-card-badge-text")),
                     ),
                 )
             } else {
                 let mss_click = mss.clone();
                 let id_click = id.clone();
                 Box::new(
-                    Button::new("Применить")
+                    Button::new(tr!("app.apply"))
                         .on_click(move || {
                             let ctx = use_context::<AppCtx>();
                             let a = ctx.appearance;
@@ -209,7 +209,7 @@ fn section(title: &'static str, themes: &[SynthosTheme], dark: bool) -> impl Wid
 
     mgui! {
         Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-            Text::new(title).class("settings-section-title"),
+            Text::new(title.into()).class("settings-section-title"),
             row,
         ]
     }

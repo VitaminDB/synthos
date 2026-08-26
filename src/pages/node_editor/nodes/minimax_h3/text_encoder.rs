@@ -75,7 +75,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("подключите H3 Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.minimax_h3.common.connect_checkpoint_model")));
         return;
     };
     let prompt = current_input_text(ctx, node.id, "prompt").unwrap_or_default();
@@ -156,8 +156,8 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             .gap(3.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(vec![field_row(
-                "Статус",
-                status_row(running, error, loaded_name, "кодирование промпта…", "h3-node-running"),
+                &tr!("nodes.common.status"),
+                status_row(running, error, loaded_name, tr!("node.minimax_h3_text_encoder.busy"), "h3-node-running"),
             )]),
     )
 }

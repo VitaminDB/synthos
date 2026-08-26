@@ -98,7 +98,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 size,
                 ..
             } => (*output_text, *text_version, *resize_mode, *size),
-            _ => return error_widget("TextView: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "TextView")),
         },
         Err(_) => return error_widget("TextView: lock error"),
     };
@@ -113,7 +113,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         vec![Box::new(
             MultilineTextEdit::new()
                 .text(initial)
-                .placeholder("Текст появится здесь по входу…")
+                .placeholder(tr!("node.text_view.placeholder"))
                 .soft_wrap(true)
                 .on_change(move |s| output_text.set(s.to_string()))
                 .class("node-input-text text-view-editor"),
@@ -144,6 +144,6 @@ pub fn toggle_resize_mode(node: &NodeInstance) {
     }
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
 }

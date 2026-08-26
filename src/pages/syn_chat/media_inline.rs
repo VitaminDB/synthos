@@ -87,15 +87,15 @@ fn actions_row(a: &MsgAttachment, on_open: Arc<dyn Fn() + Send + Sync>) -> Box<d
                 ],
                 Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     ToolButton::new(MI_FIT_SCREEN)
-                        .tooltip("Открыть на весь экран")
+                        .tooltip(tr!("chat.media.fullscreen.tooltip"))
                         .on_click(move || on_open())
                         .class("chat-media-btn"),
                     ToolButton::new(MI_DOWNLOAD)
-                        .tooltip("Сохранить как…")
+                        .tooltip(tr!("chat.media.save_as.tooltip"))
                         .on_click(move || save_as(&save))
                         .class("chat-media-btn"),
                     ToolButton::new(MI_OPEN_IN_NEW)
-                        .tooltip("Открыть во внешнем приложении")
+                        .tooltip(tr!("chat.media.open_external.tooltip"))
                         .on_click(move || open_externally(&open))
                         .class("chat-media-btn"),
                 ],
@@ -128,7 +128,7 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
             let play = mgui! {
                 Column::new().main_axis_alignment(MainAxisAlignment::Center).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     ToolButton::new(MI_PLAY_ARROW)
-                        .tooltip("Воспроизвести")
+                        .tooltip(tr!("chat.media.play.tooltip"))
                         .on_click(move || started.set(true))
                         .class("chat-media-play"),
                 ]
@@ -166,7 +166,7 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
                         DecoratedBox::new()
                             .class("chat-media-stage")
                             .child(Center::new().child(
-                                Text::new(format!("Не открыть видео: {e}")).class("chat-media-meta"),
+                                Text::new(tr!("chat.media.video_open_error", error = e)).class("chat-media-meta"),
                             )),
                     )]
                 }
@@ -201,7 +201,7 @@ fn audio_stage(a: &MsgAttachment) -> Box<dyn Widget> {
                     .class("chat-media-waveform"),
             ),
             None => Box::new(Center::new().child(
-                Text::new("Декодируем аудио…").class("chat-media-meta"),
+                Text::new(tr!("chat.media.audio_decoding")).class("chat-media-meta"),
             )),
         };
         let controls = mgui! {
@@ -210,7 +210,7 @@ fn audio_stage(a: &MsgAttachment) -> Box<dyn Widget> {
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
                 ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
-                    .tooltip(if playing { "Пауза" } else { "Воспроизвести" })
+                    .tooltip(if playing { tr!("chat.media.pause.tooltip") } else { tr!("chat.media.play.tooltip") })
                     .on_click(move || media_audio::toggle(&player, signals))
                     .class("chat-media-play-small"),
                 Text::new(duration.clone()).class("chat-media-meta"),
@@ -275,7 +275,7 @@ pub fn save_as(a: &MsgAttachment) {
     };
     std::thread::spawn(move || {
         let Some(dest) = rfd::FileDialog::new()
-            .set_title(format!("Сохранить «{name}» как…"))
+            .set_title(tr!("chat.media.save_dialog.title", name = name))
             .set_file_name(&name)
             .save_file()
         else {
@@ -285,8 +285,8 @@ pub fn save_as(a: &MsgAttachment) {
         syngui::async_runtime::run_on_main_thread(move || {
             let notif = use_context::<AppCtx>().notifications.clone();
             match res {
-                Ok(_) => notif.success(format!("Сохранено: {}", dest.display())),
-                Err(e) => notif.error(format!("Не сохранить файл: {e}")),
+                Ok(_) => notif.success(tr!("chat.media.save.success", path = dest.display())),
+                Err(e) => notif.error(tr!("chat.media.save.error", error = e)),
             }
         });
     });

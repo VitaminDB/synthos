@@ -126,16 +126,16 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     }
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("подключите H3 Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.minimax_h3.common.connect_checkpoint_model")));
         return;
     };
     let Some(cond) = current_input_conditioning(ctx, node.id, "conditioning") else {
-        error.set(Some("подключите H3 Text Encoder на вход conditioning".into()));
+        error.set(Some(tr!("node.minimax_h3_sampler.connect_text_encoder")));
         return;
     };
     let negative = current_input_conditioning(ctx, node.id, "negative");
     let Some(geometry) = current_input_av_latent(ctx, node.id, "av_latent") else {
-        error.set(Some("подключите H3 Empty AV Latent на вход av_latent".into()));
+        error.set(Some(tr!("node.minimax_h3_sampler.connect_empty_latent")));
         return;
     };
     let keyframes: Vec<Arc<H3Keyframe>> = ["keyframe", "keyframe_last"]
@@ -350,7 +350,7 @@ fn worker(
     };
     let out = h3::pipeline::denoise_av(dit, &cache, &prep, &req, &sched, &hooks).map_err(|e| {
         match e {
-            h3::H3Error::Cancelled => "отменено".to_string(),
+            h3::H3Error::Cancelled => tr!("node.minimax_h3_sampler.cancelled"),
             other => other.to_string(),
         }
     })?;
@@ -388,14 +388,14 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             .gap(3.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(vec![
-                field_row("Шагов", make_int_slider_row(steps, 1, 40, 1)),
+                field_row(&tr!("node.minimax_h3_sampler.steps"), make_int_slider_row(steps, 1, 40, 1)),
                 field_row("CFG", make_slider_row(cfg_scale, 1.0, 12.0, 0.5, 1)),
                 field_row("Seed", make_seed_slider(seed)),
-                field_row("Прогресс", progress_row(running, progress_pct)),
-                field_row("Отмена", cancel_button(running, cancel)),
+                field_row(&tr!("nodes.common.progress"), progress_row(running, progress_pct)),
+                field_row(&tr!("app.cancel"), cancel_button(running, cancel)),
                 field_row(
-                    "Статус",
-                    status_row(running, error, loaded_name, "денойзинг…", "h3-node-running"),
+                    &tr!("nodes.common.status"),
+                    status_row(running, error, loaded_name, tr!("node.minimax_h3_sampler.busy"), "h3-node-running"),
                 ),
             ]),
     )

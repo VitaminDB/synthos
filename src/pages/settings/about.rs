@@ -14,24 +14,24 @@ pub fn view() -> impl Widget {
             Padding::all(32.0) => [
                 DecoratedBox::new().class("settings-page") => [
                     Column::new().gap(24.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        Text::new("О программе").class("settings-page-title"),
-                        Text::new("Информация о приложении и его авторстве.").class("settings-page-subtitle"),
+                        Text::new(tr!("settings.about.title")).class("settings-page-title"),
+                        Text::new(tr!("settings.about.subtitle")).class("settings-page-subtitle"),
 
                         identity_card(),
 
-                        section("Авторы", vec![
-                            text_row(MI_PERSON, "Разработка", env!("CARGO_PKG_AUTHORS")),
+                        section(tr!("settings.about.section.authors"), vec![
+                            text_row(MI_PERSON, tr!("settings.about.development"), env!("CARGO_PKG_AUTHORS")),
                         ]),
 
-                        section("Лицензия", vec![
-                            text_row(MI_DESCRIPTION, "Условия распространения", env!("CARGO_PKG_LICENSE")),
-                            text_row(MI_INFO, "Copyright", "© 2024-2026 Synthos"),
+                        section(tr!("settings.about.section.license"), vec![
+                            text_row(MI_DESCRIPTION, tr!("settings.about.license_terms"), env!("CARGO_PKG_LICENSE")),
+                            text_row(MI_INFO, tr!("settings.about.copyright"), "© 2024-2026 Synthos"),
                         ]),
 
-                        section("Ссылки", vec![
-                            link_row(MI_CODE, "Исходный код", "https://github.com/vitamindb/synthos"),
-                            link_row(MI_BOOK, "Лицензия Apache-2.0", "https://www.apache.org/licenses/LICENSE-2.0"),
-                            link_row(MI_BOOK, "Лицензия MIT", "https://opensource.org/licenses/MIT"),
+                        section(tr!("settings.about.section.links"), vec![
+                            link_row(MI_CODE, tr!("settings.about.source_code"), "https://github.com/vitamindb/synthos"),
+                            link_row(MI_BOOK, tr!("settings.about.license_apache"), "https://www.apache.org/licenses/LICENSE-2.0"),
+                            link_row(MI_BOOK, tr!("settings.about.license_mit"), "https://opensource.org/licenses/MIT"),
                         ]),
                     ]
                 ]
@@ -49,15 +49,15 @@ fn identity_card() -> impl Widget {
             DecoratedBox::new().class("grow").child(mgui! {
                 Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
                     Text::new("Synthos").class("about-identity-name"),
-                    Text::new(format!("Версия {}", env!("CARGO_PKG_VERSION"))).class("about-identity-version"),
-                    Text::new("Локальный AI-студио на нативном движке synaptix").class("about-identity-tagline"),
+                    Text::new(tr!("settings.about.version", version = env!("CARGO_PKG_VERSION"))).class("about-identity-version"),
+                    Text::new(tr!("settings.about.tagline")).class("about-identity-tagline"),
                 ]
             }),
         ]
     })
 }
 
-fn section(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
+fn section(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> impl Widget {
     let card = DecoratedBox::new().class("settings-card").child(
         Column::new()
             .gap(0.0)
@@ -68,13 +68,13 @@ fn section(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
     Column::new()
         .gap(12.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new(title).class("settings-section-title"))
+        .child(Text::new(title.into()).class("settings-section-title"))
         .child(card)
 }
 
 fn row_frame(
     icon: &'static str,
-    title: &'static str,
+    title: impl Into<String>,
     value: String,
     trailing: Option<Box<dyn Widget>>,
 ) -> Box<dyn Widget> {
@@ -91,7 +91,7 @@ fn row_frame(
                 Column::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Start)
-                    .child(Text::new(title).class("settings-row-title"))
+                    .child(Text::new(title.into()).class("settings-row-title"))
                     .child(Text::new(value).class("settings-row-desc")),
             ),
         );
@@ -111,11 +111,11 @@ fn row_frame(
     )
 }
 
-fn text_row(icon: &'static str, title: &'static str, value: impl Into<String>) -> Box<dyn Widget> {
+fn text_row(icon: &'static str, title: impl Into<String>, value: impl Into<String>) -> Box<dyn Widget> {
     row_frame(icon, title, value.into(), None)
 }
 
-fn link_row(icon: &'static str, title: &'static str, url: &'static str) -> Box<dyn Widget> {
+fn link_row(icon: &'static str, title: impl Into<String>, url: &'static str) -> Box<dyn Widget> {
     let trailing: Box<dyn Widget> = Box::new(
         GestureDetector::new()
             .on_click(move || {

@@ -79,11 +79,14 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((running, error)) = snapshot else {
-        return Box::new(Text::new("LtxUpscale: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxUpscale"))
+                .class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![field_row(
-        "Статус",
+        &tr!("nodes.common.status"),
         status_row(running, error, loaded_name, "Upscale ×2…", "ltx-node-running"),
     )];
     Box::new(
@@ -112,15 +115,15 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     let Some(latent) = current_input_video_latent(ctx, node.id, "video_latent") else {
-        error.set(Some("Подключите video_latent от Sampler Stage1".into()));
+        error.set(Some(tr!("node.ltx_upscale.err.connect_video_latent_stage1")));
         return;
     };
     if handle.upscaler_path.is_none() {
-        error.set(Some("В Checkpoint-ноде не выбран spatial-upscaler".into()));
+        error.set(Some(tr!("node.ltx_upscale.err.no_upscaler")));
         return;
     }
     if running.get_untracked() {
@@ -154,7 +157,7 @@ fn worker(handle: &LtxModelHandle, latent: &LtxVideoLatent) -> std::result::Resu
     let up_path = handle
         .upscaler_path
         .as_ref()
-        .ok_or("upscaler_path пуст")?;
+        .ok_or_else(|| tr!("node.ltx_upscale.err.upscaler_path_empty"))?;
     let ckpt = shared::load_ckpt(handle)?;
     let ckpt_gpu = ckpt.view_on(dev);
     let mean = ckpt_gpu

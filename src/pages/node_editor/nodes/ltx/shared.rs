@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
 use syngui::core::sync::Mutex;
+use syngui::tr;
 use synaptix_core::device::Device;
 use synaptix_core::dtype::DType;
 use synaptix_core::precision::PrecisionConfig;
@@ -351,7 +352,7 @@ pub fn load_video_frames(
         .args(["-vf", &format!("scale={pw}:{ph}")])
         .arg(dir.join("f%05d.png"))
         .status()
-        .map_err(|e| format!("ffmpeg запуск: {e}"))?;
+        .map_err(|e| tr!("node.ltx.shared.err_ffmpeg_run", error = e))?;
     if !status.success() {
         return Err(format!("ffmpeg decode {path:?}: {status}"));
     }
@@ -361,22 +362,23 @@ pub fn load_video_frames(
         if !p.exists() {
             break;
         }
-        let img = synaptix_io::image::load_image(&p, dev).map_err(|e| format!("кадр {i}: {e}"))?;
+        let img = synaptix_io::image::load_image(&p, dev)
+            .map_err(|e| tr!("node.ltx.shared.err_frame", frame = i, error = e))?;
         let fr = img
             .contiguous()
             .and_then(|t| t.affine(2.0, -1.0))
             .and_then(|t| t.contiguous())
             .and_then(|t| t.reshape(vec![1, 3, 1, ph, pw]))
-            .map_err(|e| format!("кадр {i} prep: {e}"))?;
+            .map_err(|e| tr!("node.ltx.shared.err_frame_prep", frame = i, error = e))?;
         frames.push(fr);
     }
     if frames.is_empty() {
-        return Err("видео не дало кадров".into());
+        return Err(tr!("node.ltx.shared.err_no_frames"));
     }
     let refs: Vec<&synaptix_core::tensor::Tensor> = frames.iter().collect();
     synaptix_core::tensor::Tensor::cat(&refs, 2)
         .and_then(|t| t.contiguous())
-        .map_err(|e| format!("cat кадров: {e}"))
+        .map_err(|e| tr!("node.ltx.shared.err_cat_frames", error = e))
 }
 
 /// ref-видео `[1,3,F,Hr,Wr]` (уже [−1,1] от [`load_video_frames`]) →
@@ -407,7 +409,7 @@ pub fn load_audio_16k(path: &std::path::Path) -> Result<Vec<f32>, String> {
         .arg(path)
         .args(["-ar", "16000", "-ac", "1", "-f", "f32le", "-"])
         .output()
-        .map_err(|e| format!("ffmpeg запуск: {e}"))?;
+        .map_err(|e| tr!("node.ltx.shared.err_ffmpeg_run", error = e))?;
     if !out.status.success() {
         return Err(format!("ffmpeg audio decode {path:?}: {}", out.status));
     }
@@ -474,7 +476,7 @@ pub fn load_upsampler(
     let up_path = handle
         .upscaler_path
         .as_ref()
-        .ok_or("в Checkpoint-ноде не выбран spatial-upscaler")?;
+        .ok_or_else(|| tr!("node.ltx.shared.err_no_upscaler"))?;
     let dev = device_from_idx(handle.device_idx);
     let ckpt = load_ckpt(handle)?;
     let ckpt_gpu = ckpt.view_on(dev);
@@ -503,13 +505,13 @@ pub fn apply_canny_frames(
             .and_then(|t| t.contiguous())
             .and_then(|t| t.reshape(vec![3, h, w]))
             .and_then(|t| t.affine(0.5, 0.5))
-            .map_err(|e| format!("canny кадр {fi}: {e}"))?;
+            .map_err(|e| tr!("node.ltx.shared.err_canny_frame", frame = fi, error = e))?;
         let edges = synaptix_io::image::canny_rgb(&fr, low, high).map_err(|e| format!("canny: {e}"))?;
         out.push(
             edges
                 .affine(2.0, -1.0)
                 .and_then(|t| t.reshape(vec![1, 3, 1, h, w]))
-                .map_err(|e| format!("canny кадр {fi} prep: {e}"))?,
+                .map_err(|e| tr!("node.ltx.shared.err_canny_frame_prep", frame = fi, error = e))?,
         );
     }
     let refs: Vec<&synaptix_core::tensor::Tensor> = out.iter().collect();
@@ -553,12 +555,12 @@ pub fn apply_depth_frames(
             .and_then(|t| t.contiguous())
             .and_then(|t| t.reshape(vec![3, h, w]))
             .and_then(|t| t.affine(0.5, 0.5))
-            .map_err(|e| format!("depth кадр {fi}: {e}"))?;
+            .map_err(|e| tr!("node.ltx.shared.err_depth_frame", frame = fi, error = e))?;
         let d = m.depth_rgb(&fr).map_err(|e| format!("depth: {e}"))?;
         out.push(
             d.affine(2.0, -1.0)
                 .and_then(|t| t.reshape(vec![1, 3, 1, h, w]))
-                .map_err(|e| format!("depth кадр {fi} prep: {e}"))?,
+                .map_err(|e| tr!("node.ltx.shared.err_depth_frame_prep", frame = fi, error = e))?,
         );
     }
     let refs: Vec<&synaptix_core::tensor::Tensor> = out.iter().collect();

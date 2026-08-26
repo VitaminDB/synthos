@@ -76,19 +76,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some((width, height, duration_seconds, fps_idx, seed, running, error, progress_pct, cancel)) =
         snapshot
     else {
-        return Box::new(Text::new("LtxA2V: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxA2V")).class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row("Ширина", make_int_slider_row(width, 256, 1920, 32)),
-        field_row("Высота", make_int_slider_row(height, 256, 1088, 32)),
-        field_row("Длительность, с", make_slider_row(duration_seconds, 1.0, 20.0, 0.5, 1)),
+        field_row(&tr!("nodes.common.field_width"), make_int_slider_row(width, 256, 1920, 32)),
+        field_row(&tr!("nodes.common.field_height"), make_int_slider_row(height, 256, 1088, 32)),
+        field_row(&tr!("nodes.common.field_duration_seconds"), make_slider_row(duration_seconds, 1.0, 20.0, 0.5, 1)),
         field_row("FPS", make_fps_dropdown(fps_idx)),
         field_row("Seed", make_seed_slider(seed)),
-        field_row("Прогресс", progress_row(running, progress_pct)),
-        field_row("Отмена", super::cancel_button(running, cancel)),
+        field_row(&tr!("nodes.common.progress"), progress_row(running, progress_pct)),
+        field_row(&tr!("app.cancel"), super::cancel_button(running, cancel)),
         field_row(
-            "Статус",
+            &tr!("nodes.common.status"),
             status_row(running, error, loaded_name, "A2V denoise…", "ltx-node-running"),
         ),
     ];
@@ -121,23 +123,23 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     if handle.upscaler_path.is_none() {
-        error.set(Some("A2V требует spatial-upscaler в Checkpoint-ноде".into()));
+        error.set(Some(tr!("node.ltx_a2v.err.requires_upscaler")));
         return;
     }
     let Some(v_enc) = current_input_video_encoding(ctx, node.id, "video_encoding") else {
-        error.set(Some("Подключите video_encoding от Text Encoder".into()));
+        error.set(Some(tr!("node.ltx.common.connect_video_encoding")));
         return;
     };
     let Some(a_enc) = current_input_audio_encoding(ctx, node.id, "audio_encoding") else {
-        error.set(Some("Подключите audio_encoding от Text Encoder".into()));
+        error.set(Some(tr!("node.ltx.common.connect_audio_encoding")));
         return;
     };
     let Some(audio_path) = current_input_audio_input(ctx, node.id, "audio") else {
-        error.set(Some("Подключите LTX Audio Input на вход audio".into()));
+        error.set(Some(tr!("node.ltx.common.connect_audio_input_audio")));
         return;
     };
     if running.get_untracked() {
@@ -202,7 +204,7 @@ fn worker(
     let dit = shared::load_avdit(handle, tv_max)?;
     let seed_opt = if seed == 0 { None } else { Some(seed) };
     let cancelled = |e: synaptix_video_ltx23::LtxError| match e {
-        synaptix_video_ltx23::LtxError::Cancelled => "Отменено".to_string(),
+        synaptix_video_ltx23::LtxError::Cancelled => tr!("node.ltx.common.cancelled"),
         other => format!("a2v denoise: {other}"),
     };
 

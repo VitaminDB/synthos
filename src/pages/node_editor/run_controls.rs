@@ -679,20 +679,18 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
 
         let app_run = app.clone();
         let run_btn = ToolButton::new(MI_PLAY_ARROW)
-            .tooltip("Run")
+            .tooltip(tr!("nodes.run.start"))
             .on_click(move || {
                 info!(target: RUN_LOG, "run: нажат Run");
                 match start_run(editor_ctx, None) {
                     Ok(started) => {
-                        app_run.notifications.info(format!("Запущено нод: {started}"));
+                        app_run.notifications.info(tr!("nodes.run.started_notice", count = started));
                     }
                     Err(StartRunError::CycleInGraph) => {
-                        app_run.notifications.info(
-                            "Граф содержит цикл — нет нод, готовых к запуску",
-                        );
+                        app_run.notifications.info(tr!("nodes.run.cycle_error"));
                     }
                     Err(StartRunError::NoRunnableNodes) => {
-                        app_run.notifications.info("Нет нод с явным запуском");
+                        app_run.notifications.info(tr!("nodes.run.no_runnable"));
                     }
                 }
             })
@@ -700,23 +698,23 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
 
         let app_pause = app.clone();
         let pause_btn = ToolButton::new(MI_PAUSE)
-            .tooltip("Pause")
+            .tooltip(tr!("nodes.run.pause"))
             .on_click(move || {
                 info!(target: RUN_LOG, "run: нажат Pause");
                 ws.run_state.set(RunState::Paused);
-                app_pause.notifications.info("Paused");
+                app_pause.notifications.info(tr!("nodes.run.paused_notice"));
             })
             .class(button_class("ne-run-btn ne-run-btn--pause", state, RunState::Paused));
 
         let app_stop = app.clone();
         let stop_btn = ToolButton::new(MI_STOP)
-            .tooltip("Stop")
+            .tooltip(tr!("nodes.run.stop"))
             .on_click(move || {
                 info!(target: RUN_LOG, "run: нажат Stop");
                 // Уже запущенные worker'ы доработают (кнопка исторически не
                 // взводит cancel), но новых fire'ов больше не произойдёт.
                 stop_run(false);
-                app_stop.notifications.info("Stopped");
+                app_stop.notifications.info(tr!("nodes.run.stopped_notice"));
             })
             .class(button_class("ne-run-btn ne-run-btn--stop", state, RunState::Stopped));
 

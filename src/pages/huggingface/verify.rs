@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use syngui::async_runtime::{run_on_main_thread, spawn};
+use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
 
 use super::state::{HuggingFaceCtx, VerifyStatus};
@@ -71,7 +72,7 @@ pub fn verify_file(ctx: HuggingFaceCtx, notif: NotificationCtx, key: String) {
                 match (res, &expected) {
                     (Err(msg), _) => {
                         d.verify = VerifyStatus::Error(msg.clone());
-                        notif.error(format!("Не удалось проверить {fname_show}: {msg}"));
+                        notif.error(tr!("hf.error.verify_failed", name = fname_show, error = msg));
                     }
                     (Ok(actual), Some(exp)) => {
                         if actual.eq_ignore_ascii_case(exp) {
@@ -84,8 +85,9 @@ pub fn verify_file(ctx: HuggingFaceCtx, notif: NotificationCtx, key: String) {
                                 actual: actual.clone(),
                                 expected: exp.clone(),
                             };
-                            notif.error(format!(
-                                "SHA-256 не совпадает у {fname_show}.\nОжидалось: {exp}\nПолучено:  {actual}"
+                            notif.error(tr!(
+                                "hf.error.verify_mismatch",
+                                name = fname_show, expected = exp, actual = actual
                             ));
                         }
                     }

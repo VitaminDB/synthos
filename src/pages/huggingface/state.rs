@@ -37,12 +37,12 @@ impl SortMode {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            SortMode::Trending => "Тренды",
-            SortMode::MostDownloads => "Загрузки",
-            SortMode::MostLikes => "Звёзды",
-            SortMode::RecentlyUpdated => "Обновлены",
+            SortMode::Trending => tr!("hf.sort.trending"),
+            SortMode::MostDownloads => tr!("hf.sort.most_downloads"),
+            SortMode::MostLikes => tr!("hf.sort.most_likes"),
+            SortMode::RecentlyUpdated => tr!("hf.sort.recently_updated"),
         }
     }
 }

@@ -130,7 +130,7 @@ pub fn fmt_elapsed(ms: u64) -> String {
     let secs = ms / 1000;
     let tenths = (ms % 1000) / 100;
     if secs < 60 {
-        format!("{secs}.{tenths} с")
+        format!("{secs}.{tenths} {}", tr!("nodes.unit.seconds"))
     } else if secs < 3600 {
         format!("{}:{:02}.{}", secs / 60, secs % 60, tenths)
     } else {
@@ -271,10 +271,11 @@ mod tests {
 
     #[test]
     fn fmt_seconds_with_tenths() {
-        assert_eq!(fmt_elapsed(0), "0.0 с");
-        assert_eq!(fmt_elapsed(840), "0.8 с");
-        assert_eq!(fmt_elapsed(12_400), "12.4 с");
-        assert_eq!(fmt_elapsed(59_990), "59.9 с");
+        let unit = tr!("nodes.unit.seconds");
+        assert_eq!(fmt_elapsed(0), format!("0.0 {unit}"));
+        assert_eq!(fmt_elapsed(840), format!("0.8 {unit}"));
+        assert_eq!(fmt_elapsed(12_400), format!("12.4 {unit}"));
+        assert_eq!(fmt_elapsed(59_990), format!("59.9 {unit}"));
     }
 
     #[test]

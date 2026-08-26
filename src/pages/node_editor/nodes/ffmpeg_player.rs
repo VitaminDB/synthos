@@ -169,18 +169,18 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let runtime = node.runtime.clone();
     let h = match runtime.lock().ok().as_deref().and_then(handles_from) {
         Some(h) => h,
-        None => return error_widget("FfmpegPlayer: некорректный runtime"),
+        None => return error_widget(tr!("nodes.common.invalid_runtime", name = "FfmpegPlayer")),
     };
 
     let _ = registry::meta(node.kind);
 
     let h_pick = h.clone();
     let path_picker = ToolButton::new(MI_FOLDER_OPEN)
-        .tooltip("Выбрать видео-файл")
+        .tooltip(tr!("node.ffmpeg_player.tooltip.pick_video"))
         .on_click(move || {
             let path = rfd::FileDialog::new()
                 .add_filter(
-                    "Видео",
+                    tr!("node.ffmpeg_player.filter.video"),
                     &["mp4", "mkv", "webm", "mov", "m4v", "avi", "flv", "ts", "wmv"],
                 )
                 .pick_file();
@@ -205,9 +205,9 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         let err = load_error_sig.get();
         let mem = frames_in_label.lock().map(|g| g.is_some()).unwrap_or(false);
         let widget: Box<dyn Widget> = match (mem, p, err) {
-            (_, _, Some(e)) => Box::new(Text::new(format!("Ошибка: {e}")).class("audio-node-error")),
+            (_, _, Some(e)) => Box::new(Text::new(tr!("nodes.common.error", error = e)).class("audio-node-error")),
             (true, _, _) => {
-                Box::new(Text::new("Из памяти").class("audio-node-filename"))
+                Box::new(Text::new(tr!("node.ffmpeg_player.status.from_memory")).class("audio-node-filename"))
             }
             (false, Some(path), _) => Box::new(
                 Text::new(
@@ -217,7 +217,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 )
                 .class("audio-node-filename"),
             ),
-            _ => Box::new(Text::new("Файл не выбран").class("audio-node-empty")),
+            _ => Box::new(Text::new(tr!("nodes.common.no_file_selected")).class("audio-node-empty")),
         };
         vec![widget]
     });
@@ -271,7 +271,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 DecoratedBox::new()
                     .child(
                         Center::new().child(
-                            Text::new(format!("{} нет видео", MI_MOVIE))
+                            Text::new(format!("{} {}", MI_MOVIE, tr!("node.ffmpeg_player.canvas.no_video")))
                                 .class("ffmpeg-player-empty-label"),
                         ),
                     )
@@ -293,7 +293,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         };
         let h_btn = h_play.clone();
         let btn = ToolButton::new(icon)
-            .tooltip(if playing && !paused { "Пауза" } else { "Воспроизвести" })
+            .tooltip(if playing && !paused { tr!("nodes.transport.pause") } else { tr!("nodes.transport.play") })
             .on_click(move || {
                 toggle_play_pause(&h_btn);
             })
@@ -303,7 +303,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 
     let h_stop = h.clone();
     let stop_btn = ToolButton::new(MI_STOP)
-        .tooltip("Остановить")
+        .tooltip(tr!("nodes.common.stop"))
         .on_click(move || {
             stop(&h_stop);
         })
@@ -417,7 +417,7 @@ pub fn busy_signal(_node: &NodeInstance) -> Option<RwSignal<bool>> {
     None
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("ffmpeg-player-error")))
 }
 
@@ -501,7 +501,7 @@ fn toggle_play_pause(h: &FfmpegPlayerHandles) {
     }
 
     let Some(path) = h.current_path.get_untracked() else {
-        h.load_error.set(Some("Файл не выбран".to_string()));
+        h.load_error.set(Some(tr!("nodes.common.no_file_selected")));
         return;
     };
     let path_str = path.to_string_lossy().to_string();

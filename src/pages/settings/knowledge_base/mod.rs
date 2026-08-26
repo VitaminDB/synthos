@@ -50,14 +50,9 @@ fn empty_state() -> impl Widget {
                 DecoratedBox::new().class("models-empty-bubble") => [
                     Center::new().child(Icon::new(MI_MENU_BOOK).class("models-empty-icon")),
                 ],
-                Text::new("Базы знаний").class("models-empty-title"),
+                Text::new(tr!("settings.knowledge_base.empty.title")).class("models-empty-title"),
                 Padding::symmetric(32.0, 0.0).child(
-                    Text::new(
-                        "Создайте коллекцию документов справа («+»). \
-                         Затем добавьте файлы / папки / PDF / URL — \
-                         они будут проиндексированы локально и доступны \
-                         модели через инструмент kb_search."
-                    ).class("models-empty-text"),
+                    Text::new(tr!("settings.knowledge_base.empty.text")).class("models-empty-text"),
                 ),
             ]
         ]
@@ -97,9 +92,9 @@ fn header_card(meta: &CollectionMeta) -> impl Widget {
                         ],
                         DecoratedBox::new().class("grow") => [
                             Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                                Text::new("Имя коллекции").class("models-field-label"),
+                                Text::new(tr!("settings.knowledge_base.name")).class("models-field-label"),
                                 TextField::with_text(name_initial)
-                                    .placeholder("Например: «Документы проекта»")
+                                    .placeholder(tr!("settings.knowledge_base.name.placeholder"))
                                     .on_change(move |s| {
                                         let name = s.to_string();
                                         let id = id.clone();
@@ -120,9 +115,9 @@ fn header_card(meta: &CollectionMeta) -> impl Widget {
                             ]
                         ]
                     ],
-                    Text::new(format!(
-                        "Модель: {} ({} dim) · документов: {} · чанков: {}",
-                        model, dim, docs, chunks
+                    Text::new(tr!(
+                        "settings.knowledge_base.meta_line",
+                        model = model, dim = dim, docs = docs, chunks = chunks
                     )).class("kb-meta-line"),
                 ]
             ]
@@ -135,17 +130,21 @@ fn embedder_card() -> impl Widget {
         DecoratedBox::new().class("models-card") => [
             Padding::all(20.0) => [
                 Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Эмбеддер").class("models-section-title"),
+                    Text::new(tr!("settings.knowledge_base.embedder")).class("models-section-title"),
                     Reactive::new(move || {
                         let ctx = use_context::<AppCtx>();
                         let loaded = ctx.kb.get_embedder().is_some();
                         let label: Box<dyn Widget> = Box::new(
-                            Text::new(if loaded { "✓ Загружен" } else { "Не загружен" })
+                            Text::new(if loaded {
+                                tr!("settings.knowledge_base.embedder.loaded")
+                            } else {
+                                tr!("settings.knowledge_base.embedder.not_loaded")
+                            })
                                 .class("kb-embedder-status"),
                         );
                         let action: Box<dyn Widget> = if loaded {
                             Box::new(
-                                Button::new("Выгрузить")
+                                Button::new(tr!("settings.knowledge_base.embedder.unload"))
                                     .class("kb-embedder-btn")
                                     .on_click(|| {
                                         let app = use_context::<AppCtx>();
@@ -154,7 +153,7 @@ fn embedder_card() -> impl Widget {
                             )
                         } else {
                             Box::new(
-                                Button::new("Загрузить эмбеддер")
+                                Button::new(tr!("settings.knowledge_base.embedder.load"))
                                     .class("kb-embedder-btn primary")
                                     .on_click(|| {
                                         let app = use_context::<AppCtx>();
@@ -180,9 +179,9 @@ fn embedder_card() -> impl Widget {
                                 .children(vec![label, Box::new(DecoratedBox::new().class("grow")), action])
                         ) as Box<dyn Widget>]
                     }),
-                    Text::new(format!(
-                        "Каталог модели: {} (Settings → kb_dir)",
-                        crate::config::AppConfig::load().kb.embedder_model_path,
+                    Text::new(tr!(
+                        "settings.knowledge_base.embedder.path_hint",
+                        path = crate::config::AppConfig::load().kb.embedder_model_path,
                     )).class("kb-embedder-hint"),
                 ]
             ]
@@ -198,22 +197,19 @@ fn sources_card(collection_id: String) -> impl Widget {
         DecoratedBox::new().class("models-card") => [
             Padding::all(20.0) => [
                 Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Добавить источники").class("models-section-title"),
+                    Text::new(tr!("settings.knowledge_base.sources")).class("models-section-title"),
                     Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                        Button::new("+ Файл")
+                        Button::new(tr!("settings.knowledge_base.sources.file"))
                             .class("kb-source-btn")
                             .on_click(move || pick_files_async(cid_file.clone())),
-                        Button::new("+ Папка")
+                        Button::new(tr!("settings.knowledge_base.sources.folder"))
                             .class("kb-source-btn")
                             .on_click(move || pick_folder_async(cid_folder.clone())),
-                        Button::new("+ URL")
+                        Button::new(tr!("settings.knowledge_base.sources.url"))
                             .class("kb-source-btn")
                             .on_click(move || prompt_url_and_ingest(cid_url.clone())),
                     ],
-                    Text::new(
-                        "Поддерживаются: .md / .txt / .html / .pdf и любые \
-                         текстовые форматы кода. Папки сканируются с учётом .gitignore."
-                    ).class("kb-embedder-hint"),
+                    Text::new(tr!("settings.knowledge_base.sources.hint")).class("kb-embedder-hint"),
                 ]
             ]
         ]
@@ -236,15 +232,15 @@ fn progress_card() -> impl Widget {
                 let cur = p
                     .current_file
                     .clone()
-                    .unwrap_or_else(|| "(подготовка)".to_string());
+                    .unwrap_or_else(|| tr!("settings.knowledge_base.progress.preparing"));
                 Box::new(mgui! {
                     DecoratedBox::new().class("models-card kb-progress-card") => [
                         Padding::all(20.0) => [
                             Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                                Text::new(format!("Индексация: {} / {}", p.current, p.total)).class("models-section-title"),
+                                Text::new(tr!("settings.knowledge_base.progress.title", current = p.current, total = p.total)).class("models-section-title"),
                                 ProgressBar::new().value(pct).class("kb-progress-bar"),
-                                Text::new(format!("Стадия: {stage} — {cur}")).class("kb-progress-line"),
-                                Button::new("Отменить")
+                                Text::new(tr!("settings.knowledge_base.progress.stage", stage = stage, file = cur)).class("kb-progress-line"),
+                                Button::new(tr!("settings.knowledge_base.progress.cancel"))
                                     .class("kb-source-btn")
                                     .on_click(|| {
                                         let app = use_context::<AppCtx>();
@@ -272,13 +268,13 @@ fn documents_card(collection_id: String) -> impl Widget {
             .and_then(|s| s.list_documents().ok())
             .unwrap_or_default();
         let header: Box<dyn Widget> = Box::new(
-            Text::new(format!("Документы ({})", docs.len()))
+            Text::new(tr!("settings.knowledge_base.documents", n = docs.len()))
                 .class("models-section-title"),
         );
         let mut children: Vec<Box<dyn Widget>> = vec![header];
         if docs.is_empty() {
             children.push(Box::new(
-                Text::new("(пусто — добавь источники сверху)").class("kb-embedder-hint"),
+                Text::new(tr!("settings.knowledge_base.documents.empty")).class("kb-embedder-hint"),
             ));
         } else {
             for d in docs.into_iter().take(50) {
@@ -313,8 +309,8 @@ fn documents_card(collection_id: String) -> impl Widget {
 fn pick_files_async(collection_id: String) {
     syngui::async_runtime::spawn(async move {
         let result = AsyncFileDialog::new()
-            .add_filter("Документы", &["md", "markdown", "txt", "html", "htm", "pdf"])
-            .set_title("Выберите файлы для индексации")
+            .add_filter(tr!("settings.knowledge_base.pick_files.filter"), &["md", "markdown", "txt", "html", "htm", "pdf"])
+            .set_title(tr!("settings.knowledge_base.pick_files.title"))
             .pick_files()
             .await;
         let Some(files) = result else { return };
@@ -338,7 +334,7 @@ fn pick_files_async(collection_id: String) {
 fn pick_folder_async(collection_id: String) {
     syngui::async_runtime::spawn(async move {
         let result = AsyncFileDialog::new()
-            .set_title("Выберите папку для индексации")
+            .set_title(tr!("settings.knowledge_base.pick_folder.title"))
             .pick_folder()
             .await;
         let Some(folder) = result else { return };

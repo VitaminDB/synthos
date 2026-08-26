@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
+use syngui::{tr, trn};
 use synaptix_bundle::{
     Bundle, BundleBuilder, BundleEditor, BundleMeta, ChunkStatus, ChunkType, FileTag,
     ProgressEvent,
@@ -178,14 +179,14 @@ pub fn open_async(ctx: SynExplorerCtx, path: PathBuf) {
                     install_dirty_tracker(open_bundle);
                     ctx.active_bundle.set_always(Some(open_bundle));
                     ctx.load_state.set(LoadState::Idle);
-                    notify_info_main("Пакет открыт");
+                    notify_info_main(tr!("explorer.notify.bundle_opened"));
                 });
             }
             Err(e) => {
                 let msg = e.to_string();
                 run_on_main_thread(move || {
                     ctx.load_state.set(LoadState::Idle);
-                    ctx.show_error("Не удалось открыть пакет", msg);
+                    ctx.show_error(tr!("explorer.error.open_failed.title"), msg);
                 });
             }
         }
@@ -227,7 +228,7 @@ pub fn save_async(ctx: SynExplorerCtx) {
         return;
     };
     if !active.dirty.get_untracked() {
-        notify_info_main("Нет несохранённых изменений");
+        notify_info_main(tr!("explorer.notify.no_unsaved_changes"));
         return;
     }
     let path = active.path.get_untracked();
@@ -263,14 +264,14 @@ pub fn save_async(ctx: SynExplorerCtx) {
                             active.preview_cache.update(|m| m.clear());
                             active.reload_gen.update(|n| *n = n.wrapping_add(1));
                             ctx.load_state.set(LoadState::Idle);
-                            notify_info_main("Сохранено");
+                            notify_info_main(tr!("explorer.notify.saved"));
                         });
                     }
                     Err(e) => {
                         let msg = e.to_string();
                         run_on_main_thread(move || {
                             ctx.load_state.set(LoadState::Idle);
-                            ctx.show_error("Reload после save не удался", msg);
+                            ctx.show_error(tr!("explorer.error.reload_after_save.title"), msg);
                         });
                     }
                 }
@@ -278,7 +279,7 @@ pub fn save_async(ctx: SynExplorerCtx) {
             Err(msg) => {
                 run_on_main_thread(move || {
                     ctx.load_state.set(LoadState::Idle);
-                    ctx.show_error("Сохранение не удалось", msg);
+                    ctx.show_error(tr!("explorer.error.save_failed.title"), msg);
                 });
             }
         }
@@ -334,15 +335,15 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
     let delete_sources = form.delete_sources.get_untracked();
 
     if id.is_empty() {
-        ctx.show_error("Не хватает данных", "Поле «id» обязательно.");
+        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.id_required"));
         return;
     }
     if version.is_empty() {
-        ctx.show_error("Не хватает данных", "Поле «version» обязательно.");
+        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.version_required"));
         return;
     }
     let Some(out) = out else {
-        ctx.show_error("Не хватает данных", "Выберите целевой путь `.syn`.");
+        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.out_path_required"));
         return;
     };
 
@@ -350,8 +351,8 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
     let components_raw = form.components.get_untracked();
     if components_raw.is_empty() {
         ctx.show_error(
-            "Не хватает данных",
-            "Добавьте хотя бы один компонент (папка с safetensors).",
+            tr!("explorer.error.missing_data.title"),
+            tr!("explorer.error.missing_data.no_components"),
         );
         return;
     }
@@ -362,17 +363,15 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
         let prefix = c.prefix.get_untracked().trim().to_string();
         if name.is_empty() {
             ctx.show_error(
-                "Не хватает данных",
-                "У каждого компонента должно быть непустое имя.",
+                tr!("explorer.error.missing_data.title"),
+                tr!("explorer.error.missing_data.component_name_required"),
             );
             return;
         }
         let Some(dir) = dir else {
             ctx.show_error(
-                "Не хватает данных",
-                format!(
-                    "Для компонента «{name}» не выбрана папка с safetensors."
-                ),
+                tr!("explorer.error.missing_data.title"),
+                tr!("explorer.error.missing_data.component_dir_required", name = name),
             );
             return;
         };
@@ -387,7 +386,7 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
     if let Some(err) = preflight_check_space(&components, &target_dir) {
-        ctx.show_error("Недостаточно места", err);
+        ctx.show_error(tr!("explorer.error.insufficient_space.title"), err);
         return;
     }
 
@@ -426,7 +425,7 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
             Err(e) => {
                 run_on_main_thread(move || {
                     ctx.load_state.set(LoadState::Idle);
-                    ctx.show_error("Создание пакета не удалось", e);
+                    ctx.show_error(tr!("explorer.error.create_failed.title"), e);
                 });
             }
         }
@@ -484,15 +483,13 @@ fn preflight_check_space(
         .saturating_add(64 * 1024 * 1024);
     let avail = synaptix_bundle::available_space(target_dir).unwrap_or(u64::MAX);
     if avail < required {
-        return Some(format!(
-            "На разделе {} доступно {:.2} ГБ, требуется примерно {:.2} ГБ \
-             (объём данных {:.2} ГБ + ещё ~{:.2} ГБ на промежуточный stage \
-             крупнейшего компонента).",
-            target_dir.display(),
-            avail as f64 / (1024.0 * 1024.0 * 1024.0),
-            required as f64 / (1024.0 * 1024.0 * 1024.0),
-            total as f64 / (1024.0 * 1024.0 * 1024.0),
-            max_comp as f64 / (1024.0 * 1024.0 * 1024.0),
+        return Some(tr!(
+            "explorer.error.insufficient_space.detail",
+            path = target_dir.display(),
+            avail = format!("{:.2}", avail as f64 / (1024.0 * 1024.0 * 1024.0)),
+            required = format!("{:.2}", required as f64 / (1024.0 * 1024.0 * 1024.0)),
+            total = format!("{:.2}", total as f64 / (1024.0 * 1024.0 * 1024.0)),
+            max_comp = format!("{:.2}", max_comp as f64 / (1024.0 * 1024.0 * 1024.0)),
         ));
     }
     None
@@ -523,15 +520,15 @@ fn make_progress_cb(
                     g.items_done = 0;
                     g.finalizing = false;
                     g.current_item = String::new();
-                    g.stage_label = format!("Подготовка ({total_items} этапов)");
+                    g.stage_label = trn!("explorer.progress.preparing", total_items);
                     force = true;
                 }
                 ProgressEvent::ItemStart { index, name, bytes: _ } => {
                     g.current_item = name.clone();
                     g.items_done = index + 1;
-                    g.stage_label = format!(
-                        "Сжатие {} из {} · {}",
-                        g.items_done, g.items_total, name
+                    g.stage_label = tr!(
+                        "explorer.progress.compressing",
+                        done = g.items_done, total = g.items_total, name = name
                     );
                     force = true;
                 }
@@ -543,12 +540,12 @@ fn make_progress_cb(
                 }
                 ProgressEvent::Finalizing => {
                     g.finalizing = true;
-                    g.stage_label = "Финализация (cdir + footer)…".to_string();
+                    g.stage_label = tr!("explorer.progress.finalizing");
                     force = true;
                 }
                 ProgressEvent::Done => {
                     g.bytes_done = g.bytes_total;
-                    g.stage_label = "Готово".to_string();
+                    g.stage_label = tr!("explorer.progress.done");
                     force = true;
                 }
             }
@@ -597,7 +594,7 @@ fn build_bundle(
     // нельзя (имена в bundle root конфликтуют).
     for (idx, (name, dir, prefix)) in components.iter().enumerate() {
         let paths = synaptix_bundle::resolve_safetensors_in_dir(dir)
-            .map_err(|e| format!("компонент «{name}»: {e}"))?;
+            .map_err(|e| format!("{}: {e}", tr!("explorer.error.component_prefix", name = name)))?;
         builder = builder.add_safetensors_component(name, paths, prefix.as_deref());
         // Aux-файлы первого компонента.
         if idx == 0 {

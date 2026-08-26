@@ -50,7 +50,7 @@ fn header() -> impl Widget {
                 let label = active
                     .as_ref()
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| String::from("Файл не выбран"));
+                    .unwrap_or_else(|| tr!("code.editor.no_file_selected"));
                 let dirty = active
                     .as_ref()
                     .map(|p| is_dirty(&contents, &disk, p))
@@ -95,7 +95,7 @@ fn header() -> impl Widget {
                             DecoratedBox::new().class(dirty_class),
                             DecoratedBox::new().class("grow"),
                             ToolButton::new(MI_WRAP_TEXT)
-                                .tooltip("Перенос строк (word wrap)")
+                                .tooltip(tr!("code.editor.wrap_tooltip"))
                                 .on_click(move || {
                                     session.soft_wrap.update(|b| *b = !*b);
                                     // Toggle также перерисовывает CodeEditor
@@ -106,7 +106,7 @@ fn header() -> impl Widget {
                                 })
                                 .class(wrap_class),
                             ToolButton::new(MI_HISTORY)
-                                .tooltip("История версий")
+                                .tooltip(tr!("code.history.title"))
                                 .on_click({
                                     let active = active.clone();
                                     move || {
@@ -118,7 +118,7 @@ fn header() -> impl Widget {
                                 })
                                 .class("code-editor-history-btn"),
                             ToolButton::new(MI_SAVE)
-                                .tooltip("Сохранить (на диск)")
+                                .tooltip(tr!("code.editor.save_tooltip"))
                                 .on_click(move || {
                                     let code = use_context::<CodeEditorCtx>();
                                     if let Some(s) = code.active_session_untracked() {
@@ -238,17 +238,17 @@ fn editor_widget(session: CodeSession, initial: String) -> Box<dyn Widget> {
     let menu = ContextMenu::new()
         .child(editor)
         .items(vec![
-            MenuItem::new("copy", "Копировать")
+            MenuItem::new("copy", tr!("app.copy"))
                 .icon(MI_CONTENT_COPY)
                 .shortcut("Ctrl+C"),
-            MenuItem::new("cut", "Вырезать")
+            MenuItem::new("cut", tr!("code.editor.menu.cut"))
                 .icon(MI_CONTENT_CUT)
                 .shortcut("Ctrl+X"),
-            MenuItem::new("paste", "Вставить")
+            MenuItem::new("paste", tr!("app.paste"))
                 .icon(MI_CONTENT_PASTE)
                 .shortcut("Ctrl+V"),
             MenuItem::separator(),
-            MenuItem::new("select_all", "Выделить всё")
+            MenuItem::new("select_all", tr!("code.editor.menu.select_all"))
                 .icon(MI_SELECT_ALL)
                 .shortcut("Ctrl+A"),
         ])
@@ -273,8 +273,8 @@ fn empty_state() -> impl Widget {
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_DESCRIPTION).class("code-editor-edit-empty-icon"),
-                Text::new("Откройте файл из дерева слева").class("code-editor-edit-empty-title"),
-                Text::new("Файл появится здесь и в правом сайдбаре").class("code-editor-edit-empty-hint"),
+                Text::new(tr!("code.editor.empty.title")).class("code-editor-edit-empty-title"),
+                Text::new(tr!("code.editor.empty.hint")).class("code-editor-edit-empty-hint"),
             ]
     })
 }

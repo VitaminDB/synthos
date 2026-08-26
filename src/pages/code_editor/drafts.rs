@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use syngui::tr;
 
 use super::state::CodeSession;
 
@@ -266,21 +267,21 @@ pub fn human_age(saved_at: u64) -> String {
     let now = now_secs();
     let age = now.saturating_sub(saved_at);
     if age < 10 {
-        return "только что".to_string();
+        return tr!("code.history.age.just_now");
     }
     if age < 60 {
-        return format!("{age} с назад");
+        return tr!("code.history.age.seconds_ago", n = age.to_string());
     }
     let mins = age / 60;
     if mins < 60 {
-        return format!("{mins} мин назад");
+        return tr!("code.history.age.minutes_ago", n = mins.to_string());
     }
     let hours = mins / 60;
     if hours < 24 {
-        return format!("{hours} ч назад");
+        return tr!("code.history.age.hours_ago", n = hours.to_string());
     }
     let days = hours / 24;
-    format!("{days} дн назад")
+    tr!("code.history.age.days_ago", n = days.to_string())
 }
 
 pub fn install_draft_autosave(session: CodeSession) {
@@ -341,9 +342,18 @@ mod tests {
     #[test]
     fn human_age_buckets() {
         let now = now_secs();
-        assert_eq!(human_age(now), "только что");
-        assert_eq!(human_age(now.saturating_sub(120)), "2 мин назад");
-        assert_eq!(human_age(now.saturating_sub(7200)), "2 ч назад");
-        assert_eq!(human_age(now.saturating_sub(172800)), "2 дн назад");
+        assert_eq!(human_age(now), tr!("code.history.age.just_now"));
+        assert_eq!(
+            human_age(now.saturating_sub(120)),
+            tr!("code.history.age.minutes_ago", n = "2")
+        );
+        assert_eq!(
+            human_age(now.saturating_sub(7200)),
+            tr!("code.history.age.hours_ago", n = "2")
+        );
+        assert_eq!(
+            human_age(now.saturating_sub(172800)),
+            tr!("code.history.age.days_ago", n = "2")
+        );
     }
 }

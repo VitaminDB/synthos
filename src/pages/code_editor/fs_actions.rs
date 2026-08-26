@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use syngui::context_provider::use_context;
+use syngui::tr;
 
 use super::fs_ops;
 use super::state::{self, CodeEditorCtx, CodeSession};
@@ -21,11 +22,11 @@ use super::state::{self, CodeEditorCtx, CodeSession};
 pub fn create_file(session: CodeSession, parent: PathBuf, name: String) {
     let name = name.trim();
     if name.is_empty() {
-        notice("Имя файла не может быть пустым");
+        notice(tr!("code.fs.error.empty_file_name"));
         return;
     }
     if name.contains('/') || name.contains('\\') {
-        notice("Имя не может содержать `/` или `\\`. Используйте «New folder» для создания вложенных каталогов.");
+        notice(tr!("code.fs.error.invalid_name_file"));
         return;
     }
     let target = parent.join(name);
@@ -37,7 +38,7 @@ pub fn create_file(session: CodeSession, parent: PathBuf, name: String) {
     }
     if let Err(e) = std::fs::write(&target, "") {
         eprintln!("[code-editor] create_file {:?}: {e}", target);
-        notice(format!("Не удалось создать файл: {e}"));
+        notice(tr!("code.fs.error.create_file_failed", error = e));
         return;
     }
     refresh_dir_in_tree(session, &parent);
@@ -48,21 +49,21 @@ pub fn create_file(session: CodeSession, parent: PathBuf, name: String) {
 pub fn create_folder(session: CodeSession, parent: PathBuf, name: String) {
     let name = name.trim();
     if name.is_empty() {
-        notice("Имя папки не может быть пустым");
+        notice(tr!("code.fs.error.empty_folder_name"));
         return;
     }
     if name.contains('/') || name.contains('\\') {
-        notice("Имя не может содержать `/` или `\\`.");
+        notice(tr!("code.fs.error.invalid_name"));
         return;
     }
     let target = parent.join(name);
     if target.exists() {
-        notice(format!("«{}» уже существует", name));
+        notice(tr!("code.fs.error.already_exists", name = name));
         return;
     }
     if let Err(e) = std::fs::create_dir(&target) {
         eprintln!("[code-editor] create_folder {:?}: {e}", target);
-        notice(format!("Не удалось создать папку: {e}"));
+        notice(tr!("code.fs.error.create_folder_failed", error = e));
         return;
     }
     refresh_dir_in_tree(session, &parent);
@@ -75,15 +76,15 @@ pub fn create_folder(session: CodeSession, parent: PathBuf, name: String) {
 pub fn rename(session: CodeSession, old: PathBuf, new_name: String) {
     let new_name = new_name.trim();
     if new_name.is_empty() {
-        notice("Имя не может быть пустым");
+        notice(tr!("code.fs.error.empty_name"));
         return;
     }
     if new_name.contains('/') || new_name.contains('\\') {
-        notice("Имя не может содержать `/` или `\\`.");
+        notice(tr!("code.fs.error.invalid_name"));
         return;
     }
     let Some(parent) = old.parent().map(Path::to_path_buf) else {
-        notice("Невозможно переименовать корень");
+        notice(tr!("code.fs.error.rename_root"));
         return;
     };
     let new_path = parent.join(new_name);
@@ -91,12 +92,12 @@ pub fn rename(session: CodeSession, old: PathBuf, new_name: String) {
         return;
     }
     if new_path.exists() {
-        notice(format!("«{}» уже существует", new_name));
+        notice(tr!("code.fs.error.already_exists", name = new_name));
         return;
     }
     if let Err(e) = std::fs::rename(&old, &new_path) {
         eprintln!("[code-editor] rename {:?} -> {:?}: {e}", old, new_path);
-        notice(format!("Не удалось переименовать: {e}"));
+        notice(tr!("code.fs.error.rename_failed", error = e));
         return;
     }
 
@@ -117,7 +118,7 @@ pub fn delete(session: CodeSession, path: PathBuf) {
     };
     if let Err(e) = res {
         eprintln!("[code-editor] delete {:?}: {e}", path);
-        notice(format!("Не удалось удалить: {e}"));
+        notice(tr!("code.fs.error.delete_failed", error = e));
         return;
     }
 
@@ -145,7 +146,7 @@ pub fn delete(session: CodeSession, path: PathBuf) {
 pub fn copy_path_to_clipboard(path: &Path) {
     let s = path.display().to_string();
     syngui::clipboard::copy(&s);
-    notice(format!("Скопировано: {s}"));
+    notice(tr!("code.fs.notice.copied", value = s));
 }
 
 /// Открыть путь в системном файловом менеджере (через `xdg-open` /
@@ -169,7 +170,7 @@ pub fn reveal_in_files(path: &Path) {
         Ok(_) => {}
         Err(e) => {
             eprintln!("[code-editor] reveal_in_files {:?}: {e}", target);
-            notice(format!("Не удалось открыть: {e}"));
+            notice(tr!("code.fs.error.open_failed", error = e));
         }
     }
 }

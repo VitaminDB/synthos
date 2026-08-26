@@ -32,7 +32,7 @@ pub fn view() -> impl Widget {
 }
 
 fn title_text() -> impl Widget {
-    Text::new(concat!("Synthos v", env!("CARGO_PKG_VERSION"))).class("titlebar-title")
+    Text::new(tr!("titlebar.title", version = env!("CARGO_PKG_VERSION"))).class("titlebar-title")
 }
 
 /// Встроенные кнопки — одинаковы на всех платформах.

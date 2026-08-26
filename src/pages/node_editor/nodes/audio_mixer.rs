@@ -393,7 +393,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let n_sig = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::Mixer { n_inputs, .. } => *n_inputs,
-            _ => return error_widget("Mixer: некорректный runtime"),
+            _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "Mixer")),
         },
         Err(_) => return error_widget("Mixer: lock error"),
     };
@@ -480,7 +480,7 @@ pub fn port_row_extra(node: &NodeInstance, idx: usize) -> Box<dyn Widget> {
     })
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(
         Padding::symmetric(10.0, 6.0)
             .child(Text::new(msg).class("audio-node-error")),

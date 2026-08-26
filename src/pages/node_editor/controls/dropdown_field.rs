@@ -1,13 +1,13 @@
 use syngui::prelude::*;
 use syngui::widgets::{Dropdown, DropdownItem};
 
-use super::utils::idx_in;
+use super::utils::{idx_in, option_label};
 
 pub fn node_dropdown_field(
     options: &'static [&'static str],
     idx: RwSignal<usize>,
 ) -> Box<dyn Widget> {
-    let items: Vec<DropdownItem> = options.iter().map(|s| DropdownItem::simple(*s)).collect();
+    let items: Vec<DropdownItem> = options.iter().map(|s| DropdownItem::new(*s, option_label(s))).collect();
     let current = options
         .get(idx.get_untracked())
         .copied()

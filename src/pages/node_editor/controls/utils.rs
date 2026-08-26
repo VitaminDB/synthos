@@ -15,6 +15,16 @@ pub fn idx_in(arr: &[&str], s: &str) -> Option<usize> {
     arr.iter().position(|x| *x == s)
 }
 
+/// Подпись значения дропдауна: `nodes.option.<slug>` из каталога, иначе само значение.
+pub fn option_label(value: &str) -> String {
+    let slug: String = value
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    syngui::i18n::try_tr(&format!("nodes.option.{slug}")).unwrap_or_else(|| value.to_string())
+}
+
 pub struct WrapPadded(pub Box<dyn Widget>, pub f32, pub f32);
 
 impl Widget for WrapPadded {

@@ -73,15 +73,32 @@ impl NodeCategory {
         NodeCategory::Misc,
     ];
 
+    /// Стабильный ключ для каталога строк и стилей.
+    pub fn key(self) -> &'static str {
+        match self {
+            NodeCategory::Audio => "audio",
+            NodeCategory::Video => "video",
+            NodeCategory::DspEffects => "dsp_effects",
+            NodeCategory::Neuro => "neuro",
+            NodeCategory::Math => "math",
+            NodeCategory::Output => "output",
+            NodeCategory::Misc => "misc",
+        }
+    }
+
+    /// Английский фолбэк-лейбл (без каталога строк) — используется там, где
+    /// нет доступа к `i18n` (например, текстовые отчёты агента в
+    /// `agent::tools::pipelines`). Для UI используйте
+    /// `crate::i18n::node_category_label(cat)`.
     pub fn label(self) -> &'static str {
         match self {
-            NodeCategory::Audio => "Аудио",
-            NodeCategory::Video => "Видео",
-            NodeCategory::DspEffects => "DSP-эффекты",
-            NodeCategory::Neuro => "Нейро",
-            NodeCategory::Math => "Математика",
-            NodeCategory::Output => "Вывод",
-            NodeCategory::Misc => "Прочее",
+            NodeCategory::Audio => "Audio",
+            NodeCategory::Video => "Video",
+            NodeCategory::DspEffects => "DSP effects",
+            NodeCategory::Neuro => "Neuro",
+            NodeCategory::Math => "Math",
+            NodeCategory::Output => "Output",
+            NodeCategory::Misc => "Misc",
         }
     }
 
@@ -721,7 +738,7 @@ const EQUALIZER_6: NodeKindMeta = NodeKindMeta {
     icon: MI_TUNE,
     title: "Equalizer 6",
     category: NodeCategory::DspEffects,
-    subcategory: Some("Эквалайзеры"),
+    subcategory: Some("equalizers"),
     inputs: PortsSpec::Static(AUDIO_IO_INPUTS),
     outputs: PortsSpec::Static(AUDIO_IO_OUTPUTS),
     fields: NO_FIELDS,
@@ -738,7 +755,7 @@ const EQUALIZER_10: NodeKindMeta = NodeKindMeta {
     icon: MI_TUNE,
     title: "Equalizer 10",
     category: NodeCategory::DspEffects,
-    subcategory: Some("Эквалайзеры"),
+    subcategory: Some("equalizers"),
     inputs: PortsSpec::Static(AUDIO_IO_INPUTS),
     outputs: PortsSpec::Static(AUDIO_IO_OUTPUTS),
     fields: NO_FIELDS,
@@ -755,7 +772,7 @@ const EQUALIZER_20: NodeKindMeta = NodeKindMeta {
     icon: MI_TUNE,
     title: "Equalizer 20",
     category: NodeCategory::DspEffects,
-    subcategory: Some("Эквалайзеры"),
+    subcategory: Some("equalizers"),
     inputs: PortsSpec::Static(AUDIO_IO_INPUTS),
     outputs: PortsSpec::Static(AUDIO_IO_OUTPUTS),
     fields: NO_FIELDS,
@@ -772,7 +789,7 @@ const EQUALIZER_30: NodeKindMeta = NodeKindMeta {
     icon: MI_TUNE,
     title: "Equalizer 30",
     category: NodeCategory::DspEffects,
-    subcategory: Some("Эквалайзеры"),
+    subcategory: Some("equalizers"),
     inputs: PortsSpec::Static(AUDIO_IO_INPUTS),
     outputs: PortsSpec::Static(AUDIO_IO_OUTPUTS),
     fields: NO_FIELDS,
@@ -817,7 +834,7 @@ const MARKDOWN_VIEW: NodeKindMeta = NodeKindMeta {
     icon: MI_ARTICLE,
     title: "Markdown",
     category: NodeCategory::Misc,
-    subcategory: Some("Аннотации"),
+    subcategory: Some("annotations"),
     inputs: PortsSpec::Static(&[]),
     outputs: PortsSpec::Static(&[]),
     fields: NO_FIELDS,
@@ -840,7 +857,7 @@ const ASR_GIGAAM: NodeKindMeta = NodeKindMeta {
     icon: MI_RECORD_VOICE_OVER,
     title: "GigaAM ASR",
     category: NodeCategory::Neuro,
-    subcategory: Some("Транскрибация"),
+    subcategory: Some("transcription"),
     inputs: PortsSpec::Static(ASR_GIGAAM_INPUTS),
     outputs: PortsSpec::Static(ASR_GIGAAM_OUTPUTS),
     fields: NO_FIELDS,
@@ -868,7 +885,7 @@ const TEXT_VIEW: NodeKindMeta = NodeKindMeta {
     icon: MI_EDIT_NOTE,
     title: "Text View",
     category: NodeCategory::Misc,
-    subcategory: Some("Текст"),
+    subcategory: Some("text"),
     inputs: PortsSpec::Static(TEXT_VIEW_INPUTS),
     outputs: PortsSpec::Static(TEXT_VIEW_OUTPUTS),
     fields: NO_FIELDS,
@@ -892,7 +909,7 @@ const OMNIVOICE: NodeKindMeta = NodeKindMeta {
     icon: MI_CAMPAIGN,
     title: "OmniVoice TTS",
     category: NodeCategory::Neuro,
-    subcategory: Some("Синтез речи"),
+    subcategory: Some("tts"),
     inputs: PortsSpec::Static(OMNIVOICE_INPUTS),
     outputs: PortsSpec::Static(OMNIVOICE_OUTPUTS),
     fields: NO_FIELDS,
@@ -909,7 +926,7 @@ const VOXCPM2: NodeKindMeta = NodeKindMeta {
     icon: MI_RECORD_VOICE_OVER,
     title: "VoxCPM2 TTS (synaptix)",
     category: NodeCategory::Neuro,
-    subcategory: Some("Синтез речи"),
+    subcategory: Some("tts"),
     inputs: PortsSpec::Static(VOXCPM2_INPUTS),
     outputs: PortsSpec::Static(VOXCPM2_OUTPUTS),
     fields: NO_FIELDS,
@@ -924,9 +941,9 @@ const VOXCPM2: NodeKindMeta = NodeKindMeta {
 const VIBEVOICE: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::VibeVoice,
     icon: MI_CAMPAIGN,
-    title: "VibeVoice (диалоги)",
+    title: "VibeVoice (dialogue)",
     category: NodeCategory::Neuro,
-    subcategory: Some("Синтез речи"),
+    subcategory: Some("tts"),
     inputs: PortsSpec::Static(VIBEVOICE_INPUTS),
     outputs: PortsSpec::Static(VIBEVOICE_OUTPUTS),
     fields: NO_FIELDS,
@@ -951,7 +968,7 @@ const LLM: NodeKindMeta = NodeKindMeta {
     icon: MI_AUTO_AWESOME,
     title: "LLM (synaptix)",
     category: NodeCategory::Neuro,
-    subcategory: Some("LLM"),
+    subcategory: Some("llm"),
     inputs: PortsSpec::Static(LLM_INPUTS),
     outputs: PortsSpec::Static(LLM_OUTPUTS),
     fields: NO_FIELDS,
@@ -998,7 +1015,7 @@ const SORTFORMER_DIARIZER: NodeKindMeta = NodeKindMeta {
     icon: MI_GROUPS,
     title: "Sortformer Diarization",
     category: NodeCategory::Neuro,
-    subcategory: Some("Диаризация"),
+    subcategory: Some("diarization"),
     inputs: PortsSpec::Static(SORTFORMER_DIARIZER_INPUTS),
     outputs: PortsSpec::Static(SORTFORMER_DIARIZER_OUTPUTS),
     fields: NO_FIELDS,
@@ -1012,8 +1029,9 @@ const SORTFORMER_DIARIZER: NodeKindMeta = NodeKindMeta {
 
 // ── ACE-Step v1.5 (8 нод) ────────────────────────────────────────────────
 
-/// Подкатегория в меню «Add Node» (под `NodeCategory::Neuro`).
-const ACESTEP_SUBCATEGORY: &str = "ACE-Step";
+/// Подкатегория в меню «Add Node» (под `NodeCategory::Neuro`). Стабильный
+/// ключ каталога строк — отображаемое имя см. `node.subcategory.ace_step`.
+const ACESTEP_SUBCATEGORY: &str = "ace_step";
 
 const ACESTEP_VAE_ENCODE: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::AceStepVaeEncode,
@@ -1069,9 +1087,9 @@ const ACESTEP_GENERATE: NodeKindMeta = NodeKindMeta {
 const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::FfmpegPlayer,
     icon: MI_MOVIE,
-    title: "Видео-плеер",
+    title: "Video player",
     category: NodeCategory::Video,
-    subcategory: Some("Источники"),
+    subcategory: Some("sources"),
     inputs: PortsSpec::Static(FFMPEG_PLAYER_INPUTS),
     outputs: PortsSpec::Static(FFMPEG_PLAYER_OUTPUTS),
     fields: NO_FIELDS,
@@ -1083,9 +1101,13 @@ const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(ffmpeg_player::busy_signal),
 };
 
-const LTX_SUBCATEGORY: &str = "LTX Video";
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.ltx_video`.
+const LTX_SUBCATEGORY: &str = "ltx_video";
 
-const H3_SUBCATEGORY: &str = "MiniMax H3";
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.minimax_h3`.
+const H3_SUBCATEGORY: &str = "minimax_h3";
 
 const H3_CHECKPOINT: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::H3Checkpoint,
@@ -2235,14 +2257,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
 /// Дефолтный markdown-текст для свежей `MarkdownView`-ноды.
 /// Краткая подсказка по управлению режимами и обзор поддерживаемого синтаксиса.
 fn default_markdown_content() -> String {
-    "# Заметка\n\
-     \n\
-     ПКМ по ноде → **Редактировать** для правки, **Изменить размер** для resize-handle'ов.\n\
-     \n\
-     - Поддержка `inline code`, **bold**, *italic*\n\
-     - Списки, ссылки, code-blocks с подсветкой\n\
-     - Сноски, autolinks, заголовки"
-        .to_string()
+    tr!("nodes.markdown.default_content")
 }
 
 /// Дефолтный путь для SaveToFile-ноды: `~/Downloads/synthos-<unix>.wav`.

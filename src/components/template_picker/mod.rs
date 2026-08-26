@@ -80,14 +80,14 @@ fn header_row(picker_open: RwSignal<bool>) -> impl Widget {
             .gap(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                Text::new("Шаблоны").class("tpl-picker-title"),
+                Text::new(tr!("templates.title")).class("tpl-picker-title"),
                 Row::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::End)
                     .child(
                         ToolButton::new(MI_SAVE)
-                            .tooltip("Сохранить текущий граф (обновляет шаблон, из которого открыт)")
+                            .tooltip(tr!("templates.header.save_current"))
                             .on_click(move || {
                                 save_or_update_current();
                             })
@@ -95,7 +95,7 @@ fn header_row(picker_open: RwSignal<bool>) -> impl Widget {
                     )
                     .child(
                         ToolButton::new(MI_ADD)
-                            .tooltip("Сохранить как новый шаблон")
+                            .tooltip(tr!("templates.header.save_as_new"))
                             .on_click(move || {
                                 save_current_as_template();
                             })
@@ -103,7 +103,7 @@ fn header_row(picker_open: RwSignal<bool>) -> impl Widget {
                     )
                     .child(
                         ToolButton::new(MI_CLOSE)
-                            .tooltip("Закрыть")
+                            .tooltip(tr!("app.close"))
                             .on_click(move || {
                                 picker_open.set(false);
                             })
@@ -124,12 +124,18 @@ fn sidebar(selected: RwSignal<usize>) -> impl Widget {
             .gap(2.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch);
         for (i, cat) in TemplateCategory::ORDER.iter().enumerate() {
-            col = col.child(section_item(i, cat.icon(), cat.label(), cur == i, selected));
+            col = col.child(section_item(
+                i,
+                cat.icon(),
+                crate::i18n::template_category_label(*cat),
+                cur == i,
+                selected,
+            ));
         }
         col = col.child(section_item(
             CUSTOM_SECTION,
             MI_FOLDER,
-            "Свои",
+            tr!("templates.section.custom"),
             cur == CUSTOM_SECTION,
             selected,
         ));
@@ -144,7 +150,7 @@ fn sidebar(selected: RwSignal<usize>) -> impl Widget {
 fn section_item(
     idx: usize,
     icon: &str,
-    label: &str,
+    label: impl Into<String>,
     selected: bool,
     sel_sig: RwSignal<usize>,
 ) -> impl Widget {
@@ -207,11 +213,15 @@ fn content_area(selected: RwSignal<usize>) -> impl Widget {
 }
 
 fn empty_state(custom: bool) -> impl Widget {
-    let title = if custom { "Нет своих шаблонов" } else { "Пусто" };
-    let hint = if custom {
-        "Сохраните текущий граф через [+] в шапке"
+    let title = if custom {
+        tr!("templates.empty.custom.title")
     } else {
-        "Здесь будут встроенные пресеты"
+        tr!("templates.empty.builtin.title")
+    };
+    let hint = if custom {
+        tr!("templates.empty.custom.hint")
+    } else {
+        tr!("templates.empty.builtin.hint")
     };
     Padding::all(24.0).child(
         Column::new()
@@ -256,7 +266,7 @@ fn save_current_as_template() {
     let (nodes, conns, viewport) = templates::convert::snapshot(&tab.ctx);
     let mut t = Template::empty(tab.title.get_untracked(), templates::TemplateKind::Full);
     if t.name.trim().is_empty() {
-        t.name = "My template".into();
+        t.name = tr!("templates.default_name");
     }
     t.nodes = nodes;
     t.connections = conns;
@@ -266,11 +276,11 @@ fn save_current_as_template() {
             tab.source.set(Some(saved.id.clone()));
             tab.title.set(saved.name.clone());
             mark_tab_saved(&tab);
-            app.notifications.success(format!("Сохранено: {}", saved.name));
+            app.notifications.success(tr!("templates.notify.saved", name = saved.name));
             bump_revision();
         }
         Err(e) => {
-            app.notifications.error(format!("Не удалось сохранить шаблон: {e}"));
+            app.notifications.error(tr!("templates.notify.save_failed", error = e));
         }
     }
 }
@@ -310,11 +320,11 @@ fn save_or_update_current() {
     match templates::storage::save(&updated) {
         Ok(()) => {
             mark_tab_saved(&tab);
-            app.notifications.success(format!("Обновлено: {}", updated.name));
+            app.notifications.success(tr!("templates.notify.updated", name = updated.name));
             bump_revision();
         }
         Err(e) => {
-            app.notifications.error(format!("Не удалось обновить шаблон: {e}"));
+            app.notifications.error(tr!("templates.notify.update_failed", error = e));
         }
     }
 }
@@ -341,22 +351,22 @@ fn mark_tab_saved(tab: &crate::pages::node_editor::tabs::OpenTab) {
 /// удаление шаблона.
 pub fn delete_dialog(open: RwSignal<bool>, target_name: String, target_id: String) -> impl Widget {
     let target_id_clone = target_id.clone();
-    Dialog::new(format!("Удалить «{target_name}»?"))
-        .body("Действие нельзя отменить.")
+    Dialog::new(tr!("templates.dialog.delete.title", name = target_name))
+        .body(tr!("templates.dialog.delete.body"))
         .is_open(open)
-        .action(DialogAction::new("Отмена", move || {
+        .action(DialogAction::new(tr!("app.cancel"), move || {
             open.set(false);
         }))
         .action(
-            DialogAction::new("Удалить", move || {
+            DialogAction::new(tr!("app.delete"), move || {
                 let app = use_context::<AppCtx>();
                 match templates::delete(&target_id_clone, false) {
                     Ok(()) => {
-                        app.notifications.success("Шаблон удалён");
+                        app.notifications.success(tr!("templates.notify.deleted"));
                         bump_revision();
                     }
                     Err(e) => {
-                        app.notifications.error(format!("Не удалось удалить: {e}"));
+                        app.notifications.error(tr!("templates.notify.delete_failed", error = e));
                     }
                 }
                 open.set(false);

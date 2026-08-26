@@ -41,8 +41,8 @@ fn placeholder_view() -> impl Widget {
             .gap(12.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .class("hf-detail-placeholder") => [
-                Text::new("Выберите модель").class("hf-detail-placeholder-title"),
-                Text::new("Кликните по карточке слева, чтобы увидеть README и список файлов.")
+                Text::new(tr!("hf.detail.placeholder.title")).class("hf-detail-placeholder-title"),
+                Text::new(tr!("hf.detail.placeholder.hint"))
                     .class("hf-detail-placeholder-hint"),
             ]
     })
@@ -52,7 +52,7 @@ fn detail_body(repo_id: String) -> impl Widget {
     let ctx_tab = use_context::<HuggingFaceCtx>().detail_tab;
     let tab_bar = TabBar::new()
         .tab(Tab::new("README", TAB_README, &ctx_tab))
-        .tab(Tab::new("Файлы", TAB_FILES, &ctx_tab));
+        .tab(Tab::new(tr!("hf.detail.tab.files"), TAB_FILES, &ctx_tab));
 
     let rid_for_header = repo_id.clone();
     mgui! {
@@ -87,16 +87,16 @@ fn detail_header_row(repo_id: String) -> impl Widget {
                             let ctx = use_context::<HuggingFaceCtx>();
                             let d = ctx.model_details.get();
                             let line = match d {
-                                Some(d) => format!(
-                                    "{} загрузок • {} ★ • обновлено {}",
-                                    human_count(d.downloads),
-                                    human_count(d.likes),
-                                    d.last_modified
+                                Some(d) => tr!(
+                                    "hf.detail.stats_line",
+                                    downloads = human_count(d.downloads),
+                                    likes = human_count(d.likes),
+                                    date = d.last_modified
                                         .as_deref()
                                         .map(|s| s.chars().take(10).collect::<String>())
                                         .unwrap_or_else(|| "—".to_string())
                                 ),
-                                None => String::from("Загружаю…"),
+                                None => tr!("hf.detail.loading_ellipsis"),
                             };
                             vec![Box::new(Text::new(line).class("hf-detail-subtitle"))]
                         }),
@@ -181,13 +181,13 @@ fn readme_tab() -> impl Widget {
         let ctx = use_context::<HuggingFaceCtx>();
         if ctx.readme_loading.get() {
             return vec![Box::new(
-                Center::new().child(Text::new("Загружаю README…").class("hf-readme-loading")),
+                Center::new().child(Text::new(tr!("hf.detail.readme.loading")).class("hf-readme-loading")),
             )];
         }
         let txt = ctx.readme_text.get();
         if txt.trim().is_empty() {
             return vec![Box::new(
-                Center::new().child(Text::new("README отсутствует").class("hf-readme-empty")),
+                Center::new().child(Text::new(tr!("hf.detail.readme.missing")).class("hf-readme-empty")),
             )];
         }
         // Класс `hf-md` ставим на сам MarkdownView: его apply_computed_style
@@ -214,13 +214,13 @@ fn files_tab(repo_id: String) -> impl Widget {
 
         let Some(d) = details else {
             return vec![Box::new(
-                Center::new().child(Text::new("Загружаю список файлов…").class("hf-files-loading")),
+                Center::new().child(Text::new(tr!("hf.detail.files.loading")).class("hf-files-loading")),
             )];
         };
         if d.siblings.is_empty() {
             return vec![Box::new(
                 Center::new()
-                    .child(Text::new("В этом репозитории нет файлов").class("hf-files-empty")),
+                    .child(Text::new(tr!("hf.detail.files.empty")).class("hf-files-empty")),
             )];
         }
         let toolbar = files_toolbar(rid.clone(), d.siblings.clone());
@@ -250,15 +250,15 @@ fn files_tab(repo_id: String) -> impl Widget {
 fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
     let total_bytes: u64 = siblings.iter().filter_map(|s| s.size).sum();
     let total_text = if total_bytes > 0 {
-        format!("Всего: {}", human_bytes(total_bytes))
+        tr!("hf.detail.toolbar.total", size = human_bytes(total_bytes))
     } else {
-        "Всего: —".to_string()
+        tr!("hf.detail.toolbar.total", size = "—")
     };
     let n_files = siblings.len();
 
     let siblings_for_dl = siblings.clone();
     let rid_for_dl = repo_id.clone();
-    let download_all_btn = Button::new("Скачать всё")
+    let download_all_btn = Button::new(tr!("hf.detail.download_all"))
         .leading_icon(MI_CLOUD_DOWNLOAD)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -286,7 +286,7 @@ fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
             let all_checked = !all_keys.is_empty() && all_keys.iter().all(|k| sel.contains(k));
             let keys_c = all_keys.clone();
             let cb = Checkbox::checked(all_checked)
-                .label("Выбрать всё")
+                .label(tr!("hf.detail.select_all"))
                 .on_change(move |v| {
                     let ctx = use_context::<HuggingFaceCtx>();
                     ctx.selected_files.update(|s| {
@@ -318,7 +318,7 @@ fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
                 .count();
             let siblings_c = siblings.clone();
             let rid_c = repo_id.clone();
-            let btn = Button::new(format!("Скачать выбранные ({n})"))
+            let btn = Button::new(tr!("hf.detail.download_selected", n = n))
                 .leading_icon(MI_DOWNLOAD)
                 .disabled(n == 0)
                 .on_click(move || {
@@ -370,11 +370,17 @@ fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
         } else {
             String::new()
         };
-        let msg = format!(
-            "{done}/{n_files} • активных {active} • очередь {pending}{}{}{speed_tail}",
-            if paused > 0 { format!(" • на паузе {paused}") } else { String::new() },
-            if error > 0 { format!(" • ошибок {error}") } else { String::new() }
+        let mut msg = tr!(
+            "hf.detail.status.summary",
+            done = done, total = n_files, active = active, pending = pending
         );
+        if paused > 0 {
+            msg.push_str(&tr!("hf.detail.status.paused_suffix", n = paused));
+        }
+        if error > 0 {
+            msg.push_str(&tr!("hf.detail.status.error_suffix", n = error));
+        }
+        msg.push_str(&speed_tail);
         vec![Box::new(
             Text::new(msg).class("hf-toolbar-stat-text"),
         )]
@@ -393,7 +399,7 @@ fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
             Row::new()
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Text::new("Пропускать onnx/bin/fp32").class("hf-toolbar-stat-text"),
+                    Text::new(tr!("hf.detail.skip_formats_toggle")).class("hf-toolbar-stat-text"),
                     toggle,
                 ]
         };
@@ -672,7 +678,7 @@ fn file_checkbox(key: String) -> impl Widget {
 }
 
 fn start_btn(repo_id: String, filename: String, expected: Option<String>) -> Button {
-    Button::new("Скачать")
+    Button::new(tr!("hf.file.download"))
         .leading_icon(MI_DOWNLOAD)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -689,7 +695,7 @@ fn start_btn(repo_id: String, filename: String, expected: Option<String>) -> But
 }
 
 fn pause_btn(key: String) -> Button {
-    Button::new("Пауза")
+    Button::new(tr!("hf.file.pause"))
         .leading_icon(MI_PAUSE)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -699,7 +705,7 @@ fn pause_btn(key: String) -> Button {
 }
 
 fn stop_btn(key: String) -> Button {
-    Button::new("Стоп")
+    Button::new(tr!("hf.file.stop"))
         .leading_icon(MI_STOP)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -709,7 +715,7 @@ fn stop_btn(key: String) -> Button {
 }
 
 fn cancel_btn(key: String) -> Button {
-    Button::new("Отмена")
+    Button::new(tr!("app.cancel"))
         .leading_icon(MI_CLOSE)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -720,7 +726,7 @@ fn cancel_btn(key: String) -> Button {
 
 /// ▶ Продолжить — для Paused.
 fn resume_play_btn(key: String) -> Button {
-    Button::new("Продолжить")
+    Button::new(tr!("hf.file.resume"))
         .leading_icon(MI_PLAY_ARROW)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -733,7 +739,7 @@ fn resume_play_btn(key: String) -> Button {
 /// ⬇ Скачать (резюм) — для Stopped. Та же логика, что Продолжить, но другой
 /// визуальный акцент (как обычная «Скачать»).
 fn resume_dl_btn(key: String) -> Button {
-    Button::new("Скачать")
+    Button::new(tr!("hf.file.download"))
         .leading_icon(MI_DOWNLOAD)
         .on_click(move || {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -767,7 +773,7 @@ fn verify_badge(state: Option<&DownloadState>) -> impl Widget {
             Some(VerifyStatus::Computing) => Box::new(
                 DecoratedBox::new()
                     .class("hf-verify-badge computing")
-                    .child(Text::new("проверка…").class("hf-verify-text")),
+                    .child(Text::new(tr!("hf.file.verifying")).class("hf-verify-text")),
             ),
             Some(VerifyStatus::Error(_)) => Box::new(
                 DecoratedBox::new()
@@ -804,13 +810,13 @@ fn human_speed(bps: f64) -> String {
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
     if bps >= GB {
-        format!("{:.2} ГБ/с", bps / GB)
+        format!("{:.2} {}", bps / GB, tr!("hf.unit.gb_per_s"))
     } else if bps >= MB {
-        format!("{:.1} МБ/с", bps / MB)
+        format!("{:.1} {}", bps / MB, tr!("hf.unit.mb_per_s"))
     } else if bps >= KB {
-        format!("{:.0} КБ/с", bps / KB)
+        format!("{:.0} {}", bps / KB, tr!("hf.unit.kb_per_s"))
     } else {
-        format!("{:.0} Б/с", bps)
+        format!("{:.0} {}", bps, tr!("hf.unit.b_per_s"))
     }
 }
 
@@ -847,7 +853,7 @@ fn status_indicator(state: Option<&DownloadState>) -> impl Widget {
                     .child(Icon::new(MI_STOP).class("hf-status-icon")),
             ),
             Some((DlStatus::Active, n)) if *n > 0 => Box::new(
-                Text::new(format!("попытка {n}/3")).class("hf-status-retry"),
+                Text::new(tr!("hf.file.retry_attempt", n = n)).class("hf-status-retry"),
             ),
             _ => Box::new(DecoratedBox::new().class("hf-status-empty")),
         };
@@ -936,13 +942,13 @@ fn human_bytes(n: u64) -> String {
     const GB: f64 = MB * 1024.0;
     let f = n as f64;
     if f >= GB {
-        format!("{:.2} ГБ", f / GB)
+        format!("{:.2} {}", f / GB, tr!("hf.unit.gb"))
     } else if f >= MB {
-        format!("{:.1} МБ", f / MB)
+        format!("{:.1} {}", f / MB, tr!("hf.unit.mb"))
     } else if f >= KB {
-        format!("{:.1} КБ", f / KB)
+        format!("{:.1} {}", f / KB, tr!("hf.unit.kb"))
     } else {
-        format!("{} Б", n)
+        format!("{} {}", n, tr!("hf.unit.b"))
     }
 }
 // silence unused import (HfModelDetails reachable via `Reactive` closure types)

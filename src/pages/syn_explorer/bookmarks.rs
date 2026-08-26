@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use syngui::async_runtime::run_on_main_thread;
+use syngui::tr;
 
 use super::state::{SynExplorerCtx, SynFileEntry};
 
@@ -15,8 +16,8 @@ pub fn add_bookmark(ctx: SynExplorerCtx, path: PathBuf) {
         let p = path.display().to_string();
         run_on_main_thread(move || {
             ctx.show_error(
-                "Закладка не добавлена",
-                format!("«{}» не является папкой.", p),
+                tr!("explorer.error.bookmark_not_added.title"),
+                tr!("explorer.error.bookmark_not_added.message", path = p),
             );
         });
         return;
@@ -57,8 +58,8 @@ pub fn remove_bookmark(ctx: SynExplorerCtx, idx: usize) {
 pub fn select_folder(ctx: SynExplorerCtx, path: PathBuf) {
     if !path.is_dir() {
         ctx.show_error(
-            "Папка недоступна",
-            format!("«{}» не существует или не папка.", path.display()),
+            tr!("explorer.error.folder_unavailable.title"),
+            tr!("explorer.error.folder_unavailable.message", path = path.display()),
         );
         ctx.selected_folder.set(None);
         ctx.folder_entries.set(Vec::new());
@@ -70,7 +71,7 @@ pub fn select_folder(ctx: SynExplorerCtx, path: PathBuf) {
             ctx.folder_entries.set(entries);
         }
         Err(e) => {
-            ctx.show_error("Не удалось прочитать папку", e);
+            ctx.show_error(tr!("explorer.error.read_folder.title"), e);
             ctx.selected_folder.set(Some(path));
             ctx.folder_entries.set(Vec::new());
         }

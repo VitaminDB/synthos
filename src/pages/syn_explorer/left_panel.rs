@@ -47,7 +47,7 @@ fn bookmarks_section() -> impl Widget {
                         return vec![Box::new(
                             DecoratedBox::new()
                                 .class("syn-bookmarks-empty")
-                                .child(Text::new("Нет закладок. Нажмите «+» чтобы добавить папку с `.syn`.")
+                                .child(Text::new(tr!("explorer.left.bookmarks.empty"))
                                     .class("syn-empty-hint")),
                         )];
                     }
@@ -74,7 +74,7 @@ fn bookmarks_header() -> impl Widget {
             Row::new()
                 .gap(8.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Text::new("Закладки").class("syn-section-title"),
+                    Text::new(tr!("explorer.left.bookmarks.title")).class("syn-section-title"),
                     DecoratedBox::new().class("syn-spacer grow"),
                     Tooltip::new(
                         ToolButton::new(MI_BOOKMARK_ADD)
@@ -83,7 +83,7 @@ fn bookmarks_header() -> impl Widget {
                                 actions::pick_and_add_bookmark(ctx);
                             })
                             .class("syn-icon-btn"),
-                        "Добавить папку в закладки",
+                        tr!("explorer.left.bookmarks.add_tooltip"),
                     ),
                 ]
         })
@@ -123,7 +123,7 @@ fn bookmark_item(
     let _ = tooltip; // tooltip пока не используется (Material Tooltip требует ToolButton-обёртки)
 
     ContextMenu::new()
-        .items(vec![MenuItem::new("remove", "Удалить закладку").icon(MI_DELETE)])
+        .items(vec![MenuItem::new("remove", tr!("explorer.left.bookmarks.remove")).icon(MI_DELETE)])
         .on_select(move |action| {
             if action == "remove" {
                 let ctx = use_context::<SynExplorerCtx>();
@@ -157,7 +157,7 @@ fn folder_header() -> impl Widget {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| p.display().to_string()),
-                None => "Пакеты".to_string(),
+                None => tr!("explorer.left.folder.default_title"),
             };
             let count = ctx.folder_entries.get().len();
             let count_label = if count == 0 {
@@ -256,7 +256,7 @@ fn no_folder_placeholder() -> impl Widget {
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Text::new(MI_FOLDER_OPEN).class("syn-placeholder-icon-mini"),
-                Text::new("Выберите закладку, чтобы увидеть `.syn` пакеты.")
+                Text::new(tr!("explorer.left.folder.no_folder_hint"))
                     .class("syn-empty-hint"),
             ]
     })
@@ -264,7 +264,7 @@ fn no_folder_placeholder() -> impl Widget {
 
 fn empty_folder_placeholder() -> impl Widget {
     DecoratedBox::new().class("syn-folder-placeholder").child(
-        Text::new("В этой папке нет `.syn` файлов.").class("syn-empty-hint"),
+        Text::new(tr!("explorer.left.folder.empty_hint")).class("syn-empty-hint"),
     )
 }
 

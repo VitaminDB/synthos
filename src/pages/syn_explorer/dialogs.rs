@@ -67,17 +67,17 @@ fn confirm_delete_card(name: String) -> impl Widget {
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Удалить файл из пакета?").class("syn-dialog-title"),
-                    Text::new(format!("«{name}» будет помечен как удалённый. Изменение применится после нажатия «Сохранить»."))
+                    Text::new(tr!("explorer.dialog.confirm_delete.title")).class("syn-dialog-title"),
+                    Text::new(tr!("explorer.dialog.confirm_delete.hint", name = name))
                         .class("syn-dialog-hint"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("syn-dialog-btn-secondary"),
-                            Button::new("Удалить")
+                            Button::new(tr!("app.delete"))
                                 .leading_icon(MI_DELETE)
                                 .on_click(confirm)
                                 .class("syn-dialog-btn-danger"),
@@ -107,20 +107,20 @@ fn confirm_close_card() -> impl Widget {
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Несохранённые правки").class("syn-dialog-title"),
-                    Text::new("В пакете есть несохранённые изменения. Закрыть/перечитать и потерять их?")
+                    Text::new(tr!("explorer.unsaved_edits")).class("syn-dialog-title"),
+                    Text::new(tr!("explorer.dialog.confirm_close.hint"))
                         .class("syn-dialog-hint"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("syn-dialog-btn-secondary"),
-                            Button::new("Перечитать")
+                            Button::new(tr!("explorer.dialog.confirm_close.reload"))
                                 .on_click(reload)
                                 .class("syn-dialog-btn-secondary"),
-                            Button::new("Закрыть без сохранения")
+                            Button::new(tr!("explorer.dialog.confirm_close.discard"))
                                 .leading_icon(MI_DELETE)
                                 .on_click(proceed)
                                 .class("syn-dialog-btn-danger"),
@@ -163,20 +163,20 @@ fn rename_card(old: String) -> impl Widget {
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Переименовать файл").class("syn-dialog-title"),
-                    Text::new(format!("Текущее имя: {old}")).class("syn-dialog-hint"),
+                    Text::new(tr!("explorer.dialog.rename.title")).class("syn-dialog-title"),
+                    Text::new(tr!("explorer.dialog.rename.current_name", name = old)).class("syn-dialog-hint"),
                     TextField::with_text(old.clone())
-                        .placeholder("новое/имя.ext")
+                        .placeholder(tr!("explorer.dialog.rename.placeholder"))
                         .on_change(move |s| buffer.set(s.to_string()))
                         .class("syn-dialog-input"),
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("syn-dialog-btn-secondary"),
-                            Button::new("OK")
+                            Button::new(tr!("app.ok"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(confirm)
                                 .class("syn-dialog-btn-primary"),
@@ -201,7 +201,7 @@ fn error_card(title: String, message: String) -> impl Widget {
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("OK")
+                            Button::new(tr!("app.ok"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(close)
                                 .class("syn-dialog-btn-primary"),
@@ -213,7 +213,7 @@ fn error_card(title: String, message: String) -> impl Widget {
 
 fn new_package_card(form: NewPackageForm) -> impl Widget {
     let id_field = TextField::with_text(form.id.get_untracked())
-        .placeholder("например, voxcpm2")
+        .placeholder(tr!("explorer.dialog.new_package.id_placeholder"))
         .on_change(move |s| form.id.set(s.to_string()))
         .class("syn-dialog-input");
     let version_field = TextField::with_text(form.version.get_untracked())
@@ -236,8 +236,8 @@ fn new_package_card(form: NewPackageForm) -> impl Widget {
             .out_path
             .get()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| String::from("не выбран"));
-        vec![Box::new(Text::new(format!("Файл .syn: {v}")).class("syn-dialog-path"))]
+            .unwrap_or_else(|| tr!("explorer.dialog.new_package.not_selected"));
+        vec![Box::new(Text::new(tr!("explorer.dialog.new_package.out_file", path = v)).class("syn-dialog-path"))]
     });
 
     // Список компонент — реактивный: при добавлении/удалении пересобираем UI.
@@ -252,7 +252,7 @@ fn new_package_card(form: NewPackageForm) -> impl Widget {
             rows.push(Box::new(component_row(form, c, i, total)));
         }
         rows.push(Box::new(
-            Button::new("Добавить компонент")
+            Button::new(tr!("explorer.dialog.new_package.add_component"))
                 .leading_icon(MI_ADD)
                 .on_click(move || actions::add_component(form))
                 .class("syn-dialog-btn-secondary"),
@@ -268,7 +268,7 @@ fn new_package_card(form: NewPackageForm) -> impl Widget {
     // классом `.syn-dialog-warning` в MSS.
     let delete_sources_sig = form.delete_sources;
     let delete_checkbox = Checkbox::checked(delete_sources_sig.get_untracked())
-        .label("Удалить исходные файлы после успешной паковки")
+        .label(tr!("explorer.dialog.new_package.delete_sources"))
         .on_change(move |v| delete_sources_sig.set(v))
         .class("syn-dialog-checkbox");
 
@@ -307,20 +307,20 @@ fn new_package_card(form: NewPackageForm) -> impl Widget {
             Column::new()
                 .gap(12.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Создать .syn пакет").class("syn-dialog-title"),
-                    Text::new("Заполните метаданные и выберите папки safetensors для каждого компонента.")
+                    Text::new(tr!("explorer.dialog.new_package.title")).class("syn-dialog-title"),
+                    Text::new(tr!("explorer.dialog.new_package.hint"))
                         .class("syn-dialog-hint"),
                     field_row("id", id_field),
                     field_row("version", version_field),
                     field_row("arch", arch_field),
                     field_row("purpose", purpose_field),
-                    Text::new("Компоненты (tensors-чанки)")
+                    Text::new(tr!("explorer.dialog.new_package.components_label"))
                         .class("syn-dialog-section-label"),
                     components_view,
                     Row::new()
                         .gap(10.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            Button::new("Куда сохранить .syn…")
+                            Button::new(tr!("explorer.dialog.new_package.pick_out"))
                                 .leading_icon(MI_SAVE)
                                 .on_click(pick_out)
                                 .class("syn-dialog-btn-secondary"),
@@ -331,11 +331,11 @@ fn new_package_card(form: NewPackageForm) -> impl Widget {
                     Row::new()
                         .gap(10.0)
                         .main_axis_alignment(MainAxisAlignment::End) => [
-                            Button::new("Отмена")
+                            Button::new(tr!("app.cancel"))
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("syn-dialog-btn-secondary"),
-                            Button::new("Создать")
+                            Button::new(tr!("explorer.dialog.new_package.create"))
                                 .leading_icon(MI_CHECK)
                                 .on_click(confirm)
                                 .class("syn-dialog-btn-primary"),
@@ -357,13 +357,13 @@ fn progress_panel(p: CreateProgress) -> impl Widget {
     let percent = (fraction * 100.0).round() as i32;
     // Отображаем реальный размер payload'а (без удвоения stage+pack) —
     // пользователь видит «X из 51 ГБ», а не «X из 103 ГБ».
-    let bytes_human = format!(
-        "{:.2} / {:.2} ГБ",
-        p.display_done() as f64 / (1024.0 * 1024.0 * 1024.0),
-        p.payload_total as f64 / (1024.0 * 1024.0 * 1024.0)
+    let bytes_human = tr!(
+        "explorer.dialog.new_package.progress_bytes",
+        done = format!("{:.2}", p.display_done() as f64 / (1024.0 * 1024.0 * 1024.0)),
+        total = format!("{:.2}", p.payload_total as f64 / (1024.0 * 1024.0 * 1024.0))
     );
     let stage = if p.stage_label.is_empty() {
-        "Подготовка…".to_string()
+        tr!("explorer.dialog.new_package.stage_preparing")
     } else {
         p.stage_label
     };
@@ -413,7 +413,7 @@ fn component_row(
         .on_change(move |s| c.name.set(s.to_string()))
         .class("syn-dialog-input");
     let prefix_field = TextField::with_text(c.prefix.get_untracked())
-        .placeholder("prefix (необязательно)")
+        .placeholder(tr!("explorer.dialog.new_package.component.prefix_placeholder"))
         .on_change(move |s| c.prefix.set(s.to_string()))
         .class("syn-dialog-input");
 
@@ -426,7 +426,7 @@ fn component_row(
             .source_dir
             .get()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| String::from("не выбрана"));
+            .unwrap_or_else(|| tr!("explorer.dialog.new_package.component.dir_not_selected"));
         vec![Box::new(Text::new(v).class("syn-dialog-path"))]
     });
 
@@ -463,7 +463,7 @@ fn component_row(
                     Row::new()
                         .gap(8.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            Button::new("Папка safetensors…")
+                            Button::new(tr!("explorer.dialog.new_package.component.pick_folder"))
                                 .leading_icon(MI_FOLDER_OPEN)
                                 .on_click(pick)
                                 .class("syn-dialog-btn-secondary"),

@@ -89,21 +89,21 @@ fn create_card() -> impl Widget {
     mgui! {
         DecoratedBox::new().class("skill-dialog-card") => [
             Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Text::new("Новый скил").class("skill-dialog-title"),
-                Text::new("Имя и краткое описание. Markdown-инструкцию допишете в редакторе.")
+                Text::new(tr!("settings.skills.dialog.create.title")).class("skill-dialog-title"),
+                Text::new(tr!("settings.skills.dialog.create.hint"))
                     .class("skill-dialog-hint"),
                 TextField::new()
-                    .placeholder("Имя скила")
+                    .placeholder(tr!("settings.skills.dialog.name.placeholder"))
                     .on_change(move |s| name.set(s.to_string())),
                 TextField::new()
-                    .placeholder("Краткое описание (опционально)")
+                    .placeholder(tr!("settings.skills.dialog.create.description.placeholder"))
                     .on_change(move |s| description.set(s.to_string())),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
-                    Button::new("Отмена")
+                    Button::new(tr!("app.cancel"))
                         .leading_icon(MI_CLOSE)
                         .on_click(cancel)
                         .class("skill-dialog-btn-secondary"),
-                    Button::new("Создать")
+                    Button::new(tr!("settings.skills.dialog.create.confirm"))
                         .leading_icon(MI_CHECK)
                         .on_click(confirm)
                         .class("skill-dialog-btn-primary"),
@@ -169,19 +169,19 @@ fn edit_card(id: String, current_name: String, current_description: String) -> i
     mgui! {
         DecoratedBox::new().class("skill-dialog-card") => [
             Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Text::new("Редактировать скил").class("skill-dialog-title"),
+                Text::new(tr!("settings.skills.dialog.edit.title")).class("skill-dialog-title"),
                 TextField::with_text(current_name)
-                    .placeholder("Имя скила")
+                    .placeholder(tr!("settings.skills.dialog.name.placeholder"))
                     .on_change(move |s| name.set(s.to_string())),
                 TextField::with_text(current_description)
-                    .placeholder("Краткое описание")
+                    .placeholder(tr!("settings.skills.dialog.edit.description.placeholder"))
                     .on_change(move |s| description.set(s.to_string())),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
-                    Button::new("Отмена")
+                    Button::new(tr!("app.cancel"))
                         .leading_icon(MI_CLOSE)
                         .on_click(cancel)
                         .class("skill-dialog-btn-secondary"),
-                    Button::new("OK")
+                    Button::new(tr!("app.ok"))
                         .leading_icon(MI_CHECK)
                         .on_click(confirm)
                         .class("skill-dialog-btn-primary"),
@@ -217,15 +217,15 @@ fn delete_card(id: String, name: String) -> impl Widget {
     mgui! {
         DecoratedBox::new().class("skill-dialog-card skill-dialog-danger") => [
             Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Text::new("Удалить скил?").class("skill-dialog-title"),
-                Text::new(format!("«{label}» — действие нельзя отменить."))
+                Text::new(tr!("settings.skills.dialog.delete.title")).class("skill-dialog-title"),
+                Text::new(tr!("settings.skills.dialog.delete.hint", name = label))
                     .class("skill-dialog-hint"),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
-                    Button::new("Отмена")
+                    Button::new(tr!("app.cancel"))
                         .leading_icon(MI_CLOSE)
                         .on_click(cancel)
                         .class("skill-dialog-btn-secondary"),
-                    Button::new("Удалить")
+                    Button::new(tr!("app.delete"))
                         .leading_icon(MI_DELETE)
                         .on_click(confirm)
                         .class("skill-dialog-btn-danger"),

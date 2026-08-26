@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use crate::context::AppCtx;
 use syngui::context_provider::use_context;
 use syngui::core::sync::Mutex;
+use syngui::tr;
 
 use synaptix_bundle::Bundle;
 use synaptix_core::{device::Device, dtype::DType, tensor::Tensor};
@@ -276,10 +277,10 @@ pub fn xl_bundle_path() -> Result<PathBuf, String> {
     let raw = ctx
         .acestep_xl_bundle_path
         .get_untracked()
-        .ok_or_else(|| "Settings → AI Models → ACE-Step: укажите xl-bundle (xl-base / xl-turbo)".to_string())?;
+        .ok_or_else(|| tr!("node.acestep_shared.error.no_xl_bundle"))?;
     let p = PathBuf::from(&raw);
     if !p.exists() {
-        return Err(format!("xl-bundle не найден: {raw}"));
+        return Err(tr!("node.acestep_shared.error.xl_bundle_not_found", path = raw));
     }
     Ok(p)
 }
@@ -289,10 +290,10 @@ pub fn vae_bundle_path() -> Result<PathBuf, String> {
     let raw = ctx
         .acestep_vae_bundle_path
         .get_untracked()
-        .ok_or_else(|| "Settings → AI Models → ACE-Step: укажите VAE bundle (acestep_vae.syn)".to_string())?;
+        .ok_or_else(|| tr!("node.acestep_shared.error.no_vae_bundle"))?;
     let p = PathBuf::from(&raw);
     if !p.exists() {
-        return Err(format!("VAE bundle не найден: {raw}"));
+        return Err(tr!("node.acestep_shared.error.vae_bundle_not_found", path = raw));
     }
     Ok(p)
 }

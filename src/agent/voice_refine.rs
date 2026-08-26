@@ -9,6 +9,7 @@
 //! Модель одна на GPU, поэтому постобработка не запускается, пока идёт
 //! генерация основного чата (`SynChatCtx.pending`) — иначе коллизия на девайсе.
 
+use syngui::tr;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 use synaptix::facade::llm::{LlmGeneration, Message};
@@ -54,7 +55,7 @@ pub fn refine_voice_text(app: AppCtx, raw: String) {
     let Some(model) = use_context::<SynModelRegistry>().current.get_untracked() else {
         app.voice
             .refine_error
-            .set(Some("Модель не загружена — постобработка недоступна".to_string()));
+            .set(Some(tr!("voice.refine.model_not_loaded")));
         app.voice.refined.set(raw);
         app.voice.refined_gen.update(|n| *n = n.wrapping_add(1));
         return;
@@ -64,7 +65,7 @@ pub fn refine_voice_text(app: AppCtx, raw: String) {
     if use_context::<SynChatCtx>().pending.get_untracked() {
         app.voice
             .refine_error
-            .set(Some("Модель занята генерацией — попробуйте позже".to_string()));
+            .set(Some(tr!("voice.refine.model_busy")));
         app.voice.refined.set(raw);
         app.voice.refined_gen.update(|n| *n = n.wrapping_add(1));
         return;
@@ -91,7 +92,7 @@ pub fn refine_voice_text(app: AppCtx, raw: String) {
                     app.voice.refined.set(raw_for_fallback);
                 }
                 Err(e) => {
-                    let msg = format!("Постобработка недоступна: {e:#}");
+                    let msg = tr!("voice.refine.unavailable", error = format!("{e:#}"));
                     eprintln!("[synthos/voice_refine] {msg}");
                     app.voice.refine_error.set(Some(msg));
                     // Чтобы Paste не оставался без текста — кладём raw как fallback.

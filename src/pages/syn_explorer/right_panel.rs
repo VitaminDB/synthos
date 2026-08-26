@@ -51,7 +51,7 @@ fn header() -> impl Widget {
                     .gap(8.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center) => [
                         Text::new(MI_DEPLOYED_CODE).class("syn-section-title-icon"),
-                        Text::new("Содержимое").class("syn-section-title"),
+                        Text::new(tr!("explorer.right.title")).class("syn-section-title"),
                         DecoratedBox::new().class("syn-spacer grow"),
                         Text::new(count_label).class("syn-section-count"),
                         Tooltip::new(
@@ -61,7 +61,7 @@ fn header() -> impl Widget {
                                     actions::pick_and_extract_file(ctx);
                                 })
                                 .class("syn-icon-btn"),
-                            "Извлечь выбранный файл…",
+                            tr!("explorer.right.extract_tooltip"),
                         ),
                     ]
             })]
@@ -123,7 +123,7 @@ fn body() -> impl Widget {
 
 fn empty_placeholder() -> impl Widget {
     Center::new().child(
-        Text::new("Откройте пакет, чтобы увидеть содержимое.")
+        Text::new(tr!("explorer.right.empty_hint"))
             .class("syn-empty-hint"),
     )
 }

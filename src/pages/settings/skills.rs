@@ -59,14 +59,14 @@ fn editor(skill: crate::skills::Skill) -> impl Widget {
                             Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
                                 Text::new(name.clone()).class("skill-editor-title"),
                                 Text::new(if description.is_empty() {
-                                    "Markdown-инструкция для ассистента".to_string()
+                                    tr!("settings.skills.editor.default_subtitle")
                                 } else {
                                     description.clone()
                                 }).class("skill-editor-subtitle"),
                             ]
                         ],
                         ToolButton::new(MI_EDIT_NOTE)
-                            .tooltip("Редактировать имя и описание")
+                            .tooltip(tr!("settings.skills.edit_meta"))
                             .on_click({
                                 let id = id_for_header.clone();
                                 let n = name.clone();
@@ -82,7 +82,7 @@ fn editor(skill: crate::skills::Skill) -> impl Widget {
                             })
                             .class("skill-editor-action"),
                         ToolButton::new(MI_DELETE)
-                            .tooltip("Удалить")
+                            .tooltip(tr!("app.delete"))
                             .on_click({
                                 let id = id_for_header.clone();
                                 let n = name.clone();
@@ -116,9 +116,9 @@ fn editor(skill: crate::skills::Skill) -> impl Widget {
 
 fn empty_state(count: usize) -> impl Widget {
     let hint = if count == 0 {
-        "Список пуст. Нажмите «+» в правой панели, чтобы создать первый скил.".to_string()
+        tr!("settings.skills.empty.no_skills")
     } else {
-        format!("Справа — список из {count} скилов. Выберите любой, чтобы открыть его инструкцию в редакторе.")
+        trn!("settings.skills.empty.pick", count)
     };
     mgui! {
         Center::new() => [
@@ -126,7 +126,7 @@ fn empty_state(count: usize) -> impl Widget {
                 DecoratedBox::new().class("skill-empty-bubble") => [
                     Center::new().child(Icon::new(MI_MENU_BOOK).class("skill-empty-icon")),
                 ],
-                Text::new("Выберите скил").class("skill-empty-title"),
+                Text::new(tr!("settings.skills.empty.title")).class("skill-empty-title"),
                 Padding::symmetric(32.0, 0.0).child(
                     Text::new(hint).class("skill-empty-text"),
                 ),

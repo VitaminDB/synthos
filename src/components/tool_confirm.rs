@@ -21,7 +21,7 @@ use syngui::prelude::*;
 use syngui::widgets::overlay::PortalAnchor;
 use syngui::StyledWidget;
 
-use crate::agent::tools::{PendingApproval, ToolDecision};
+use crate::agent::tools::{PendingApproval, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::icons::{MI_CHECK, MI_CLOSE, MI_DONE_ALL};
 
@@ -62,9 +62,11 @@ fn card() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
 
 fn card_inner(pending: Arc<PendingApproval>) -> StyledWidget<DecoratedBox> {
     let tool_icon = pending.tool_icon.clone();
-    let tool_label = pending.tool_label.clone();
+    let tool_label = Tool::by_key(&pending.tool_key)
+        .map(crate::i18n::tool_label)
+        .unwrap_or_else(|| pending.tool_label.clone());
     let args_pretty = if pending.args_pretty.trim().is_empty() {
-        "(без аргументов)".to_string()
+        tr!("chat.tool_confirm.no_args")
     } else {
         pending.args_pretty.clone()
     };
@@ -76,8 +78,8 @@ fn card_inner(pending: Arc<PendingApproval>) -> StyledWidget<DecoratedBox> {
             ],
             DecoratedBox::new().class("grow") => [
                 Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
-                    Text::new("Разрешить выполнение инструмента?").class("tool-confirm-title"),
-                    Text::new(format!("Инструмент: {tool_label}")).class("tool-confirm-subtitle"),
+                    Text::new(tr!("chat.tool_confirm.title")).class("tool-confirm-title"),
+                    Text::new(tr!("chat.tool_confirm.tool", name = tool_label)).class("tool-confirm-subtitle"),
                 ]
             ],
         ]
@@ -94,7 +96,7 @@ fn card_inner(pending: Arc<PendingApproval>) -> StyledWidget<DecoratedBox> {
         Column::new()
             .gap(6.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(Text::new("Аргументы").class("tool-confirm-args-label"))
+            .child(Text::new(tr!("chat.tool_confirm.args")).class("tool-confirm-args-label"))
             .child(
                 ScrollView::new()
                     .both()
@@ -109,15 +111,15 @@ fn card_inner(pending: Arc<PendingApproval>) -> StyledWidget<DecoratedBox> {
 
     let buttons = mgui! {
         Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Button::new("Отмена")
+            Button::new(tr!("app.cancel"))
                 .leading_icon(MI_CLOSE)
                 .on_click(move || decide(&pending_cancel, ToolDecision::Cancel))
                 .class("tool-confirm-btn tool-confirm-btn-secondary"),
-            Button::new("Разрешить")
+            Button::new(tr!("chat.tool_confirm.allow"))
                 .leading_icon(MI_CHECK)
                 .on_click(move || decide(&pending_allow, ToolDecision::Allow))
                 .class("tool-confirm-btn tool-confirm-btn-primary"),
-            Button::new("Разрешить все")
+            Button::new(tr!("chat.tool_confirm.allow_all"))
                 .leading_icon(MI_DONE_ALL)
                 .on_click(move || decide(&pending_allow_all, ToolDecision::AllowAll))
                 .class("tool-confirm-btn tool-confirm-btn-accent"),
@@ -133,9 +135,7 @@ fn card_inner(pending: Arc<PendingApproval>) -> StyledWidget<DecoratedBox> {
         Column::new().gap(16.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
             header,
             args_block,
-            Text::new(
-                "Агент запросил выполнение инструмента. Проверьте параметры — команда выполнится в вашей системе."
-            ).class("tool-confirm-warning"),
+            Text::new(tr!("chat.tool_confirm.warning")).class("tool-confirm-warning"),
             buttons,
         ]
     })

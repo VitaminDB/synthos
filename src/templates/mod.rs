@@ -70,12 +70,13 @@ impl TemplateCategory {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    /// Стабильный ключ для каталога строк.
+    pub fn key(self) -> &'static str {
         match self {
-            TemplateCategory::Video => "Генерация видео",
-            TemplateCategory::Music => "Музыка",
-            TemplateCategory::Audio => "Аудио",
-            TemplateCategory::Basic => "Базовые",
+            TemplateCategory::Video => "video",
+            TemplateCategory::Music => "music",
+            TemplateCategory::Audio => "audio",
+            TemplateCategory::Basic => "basic",
         }
     }
 

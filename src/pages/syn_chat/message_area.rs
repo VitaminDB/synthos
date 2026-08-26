@@ -79,8 +79,8 @@ fn no_chat_hero() -> impl Widget {
     DecoratedBox::new().class("msg-hero").child(mgui! {
         Center::new() => [
             Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Text::new("Нет активного чата").class("msg-hero-title"),
-                Text::new("Создайте чат слева (кнопка +) или выберите существующий")
+                Text::new(tr!("chat.area.no_chat.title")).class("msg-hero-title"),
+                Text::new(tr!("chat.area.no_chat.hint"))
                     .class("msg-hero-sub"),
             ]
         ]
@@ -91,8 +91,8 @@ fn empty_hero() -> impl Widget {
     DecoratedBox::new().class("msg-hero").child(mgui! {
         Center::new() => [
             Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Text::new("Напишите первое сообщение").class("msg-hero-title"),
-                Text::new("Например: «Расскажи о себе»").class("msg-hero-sub"),
+                Text::new(tr!("chat.area.empty.title")).class("msg-hero-title"),
+                Text::new(tr!("chat.area.empty.hint")).class("msg-hero-sub"),
             ]
         ]
     })

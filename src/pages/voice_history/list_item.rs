@@ -53,7 +53,7 @@ pub fn view(rec: VoiceRecording, is_active: bool) -> impl Widget {
                                     ]
                             ],
                             ToolButton::new(MI_DELETE)
-                                .tooltip("Удалить запись")
+                                .tooltip(tr!("voice.history.item.delete_tooltip"))
                                 .on_click(move || {
                                     let app = use_context::<AppCtx>();
                                     let id = id_for_delete.clone();
@@ -84,7 +84,7 @@ fn preview_text(s: &str) -> String {
         count += 1;
     }
     if out.is_empty() {
-        "(пусто)".to_string()
+        tr!("voice.history.item.empty_preview")
     } else {
         out
     }
@@ -95,9 +95,13 @@ fn format_duration(ms: u32) -> String {
     let mins = total_secs / 60;
     let secs = total_secs % 60;
     if mins > 0 {
-        format!("{mins}м {secs:02}с")
+        tr!(
+            "voice.history.item.duration.min_sec",
+            min = mins.to_string(),
+            sec = format!("{secs:02}")
+        )
     } else {
-        format!("{secs}с")
+        tr!("voice.history.item.duration.sec", sec = secs.to_string())
     }
 }
 
@@ -126,13 +130,18 @@ fn format_date(unix_secs: u64) -> String {
     let h = (secs_in_day / 3600) as u32;
     let m = ((secs_in_day % 3600) / 60) as u32;
 
+    let time = format!("{h:02}:{m:02}");
     if days_ago == 0 {
-        format!("Сегодня {h:02}:{m:02} UTC")
+        tr!("voice.history.item.date.today", time = time)
     } else if days_ago == 1 {
-        format!("Вчера {h:02}:{m:02} UTC")
+        tr!("voice.history.item.date.yesterday", time = time)
     } else if days_ago < 7 {
-        format!("{days_ago} дн. назад {h:02}:{m:02}")
+        tr!(
+            "voice.history.item.date.days_ago_time",
+            days = days_ago.to_string(),
+            time = time
+        )
     } else {
-        format!("{days_ago} дн. назад")
+        tr!("voice.history.item.date.days_ago", days = days_ago.to_string())
     }
 }

@@ -29,7 +29,7 @@ fn title_row() -> impl Widget {
             .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Text::new("HuggingFace").class("hf-title"),
-                Text::new("поиск моделей по hub'у").class("hf-subtitle"),
+                Text::new(tr!("hf.header.subtitle")).class("hf-subtitle"),
             ]
     }
 }
@@ -42,7 +42,7 @@ fn search_bar() -> impl Widget {
         // дополнительных обёрток: они дают двойной бордер.
         let field = TextField::new()
             .text(current)
-            .placeholder("Поиск моделей…")
+            .placeholder(tr!("hf.header.search_placeholder"))
             .prefix_icon(MI_SEARCH)
             .on_change(move |s| {
                 let ctx = use_context::<HuggingFaceCtx>();

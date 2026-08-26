@@ -263,9 +263,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         },
         None => {
             let Some(bundle_path) = model_path.get_untracked() else {
-                error_sig.set(Some(
-                    "Выберите .syn bundle OmniVoice или подключите Syn Checkpoint".into(),
-                ));
+                error_sig.set(Some(tr!("node.omnivoice.err.select_model")));
                 return;
             };
             OmniLoadedCfg {
@@ -281,7 +279,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let text = match current_input_text(ctx, node.id, "text") {
         Some(s) if !s.trim().is_empty() => s,
         _ => {
-            error_sig.set(Some("Подключите Text на вход «text»".into()));
+            error_sig.set(Some(tr!("nodes.common.connect_text_input")));
             return;
         }
     };
@@ -430,7 +428,7 @@ fn synth_worker(
                 );
             }
             Err(e) => {
-                error_sig.set(Some(format!("Не удалось загрузить модель: {e}")));
+                error_sig.set(Some(tr!("nodes.common.model_load_failed", error = e)));
                 running.set(false);
                 return;
             }
@@ -444,7 +442,7 @@ fn synth_worker(
         Some(buf) => match save_ref_audio_to_tmp_wav(&buf) {
             Ok(p) => Some(p),
             Err(e) => {
-                error_sig.set(Some(format!("Не удалось сохранить ref-аудио: {e}")));
+                error_sig.set(Some(tr!("nodes.common.save_ref_audio_failed", error = e)));
                 running.set(false);
                 return;
             }
@@ -477,7 +475,7 @@ fn synth_worker(
                 .synthesize(&text, &mode, &gen_cfg)
                 .map(|pcm| (pcm, pl.sample_rate())),
             None => Err(synaptix::facade::tts::core::OmniVoiceError::Inference(
-                "Pipeline не загружен".into(),
+                tr!("nodes.common.pipeline_not_loaded"),
             )),
         },
         Err(_) => Err(synaptix::facade::tts::core::OmniVoiceError::Inference(
@@ -505,7 +503,7 @@ fn synth_worker(
             error_sig.set(None);
         }
         Err(e) => {
-            error_sig.set(Some(format!("Ошибка синтеза: {e}")));
+            error_sig.set(Some(tr!("nodes.common.synthesis_failed", error = e)));
         }
     }
     // Хэндл без резидентности («Держать в памяти» выключен у Syn
@@ -649,7 +647,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         loaded_name,
     )) = snapshot
     else {
-        return error_widget("OmniVoice: некорректный runtime");
+        return error_widget(tr!("nodes.common.invalid_runtime", name = "OmniVoice"));
     };
 
     let pipeline_h = pipeline_handle.clone();
@@ -657,7 +655,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let on_pick_error = error_sig;
     let on_pick_loaded_name = loaded_name;
     let model_control: Box<dyn Widget> = node_file_picker(
-        "Выбрать .syn bundle OmniVoice",
+        tr!("node.omnivoice.pick_model_tooltip"),
         model_path,
         &[("Syn bundle", &["syn"])],
         move |_p| {
@@ -684,7 +682,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let instruct_field = Box::new(
         TextField::new()
             .text(instruct.get_untracked())
-            .placeholder("женский низкий тембр")
+            .placeholder(tr!("node.omnivoice.instruct_placeholder"))
             .on_change(move |s| instruct.set(s.to_string()))
             .class("node-input-text"),
     ) as Box<dyn Widget>;
@@ -693,7 +691,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let ref_text_widget = Box::new(
         TextField::new()
             .text(ref_text_field.get_untracked())
-            .placeholder("Транскрипт ref-аудио (опционально)")
+            .placeholder(tr!("node.omnivoice.ref_text_placeholder"))
             .on_change(move |s| ref_text_field.set(s.to_string()))
             .class("node-input-text"),
     ) as Box<dyn Widget>;
@@ -730,13 +728,13 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let status_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         if running.get() {
             return vec![Box::new(
-                Text::new("Синтезирование…").class("audio-node-meta omnivoice-node-running"),
+                Text::new(tr!("nodes.common.synthesizing")).class("audio-node-meta omnivoice-node-running"),
             ) as Box<dyn Widget>];
         }
         if let Some(name) = loaded_name.get() {
@@ -757,7 +755,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row("Модель", model_control),
+            node_field_row(&tr!("nodes.common.model"), model_control),
             node_field_row("Device", device_dd),
             node_field_row("Storage", storage_dd),
             node_field_row("Compute", compute_dd),
@@ -769,13 +767,13 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             node_field_row("T-shift", tshift_control),
             node_field_row("Speed", speed_control),
             node_field_row("Seed", seed_widget),
-            node_field_row("Статус", status_control),
+            node_field_row(&tr!("nodes.common.status"), status_control),
         ]);
 
     Box::new(col)
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
     Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
 }
 

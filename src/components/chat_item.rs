@@ -54,7 +54,7 @@ pub fn row_generic(
     let delete_id = id.clone();
     let on_delete_btn = on_delete.clone();
     let trailing = ToolButton::new(MI_DELETE)
-        .tooltip("Удалить чат")
+        .tooltip(tr!("chat.item.delete"))
         .on_click(move || on_delete_btn(&delete_id))
         .class("chat-item-trailing-delete");
 
@@ -79,7 +79,7 @@ pub fn row_generic(
     let on_delete_menu = on_delete.clone();
     Box::new(
         ContextMenu::new()
-            .items(vec![MenuItem::new("delete", "Удалить чат").icon(MI_DELETE)])
+            .items(vec![MenuItem::new("delete", tr!("chat.item.delete")).icon(MI_DELETE)])
             .on_select(move |action| {
                 if action == "delete" {
                     on_delete_menu(&menu_id);
@@ -92,7 +92,7 @@ pub fn row_generic(
 fn display_title(title: &str) -> String {
     let t = title.trim();
     if t.is_empty() {
-        "Новый чат".to_string()
+        tr!("chat.item.untitled")
     } else {
         t.to_string()
     }
@@ -101,7 +101,7 @@ fn display_title(title: &str) -> String {
 fn display_preview(preview: &str) -> String {
     let p = preview.trim();
     if p.is_empty() {
-        return "Ещё нет сообщений".to_string();
+        return tr!("chat.item.no_messages");
     }
     // Превью узкое (~180px полезной ширины при колонке 300px), а исходный
     // текст часто содержит реальные \n и литералы "\n" (если в чат прилетел

@@ -63,11 +63,11 @@ pub fn vae_on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("подключите H3 Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.minimax_h3.common.connect_checkpoint_model")));
         return;
     };
     let Some(latent) = current_input_video_latent(ctx, node.id, "video_latent") else {
-        error.set(Some("подключите H3 Sampler на вход video_latent".into()));
+        error.set(Some(tr!("node.minimax_h3_decode.connect_video_latent")));
         return;
     };
 
@@ -155,8 +155,8 @@ pub fn vae_body(node: &NodeInstance) -> Box<dyn Widget> {
             .children(vec![
                 Box::new(preview),
                 field_row(
-                    "Статус",
-                    status_row(running, error, loaded_name, "декодирование видео…", "h3-node-running"),
+                    &tr!("nodes.common.status"),
+                    status_row(running, error, loaded_name, tr!("node.minimax_h3_decode.video_busy"), "h3-node-running"),
                 ),
             ]),
     )
@@ -205,11 +205,11 @@ pub fn audio_on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("подключите H3 Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.minimax_h3.common.connect_checkpoint_model")));
         return;
     };
     let Some(latent) = current_input_audio_latent(ctx, node.id, "audio_latent") else {
-        error.set(Some("подключите H3 Sampler на вход audio_latent".into()));
+        error.set(Some(tr!("node.minimax_h3_decode.connect_audio_latent")));
         return;
     };
 
@@ -294,8 +294,8 @@ pub fn audio_body(node: &NodeInstance) -> Box<dyn Widget> {
             .children(vec![
                 Box::new(wave),
                 field_row(
-                    "Статус",
-                    status_row(running, error, loaded_name, "декодирование звука…", "h3-node-running"),
+                    &tr!("nodes.common.status"),
+                    status_row(running, error, loaded_name, tr!("node.minimax_h3_decode.audio_busy"), "h3-node-running"),
                 ),
             ]),
     )

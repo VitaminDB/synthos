@@ -179,9 +179,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         },
         None => {
             let Some(bundle_path) = snap.model_path.get_untracked() else {
-                snap.error.set(Some(
-                    "Выберите .syn bundle VibeVoice или подключите Syn Checkpoint".into(),
-                ));
+                snap.error.set(Some(tr!("node.vibevoice.error.no_bundle")));
                 return;
             };
             VibeVoiceLoadedCfg {
@@ -197,8 +195,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         .unwrap_or_else(|| snap.script_field.get_untracked());
     let script = plain_text_to_script(&raw_script);
     if script.is_empty() {
-        snap.error
-            .set(Some("Подключите Text на вход «script» или впишите сценарий".into()));
+        snap.error.set(Some(tr!("node.vibevoice.error.no_script")));
         return;
     }
 
@@ -307,7 +304,7 @@ fn synth_worker(
             Err(e) => {
                 let res: std::result::Result<(), String> = Err(format!("загрузка: {e}"));
                 super::log_worker_done("vibevoice", started, &res);
-                snap.error.set(Some(format!("Не удалось загрузить модель: {e}")));
+                snap.error.set(Some(tr!("nodes.common.model_load_failed", error = e)));
                 snap.running.set(false);
                 return;
             }
@@ -335,7 +332,7 @@ fn synth_worker(
                 .synthesize_with(&script, &samples, &gen, None, Some(&mut on_step))
                 .map(|out| (out.audio, pl.sample_rate()))
                 .map_err(|e| e.to_string()),
-            None => Err("Pipeline не загружен".to_string()),
+            None => Err(tr!("nodes.common.pipeline_not_loaded")),
         },
         Err(_) => Err("Lock error pipeline".to_string()),
     };
@@ -356,8 +353,8 @@ fn synth_worker(
             });
             snap.error.set(None);
         }
-        Ok(_) => snap.error.set(Some("Модель не сгенерировала аудио".into())),
-        Err(e) => snap.error.set(Some(format!("Ошибка синтеза: {e}"))),
+        Ok(_) => snap.error.set(Some(tr!("node.vibevoice.error.no_audio_generated"))),
+        Err(e) => snap.error.set(Some(tr!("nodes.common.synthesis_failed", error = e))),
     }
     super::log_worker_done("vibevoice", started, &result);
 
@@ -412,7 +409,7 @@ fn current_input_audio_optional(
 
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some(snap) = snapshot(node) else {
-        return error_widget("VibeVoice: некорректный runtime");
+        return error_widget(tr!("nodes.common.invalid_runtime", name = "VibeVoice"));
     };
 
     let pipeline_h = snap.pipeline.clone();
@@ -420,7 +417,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let pick_error = snap.error;
     let pick_name = snap.loaded_name;
     let model_control: Box<dyn Widget> = node_file_picker(
-        "Выбрать .syn bundle VibeVoice",
+        tr!("node.vibevoice.tooltip.pick_bundle"),
         snap.model_path,
         &[("Syn bundle", &["syn"])],
         move |_p| {
@@ -439,7 +436,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let script_widget = Box::new(
         MultilineTextEdit::new()
             .text(script_field.get_untracked())
-            .placeholder("Speaker 1: Привет!\nSpeaker 2: И тебе привет.")
+            .placeholder(tr!("node.vibevoice.field.script_placeholder"))
             .on_change(move |s| script_field.set(s.to_string()))
             .class("node-input-text"),
     ) as Box<dyn Widget>;
@@ -462,16 +459,16 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let status_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if let Some(msg) = error_sig.get() {
             return vec![
-                Box::new(Text::new(format!("Ошибка: {msg}")).class("audio-node-error"))
+                Box::new(Text::new(tr!("nodes.common.error", error = msg)).class("audio-node-error"))
                     as Box<dyn Widget>,
             ];
         }
         if running.get() {
             let pct = progress.get();
             let label = if pct > 0 {
-                format!("Синтезирование… {pct}%")
+                tr!("node.vibevoice.status.synthesizing", pct = pct)
             } else {
-                "Загрузка модели…".to_string()
+                tr!("node.vibevoice.status.loading_model")
             };
             return vec![Box::new(
                 Text::new(label).class("audio-node-meta vibevoice-node-running"),
@@ -487,25 +484,25 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row("Модель", model_control),
+            node_field_row(&tr!("nodes.common.model"), model_control),
             node_field_row("Device", node_dropdown_field(DEVICE_OPTIONS, snap.device_idx)),
             node_field_row("Compute", node_dropdown_field(COMPUTE_OPTIONS, snap.compute_idx)),
-            node_field_row("Сценарий", script_widget),
+            node_field_row(&tr!("node.vibevoice.field.script"), script_widget),
             node_field_row("CFG", node_slider_field(snap.cfg_value, 0.5, 3.0, 0.05, 2)),
             node_field_row("Steps", node_int_slider_field(snap.ddpm_steps, 5, 50, 1)),
             node_field_row(
-                "Длина ×",
+                &tr!("node.vibevoice.field.length_multiplier"),
                 node_slider_field(snap.max_length_times, 1.0, 6.0, 0.1, 1),
             ),
             node_field_row("Seed", seed_widget),
-            node_field_row("Статус", Box::new(status_text) as Box<dyn Widget>),
+            node_field_row(&tr!("nodes.common.status"), Box::new(status_text) as Box<dyn Widget>),
         ]);
 
     Box::new(col)
 }
 
-fn error_widget(msg: &'static str) -> Box<dyn Widget> {
-    Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg).class("node-card-field-error")))
+fn error_widget(msg: impl Into<String>) -> Box<dyn Widget> {
+    Box::new(Padding::symmetric(10.0, 6.0).child(Text::new(msg.into()).class("node-card-field-error")))
 }
 
 fn register_in_panel<T: Send + 'static, C: Send + 'static>(

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
+use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
 
 use crate::config;
@@ -54,7 +55,7 @@ pub fn pick_mmproj(dir: &Path, exclude: &Path) -> Option<PathBuf> {
 
 #[cfg(not(feature = "gguf"))]
 pub fn start(_ctx: HuggingFaceCtx, notif: NotificationCtx, _repo_id: String, _filename: String) {
-    notif.error("Сборка synthos без feature `gguf` — конвертация недоступна");
+    notif.error(tr!("hf.error.gguf_disabled"));
 }
 
 #[cfg(feature = "gguf")]
@@ -63,16 +64,16 @@ pub fn start(ctx: HuggingFaceCtx, notif: NotificationCtx, repo_id: String, filen
     use std::sync::Arc;
 
     if ctx.convert_active.get_untracked().is_some() {
-        notif.warning("Конвертация уже идёт");
+        notif.warning(tr!("hf.notify.convert_in_progress"));
         return;
     }
     let src = local_path(&ctx, &repo_id, &filename);
     if !src.is_file() {
-        notif.error(format!("Файл не найден: {}", src.display()));
+        notif.error(tr!("hf.error.file_not_found", path = src.display()));
         return;
     }
     if is_mmproj(&filename) {
-        notif.warning("mmproj подхватывается автоматически при конвертации основного GGUF");
+        notif.warning(tr!("hf.notify.mmproj_auto"));
         return;
     }
     let out = output_path(&src);
@@ -80,7 +81,7 @@ pub fn start(ctx: HuggingFaceCtx, notif: NotificationCtx, repo_id: String, filen
 
     ctx.convert_active.set(Some(filename.clone()));
     ctx.convert_progress.set(0.0);
-    notif.info(format!("Конвертация {filename} → .syn"));
+    notif.info(tr!("hf.notify.converting", name = filename));
 
     let active = ctx.convert_active;
     let progress = ctx.convert_progress;
@@ -121,12 +122,12 @@ pub fn start(ctx: HuggingFaceCtx, notif: NotificationCtx, repo_id: String, filen
             active.set(None);
             progress.set(0.0);
             match res {
-                Ok(r) => notif_done.success(format!(
-                    "Готово: {} ({:.1} ГБ)",
-                    r.output.display(),
-                    r.payload_bytes as f64 / 1e9
+                Ok(r) => notif_done.success(tr!(
+                    "hf.notify.convert_done",
+                    path = r.output.display(),
+                    size = format!("{:.1}", r.payload_bytes as f64 / 1e9)
                 )),
-                Err(e) => notif_done.error(format!("Конвертация не удалась: {e}")),
+                Err(e) => notif_done.error(tr!("hf.error.convert_failed", error = e)),
             }
         });
     });

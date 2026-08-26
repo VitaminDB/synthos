@@ -93,7 +93,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((running, error, progress_pct, frames_out, preview_version)) = snapshot else {
-        return Box::new(Text::new("LtxVaeDecode: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxVaeDecode"))
+                .class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let preview = Reactive::new(move || -> Vec<Box<dyn Widget>> {
@@ -108,16 +111,18 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 ) as Box<dyn Widget>,
             ],
             None => vec![
-                Box::new(Text::new("Превью появится после декода").class("audio-node-empty"))
-                    as Box<dyn Widget>,
+                Box::new(
+                    Text::new(tr!("node.ltx_vae_decode.status.preview_placeholder"))
+                        .class("audio-node-empty"),
+                ) as Box<dyn Widget>,
             ],
         }
     });
     let rows: Vec<Box<dyn Widget>> = vec![
         Box::new(preview),
-        field_row("Прогресс", progress_row(running, progress_pct)),
+        field_row(&tr!("node.ltx.common.progress"), progress_row(running, progress_pct)),
         field_row(
-            "Статус",
+            &tr!("nodes.common.status"),
             status_row(running, error, loaded_name, "VAE decode…", "ltx-node-running"),
         ),
     ];
@@ -158,11 +163,11 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     let Some(latent) = current_input_video_latent(ctx, node.id, "video_latent") else {
-        error.set(Some("Подключите video_latent (Sampler/Upscale)".into()));
+        error.set(Some(tr!("node.ltx_vae_decode.err.connect_video_latent")));
         return;
     };
     if running.get_untracked() {
@@ -267,7 +272,7 @@ fn frames_to_rgba_impl(
 ) -> std::result::Result<LtxFrames, String> {
     let dims = rgb.dims().to_vec();
     if dims.len() != 5 {
-        return Err(format!("ожидался RGB [1,3,F,H,W], получено {dims:?}"));
+        return Err(tr!("node.ltx_vae_decode.err.bad_rgb_dims", dims = format!("{dims:?}")));
     }
     let (h, w) = (dims[3], dims[4]);
     let planes = if signed {
@@ -280,11 +285,11 @@ fn frames_to_rgba_impl(
     for (i, fr) in planes.into_iter().enumerate() {
         let v = fr
             .to_device(Device::Cpu)
-            .map_err(|e| format!("кадр {i} → CPU: {e}"))?
+            .map_err(|e| tr!("node.ltx_vae_decode.err.frame_to_cpu", frame = i, error = e))?
             .reshape(vec![3 * h * w])
-            .map_err(|e| format!("кадр {i} reshape: {e}"))?
+            .map_err(|e| tr!("node.ltx_vae_decode.err.frame_reshape", frame = i, error = e))?
             .to_vec1::<f32>()
-            .map_err(|e| format!("кадр {i} → vec: {e}"))?;
+            .map_err(|e| tr!("node.ltx_vae_decode.err.frame_to_vec", frame = i, error = e))?;
         let mut rgba = vec![0u8; h * w * 4];
         let plane = h * w;
         for p in 0..plane {

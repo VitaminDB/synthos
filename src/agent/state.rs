@@ -22,6 +22,7 @@
 //! активного чата живёт в `messages`; при переключении чата `registry::select`
 //! перегружает её из `storage`.
 
+use syngui::tr;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::schema::ChatToolCall;
@@ -51,13 +52,13 @@ pub enum AttachmentKind {
 
 impl AttachmentKind {
     /// Человекочитаемое имя для UI-подписей.
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Image => "Изображение",
-            Self::Video => "Видео",
-            Self::Audio => "Аудио",
-            Self::Document => "Документ",
-            Self::Other => "Файл",
+            Self::Image => tr!("chat.attachment.kind.image"),
+            Self::Video => tr!("chat.attachment.kind.video"),
+            Self::Audio => tr!("chat.attachment.kind.audio"),
+            Self::Document => tr!("chat.attachment.kind.document"),
+            Self::Other => tr!("chat.attachment.kind.other"),
         }
     }
 
@@ -251,8 +252,8 @@ impl ChatMsg {
     pub fn user_with_attachments(body: impl Into<String>, attachments: Vec<MsgAttachment>) -> Self {
         Self {
             role: ChatMsgRole::User,
-            author: "Вы".to_string(),
-            initials: "ВЫ".to_string(),
+            author: tr!("chat.msg.author.you"),
+            initials: tr!("chat.msg.author.you_initials"),
             tone_class: "avatar-slate".to_string(),
             time: format_hm_now(),
             body: body.into(),
@@ -269,7 +270,7 @@ impl ChatMsg {
     pub fn assistant_empty() -> Self {
         Self {
             role: ChatMsgRole::Assistant,
-            author: "Ассистент".to_string(),
+            author: tr!("chat.msg.author.assistant"),
             initials: "AI".to_string(),
             tone_class: "avatar-blue".to_string(),
             time: format_hm_now(),
@@ -309,7 +310,7 @@ impl ChatMsg {
     pub fn tool_call(tool_name: impl Into<String>, args_pretty: impl Into<String>, calls: Vec<ChatToolCall>) -> Self {
         Self {
             role: ChatMsgRole::Assistant,
-            author: "Ассистент".to_string(),
+            author: tr!("chat.msg.author.assistant"),
             initials: "AI".to_string(),
             tone_class: "avatar-blue".to_string(),
             time: format_hm_now(),

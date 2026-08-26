@@ -83,25 +83,25 @@ fn card(ctx: NodeEditorCtx, node_id: NodeId) -> impl Widget {
             Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Text::new(MI_PALETTE).class("node-tint-dialog-icon"),
-                    Text::new("Цвет ноды").class("node-tint-dialog-title"),
+                    Text::new(tr!("nodes.dialog.tint.title")).class("node-tint-dialog-title"),
                 ],
-                Text::new("Оттенок смешивается с базовым тёмным фоном карточки — нода остаётся читаемой, но получает узнаваемый акцент.")
+                Text::new(tr!("nodes.dialog.tint.hint"))
                     .class("node-tint-dialog-hint"),
                 ColorPicker::new()
                     .color(initial)
                     .width(280.0)
                     .on_change(move |c| picked.set(c)),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                    Button::new("Сбросить")
+                    Button::new(tr!("nodes.dialog.tint.reset"))
                         .leading_icon(MI_REMOVE_CIRCLE_OUTLINE)
                         .on_click(reset)
                         .class("node-tint-dialog-btn-secondary"),
                     Row::new().gap(10.0) => [
-                        Button::new("Отмена")
+                        Button::new(tr!("app.cancel"))
                             .leading_icon(MI_CLOSE)
                             .on_click(cancel)
                             .class("node-tint-dialog-btn-secondary"),
-                        Button::new("Применить")
+                        Button::new(tr!("app.apply"))
                             .leading_icon(MI_CHECK)
                             .on_click(apply)
                             .class("node-tint-dialog-btn-primary"),

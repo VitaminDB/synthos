@@ -12,9 +12,9 @@ pub fn view() -> impl Widget {
                 DecoratedBox::new().class("settings-right-hint-bubble") => [
                     Center::new().child(Icon::new(MI_LIGHTBULB).class("settings-right-hint-icon")),
                 ],
-                Text::new("Скилы").class("settings-right-hint-title"),
+                Text::new(tr!("settings.right_hint.title")).class("settings-right-hint-title"),
                 Padding::symmetric(16.0, 0.0).child(
-                    Text::new("Выберите вкладку «Скилы», чтобы увидеть список инструкций и отредактировать их в редакторе с нумерацией строк.")
+                    Text::new(tr!("settings.right_hint.text"))
                         .class("settings-right-hint-text"),
                 ),
             ],

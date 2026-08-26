@@ -37,7 +37,7 @@ pub fn terminal_font_panel() -> impl Widget {
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .children(vec![
                     Box::new(section_card(
-                        "Шрифт",
+                        tr!("settings.terminal.section.font"),
                         vec![family_row(), size_row()],
                     )) as Box<dyn Widget>,
                     preview_card(),
@@ -61,7 +61,7 @@ fn family_row() -> Box<dyn Widget> {
             let mut items = Vec::with_capacity(monospace.len() + 1);
             items.push(DropdownItem::new(
                 DEFAULT_FAMILY_KEY,
-                "Системный по умолчанию",
+                tr!("settings.terminal.family.default"),
             ));
             for name in monospace {
                 items.push(DropdownItem::new(name.clone(), name.clone()));
@@ -89,8 +89,8 @@ fn family_row() -> Box<dyn Widget> {
 
     row_frame(
         MI_TUNE,
-        "Семейство",
-        "Только моноширинные шрифты системы. «Системный» — fallback к DejaVu Sans Mono / Menlo / Consolas в зависимости от ОС.",
+        tr!("settings.terminal.family"),
+        tr!("settings.terminal.family.desc"),
         Box::new(control),
     )
 }
@@ -115,16 +115,16 @@ fn size_row() -> Box<dyn Widget> {
                     .child(
                         DecoratedBox::new()
                             .class("grow")
-                            .child(Text::new("Размер").class("settings-row-title")),
+                            .child(Text::new(tr!("settings.terminal.size")).class("settings-row-title")),
                     )
                     .child(
-                        Text::new(format!("{} px", value as i32))
+                        Text::new(tr!("settings.terminal.size.px", n = value as i32))
                             .class("terminal-font-size-value"),
                     ),
             )
             .child(
                 Text::new(
-                    "8–32 px. Меняется без перезапуска текущей сессии shell — PTY и история сохраняются.",
+                    tr!("settings.terminal.size.desc"),
                 )
                 .class("settings-row-desc"),
             )
@@ -195,9 +195,9 @@ fn preview_card() -> Box<dyn Widget> {
             let family = ctx.terminal_font_family.get();
             let size = ctx.terminal_font_size.get();
             let label = if family.is_empty() {
-                format!("Системный по умолчанию · {} px", size as i32)
+                tr!("settings.terminal.preview.caption", family = tr!("settings.terminal.family.default"), size = size as i32)
             } else {
-                format!("{family} · {} px", size as i32)
+                tr!("settings.terminal.preview.caption", family = family, size = size as i32)
             };
             Text::new(label).class("terminal-preview-caption")
         });
@@ -216,7 +216,7 @@ fn preview_card() -> Box<dyn Widget> {
         Column::new()
             .gap(12.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(Text::new("Предпросмотр").class("settings-section-title"))
+            .child(Text::new(tr!("settings.terminal.preview")).class("settings-section-title"))
             .child(body),
     )
 }
@@ -227,8 +227,8 @@ fn preview_card() -> Box<dyn Widget> {
 
 fn row_frame(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     control: Box<dyn Widget>,
 ) -> Box<dyn Widget> {
     let inner = Row::new()
@@ -244,8 +244,8 @@ fn row_frame(
                 Column::new()
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Start)
-                    .child(Text::new(title).class("settings-row-title"))
-                    .child(Text::new(desc).class("settings-row-desc")),
+                    .child(Text::new(title.into()).class("settings-row-title"))
+                    .child(Text::new(desc.into()).class("settings-row-desc")),
             ),
         )
         .children(vec![control]);
@@ -257,7 +257,7 @@ fn row_frame(
     )
 }
 
-fn section_card(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
+fn section_card(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> impl Widget {
     let card = DecoratedBox::new().class("settings-card").child(
         Column::new()
             .gap(0.0)
@@ -267,6 +267,6 @@ fn section_card(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget 
     Column::new()
         .gap(12.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new(title).class("settings-section-title"))
+        .child(Text::new(title.into()).class("settings-section-title"))
         .child(card)
 }

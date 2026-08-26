@@ -61,7 +61,7 @@ fn list_view() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Stretch);
 
         if !pinned.is_empty() {
-            col = col.child(Text::new("Качается").class("hf-list-section"));
+            col = col.child(Text::new(tr!("hf.list.downloading_section")).class("hf-list-section"));
             for rid in &pinned {
                 let model = models
                     .iter()
@@ -78,7 +78,7 @@ fn list_view() -> impl Widget {
             .filter(|m| !pinned.iter().any(|p| p == &m.id))
             .collect();
         if !pinned.is_empty() && !rest.is_empty() {
-            col = col.child(Text::new("Модели").class("hf-list-section"));
+            col = col.child(Text::new(tr!("hf.list.models_section")).class("hf-list-section"));
         }
         for m in rest.into_iter() {
             let is_sel = selected.as_deref() == Some(m.id.as_str());
@@ -123,17 +123,17 @@ fn error_view() -> impl Widget {
         let msg = ctx
             .list_error
             .get()
-            .unwrap_or_else(|| "Неизвестная ошибка".to_string());
+            .unwrap_or_else(|| tr!("hf.list.unknown_error"));
         let widget = mgui! {
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::Center)
                 .class("hf-list-error") => [
-                    Text::new("Не удалось загрузить список моделей")
+                    Text::new(tr!("hf.list.load_error_title"))
                         .class("hf-list-error-title"),
                     Text::new(msg).class("hf-list-error-msg"),
-                    Button::new("Повторить")
+                    Button::new(tr!("hf.list.retry"))
                         .on_click(|| actions::trigger_list_reload())
                         .class("hf-retry-btn"),
                 ]
@@ -144,6 +144,6 @@ fn error_view() -> impl Widget {
 
 fn empty_view() -> impl Widget {
     Center::new().child(
-        Text::new("Ничего не найдено").class("hf-list-empty"),
+        Text::new(tr!("hf.list.empty")).class("hf-list-empty"),
     )
 }

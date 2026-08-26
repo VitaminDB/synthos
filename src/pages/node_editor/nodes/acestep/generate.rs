@@ -88,9 +88,7 @@ pub fn resolve_paths(
         }
         match &h.models_dir {
             Some(d) => Ok(d.join(name)),
-            None => Err(format!(
-                "{name}: укажите каталог моделей на Checkpoint-ноде или путь-override"
-            )),
+            None => Err(tr!("node.acestep_generate.error.missing_dir_or_override", name = name)),
         }
     };
     let lm = pick(&h.lm_path, LM_NAME)?;
@@ -99,7 +97,11 @@ pub fn resolve_paths(
     let vae = pick(&h.vae_path, VAE_NAME)?;
     for (label, p) in [("lm", &lm), ("text-encoder", &te), ("dit", &dit), ("vae", &vae)] {
         if !p.exists() {
-            return Err(format!("{label} bundle не найден: {}", p.display()));
+            return Err(tr!(
+                "node.acestep_generate.error.bundle_not_found",
+                label = label,
+                path = p.display()
+            ));
         }
     }
     Ok((lm, te, dit, vae))
@@ -442,7 +444,8 @@ fn section_header(label: &str) -> Box<dyn Widget> {
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some(s) = snapshot(node) else {
         return Box::new(
-            Text::new("AceStepGenerate: некорректный runtime").class("node-card-field-error"),
+            Text::new(tr!("nodes.common.invalid_runtime", name = "AceStepGenerate"))
+                .class("node-card-field-error"),
         );
     };
 
@@ -462,8 +465,14 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 field_row("Retake seed", make_seed_slider(retake_seed)),
             ],
             2 | 3 => vec![
-                field_row("Region start, с", make_slider_row(repaint_start_sec, 0.0, 600.0, 0.1, 1)),
-                field_row("Region end, с (-1=конец)", make_slider_row(repaint_end_sec, -1.0, 600.0, 0.1, 1)),
+                field_row(
+                    &tr!("node.acestep_generate.field.region_start"),
+                    make_slider_row(repaint_start_sec, 0.0, 600.0, 0.1, 1),
+                ),
+                field_row(
+                    &tr!("node.acestep_generate.field.region_end"),
+                    make_slider_row(repaint_end_sec, -1.0, 600.0, 0.1, 1),
+                ),
                 field_row("Strength", make_slider_row(repaint_strength, 0.0, 1.0, 0.01, 2)),
             ],
             4 => vec![
@@ -477,26 +486,33 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let rows: Vec<Box<dyn Widget>> = vec![
         Box::new(
             Padding::symmetric(super::NODE_PADDING_H, super::ROW_PADDING_V).child(
-                Text::new(
-                    "Полный ACE-Step text→music  ▸  модель: вход model (Checkpoint-нода)",
-                )
-                .class("node-card-hint acestep-model-hint"),
+                Text::new(tr!("node.acestep_generate.hint"))
+                    .class("node-card-hint acestep-model-hint"),
             ),
         ),
-        field_row("Режим", make_mode_dropdown(s.mode_idx)),
+        field_row(&tr!("node.acestep_generate.field.mode"), make_mode_dropdown(s.mode_idx)),
         Box::new(mode_rows),
         field_row(
             "Preset",
             make_preset_dropdown(s.preset, s.infer_steps, s.cfg_scale, s.flow_match_shift),
         ),
-        field_row("Длительность", make_slider_row(s.duration_seconds, -1.0, 600.0, 0.1, 1)),
+        field_row(
+            &tr!("node.acestep_generate.field.duration"),
+            make_slider_row(s.duration_seconds, -1.0, 600.0, 0.1, 1),
+        ),
         field_row("Seed", make_seed_slider(s.seed)),
         // ── AR (5Hz LM): генерация audio-кодов + метадата-оверрайды ──
         section_header("AR · 5Hz LM"),
-        field_row("AR вкл (turbo→off)", make_toggle(s.use_ar)),
+        field_row(&tr!("node.acestep_generate.field.ar_enabled"), make_toggle(s.use_ar)),
         field_row("BPM (0 = N/A)", make_int_slider_row(s.bpm, 0, 300, 1)),
-        field_row("Тональность", super::make_dropdown(KEYSCALE_OPTIONS, s.keyscale_idx)),
-        field_row("Размер такта", super::make_dropdown(TIMESIG_OPTIONS, s.timesig_idx)),
+        field_row(
+            &tr!("node.acestep_generate.field.keyscale"),
+            super::make_dropdown(KEYSCALE_OPTIONS, s.keyscale_idx),
+        ),
+        field_row(
+            &tr!("node.acestep_generate.field.timesig"),
+            super::make_dropdown(TIMESIG_OPTIONS, s.timesig_idx),
+        ),
         field_row("CoT (Phase-1)", make_toggle(s.use_cot)),
         field_row("Temperature", make_slider_row(s.temperature, 0.0, 2.0, 0.01, 2)),
         field_row("Top-p", make_slider_row(s.top_p, 0.0, 1.0, 0.01, 2)),
@@ -504,7 +520,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Min-p", make_slider_row(s.min_p, 0.0, 1.0, 0.01, 2)),
         field_row("LM CFG", make_slider_row(s.lm_cfg_scale, 1.0, 3.0, 0.1, 1)),
         // ── DiT (диффузия): шаги + CFG + DCW-коррекция ──
-        section_header("DiT · диффузия"),
+        section_header(&tr!("node.acestep_generate.section.dit")),
         field_row("Steps", make_int_slider_row(s.infer_steps, 4, 200, 1)),
         field_row("CFG scale", make_slider_row(s.cfg_scale, 1.0, 15.0, 0.1, 1)),
         field_row("Shift", make_slider_row(s.flow_match_shift, 1.0, 5.0, 0.1, 2)),
@@ -515,11 +531,17 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("DCW scaler", make_slider_row(s.dcw_scaler, 0.0, 0.2, 0.001, 3)),
         field_row("DCW high", make_slider_row(s.dcw_high_scaler, 0.0, 0.2, 0.001, 3)),
         // ── Выход: нормализация PCM + статус ──
-        section_header("Выход"),
-        field_row("Нормализация", make_norm_dropdown(s.norm_mode)),
+        section_header(&tr!("node.acestep_generate.section.output")),
+        field_row(&tr!("node.acestep_generate.field.normalization"), make_norm_dropdown(s.norm_mode)),
         field_row(
-            "Статус",
-            status_row(s.running, s.error, s.loaded_name, "Генерация…", "acestep-node-running"),
+            &tr!("nodes.common.status"),
+            status_row(
+                s.running,
+                s.error,
+                s.loaded_name,
+                tr!("nodes.common.generating"),
+                "acestep-node-running",
+            ),
         ),
     ];
     Box::new(
@@ -573,7 +595,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        s.error.set(Some("Подключите ACE-Step Checkpoint к входу model".into()));
+        s.error.set(Some(tr!("node.acestep_generate.error.no_checkpoint")));
         return;
     };
     let mode = s.mode_idx.get_untracked();
@@ -582,8 +604,9 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     // не подключён, generate_music вернёт понятную ошибку.
     if matches!(mode, 2..=6) && current_input_latent(ctx, node.id, "src_latent").is_none() {
         let name = MODE_OPTIONS.get(mode).copied().unwrap_or("?");
-        s.error.set(Some(format!(
-            "Режим '{name}': подключите src_latent (VaeEncode аудио или latent предыдущей генерации)"
+        s.error.set(Some(tr!(
+            "node.acestep_generate.error.mode_needs_src_latent",
+            name = name
         )));
         return;
     }
@@ -598,12 +621,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     // AR off (no-codes) штатно ТОЛЬКО для turbo: base/sft не дистиллированы под
     // пустые коды и падают illegal-instruction. Даём понятную ошибку заранее.
     if !s.use_ar.get_untracked() && !matches!(detect_xl_bundle_kind(&dit), XlBundleKind::Turbo) {
-        s.error.set(Some(
-            "AR (5Hz LM) выключен, но DiT-бандл не turbo: режим no-AR поддерживает \
-             только turbo (base/sft не дистиллированы под пустые коды и аварийно \
-             падают). Включите AR или подключите turbo-DiT."
-                .into(),
-        ));
+        s.error.set(Some(tr!("node.acestep_generate.error.no_ar_requires_turbo")));
         return;
     }
     let (steps, cfg, shift) = if matches!(s.preset.get_untracked(), SamplerPreset::Auto) {

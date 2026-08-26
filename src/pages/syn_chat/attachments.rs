@@ -74,7 +74,7 @@ pub fn strip() -> impl Widget {
 /// но именно она отвечает на вопрос «сколько контекста я сейчас потрачу».
 fn summary_line(items: &[MsgAttachment], busy: usize) -> String {
     if items.is_empty() {
-        return format!("Готовим {busy} файл(ов)…");
+        return trn!("chat.attach.summary.preparing_only", busy);
     }
     let cap = use_context::<crate::context::AppCtx>()
         .syn_chat_max_image_tokens
@@ -88,28 +88,18 @@ fn summary_line(items: &[MsgAttachment], busy: usize) -> String {
 
     let mut s = format!(
         "{} · {}",
-        plural_files(items.len()),
+        trn!("chat.attach.count", items.len()),
         attach::format_size(total_bytes)
     );
     if tokens > 0 {
         // Тильда, а не «≈»: в интерфейсном шрифте нет U+2248, и глиф
         // молча выпадает — подпись читалась бы как точное число.
-        s.push_str(&format!(" · ~{tokens} ток. контекста"));
+        s.push_str(&format!(" · {}", tr!("chat.attach.summary.tokens_suffix", tokens = tokens)));
     }
     if busy > 0 {
-        s.push_str(&format!(" · готовим ещё {busy}…"));
+        s.push_str(&format!(" · {}", tr!("chat.attach.summary.more_preparing", busy = busy)));
     }
     s
-}
-
-fn plural_files(n: usize) -> String {
-    let tail = match (n % 10, n % 100) {
-        (_, 11..=14) => "файлов",
-        (1, _) => "файл",
-        (2..=4, _) => "файла",
-        _ => "файлов",
-    };
-    format!("{n} {tail}")
 }
 
 /// Плитка вложений внутри пузырька сообщения.
@@ -262,7 +252,7 @@ fn close_overlay(sha: &str) -> impl Widget {
         .child(mgui! {
             Row::new().main_axis_alignment(MainAxisAlignment::End).cross_axis_alignment(CrossAxisAlignment::Start) => [
                 ToolButton::new(MI_CLOSE)
-                    .tooltip("Убрать вложение")
+                    .tooltip(tr!("chat.attach.remove.tooltip"))
                     .on_click(move || attach::remove_pending(&sha))
                     .class("attachment-card-close"),
             ]
@@ -275,7 +265,7 @@ fn busy_card() -> impl Widget {
         Center::new() => [
             Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_HOURGLASS_TOP).class("attachment-icon"),
-                Text::new("готовим…").class("attachment-card-meta"),
+                Text::new(tr!("chat.attach.busy_card.label")).class("attachment-card-meta"),
             ]
         ]
     })

@@ -82,28 +82,30 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let Some((width, height, duration_seconds, fps_idx, downscale, ref_strength, control_idx, canny_low, canny_high, depth_model_path, seed, running, error, progress_pct, cancel)) =
         snapshot
     else {
-        return Box::new(Text::new("LtxIcLora: некорректный runtime").class("node-card-field-error"));
+        return Box::new(
+            Text::new(tr!("nodes.common.invalid_runtime", name = "LtxIcLora")).class("node-card-field-error"),
+        );
     };
     let loaded_name = use_signal(None::<String>);
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row("Ширина", make_int_slider_row(width, 256, 1920, 32)),
-        field_row("Высота", make_int_slider_row(height, 256, 1088, 32)),
-        field_row("Длительность, с", make_slider_row(duration_seconds, 1.0, 20.0, 0.5, 1)),
+        field_row(&tr!("nodes.common.field_width"), make_int_slider_row(width, 256, 1920, 32)),
+        field_row(&tr!("nodes.common.field_height"), make_int_slider_row(height, 256, 1088, 32)),
+        field_row(&tr!("nodes.common.field_duration_seconds"), make_slider_row(duration_seconds, 1.0, 20.0, 0.5, 1)),
         field_row("FPS", make_fps_dropdown(fps_idx)),
         field_row("Downscale ref", make_int_slider_row(downscale, 1, 8, 1)),
-        field_row("Сила ref", make_slider_row(ref_strength, 0.0, 1.0, 0.05, 2)),
+        field_row(&tr!("node.ltx_ic_lora.field.ref_strength"), make_slider_row(ref_strength, 0.0, 1.0, 0.05, 2)),
         field_row("Control", super::super::acestep::make_dropdown(super::CONTROL_OPTIONS, control_idx)),
         field_row("Canny low", make_slider_row(canny_low, 0.0, 1.0, 0.01, 2)),
         field_row("Canny high", make_slider_row(canny_high, 0.0, 1.0, 0.01, 2)),
         field_row(
-            "Depth-модель",
-            super::dir_picker_row("Каталог Depth Anything V2 (для control=depth)", depth_model_path),
+            &tr!("node.ltx_ic_lora.field.depth_model"),
+            super::dir_picker_row(tr!("node.ltx_ic_lora.field.depth_dir_label"), depth_model_path),
         ),
         field_row("Seed", make_seed_slider(seed)),
-        field_row("Прогресс", progress_row(running, progress_pct)),
-        field_row("Отмена", super::cancel_button(running, cancel)),
+        field_row(&tr!("nodes.common.progress"), progress_row(running, progress_pct)),
+        field_row(&tr!("app.cancel"), super::cancel_button(running, cancel)),
         field_row(
-            "Статус",
+            &tr!("nodes.common.status"),
             status_row(running, error, loaded_name, "IC-LoRA denoise…", "ltx-node-running"),
         ),
     ];
@@ -138,23 +140,23 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
 
     let Some(handle) = current_input_model(ctx, node.id, "model") else {
-        error.set(Some("Подключите LTX Checkpoint на вход model".into()));
+        error.set(Some(tr!("node.ltx.common.connect_checkpoint_model")));
         return;
     };
     if handle.lora_path.is_none() {
-        error.set(Some("IC-LoRA требует LoRA-адаптер в Checkpoint-ноде".into()));
+        error.set(Some(tr!("node.ltx_ic_lora.err.requires_lora_adapter")));
         return;
     }
     let Some(v_enc) = current_input_video_encoding(ctx, node.id, "video_encoding") else {
-        error.set(Some("Подключите video_encoding от Text Encoder".into()));
+        error.set(Some(tr!("node.ltx.common.connect_video_encoding")));
         return;
     };
     let Some(a_enc) = current_input_audio_encoding(ctx, node.id, "audio_encoding") else {
-        error.set(Some("Подключите audio_encoding от Text Encoder".into()));
+        error.set(Some(tr!("node.ltx.common.connect_audio_encoding")));
         return;
     };
     let Some(ref_path) = current_input_video_input(ctx, node.id, "ref_video") else {
-        error.set(Some("Подключите LTX Video Input на вход ref_video".into()));
+        error.set(Some(tr!("node.ltx.common.connect_video_input_ref_video")));
         return;
     };
     if running.get_untracked() {
@@ -177,7 +179,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let c_high = canny_high.get_untracked();
     let depth_dir = depth_model_path.get_untracked();
     if ctrl == 2 && depth_dir.is_none() {
-        error.set(Some("control=depth требует каталог Depth Anything V2".into()));
+        error.set(Some(tr!("node.ltx_ic_lora.err.requires_depth_dir")));
         running.set(false);
         return;
     }
@@ -234,7 +236,7 @@ fn worker(
     ref_frames = match control {
         1 => shared::apply_canny_frames(&ref_frames, canny_low, canny_high)?,
         2 => {
-            let dir = depth_dir.as_ref().ok_or("control=depth требует Depth-модель")?;
+            let dir = depth_dir.as_ref().ok_or_else(|| tr!("node.ltx_ic_lora.err.requires_depth_model"))?;
             shared::apply_depth_frames(&ref_frames, dir, dev)?
         }
         _ => ref_frames,
@@ -258,7 +260,7 @@ fn worker(
         fps, dev, seed_opt, &hooks,
     )
     .map_err(|e| match e {
-        synaptix_video_ltx23::LtxError::Cancelled => "Отменено".to_string(),
+        synaptix_video_ltx23::LtxError::Cancelled => tr!("node.ltx.common.cancelled"),
         other => format!("ic-lora denoise: {other}"),
     })?;
 

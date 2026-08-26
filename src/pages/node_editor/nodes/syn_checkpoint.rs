@@ -111,28 +111,29 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     };
     let Some((model_path, device_idx, storage_idx, compute_idx, resident)) = snapshot else {
         return Box::new(
-            Text::new("SynCheckpoint: некорректный runtime").class("node-card-field-error"),
+            Text::new(tr!("nodes.common.invalid_runtime", name = "SynCheckpoint"))
+                .class("node-card-field-error"),
         );
     };
     let rows: Vec<Box<dyn Widget>> = vec![
         field_row(
-            "Модель",
+            &tr!("nodes.common.model"),
             node_file_picker(
-                ".syn-бандл модели (LLM/TTS/ASR/диаризация)",
+                tr!("node.syn_checkpoint.picker.model_bundle"),
                 model_path,
                 &[("Syn bundle", &["syn"])],
                 |_| {},
             ),
         ),
         field_row(
-            "HF-каталог",
-            dir_picker_row("Или HF-каталог (config.json + safetensors) — для LLM", model_path),
+            &tr!("node.syn_checkpoint.hf_dir"),
+            dir_picker_row(tr!("node.syn_checkpoint.picker.hf_dir"), model_path),
         ),
         field_row("Device", make_dropdown(DEVICE_PREF_OPTIONS, device_idx)),
         field_row("Storage", make_dropdown(STORAGE_PREF_OPTIONS, storage_idx)),
         field_row("Compute", make_dropdown(COMPUTE_PREF_OPTIONS, compute_idx)),
         // «Слотовое» поведение: держать модель в памяти между прогонами.
-        field_row("Держать в памяти", make_toggle(resident)),
+        field_row(&tr!("nodes.common.keep_in_memory"), make_toggle(resident)),
     ];
     Box::new(
         Column::new()

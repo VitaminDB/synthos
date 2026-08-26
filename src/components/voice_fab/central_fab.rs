@@ -52,7 +52,7 @@ fn build() -> StyledWidget<ToolButton> {
     };
 
     ToolButton::new(MI_MIC)
-        .tooltip("Пауза / Продолжить")
+        .tooltip(tr!("voice.fab.center.tooltip"))
         .on_click(toggle_central)
         .class(class)
 }

@@ -1,5 +1,7 @@
 # synthos
 
+[![Donate via PayPal](https://img.shields.io/badge/donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/vitamindbnfkz)
+
 A local AI desktop studio for Rust — a node-based editor for generating video, music,
 speech and images, with a chat client, a code editor and a document knowledge base, all
 running on-device on the native [synaptix](https://github.com/VitaminDB/synaptix) engine
@@ -79,6 +81,10 @@ LTX-2.3, Gemma-3) are non-commercial or otherwise restricted; check the licence 
 
 - [syngui](https://github.com/VitaminDB/syngui) — the GUI framework.
 - [synaptix](https://github.com/VitaminDB/synaptix) — the inference and training engine.
+
+## Support
+
+synthos is free and open source. If it is useful to you, you can support its development with a donation via [PayPal](https://paypal.me/vitamindbnfkz).
 
 ## Licence
 

@@ -78,6 +78,7 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "ffmpeg",
     "terminal",
     "code-editor-all",
+    "i18n",
 ] }
 
 rand = "0.8"

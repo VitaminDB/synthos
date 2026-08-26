@@ -17,19 +17,17 @@ use crate::icons::*;
 struct Tab {
     key: &'static str,
     icon: &'static str,
-    title: &'static str,
-    subtitle: &'static str,
 }
 
 const TABS: &[Tab] = &[
-    Tab { key: "general",      icon: MI_TUNE,         title: "Общие",        subtitle: "Уведомления и интерфейс" },
-    Tab { key: "themes",       icon: MI_PALETTE,      title: "Темы",         subtitle: "Светлые и тёмные оформления" },
-    Tab { key: "skills",       icon: MI_PSYCHOLOGY,   title: "Скилы",        subtitle: "Инструкции и подсказки" },
-    Tab { key: "audio_models",   icon: MI_HEADSET_MIC,  title: "Аудио модели", subtitle: "Распознавание речи" },
-    Tab { key: "ai_models",      icon: MI_AUTO_AWESOME,    title: "AI модели",    subtitle: "Квантование LLM: Qwen3.6/3.8, Muse Glimmer (чат)" },
-    Tab { key: "knowledge_base", icon: MI_MENU_BOOK,    title: "Базы знаний",  subtitle: "RAG-коллекции для агента" },
-    Tab { key: "terminal",       icon: MI_TERMINAL,     title: "Терминал",     subtitle: "Шрифт встроенного VTE" },
-    Tab { key: "about",          icon: MI_INFO,         title: "О программе",  subtitle: "Версия, авторы, лицензия" },
+    Tab { key: "general", icon: MI_TUNE },
+    Tab { key: "themes", icon: MI_PALETTE },
+    Tab { key: "skills", icon: MI_PSYCHOLOGY },
+    Tab { key: "audio_models", icon: MI_HEADSET_MIC },
+    Tab { key: "ai_models", icon: MI_AUTO_AWESOME },
+    Tab { key: "knowledge_base", icon: MI_MENU_BOOK },
+    Tab { key: "terminal", icon: MI_TERMINAL },
+    Tab { key: "about", icon: MI_INFO },
 ];
 
 pub fn view() -> impl Widget {
@@ -38,7 +36,7 @@ pub fn view() -> impl Widget {
         let active = ctx.selected_settings_tab.get();
 
         let mut items: Vec<Box<dyn Widget>> = Vec::with_capacity(TABS.len() + 1);
-        items.push(Box::new(Text::new("Настройки").class("settings-sidebar-title")));
+        items.push(Box::new(Text::new(tr!("settings.title")).class("settings-sidebar-title")));
         for t in TABS {
             items.push(Box::new(tab_row(*t, active == t.key)));
         }
@@ -72,8 +70,8 @@ fn tab_row(t: Tab, is_active: bool) -> impl Widget {
                 Icon::new(t.icon).class("settings-tab-icon"),
                 DecoratedBox::new().class("grow").child(mgui! {
                     Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
-                        Text::new(t.title).class("settings-tab-title"),
-                        Text::new(t.subtitle).class("settings-tab-subtitle"),
+                        Text::new(tr!(&format!("settings.tabs.{}.title", t.key))).class("settings-tab-title"),
+                        Text::new(tr!(&format!("settings.tabs.{}.subtitle", t.key))).class("settings-tab-subtitle"),
                     ]
                 }),
             ]

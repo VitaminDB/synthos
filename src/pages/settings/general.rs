@@ -25,120 +25,116 @@ pub fn view() -> impl Widget {
             Padding::all(32.0) => [
                 DecoratedBox::new().class("settings-page") => [
                     Column::new().gap(24.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        Text::new("Общие").class("settings-page-title"),
-                        Text::new("Основные параметры приложения.").class("settings-page-subtitle"),
+                        Text::new(tr!("settings.general.title")).class("settings-page-title"),
+                        Text::new(tr!("settings.general.subtitle")).class("settings-page-subtitle"),
 
-                        section("Интерфейс", vec![
-                            text_row(MI_CONTACTS, "Отображаемое имя",
-                                "Как подписываются исходящие сообщения", g.display_name),
-                            dropdown_row(MI_TRANSLATE, "Язык интерфейса",
-                                "Перезагрузка не требуется", g.language, vec![
-                                    DropdownItem::new("ru", "Русский"),
-                                    DropdownItem::new("en", "English"),
-                                    DropdownItem::new("de", "Deutsch"),
-                                    DropdownItem::new("es", "Español"),
-                                ]),
+                        section(tr!("settings.general.section.interface"), vec![
+                            text_row(MI_CONTACTS, tr!("settings.general.display_name"),
+                                tr!("settings.general.display_name.desc"), g.display_name),
+                            dropdown_row(MI_TRANSLATE, tr!("settings.general.language"),
+                                tr!("settings.general.language.desc"), g.language,
+                                crate::i18n::language_items()),
                         ]),
 
-                        section("AI-ассистент", vec![
-                            textarea_row(MI_CHAT, "Системный промпт",
-                                "Первое сообщение (role=system) в каждом запросе к модели. Задаёт тон и ограничения ассистента.",
+                        section(tr!("settings.general.section.assistant"), vec![
+                            textarea_row(MI_CHAT, tr!("settings.general.system_prompt"),
+                                tr!("settings.general.system_prompt.desc"),
                                 g.system_prompt),
-                            textarea_row(MI_RECORD_VOICE_OVER, "Системный промпт постобработки речи",
-                                "Применяется при распознавании голоса — кнопка ⟲ в FAB-окне прогоняет сырую стенограмму через локальную модель с этим промптом и заменяет ею «Отредактированный текст». Пусто = постобработка отключена.",
+                            textarea_row(MI_RECORD_VOICE_OVER, tr!("settings.general.voice_refine_prompt"),
+                                tr!("settings.general.voice_refine_prompt.desc"),
                                 g.voice_refine_prompt),
                         ]),
 
-                        section("Глубина агентов", vec![
-                            turns_row(MI_AUTORENEW, "Глубина основного агента",
-                                "Сколько подряд tool-вызовов разрешено сделать в одном цикле run_agent. По исчерпании цикл выходит. Больше — длиннее цепочки, выше риск зацикливания.",
+                        section(tr!("settings.general.section.agent_depth"), vec![
+                            turns_row(MI_AUTORENEW, tr!("settings.general.agent_max_turns"),
+                                tr!("settings.general.agent_max_turns.desc"),
                                 g.agent_max_turns, 1, 128),
-                            turns_row(MI_BOLT, "Глубина субагента",
-                                "Сколько tool-вызовов разрешено внутри одного субагента до финального summarize-turn без tools. Не превышает основной лимит на практике, можно ставить меньше.",
+                            turns_row(MI_BOLT, tr!("settings.general.subagent_max_turns"),
+                                tr!("settings.general.subagent_max_turns.desc"),
                                 g.subagent_max_turns, 1, 64),
                         ]),
 
-                        section("Автокомпактификация контекста", vec![
-                            switch_row(MI_COMPRESS, "Включить autocompact",
-                                "Когда заполнение контекстного окна превышает порог, старые сообщения автоматически сжимаются в краткое system-сообщение. Доступна и ручная кнопка «Compact now» в правой панели.",
+                        section(tr!("settings.general.section.autocompact"), vec![
+                            switch_row(MI_COMPRESS, tr!("settings.general.autocompact_enabled"),
+                                tr!("settings.general.autocompact_enabled.desc"),
                                 g.autocompact_enabled),
-                            turns_row(MI_TUNE, "Порог срабатывания, %",
-                                "При prompt_tokens / n_ctx больше этого процента запускается компактификация. 50–95.",
+                            turns_row(MI_TUNE, tr!("settings.general.autocompact_threshold"),
+                                tr!("settings.general.autocompact_threshold.desc"),
                                 g.autocompact_threshold_percent, 50, 95),
                         ]),
 
-                        section("Окно голосового распознавания", vec![
-                            text_row(MI_RECORD_VOICE_OVER, "Семейство шрифта",
-                                "Применяется к распознанному тексту в FAB-окне. Пусто = sans-serif.",
+                        section(tr!("settings.general.section.voice_window"), vec![
+                            text_row(MI_RECORD_VOICE_OVER, tr!("settings.general.font_family"),
+                                tr!("settings.general.voice_font_family.desc"),
                                 g.voice_font_family),
-                            font_size_row(MI_TUNE, "Размер шрифта",
-                                "В логических пикселях. Применяется через MSS-переменную в реальном времени.",
+                            font_size_row(MI_TUNE, tr!("settings.general.font_size"),
+                                tr!("settings.general.voice_font_size.desc"),
                                 g.voice_font_size, 14.0, 40.0),
                         ]),
 
-                        section("Редактор кода", vec![
-                            text_row(MI_FONT_DOWNLOAD, "Семейство шрифта",
-                                "Применяется к CodeEditor на странице «Код». Пусто = monospace (системный default).",
+                        section(tr!("settings.general.section.code_editor"), vec![
+                            text_row(MI_FONT_DOWNLOAD, tr!("settings.general.font_family"),
+                                tr!("settings.general.code_font_family.desc"),
                                 ctx.code_editor_font_family),
-                            font_size_row(MI_TUNE, "Размер шрифта",
-                                "В логических пикселях. Применяется через MSS-переменную в реальном времени.",
+                            font_size_row(MI_TUNE, tr!("settings.general.font_size"),
+                                tr!("settings.general.code_font_size.desc"),
                                 ctx.code_editor_font_size, 10.0, 24.0),
                         ]),
 
-                        section("Чат", vec![
-                            dropdown_row(MI_TUNE, "Вызовы инструментов",
-                                "Что показывать в ленте при работе агента (bash, web_read и др.)",
+                        section(tr!("settings.general.section.chat"), vec![
+                            dropdown_row(MI_TUNE, tr!("settings.general.tool_display"),
+                                tr!("settings.general.tool_display.desc"),
                                 g.tool_display_mode, vec![
-                                    DropdownItem::new("full",    "Полный вывод"),
-                                    DropdownItem::new("minimal", "Минимальная информация"),
-                                    DropdownItem::new("hidden",  "Скрыть"),
+                                    DropdownItem::new("full", tr!("settings.general.tool_display.full")),
+                                    DropdownItem::new("minimal", tr!("settings.general.tool_display.minimal")),
+                                    DropdownItem::new("hidden", tr!("settings.general.tool_display.hidden")),
                                 ]),
                         ]),
 
-                        section("HuggingFace", {
+                        section(tr!("settings.general.section.huggingface"), {
                             let hf = use_context::<HuggingFaceCtx>();
                             vec![
-                                text_row(MI_LOCK, "Токен доступа",
-                                    "Токен HuggingFace (hf_…) для gated/private моделей (FLUX.1-dev, Llama) и снятия anon-лимита. Создать: huggingface.co/settings/tokens (роль read). Пусто = только публичные.",
+                                text_row(MI_LOCK, tr!("settings.general.hf_token"),
+                                    tr!("settings.general.hf_token.desc"),
                                     hf.token),
-                                folder_row(MI_FOLDER, "Каталог моделей",
-                                    "Куда сохраняются скачанные веса. Пусто = ~/.local/share/synthos/hf.",
+                                folder_row(MI_FOLDER, tr!("settings.general.hf_cache_dir"),
+                                    tr!("settings.general.hf_cache_dir.desc"),
                                     hf.cache_dir),
-                                turns_row(MI_CLOUD_DOWNLOAD, "Одновременно файлов",
-                                    "Сколько файлов скачивается параллельно. Остальные ждут в очереди.",
+                                turns_row(MI_CLOUD_DOWNLOAD, tr!("settings.general.hf_concurrent"),
+                                    tr!("settings.general.hf_concurrent.desc"),
                                     hf.concurrent_limit, 1, 8),
-                                turns_row(MI_TUNE, "Сегментов на файл",
-                                    "Файл режется на N HTTP-Range-сегментов и качается параллельно. Ускоряет крупные шарды.",
+                                turns_row(MI_TUNE, tr!("settings.general.hf_segments"),
+                                    tr!("settings.general.hf_segments.desc"),
                                     hf.segments_per_file, 1, 16),
-                                turns_row(MI_SPEED, "Лимит скорости (МБ/с)",
-                                    "Общий потолок на все загрузки и их сегменты. 0 = без лимита.",
+                                turns_row(MI_SPEED, tr!("settings.general.hf_speed_limit"),
+                                    tr!("settings.general.hf_speed_limit.desc"),
                                     hf.speed_limit_mbps, 0, 2000),
-                                switch_row(MI_FILTER_ALT, "Пропускать onnx/bin/fp32",
-                                    "«Скачать всё» не тянет несовместимые/тяжёлые форматы (onnx, openvino, fp32, .bin). Кнопка «Скачать» на файле качает что угодно.",
+                                switch_row(MI_FILTER_ALT, tr!("settings.general.hf_skip_formats"),
+                                    tr!("settings.general.hf_skip_formats.desc"),
                                     hf.skip_unwanted_formats),
-                                switch_row(MI_FOLDER_ZIP, "Поддержка GGUF",
-                                    "Включает поиск и скачивание GGUF-моделей на странице HuggingFace и конвертацию .gguf → .syn прямо из списка файлов. Выключено — GGUF не ищется и не качается.",
+                                switch_row(MI_FOLDER_ZIP, tr!("settings.general.hf_gguf"),
+                                    tr!("settings.general.hf_gguf.desc"),
                                     hf.gguf_support),
                             ]
                         }),
 
-                        section("Разрешения инструментов", {
+                        section(tr!("settings.general.section.tool_permissions"), {
                             // Глобальный режим + per-tool override на каждый
                             // зарегистрированный инструмент. Tool::all() — единый
                             // источник правды (chat::tools::descriptor), новый
                             // инструмент в каталоге автоматически появится здесь.
                             let mut rows: Vec<Box<dyn Widget>> = vec![
-                                dropdown_row(MI_VERIFIED_USER, "Режим по умолчанию",
-                                    "Применяется ко всем инструментам без отдельного override",
+                                dropdown_row(MI_VERIFIED_USER, tr!("settings.general.tool_approval_default"),
+                                    tr!("settings.general.tool_approval_default.desc"),
                                     g.tool_approval_default, vec![
-                                        DropdownItem::new(TOOL_APPROVAL_ASK,    "Спрашивать всегда"),
-                                        DropdownItem::new(TOOL_APPROVAL_ALWAYS, "Разрешать без подтверждения"),
+                                        DropdownItem::new(TOOL_APPROVAL_ASK, tr!("settings.general.tool_approval.ask_always")),
+                                        DropdownItem::new(TOOL_APPROVAL_ALWAYS, tr!("settings.general.tool_approval.allow")),
                                     ]),
                             ];
                             for tool in Tool::all() {
                                 rows.push(tool_override_row(
                                     tool.key, tool.icon, tool.label,
-                                    "Переопределяет режим по умолчанию для этого инструмента",
+                                    tr!("settings.general.tool_override.desc"),
                                     g.tool_approval_overrides,
                                 ));
                             }
@@ -151,7 +147,7 @@ pub fn view() -> impl Widget {
     }
 }
 
-fn section(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
+fn section(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> impl Widget {
     let card = DecoratedBox::new().class("settings-card").child(
         Column::new()
             .gap(0.0)
@@ -168,8 +164,8 @@ fn section(title: &'static str, rows: Vec<Box<dyn Widget>>) -> impl Widget {
 
 pub(super) fn row_frame(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     control: Box<dyn Widget>,
 ) -> Box<dyn Widget> {
     let inner = Row::new()
@@ -200,8 +196,8 @@ pub(super) fn row_frame(
 
 fn text_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<String>,
 ) -> Box<dyn Widget> {
     let initial = value.get_untracked();
@@ -213,8 +209,8 @@ fn text_row(
 
 fn dropdown_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<String>,
     items: Vec<DropdownItem>,
 ) -> Box<dyn Widget> {
@@ -232,8 +228,8 @@ fn dropdown_row(
 /// (`pick_folder`) — для каталогов вроде HF-кэша.
 fn folder_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<String>,
 ) -> Box<dyn Widget> {
     let initial = value.get_untracked();
@@ -266,8 +262,8 @@ fn folder_row(
 /// для длинных промптов, которые иначе сжимаются в узкую колонку справа.
 fn textarea_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<String>,
 ) -> Box<dyn Widget> {
     let initial = value.get_untracked();
@@ -297,7 +293,7 @@ fn textarea_row(
     // DecoratedBox только добавила бы лишний слой и повторный фон.
     let field = MultilineTextEdit::new()
         .text(initial)
-        .placeholder("Введите системный промпт…")
+        .placeholder(tr!("settings.general.prompt.placeholder"))
         .rows(4)
         .soft_wrap(true)
         .auto_height(true)
@@ -325,8 +321,8 @@ fn textarea_row(
 fn tool_override_row(
     tool_key: &'static str,
     icon: &'static str,
-    label: &'static str,
-    desc: &'static str,
+    label: impl Into<String>,
+    desc: impl Into<String>,
     overrides: RwSignal<HashMap<String, String>>,
 ) -> Box<dyn Widget> {
     let initial = overrides
@@ -336,9 +332,9 @@ fn tool_override_row(
         .unwrap_or_else(|| TOOL_APPROVAL_DEFAULT.to_string());
 
     let items = vec![
-        DropdownItem::new(TOOL_APPROVAL_DEFAULT, "По умолчанию"),
-        DropdownItem::new(TOOL_APPROVAL_ASK,     "Спрашивать"),
-        DropdownItem::new(TOOL_APPROVAL_ALWAYS,  "Разрешать всегда"),
+        DropdownItem::new(TOOL_APPROVAL_DEFAULT, tr!("settings.general.tool_override.default")),
+        DropdownItem::new(TOOL_APPROVAL_ASK, tr!("settings.general.tool_override.ask")),
+        DropdownItem::new(TOOL_APPROVAL_ALWAYS, tr!("settings.general.tool_override.allow")),
     ];
 
     let key = tool_key.to_string();
@@ -366,8 +362,8 @@ fn tool_override_row(
 /// теперь обобщено и для CodeEditor (10..24).
 fn font_size_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<f32>,
     min: f32,
     max: f32,
@@ -390,8 +386,8 @@ fn font_size_row(
 /// (тот ограничен u16 1..=65535 — для нас бессмысленно).
 pub(super) fn switch_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<bool>,
 ) -> Box<dyn Widget> {
     let initial = value.get_untracked();
@@ -403,8 +399,8 @@ pub(super) fn switch_row(
 
 fn turns_row(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     value: RwSignal<u32>,
     min: u32,
     max: u32,

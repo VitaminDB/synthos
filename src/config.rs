@@ -204,7 +204,7 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             display_name: "Dean Kowalski".into(),
-            language: "ru".into(),
+            language: "auto".into(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             voice_refine_prompt: default_voice_refine_prompt(),
             tool_display_mode: default_tool_display_mode(),

@@ -17,6 +17,7 @@ pub mod agent;
 pub mod components;
 pub mod config;
 pub mod context;
+pub mod i18n;
 pub mod icons;
 pub mod kb;
 pub mod logging;
@@ -70,6 +71,7 @@ pub fn run_desktop() {
     kb::init_sqlite_vec();
 
     let (theme_mss, ctx) = build_context();
+    i18n::install(ctx.general);
 
     App::new()
         .title(concat!("Synthos v", env!("CARGO_PKG_VERSION")))
@@ -123,7 +125,10 @@ pub fn run_desktop() {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
-            Box::new(build_app())
+            Box::new(DecoratedBox::new().class("grow").child(move || {
+                syngui::i18n::subscribe();
+                build_app()
+            }))
         });
 }
 
@@ -181,7 +186,10 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
-            Box::new(build_app())
+            Box::new(DecoratedBox::new().class("grow").child(move || {
+                syngui::i18n::subscribe();
+                build_app()
+            }))
         });
 }
 

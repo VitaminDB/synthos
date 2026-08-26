@@ -2,7 +2,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::containers::{Positioned, Stack};
 use syngui::widgets::overlay::context_menu::ContextMenu;
-use syngui::widgets::overlay::menu::MenuItem;
+use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
 use syngui::widgets::visual::{Badge, Image, ImageFit};
 
 use crate::context::AppCtx;
@@ -15,19 +15,19 @@ use crate::pages::huggingface::HuggingFaceCtx;
 struct Item {
     icon: &'static str,
     route: &'static str,
-    tooltip: &'static str,
+    tooltip_key: &'static str,
 }
 
 const PRIMARY: &[Item] = &[
-    Item { icon: MI_CHAT,             route: "syn_chat",  tooltip: "Чат"     },
-    Item { icon: MI_HUB,              route: "nodes",     tooltip: "Ноды" },
+    Item { icon: MI_CHAT, route: "syn_chat", tooltip_key: "nav.syn_chat" },
+    Item { icon: MI_HUB,  route: "nodes",    tooltip_key: "nav.nodes" },
 ];
 
 const FOOTER_UTILITY: &[Item] = &[
-    Item { icon: MI_HISTORY,        route: "voice_history", tooltip: "История голоса" },
-    Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip: "Syn-пакеты" },
-    Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip: "HuggingFace" },
-    Item { icon: MI_SETTINGS,       route: "settings",      tooltip: "Настройки" },
+    Item { icon: MI_HISTORY,        route: "voice_history", tooltip_key: "nav.voice_history" },
+    Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip_key: "nav.syn_explorer" },
+    Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip_key: "nav.huggingface" },
+    Item { icon: MI_SETTINGS,       route: "settings",      tooltip_key: "nav.settings" },
 ];
 
 pub fn view() -> impl Widget {
@@ -63,9 +63,32 @@ fn bottom_cluster() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .class("nav-rail-footer") => [
                 rail_column(FOOTER_UTILITY),
+                language_button(),
                 avatar(),
             ]
     }
+}
+
+fn language_button() -> impl Widget {
+    let open = use_signal(false);
+    let pos = use_signal(Point::zero());
+    let current = use_context::<AppCtx>().general.language.get_untracked();
+    let btn = ToolButton::new(MI_TRANSLATE)
+        .tooltip(tr!("nav.language"))
+        .on_click_with_bounds(move |_, bounds| {
+            pos.set(Point::new(bounds.origin.x + bounds.size.width + 8.0, bounds.origin.y));
+            open.set(true);
+        })
+        .class("nav-rail-item");
+    let menu = PopupMenu::new()
+        .items(crate::i18n::language_menu_items(&current))
+        .is_open(open)
+        .position(pos)
+        .on_select(move |id| {
+            let ctx = use_context::<AppCtx>();
+            ctx.general.language.set(id.to_string());
+        });
+    Stack::new().clip(false).child(btn).child(menu)
 }
 
 fn avatar() -> impl Widget {
@@ -128,7 +151,7 @@ fn hf_rail_item(it: Item) -> impl Widget {
 
     let route = it.route;
     let btn = ToolButton::new(it.icon)
-        .tooltip(it.tooltip)
+        .tooltip(tr!(it.tooltip_key))
         .on_click(move || {
             let app = use_context::<AppCtx>();
             if app.current_route.get_untracked() == route {
@@ -161,7 +184,7 @@ fn rail_item(it: Item) -> impl Widget {
 
     let route = it.route;
     ToolButton::new(it.icon)
-        .tooltip(it.tooltip)
+        .tooltip(tr!(it.tooltip_key))
         .on_click(move || {
             let ctx = use_context::<AppCtx>();
             if ctx.current_route.get_untracked() == route {
@@ -203,7 +226,7 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
     let label = folder
         .as_ref()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| format!("Сессия #{}", idx + 1));
+        .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx + 1));
     let btn_class = if is_selected {
         "nav-rail-item selected"
     } else {
@@ -264,7 +287,7 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
     };
 
     ContextMenu::new()
-        .items(vec![MenuItem::new("close", "Закрыть").icon(MI_CLOSE)])
+        .items(vec![MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE)])
         .on_select(move |action| {
             if action == "close" {
                 let code = use_context::<CodeEditorCtx>();
@@ -276,7 +299,7 @@ fn session_rail_item(session: CodeSession, idx: usize, is_selected: bool) -> imp
 
 fn add_session_btn() -> impl Widget {
     ToolButton::new(MI_ADD)
-        .tooltip("Новая сессия редактора")
+        .tooltip(tr!("nav.session.new"))
         .on_click(move || {
             let app = use_context::<AppCtx>();
             let code = use_context::<CodeEditorCtx>();

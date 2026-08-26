@@ -23,8 +23,8 @@ use syngui::widgets::input::dropdown::{Dropdown, DropdownItem};
 /// Стандартная строка настроек: иконка + заголовок/описание + контрол справа.
 pub fn row_frame(
     icon: &'static str,
-    title: &'static str,
-    desc: &'static str,
+    title: impl Into<String>,
+    desc: impl Into<String>,
     control: Box<dyn Widget>,
 ) -> Box<dyn Widget> {
     let inner = Row::new()
@@ -54,7 +54,7 @@ pub fn row_frame(
 }
 
 /// Карточка с заголовком и стопкой строк-настроек.
-pub fn section_card(title: &'static str, rows: Vec<Box<dyn Widget>>) -> Box<dyn Widget> {
+pub fn section_card(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> Box<dyn Widget> {
     let card = DecoratedBox::new().class("settings-card").child(
         Column::new()
             .gap(0.0)

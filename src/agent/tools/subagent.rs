@@ -105,7 +105,7 @@ fn parse_args(args_json: &str) -> Result<SubagentArgs, ToolError> {
         Some(v) => {
             if v.iter().any(|k| k == KEY_SUBAGENT) {
                 return Err(ToolError::BadArgs(
-                    "вложенный subagent запрещён: убери \"subagent\" из tools".to_string(),
+                    "nested subagent is forbidden: remove \"subagent\" from tools".to_string(),
                 ));
             }
             Some(v.into_iter().map(|s| s.trim().to_string()).collect())
@@ -167,7 +167,7 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
         let _ = tx.send(snap);
     });
     let snap = rx.await.map_err(|e| ToolError::Spawn(e.to_string()))?;
-    snap.ok_or_else(|| ToolError::Spawn("модель не загружена".to_string()))
+    snap.ok_or_else(|| ToolError::Spawn("model not loaded".to_string()))
 }
 
 /// Собирает дескрипторы активных тулов для субагента: те же активные ключи,
@@ -227,7 +227,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let depth = SUBAGENT_DEPTH.try_with(|d| *d).unwrap_or(0);
     if depth >= 1 {
         return Err(ToolError::BadArgs(
-            "вложенный subagent запрещён (max depth = 1)".to_string(),
+            "nested subagent is forbidden (max depth = 1)".to_string(),
         ));
     }
 
@@ -288,7 +288,7 @@ async fn run_subagent_loop(
     // System: префикс с датой + либо пользовательский system_prompt из args,
     // либо общий из Syn-чата.
     let date = crate::agent::tool_flow::today_utc_iso(crate::agent::tool_flow::now_unix_secs());
-    let preamble = format!("Текущая дата (UTC): {date}.");
+    let preamble = format!("Current date (UTC): {date}.");
     let user_sys = args
         .system_prompt
         .as_deref()
@@ -314,7 +314,7 @@ async fn run_subagent_loop(
     for turn in 0..snap.max_turns {
         if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
             tracing::info!(target: "subagent", id = %id, turn, "aborted by user");
-            return Ok("Subagent прерван пользователем.".to_string());
+            return Ok("Subagent was interrupted by the user.".to_string());
         }
 
         tracing::debug!(
@@ -362,7 +362,7 @@ async fn run_subagent_loop(
             // таким именем. Не зовём executor (там был бы дальнейший
             // depth-check), сразу записываем error tool-result.
             if raw_call.name == KEY_SUBAGENT {
-                history.push(Message::tool("ошибка: вложенный subagent запрещён"));
+                history.push(Message::tool("error: nested subagent is forbidden"));
                 tracing::warn!(target: "subagent", id = %id, "blocked nested subagent call");
                 continue;
             }
@@ -392,7 +392,7 @@ async fn run_subagent_loop(
             let outcome = tokio::select! {
                 o = Box::pin(super::executor::execute(&chat_call)) => o,
                 _ = wait_abort(&snap.abort, snap.abort_baseline) => {
-                    return Ok("Subagent прерван пользователем.".to_string());
+                    return Ok("Subagent was interrupted by the user.".to_string());
                 }
             };
             history.push(Message::tool(outcome.content));
@@ -562,13 +562,14 @@ async fn force_final_summary_turn(
     id: &str,
 ) -> Result<String, ToolError> {
     if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
-        return Ok("Subagent прерван пользователем.".to_string());
+        return Ok("Subagent was interrupted by the user.".to_string());
     }
 
     history.push(Message::user(
-        "Ты исчерпал лимит tool-вызовов. Не вызывай больше никаких tools. \
-         Сожми накопленный прогресс в краткий итог 1-3 абзаца — что узнал, \
-         что осталось неясным, какие ещё шаги нужны. Текст без преамбулы.",
+        "You've exhausted the tool-call limit. Don't call any more tools. \
+         Compress your accumulated progress into a brief summary of 1-3 \
+         paragraphs — what you learned, what remains unclear, what further \
+         steps are needed. Text with no preamble.",
     ));
 
     let mut params = snap.params.clone();
@@ -592,9 +593,9 @@ async fn force_final_summary_turn(
         tracing::warn!(target: "subagent", id = %id, "final summary empty");
         let limit = snap.max_turns;
         Ok(format!(
-            "Subagent достиг лимита в {limit} turn-ов и не сошёлся \
-             к финальному ответу. Сформулируй задачу более узко или вызови \
-             subagent повторно с уже имеющимся прогрессом."
+            "Subagent reached the limit of {limit} turns and didn't converge \
+             on a final answer. Phrase the task more narrowly or call \
+             subagent again with the progress already made."
         ))
     } else {
         tracing::info!(target: "subagent", id = %id, summary_len = summary.len(), "final summary ok");

@@ -26,6 +26,7 @@
 //! `run_on_main_thread`-замыкании, результат уходит через oneshot
 //! (паттерн `kb_search`).
 
+use syngui::tr;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 use syngui::core::Point;
@@ -66,12 +67,12 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             // жизненным циклом LLM). Сюда run доходит только из subagent'а —
             // там прогоны запрещены.
             "run" => Err(
-                "action=run доступен только основному агенту чата (не subagent): \
-                 попроси главного агента запустить граф"
+                "action=run is only available to the chat's main agent (not a subagent): \
+                 ask the main agent to run the graph"
                     .to_string(),
             ),
             other => Err(format!(
-                "неизвестный action «{other}» (list | nodes | open | graph | apply | save_template | run)"
+                "unknown action \"{other}\" (list | nodes | open | graph | apply | save_template | run)"
             )),
         };
         let _ = tx.send(result);
@@ -89,7 +90,7 @@ fn active_chat_id() -> Result<String, String> {
     let chat = use_context::<SynChatCtx>();
     chat.active_chat_id
         .get_untracked()
-        .ok_or_else(|| "нет активного чата".to_string())
+        .ok_or_else(|| "no active chat".to_string())
 }
 
 /// Ctx служебной вкладки текущего чата, если она уже создана.
@@ -116,7 +117,7 @@ fn agent_ctx_ensure(title: &str) -> Result<NodeEditorCtx, String> {
     let tab = tabs
         .iter()
         .find(|t| t.id == tab_id)
-        .ok_or_else(|| "служебная вкладка не создалась".to_string())?;
+        .ok_or_else(|| "the service tab wasn't created".to_string())?;
     if !title.is_empty() {
         tab.title.set(title.to_string());
     }
@@ -144,10 +145,10 @@ fn clip_desc(s: &str) -> String {
 fn list_impl() -> Result<String, String> {
     let mut out = String::new();
 
-    out.push_str("--- Шаблоны пайплайнов ---\n");
+    out.push_str("--- Pipeline templates ---\n");
     for t in templates::list_all() {
         out.push_str(&format!(
-            "{} · «{}»{} · нод: {}{}\n",
+            "{} · \"{}\"{} · nodes: {}{}\n",
             t.id,
             t.name,
             if t.builtin { "" } else { " · custom" },
@@ -169,12 +170,12 @@ fn list_impl() -> Result<String, String> {
     for (label, dir) in models_dirs() {
         let dir_s = dir.display().to_string();
         out.push_str(&format!(
-            "--- Модели в каталоге {dir_s} ({label}) --- (пути: {dir_s}/<имя>)\n"
+            "--- Models in directory {dir_s} ({label}) --- (paths: {dir_s}/<name>)\n"
         ));
         let inventory = models_inventory(&dir);
         if inventory.is_empty() {
             out.push_str(
-                "(пусто или каталог не существует — путь задаётся в Настройки → AI-модели)\n",
+                "(empty or the directory doesn't exist — the path is set in Settings → AI Models)\n",
             );
         } else {
             // Имена относительно каталога: полный путь в каждой строке — это
@@ -188,10 +189,10 @@ fn list_impl() -> Result<String, String> {
         }
     }
 
-    out.push_str("--- Вложения чата (для attachment:<имя|sha|last>) ---\n");
+    out.push_str("--- Chat attachments (for attachment:<name|sha|last>) ---\n");
     let atts = chat_attachments();
     if atts.is_empty() {
-        out.push_str("(нет)\n");
+        out.push_str("(none)\n");
     } else {
         for a in &atts {
             out.push_str(&format!(
@@ -203,12 +204,12 @@ fn list_impl() -> Result<String, String> {
         }
     }
 
-    out.push_str("--- Служебная вкладка ---\n");
+    out.push_str("--- Service tab ---\n");
     match agent_ctx()? {
         // Без state и связей: полный снимок — action=graph. В list он дублировал
         // ответ open и съедал бюджет, вытесняя инвентарь моделей.
         Some(ctx) => out.push_str(&graph_brief(&ctx)?),
-        None => out.push_str("(ещё не создана — открой шаблон через action=open)\n"),
+        None => out.push_str("(not created yet — open a template via action=open)\n"),
     }
     Ok(out)
 }
@@ -224,14 +225,14 @@ fn models_dirs() -> Vec<(&'static str, std::path::PathBuf)> {
     let Some(hf) =
         syngui::context_provider::try_use_context::<crate::pages::huggingface::HuggingFaceCtx>()
     else {
-        return vec![("основной", main)];
+        return vec![("main", main)];
     };
     let hf_dir = crate::config::resolve_hf_cache_dir(&hf.cache_dir.get_untracked());
     let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     let (main_c, hf_c) = (canon(&main), canon(&hf_dir));
-    let mut dirs = vec![("основной", main)];
+    let mut dirs = vec![("main", main)];
     if hf_c != main_c && !hf_c.starts_with(&main_c) {
-        dirs.push(("кэш HF", hf_dir));
+        dirs.push(("HF cache", hf_dir));
     }
     dirs
 }
@@ -251,7 +252,7 @@ fn models_inventory(dir: &std::path::Path) -> Vec<String> {
             let p = e.path();
             if p.is_dir() {
                 if p.join("config.json").exists() {
-                    out.push(format!("{} · HF-каталог модели", p.display()));
+                    out.push(format!("{} · HF model directory", p.display()));
                 } else {
                     scan(&p, depth + 1, out);
                 }
@@ -274,18 +275,18 @@ fn models_inventory(dir: &std::path::Path) -> Vec<String> {
     if lines.len() > CAP {
         let extra = lines.len() - CAP;
         lines.truncate(CAP);
-        lines.push(format!("… и ещё {extra} файлов"));
+        lines.push(format!("… and {extra} more files"));
     }
     lines
 }
 
 fn attachment_kind_label(k: AttachmentKind) -> &'static str {
     match k {
-        AttachmentKind::Image => "картинка",
-        AttachmentKind::Video => "видео",
-        AttachmentKind::Audio => "аудио",
-        AttachmentKind::Document => "документ",
-        AttachmentKind::Other => "файл",
+        AttachmentKind::Image => "image",
+        AttachmentKind::Video => "video",
+        AttachmentKind::Audio => "audio",
+        AttachmentKind::Document => "document",
+        AttachmentKind::Other => "file",
     }
 }
 
@@ -331,7 +332,7 @@ fn ports_line(spec: PortsSpec) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     if dynamic {
-        format!("{joined} (динамические)")
+        format!("{joined} (dynamic)")
     } else {
         joined
     }
@@ -463,19 +464,19 @@ fn compact_kind_list() -> String {
             out.push_str(&format!("--- {} ---\n", meta.category.label()));
         }
         out.push_str(&format!(
-            "{} · {} · есть запуск: {}\n",
+            "{} · {} · has run: {}\n",
             kind_slug(*kind),
             meta.title,
-            if meta.on_run.is_some() { "да" } else { "нет" }
+            if meta.on_run.is_some() { "yes" } else { "no" }
         ));
     }
     out
 }
 
-const FILTER_HINT: &str = "filter ищет по kind/названию/категории (не по именам \
-     полей — те смотри в примере state). Несколько значений через пробел или \
-     запятую объединяются: «ltx_checkpoint ltx_sampler_stage1» вернёт обе ноды, \
-     «ltx» — всё семейство.";
+const FILTER_HINT: &str = "filter matches kind/title/category (not field \
+     names — see those in the state example). Multiple values joined by a \
+     space or comma are combined: \"ltx_checkpoint ltx_sampler_stage1\" \
+     returns both nodes, \"ltx\" returns the whole family.";
 
 fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
     let filter = v
@@ -496,8 +497,8 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
     let mut out = String::new();
     if tokens.is_empty() {
         out.push_str(&format!(
-            "Все виды нод (kind · название · категория). Детали (порты, \
-             state-JSON, расшифровка *_idx) — повтори с filter. {FILTER_HINT}\n"
+            "All node kinds (kind · title · category). Details (ports, \
+             state JSON, *_idx decoding) — repeat with filter. {FILTER_HINT}\n"
         ));
         out.push_str(&compact_kind_list());
         return Ok(out);
@@ -519,13 +520,13 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         }
         matched += 1;
         out.push_str(&format!(
-            "--- {} · «{}» · {} ---\n",
+            "--- {} · \"{}\" · {} ---\n",
             slug,
             meta.title,
             category_path(meta)
         ));
-        out.push_str(&format!("входы: {}\n", ports_line(meta.inputs)));
-        out.push_str(&format!("выходы: {}\n", ports_line(meta.outputs)));
+        out.push_str(&format!("inputs: {}\n", ports_line(meta.inputs)));
+        out.push_str(&format!("outputs: {}\n", ports_line(meta.outputs)));
         if !meta.fields.is_empty() {
             let fields = meta
                 .fields
@@ -533,14 +534,14 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
                 .map(|f| format!("{} ({:?})", f.name, f.ty))
                 .collect::<Vec<_>>()
                 .join(", ");
-            out.push_str(&format!("поля: {fields}\n"));
+            out.push_str(&format!("fields: {fields}\n"));
         }
         out.push_str(&format!(
-            "запуск (on_run): {}\n",
-            if meta.on_run.is_some() { "да" } else { "нет (реактивная)" }
+            "run (on_run): {}\n",
+            if meta.on_run.is_some() { "yes" } else { "no (reactive)" }
         ));
         if let Some(state) = state_example(*kind) {
-            out.push_str(&format!("state (пример с дефолтами): {state}\n"));
+            out.push_str(&format!("state (example with defaults): {state}\n"));
         }
         for line in enum_hints_lines(*kind) {
             out.push_str(&format!("  {line}\n"));
@@ -550,7 +551,7 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         // Не ошибка: пустой ответ гонит агента по кругу с вариациями фильтра.
         // Отдаём то, ради чего он и звал инструмент, — список видов нод.
         return Ok(format!(
-            "по фильтру «{filter}» нод не найдено. {FILTER_HINT}\n{}",
+            "no nodes found for filter \"{filter}\". {FILTER_HINT}\n{}",
             compact_kind_list()
         ));
     }
@@ -565,22 +566,22 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     let id = v
         .get("template")
         .and_then(|x| x.as_str())
-        .ok_or("для action=open нужен параметр template (id из action=list)")?;
+        .ok_or("action=open requires the template parameter (id from action=list)")?;
     let all = templates::list_all();
     let t = all
         .iter()
         .find(|t| t.id == id)
-        .ok_or_else(|| format!("шаблона «{id}» нет (см. action=list)"))?;
+        .ok_or_else(|| format!("template \"{id}\" not found (see action=list)"))?;
 
     let ctx = agent_ctx_ensure(&t.name)?;
     convert::load_into_ctx(&ctx, t);
-    let mut out = format!("шаблон «{}» загружен в служебную вкладку\n", t.name);
+    let mut out = format!("template \"{}\" loaded into the service tab\n", t.name);
     out.push_str(&graph_summary(&ctx)?);
     // Чем заполнять граф — говорим сразу: встроенные шаблоны путей не несут,
     // и агент иначе выясняет это только на pre-check прогона, потратив ходы.
     let missing = missing_model_paths(&ctx);
     if !missing.is_empty() {
-        out.push_str("не заполнены пути моделей (apply set_state, пути — из action=list):\n");
+        out.push_str("model paths not filled in (apply set_state, paths — from action=list):\n");
         for m in &missing {
             out.push_str(m);
             out.push('\n');
@@ -618,7 +619,7 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
         }
         if !fields.is_empty() {
             out.push(format!(
-                "нода {} ({}): {}",
+                "node {} ({}): {}",
                 n.id.0,
                 registry::meta(n.kind).title,
                 fields.join(", ")
@@ -631,7 +632,7 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
 fn graph_impl() -> Result<String, String> {
     match agent_ctx()? {
         Some(ctx) => graph_summary(&ctx),
-        None => Err("служебной вкладки ещё нет — открой шаблон (action=open) или собери граф (action=apply)".into()),
+        None => Err("there's no service tab yet — open a template (action=open) or build a graph (action=apply)".into()),
     }
 }
 
@@ -643,7 +644,7 @@ fn graph_impl() -> Result<String, String> {
 fn graph_brief(ctx: &NodeEditorCtx) -> Result<String, String> {
     let (nodes, conns, _viewport) = convert::snapshot(ctx);
     let mut out = format!(
-        "граф: нод {}, связей {} (полный снимок — action=graph)\n",
+        "graph: {} nodes, {} connections (full snapshot — action=graph)\n",
         nodes.len(),
         conns.len()
     );
@@ -653,7 +654,7 @@ fn graph_brief(ctx: &NodeEditorCtx) -> Result<String, String> {
             n.id,
             kind_slug(n.kind),
             registry::meta(n.kind).title,
-            if n.enabled { "" } else { " · ВЫКЛ" }
+            if n.enabled { "" } else { " · OFF" }
         ));
     }
     Ok(out)
@@ -662,7 +663,7 @@ fn graph_brief(ctx: &NodeEditorCtx) -> Result<String, String> {
 fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
     const STATE_CLIP: usize = 700;
     let (nodes, conns, _viewport) = convert::snapshot(ctx);
-    let mut out = format!("граф: нод {}, связей {}\n", nodes.len(), conns.len());
+    let mut out = format!("graph: {} nodes, {} connections\n", nodes.len(), conns.len());
     for n in &nodes {
         let meta = registry::meta(n.kind);
         let mut line = format!(
@@ -670,7 +671,7 @@ fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
             n.id,
             kind_slug(n.kind),
             meta.title,
-            if n.enabled { "" } else { " · ВЫКЛ" }
+            if n.enabled { "" } else { " · OFF" }
         );
         if let Some(state) = &n.state {
             if let Ok(js) = serde_json::to_string(state) {
@@ -690,7 +691,7 @@ fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
         out.push_str(&line);
     }
     if !conns.is_empty() {
-        out.push_str("связи:\n");
+        out.push_str("connections:\n");
         for c in &conns {
             out.push_str(&format!(
                 "{}.{} → {}.{}\n",
@@ -706,7 +707,7 @@ fn graph_summary(ctx: &NodeEditorCtx) -> Result<String, String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
-    let ctx = agent_ctx_ensure("Агент")?;
+    let ctx = agent_ctx_ensure(&tr!("nodes.agent_tab.title"))?;
     let mut notes: Vec<String> = Vec::new();
 
     // attachment:-ссылки резолвятся по всему payload'у до парсинга структур.
@@ -720,10 +721,10 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         match mode {
             "replace" => convert::load_into_ctx(&ctx, &template),
             "merge" => convert::apply_to_ctx(&ctx, &template, Point::new(0.0, 0.0)),
-            other => return Err(format!("mode «{other}» неизвестен (replace | merge)")),
+            other => return Err(format!("unknown mode \"{other}\" (replace | merge)")),
         }
         notes.push(format!(
-            "graph применён ({mode}): нод {}, связей {}",
+            "graph applied ({mode}): {} nodes, {} connections",
             template.nodes.len(),
             template.connections.len()
         ));
@@ -748,7 +749,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
             let res = conn_from_value(item, &ctx).and_then(|c| {
                 add_connection(&ctx, &c)?;
                 Ok(format!(
-                    "связь {}.{} → {}.{}",
+                    "connection {}.{} → {}.{}",
                     c.from_node, c.from_port, c.to_node, c.to_port
                 ))
             });
@@ -779,7 +780,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
             let removed = before - conns.len();
             ctx.connections.set(conns);
             notes.push(format!(
-                "разъединено {}: {}.{} → {}.{}",
+                "disconnected {}: {}.{} → {}.{}",
                 removed, c.from_node, c.from_port, c.to_node, c.to_port
             ));
         }
@@ -803,10 +804,10 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
             })
             .unwrap_or_default();
         return Ok(format!(
-            "apply без изменений — передано только [{got}]. Правки идут в \
-             set_state / connect / disconnect / graph, формат set_state: \
-             [{{\"node\": <id|имя вида>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]\n\
-             Если граф уже собран — следующий шаг action=run.\n{}",
+            "apply made no changes — only [{got}] was passed. Edits go through \
+             set_state / connect / disconnect / graph, set_state format: \
+             [{{\"node\": <id|kind name>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]\n\
+             If the graph is already assembled — the next step is action=run.\n{}",
             graph_brief(&ctx)?
         ));
     }
@@ -814,7 +815,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
     let mut out = notes.join("\n");
     out.push('\n');
     if !problems.is_empty() {
-        out.push_str("⚠ не применено:\n");
+        out.push_str("⚠ not applied:\n");
         for p in &problems {
             out.push_str(p);
             out.push('\n');
@@ -825,8 +826,8 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
     // дальше». Полный снимок остаётся за action=graph.
     out.push_str(&graph_brief(&ctx)?);
     out.push_str(
-        "Следующий шаг: action=run (free_vram=true, если по system status \
-         VRAM не хватает). Проверить state целиком — action=graph.\n",
+        "Next step: action=run (free_vram=true if system status shows not \
+         enough VRAM). To check the full state — action=graph.\n",
     );
     Ok(out)
 }
@@ -848,7 +849,7 @@ fn template_from_value(graph: &serde_json::Value) -> Result<Template, String> {
     if let Some(nodes) = graph.get_mut("nodes").and_then(|n| n.as_array_mut()) {
         for (i, node) in nodes.iter_mut().enumerate() {
             let Some(obj) = node.as_object_mut() else {
-                return Err(format!("nodes[{i}] — не объект"));
+                return Err(format!("nodes[{i}] is not an object"));
             };
             obj.entry("id".to_string())
                 .or_insert(serde_json::json!((i + 1) as u64));
@@ -888,8 +889,8 @@ fn unwrap_json_string(v: &serde_json::Value, field: &str) -> Result<serde_json::
     let text = raw.trim();
     serde_json::from_str(text).map_err(|e| {
         format!(
-            "{field} пришёл строкой, и это не разбирается как JSON: {e}{}. \
-             Передавай значение структурой (массивом/объектом), а не текстом.",
+            "{field} came as a string, and it doesn't parse as JSON: {e}{}. \
+             Pass the value as a structure (array/object), not as text.",
             json_error_context(text, &e)
         )
     })
@@ -907,7 +908,7 @@ fn json_error_context(text: &str, e: &serde_json::Error) -> String {
     let from = idx.saturating_sub(40);
     let to = (idx + 20).min(chars.len());
     let frag: String = chars[from..to].iter().collect();
-    format!(" (около: …{frag}…)")
+    format!(" (around: …{frag}…)")
 }
 
 /// Массив-аргумент: принимает массив, одиночный объект и строку с JSON.
@@ -924,7 +925,7 @@ fn coerce_array(
         // Один элемент без обёртки — тоже понятное намерение.
         serde_json::Value::Object(_) => Ok(Some(vec![val])),
         other => Err(format!(
-            "{field}: ожидался массив объектов, пришло {}",
+            "{field}: expected an array of objects, got {}",
             json_type_name(&other)
         )),
     }
@@ -934,10 +935,10 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Null => "null",
         serde_json::Value::Bool(_) => "bool",
-        serde_json::Value::Number(_) => "число",
-        serde_json::Value::String(_) => "строка",
-        serde_json::Value::Array(_) => "массив",
-        serde_json::Value::Object(_) => "объект",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -958,7 +959,7 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
         return Ok(n);
     }
     let Some(raw) = v.as_str() else {
-        return Err("id ноды — число (2) или имя вида ноды («h3_checkpoint»)".to_string());
+        return Err("node id is a number (2) or a node kind name (\"h3_checkpoint\")".to_string());
     };
     let name = raw.trim();
     let nodes = ctx.nodes.get_untracked();
@@ -971,7 +972,7 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
     match hits.len() {
         1 => Ok(hits[0]),
         0 => Err(format!(
-            "ноды «{name}» нет в графе; есть: {}",
+            "no node \"{name}\" in the graph; there is: {}",
             nodes
                 .iter()
                 .map(|n| format!("{} ({})", n.id.0, kind_slug(n.kind)))
@@ -979,7 +980,7 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
                 .join(", ")
         )),
         _ => Err(format!(
-            "«{name}» в графе не одна — укажи числовой id: {}",
+            "\"{name}\" is not unique in the graph — specify the numeric id: {}",
             hits.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
         )),
     }
@@ -991,17 +992,17 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
 fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
     let node_ref = item
         .get("node")
-        .ok_or("нужно поле node (id ноды или имя вида)")?;
+        .ok_or("the node field is required (node id or kind name)")?;
     let node_id = resolve_node_ref(node_ref, ctx)?;
-    let state_v = item.get("state").cloned().ok_or("нужно поле state")?;
+    let state_v = item.get("state").cloned().ok_or("the state field is required")?;
     let state_v = unwrap_json_string(&state_v, "state")?;
     let state: NodeStateData = serde_json::from_value(state_v)
-        .map_err(|e| format!("нода {node_id}: не разобрать state: {e}"))?;
+        .map_err(|e| format!("node {node_id}: failed to parse state: {e}"))?;
     let nodes = ctx.nodes.get_untracked();
     let node = nodes
         .iter()
         .find(|n| n.id.0 == node_id)
-        .ok_or_else(|| format!("ноды {node_id} нет в графе"))?;
+        .ok_or_else(|| format!("node {node_id} not found in the graph"))?;
     // Совпадение варианта state с kind ноды проверяем заранее:
     // apply_state_to_runtime при несовпадении молча no-op'ает, а агенту
     // нужна честная ошибка.
@@ -1013,7 +1014,7 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     let got = variant_tag(&state);
     if expected != got {
         return Err(format!(
-            "нода {node_id} ({}) ждёт state kind={}, а пришёл {}",
+            "node {node_id} ({}) expects state kind={}, but got {}",
             kind_slug(node.kind),
             expected.unwrap_or_else(|| "—".into()),
             got.unwrap_or_else(|| "—".into())
@@ -1022,19 +1023,19 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     if let Ok(rt) = node.runtime.lock() {
         convert::apply_state_to_runtime(&rt, &state);
     }
-    Ok(format!("state ноды {node_id} обновлён"))
+    Ok(format!("state of node {node_id} updated"))
 }
 
 fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnData, String> {
     let mut v = v.clone();
     for field in ["from_node", "to_node"] {
         let Some(raw) = v.get(field) else {
-            return Err(format!("связь: нужно поле {field}"));
+            return Err(format!("connection: the {field} field is required"));
         };
-        let id = resolve_node_ref(raw, ctx).map_err(|e| format!("связь.{field}: {e}"))?;
+        let id = resolve_node_ref(raw, ctx).map_err(|e| format!("connection.{field}: {e}"))?;
         v[field] = serde_json::json!(id);
     }
-    serde_json::from_value(v).map_err(|e| format!("связь: {e}"))
+    serde_json::from_value(v).map_err(|e| format!("connection: {e}"))
 }
 
 /// Добавить связь в граф вкладки с той же валидацией, что у `complete_wire`:
@@ -1042,23 +1043,23 @@ fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnDat
 /// отбрасываются.
 fn add_connection(ctx: &NodeEditorCtx, c: &ConnData) -> Result<(), String> {
     if c.from_node == c.to_node {
-        return Err(format!("связь {}→{}: самосвязь запрещена", c.from_node, c.to_node));
+        return Err(format!("connection {}→{}: self-connection is forbidden", c.from_node, c.to_node));
     }
     let nodes = ctx.nodes.get_untracked();
     let from_kind = nodes
         .iter()
         .find(|n| n.id.0 == c.from_node)
         .map(|n| n.kind)
-        .ok_or_else(|| format!("connect: ноды {} нет в графе", c.from_node))?;
+        .ok_or_else(|| format!("connect: node {} not found in the graph", c.from_node))?;
     let to_kind = nodes
         .iter()
         .find(|n| n.id.0 == c.to_node)
         .map(|n| n.kind)
-        .ok_or_else(|| format!("connect: ноды {} нет в графе", c.to_node))?;
+        .ok_or_else(|| format!("connect: node {} not found in the graph", c.to_node))?;
     let from_port = convert::resolve_port_name(Some(from_kind), PortSide::Output, &c.from_port)
         .ok_or_else(|| {
             format!(
-                "connect: у {} нет выхода «{}» (см. action=nodes filter={})",
+                "connect: {} has no output \"{}\" (see action=nodes filter={})",
                 kind_slug(from_kind),
                 c.from_port,
                 kind_slug(from_kind)
@@ -1067,7 +1068,7 @@ fn add_connection(ctx: &NodeEditorCtx, c: &ConnData) -> Result<(), String> {
     let to_port = convert::resolve_port_name(Some(to_kind), PortSide::Input, &c.to_port)
         .ok_or_else(|| {
             format!(
-                "connect: у {} нет входа «{}» (см. action=nodes filter={})",
+                "connect: {} has no input \"{}\" (see action=nodes filter={})",
                 kind_slug(to_kind),
                 c.to_port,
                 kind_slug(to_kind)
@@ -1113,7 +1114,7 @@ fn resolve_attachment_uris(v: &mut serde_json::Value, notes: &mut Vec<String>) {
                         *s = path;
                     }
                     None => notes.push(format!(
-                        "attachment:{r} — вложение не найдено (см. action=list), строка оставлена как есть"
+                        "attachment:{r} — attachment not found (see action=list), string left as is"
                     )),
                 }
             }
@@ -1159,12 +1160,12 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
         .and_then(|x| x.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .ok_or("для action=save_template нужен name")?;
+        .ok_or("action=save_template requires name")?;
     let ctx = agent_ctx()?
-        .ok_or("служебной вкладки нет — нечего сохранять")?;
+        .ok_or("there's no service tab — nothing to save")?;
     let (nodes, connections, viewport) = convert::snapshot(&ctx);
     if nodes.is_empty() {
-        return Err("граф пуст — нечего сохранять".into());
+        return Err("the graph is empty — nothing to save".into());
     }
     let mut t = Template::empty(name, TemplateKind::Full);
     if let Some(desc) = v.get("description").and_then(|x| x.as_str()) {
@@ -1176,7 +1177,7 @@ fn save_template_impl(v: &serde_json::Value) -> Result<String, String> {
     let created = templates::create(t).map_err(|e| e.to_string())?;
     crate::components::template_picker::bump_revision();
     Ok(format!(
-        "сохранён кастомный шаблон «{}» (id: {})",
+        "custom template saved \"{}\" (id: {})",
         created.name, created.id
     ))
 }
@@ -1209,9 +1210,9 @@ mod tests {
     fn coerce_array_reports_broken_json_string() {
         let v = serde_json::json!({"set_state": "[{\"prompt\", \"\"}]"});
         let err = coerce_array(&v, "set_state").expect_err("битый JSON");
-        assert!(err.contains("set_state пришёл строкой"), "{err}");
+        assert!(err.contains("set_state came as a string"), "{err}");
         assert!(err.contains("column"), "{err}");
-        assert!(err.contains("около:"), "нужен фрагмент вокруг ошибки: {err}");
+        assert!(err.contains("around:"), "нужен фрагмент вокруг ошибки: {err}");
     }
 
     /// Описания шаблонов в `list` подрезаются: полный `list` обязан влезать
@@ -1255,9 +1256,9 @@ mod tests {
             "filter": "ltx_checkpoint ltx_sampler_stage1 quant_dit_idx width"
         }))
         .expect("nodes");
-        assert!(out.contains("«LTX Checkpoint»"), "{out}");
-        assert!(out.contains("«LTX Sampler Stage1»"), "{out}");
-        assert!(!out.contains("«H3 Checkpoint»"), "{out}");
+        assert!(out.contains("\"LTX Checkpoint\""), "{out}");
+        assert!(out.contains("\"LTX Sampler Stage1\""), "{out}");
+        assert!(!out.contains("\"H3 Checkpoint\""), "{out}");
     }
 
     /// Промах фильтра — не ошибка, а список видов нод: иначе агент крутит
@@ -1266,7 +1267,7 @@ mod tests {
     fn nodes_filter_miss_returns_catalog() {
         let out = nodes_impl(&serde_json::json!({"filter": "quant_dit_idx keep_gemma"}))
             .expect("промах не ошибка");
-        assert!(out.contains("нод не найдено"), "{out}");
+        assert!(out.contains("no nodes found"), "{out}");
         assert!(out.contains("ltx_checkpoint · LTX Checkpoint"), "{out}");
     }
 
@@ -1377,7 +1378,7 @@ mod tests {
         assert!(inv.contains("qwen3.8-27b.syn"), "{inv}");
         assert!(inv.contains("ltx23.syn"), "{inv}");
         assert!(inv.contains("turbo_lora.safetensors"), "{inv}");
-        assert!(inv.contains("HF-каталог"), "{inv}");
+        assert!(inv.contains("HF model directory"), "{inv}");
         assert!(!inv.contains("readme.txt"), "{inv}");
         let _ = std::fs::remove_dir_all(&tmp);
     }

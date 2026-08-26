@@ -47,11 +47,11 @@ pub struct RawDoc {
 
 #[derive(Debug, Error)]
 pub enum FetchError {
-    #[error("HTTP-клиент: {0}")]
+    #[error("HTTP client: {0}")]
     Client(String),
-    #[error("сетевая ошибка: {0}")]
+    #[error("network error: {0}")]
     Network(String),
-    #[error("чтение тела: {0}")]
+    #[error("reading body: {0}")]
     Read(String),
 }
 

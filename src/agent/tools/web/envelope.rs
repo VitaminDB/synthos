@@ -47,9 +47,9 @@ pub fn format_search_envelope(query: &str, lang: &str, hits: &[SerpHit]) -> Stri
     if hits.is_empty() {
         out.push_str("--- error ---\n");
         out.push_str(
-            "Поисковик не вернул результатов. Возможные причины: парсер \
-             SERP устарел, запрос слишком узкий, временная ошибка DDG. \
-             Попробуй переформулировать запрос.\n",
+            "The search engine returned no results. Possible reasons: the \
+             SERP parser is outdated, the query is too narrow, a temporary \
+             DDG error. Try rephrasing the query.\n",
         );
         return out;
     }
@@ -157,7 +157,7 @@ mod tests {
         let out = format_search_envelope("hi", "ru", &[]);
         assert!(out.contains("results-count: 0"));
         assert!(out.contains("--- error ---"));
-        assert!(out.contains("Поисковик не вернул"));
+        assert!(out.contains("The search engine returned no results"));
     }
 
     #[test]

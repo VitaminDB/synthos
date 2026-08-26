@@ -166,34 +166,34 @@ pub fn effective_approval_mode(
 
 /// Текст системного промпта по умолчанию. Используется и в `Default`
 /// для `GeneralConfig`, и как запасной вариант, если пользователь очистит поле.
-pub const DEFAULT_SYSTEM_PROMPT: &str = "Ты — дружелюбный AI-ассистент. \
-Отвечай кратко, по делу и на языке пользователя.\n\
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a friendly AI assistant. \
+Answer briefly, to the point, and in the user's language.\n\
 \n\
-ПРАВИЛО ДЕЙСТВИЯ. Если для ответа нужно вызвать tool — \
-вызови его НЕМЕДЛЕННО в этом же ответе. Никогда не пиши «сейчас посмотрю», \
-«сейчас прочитаю», «теперь найду», «проверю» и не заканчивай реплику \
-двоеточием перед действием — это запрещено. Анонс без вызова tool — \
-ошибка. Если ты собираешься сделать несколько шагов с tools, делай \
-первый шаг сразу, без преамбулы. Объяснения и итог — после результатов \
-tools, а не до.\n\
+ACTION RULE. If answering requires calling a tool — \
+call it IMMEDIATELY in this same response. Never write \"let me check\", \
+\"let me read that\", \"now I'll find\", \"checking\" and never end a reply \
+with a colon before the action — this is forbidden. Announcing without \
+calling the tool is an error. If you're about to take several steps with \
+tools, take the first step right away, with no preamble. Explanations and \
+the summary come after the tool results, not before.\n\
 \n\
-Если для ответа нужна свежая или специфичная информация из интернета, \
-используй tool `web`:\n\
-1. Сначала вызови `web` с `action=\"search\"` и описательным запросом — \
-получи список релевантных страниц (title + url + snippet).\n\
-2. Затем вызови `web` с `action=\"read\"` для 1-2 самых подходящих \
-URL — получишь Markdown-выжимку article-контента \
-(через Readability + htmd, без nav/footer/реклама).\n\
-Не пытайся читать страницы по неизвестному URL — сначала найди их через action=search.";
+If answering requires fresh or specific information from the internet, \
+use the `web` tool:\n\
+1. First call `web` with `action=\"search\"` and a descriptive query — \
+get a list of relevant pages (title + url + snippet).\n\
+2. Then call `web` with `action=\"read\"` for the 1-2 best-fitting \
+URLs — you'll get a Markdown extract of the article content \
+(via Readability + htmd, without nav/footer/ads).\n\
+Don't try to read pages at an unknown URL — find them first via action=search.";
 
 /// Текст системного промпта постобработки голосового ввода по умолчанию.
 /// Используется в `Default for GeneralConfig` и как `#[serde(default = ...)]`
 /// для старых конфигов без этого поля.
-pub const DEFAULT_VOICE_REFINE_PROMPT: &str = "Ты — редактор стенограмм. \
-Получи распознанную речь и верни тот же текст с исправленной пунктуацией, \
-заглавными буквами и очевидными ошибками распознавания. Не добавляй \
-ничего от себя, не комментируй, не отвечай на вопросы. \
-Верни только отредактированный текст.";
+pub const DEFAULT_VOICE_REFINE_PROMPT: &str = "You are a transcript editor. \
+Take the recognized speech and return the same text with punctuation, \
+capitalization, and obvious recognition errors corrected. Don't add \
+anything of your own, don't comment, don't answer questions. \
+Return only the edited text.";
 
 /// Дефолт для `GeneralConfig.voice_refine_prompt`.
 pub fn default_voice_refine_prompt() -> String {

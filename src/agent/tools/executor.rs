@@ -32,13 +32,13 @@ pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("Неизвестный инструмент: {0}")]
+    #[error("Unknown tool: {0}")]
     Unknown(String),
-    #[error("Некорректный JSON аргументов: {0}")]
+    #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
-    #[error("Отсутствует обязательное поле «{0}»")]
+    #[error("Missing required field \"{0}\"")]
     MissingField(&'static str),
-    #[error("Ошибка запуска процесса: {0}")]
+    #[error("Failed to spawn process: {0}")]
     Spawn(String),
 }
 

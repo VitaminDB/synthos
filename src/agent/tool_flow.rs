@@ -58,13 +58,13 @@ pub(crate) fn build_autoskill_chat_tool(app: &AppCtx) -> ChatTool {
     let skills = app.skills.get_untracked();
 
     let mut description = descriptor.description.to_string();
-    description.push_str("\n\nДоступные скилы (id — описание):\n");
+    description.push_str("\n\nAvailable skills (id — description):\n");
     if skills.is_empty() {
-        description.push_str("- (пусто, у пользователя нет скилов)\n");
+        description.push_str("- (empty, the user has no skills)\n");
     } else {
         for s in &skills {
             let desc = if s.description.is_empty() {
-                "(без описания)"
+                "(no description)"
             } else {
                 s.description.as_str()
             };
@@ -226,13 +226,13 @@ mod tests {
     fn build_autoskill_for_tests(skills: &[crate::skills::Skill]) -> ChatTool {
         let descriptor = Tool::by_key(KEY_AUTOSKILL).expect("autoskill descriptor present");
         let mut description = descriptor.description.to_string();
-        description.push_str("\n\nДоступные скилы (id — описание):\n");
+        description.push_str("\n\nAvailable skills (id — description):\n");
         if skills.is_empty() {
-            description.push_str("- (пусто, у пользователя нет скилов)\n");
+            description.push_str("- (empty, the user has no skills)\n");
         } else {
             for s in skills {
                 let desc = if s.description.is_empty() {
-                    "(без описания)"
+                    "(no description)"
                 } else {
                     s.description.as_str()
                 };
@@ -267,13 +267,13 @@ mod tests {
     #[test]
     fn autoskill_descriptor_lists_skills_in_description() {
         let skills = vec![
-            make_skill("greet", "Приветствие", "Тон первого сообщения"),
-            make_skill("apo", "Извинения", ""),
+            make_skill("greet", "Greeting", "Tone of the first message"),
+            make_skill("apo", "Apology", ""),
         ];
         let tool = build_autoskill_for_tests(&skills);
         let desc = tool.function.description.unwrap();
-        assert!(desc.contains("- greet — Тон первого сообщения"), "{desc}");
-        assert!(desc.contains("- apo — (без описания)"), "{desc}");
+        assert!(desc.contains("- greet — Tone of the first message"), "{desc}");
+        assert!(desc.contains("- apo — (no description)"), "{desc}");
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
         let skills: Vec<crate::skills::Skill> = Vec::new();
         let tool = build_autoskill_for_tests(&skills);
         let desc = tool.function.description.unwrap();
-        assert!(desc.contains("(пусто, у пользователя нет скилов)"));
+        assert!(desc.contains("(empty, the user has no skills)"));
         let params = tool.function.parameters.unwrap();
         assert!(params
             .get("properties")

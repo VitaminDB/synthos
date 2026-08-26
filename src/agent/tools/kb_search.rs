@@ -116,8 +116,8 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         return Ok(format_envelope(
             &args.query,
             &[],
-            "Нет активных баз знаний для этого чата. Включи коллекцию через \
-             chip над полем ввода (Settings → Базы знаний для управления).",
+            "No active knowledge bases for this chat. Enable a collection via \
+             the chip above the input field (Settings → Knowledge Bases to manage).",
         ));
     }
 
@@ -127,9 +127,9 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             return Ok(format_envelope(
                 &args.query,
                 &[],
-                "Эмбеддер не загружен. Settings → Базы знаний → \
-                 «Загрузить модель эмбеддера» / убедись, что модель скачана \
-                 в указанный каталог (по умолчанию ~/models/bge-m3).",
+                "Embedder not loaded. Settings → Knowledge Bases → \
+                 \"Load embedder model\" / make sure the model is downloaded \
+                 to the configured directory (default ~/models/bge-m3).",
             ));
         }
     };
@@ -139,7 +139,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         return Ok(format_envelope(
             &args.query,
             &[],
-            "Активные коллекции не найдены в registry (возможно, удалены).",
+            "No active collections found in the registry (possibly deleted).",
         ));
     }
 
@@ -187,7 +187,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             return Ok(format_envelope(
                 &args.query,
                 &[],
-                &format!("ошибка поиска: {e}"),
+                &format!("search error: {e}"),
             ));
         }
     };
@@ -207,7 +207,7 @@ fn format_envelope(query: &str, hits: &[SearchHit], body: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("kb_search query: {query}\n"));
     out.push_str(&format!("hits: {}\n", hits.len()));
-    out.push_str("--- результаты ---\n");
+    out.push_str("--- results ---\n");
     out.push_str(body.trim_end());
     out.push('\n');
     truncate_envelope(out)
@@ -215,7 +215,7 @@ fn format_envelope(query: &str, hits: &[SearchHit], body: &str) -> String {
 
 fn format_hits_body(hits: &[SearchHit]) -> String {
     if hits.is_empty() {
-        return "(ничего не найдено)".to_string();
+        return "(nothing found)".to_string();
     }
     let mut out = String::new();
     for (i, h) in hits.iter().enumerate() {
@@ -286,9 +286,9 @@ mod tests {
 
     #[test]
     fn format_envelope_no_hits() {
-        let s = format_envelope("foo", &[], "(ничего не найдено)");
+        let s = format_envelope("foo", &[], "(nothing found)");
         assert!(s.contains("kb_search query: foo"));
         assert!(s.contains("hits: 0"));
-        assert!(s.contains("(ничего не найдено)"));
+        assert!(s.contains("(nothing found)"));
     }
 }

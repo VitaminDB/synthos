@@ -56,14 +56,14 @@ impl std::fmt::Display for SearchError {
             Self::Network(e) => write!(f, "DDG fetch: {e}"),
             Self::Challenge => write!(
                 f,
-                "DDG требует captcha (anti-bot challenge). Подожди или \
-                 переключи exit-IP (VPN)."
+                "DDG is demanding a captcha (anti-bot challenge). Wait or \
+                 switch the exit IP (VPN)."
             ),
             Self::Empty => write!(
                 f,
-                "DDG html- и lite-endpoint вернули пустой SERP. \
-                 Возможно изменилась вёрстка либо запрос слишком узкий — \
-                 попробуй переформулировать."
+                "The DDG html and lite endpoints returned an empty SERP. \
+                 The markup may have changed, or the query is too narrow — \
+                 try rephrasing it."
             ),
         }
     }
@@ -578,7 +578,7 @@ mod tests {
         // подсвечивает причину пользователю.
         assert!(SearchError::Network("conn".into()).to_string().contains("DDG fetch"));
         assert!(SearchError::Challenge.to_string().contains("captcha"));
-        assert!(SearchError::Empty.to_string().contains("пустой SERP"));
+        assert!(SearchError::Empty.to_string().contains("empty SERP"));
     }
 
     #[test]

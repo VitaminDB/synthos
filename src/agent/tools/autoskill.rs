@@ -27,7 +27,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         .await
         .map_err(|e| ToolError::BadArgs(format!("join error: {e}")))?;
     let Some(skill) = skill else {
-        return Err(ToolError::BadArgs(format!("скил «{id}» не найден")));
+        return Err(ToolError::BadArgs(format!("skill \"{id}\" not found")));
     };
     Ok(format!("# {}\n\n{}", skill.name, skill.content))
 }

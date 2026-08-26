@@ -68,7 +68,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         "status" => status().await,
         "unload" => unload(&v),
         other => Err(ToolError::BadArgs(format!(
-            "неизвестный action «{other}» (ожидается status | unload)"
+            "unknown action \"{other}\" (expected status | unload)"
         ))),
     }
 }
@@ -83,15 +83,15 @@ async fn status() -> Result<String, ToolError> {
     out.push_str("--- VRAM (CUDA:0) ---\n");
     match synaptix_core::device::cuda::mem_info(0) {
         Ok((_free, total)) => {
-            out.push_str(&format!("всего: {} МБ\n", total / (1024 * 1024)));
-            out.push_str(&format!("свободно по драйверу: {} МБ\n", vram_free_mb()));
+            out.push_str(&format!("total: {} MB\n", total / (1024 * 1024)));
+            out.push_str(&format!("free per driver: {} MB\n", vram_free_mb()));
             out.push_str(&format!(
-                "доступно (свободно + слабина пула активаций {} МБ): {} МБ\n",
+                "available (free + activation pool slack {} MB): {} MB\n",
                 act_pool_slack_mb(),
                 vram_available_mb()
             ));
         }
-        Err(_) => out.push_str("CUDA недоступна\n"),
+        Err(_) => out.push_str("CUDA unavailable\n"),
     }
 
     // RAM — свежий замер sysinfo, только память (дёшево).
@@ -99,16 +99,16 @@ async fn status() -> Result<String, ToolError> {
     sys.refresh_memory();
     out.push_str("--- RAM ---\n");
     out.push_str(&format!(
-        "занято: {} из {}\n",
+        "used: {} of {}\n",
         models::human_bytes(sys.used_memory()),
         models::human_bytes(sys.total_memory())
     ));
 
     // Нодовые модели: id нужен для action=unload.
-    out.push_str("--- Модели в памяти (нодовые) ---\n");
+    out.push_str("--- Models in memory (node-graph) ---\n");
     let infos = models::list();
     if infos.is_empty() {
-        out.push_str("(нет)\n");
+        out.push_str("(none)\n");
     } else {
         for m in &infos {
             out.push_str(&format!(
@@ -123,31 +123,31 @@ async fn status() -> Result<String, ToolError> {
         }
     }
 
-    out.push_str("--- Чат-LLM ---\n");
+    out.push_str("--- Chat LLM ---\n");
     match chat_rx.await {
         Ok(snap) => {
             if let Some(name) = snap.loaded_name {
                 out.push_str(&format!(
-                    "загружена: {name}{}\n",
+                    "loaded: {name}{}\n",
                     if snap.supports_media { " (vision)" } else { "" }
                 ));
             } else if snap.loading {
-                out.push_str("загружается…\n");
+                out.push_str("loading…\n");
             } else {
                 out.push_str(&format!(
-                    "не загружена{}\n",
+                    "not loaded{}\n",
                     snap.last_path
-                        .map(|p| format!(" (последняя: {p})"))
+                        .map(|p| format!(" (last: {p})"))
                         .unwrap_or_default()
                 ));
             }
         }
-        Err(_) => out.push_str("(снимок недоступен)\n"),
+        Err(_) => out.push_str("(snapshot unavailable)\n"),
     }
 
     out.push_str(
-        "---\nВыгрузка нодовых моделей: system {\"action\":\"unload\",\"id\":N} \
-         или {\"all\":true}. Чат-LLM выгружается только через free_vram у \
+        "---\nUnload node-graph models: system {\"action\":\"unload\",\"id\":N} \
+         or {\"all\":true}. The chat LLM is only unloaded via free_vram on \
          pipelines run.\n",
     );
     Ok(out)
@@ -176,30 +176,30 @@ fn unload(v: &serde_json::Value) -> Result<String, ToolError> {
     if all {
         let n = models::unload_all();
         models::trim_all();
-        out.push_str(&format!("выгружено моделей: {n}\n"));
+        out.push_str(&format!("models unloaded: {n}\n"));
     } else if let Some(id) = id {
         let known = models::list().iter().any(|m| m.id == id);
         if !known {
             return Err(ToolError::BadArgs(format!(
-                "модели с id={id} нет в реестре (см. system status)"
+                "no model with id={id} in the registry (see system status)"
             )));
         }
         let released = models::unload(id);
         models::trim_all();
         if released {
-            out.push_str(&format!("модель id={id} выгружена\n"));
+            out.push_str(&format!("model id={id} unloaded\n"));
         } else {
             out.push_str(&format!(
-                "модель id={id} ещё удерживается работающим воркером — \
-                 дождись конца прогона\n"
+                "model id={id} is still held by a running worker — \
+                 wait for the run to finish\n"
             ));
         }
     } else {
-        return Err(ToolError::MissingField("id (или all=true)"));
+        return Err(ToolError::MissingField("id (or all=true)"));
     }
 
     out.push_str(&format!(
-        "VRAM доступно: было {} МБ, стало {} МБ\n",
+        "VRAM available: was {} MB, now {} MB\n",
         before_mb,
         vram_available_mb()
     ));

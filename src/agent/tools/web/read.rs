@@ -32,7 +32,7 @@ impl std::fmt::Display for ReadError {
         match self {
             ReadError::Http(e) => write!(f, "{e}"),
             ReadError::UnsupportedMime(ct) => {
-                write!(f, "неподдерживаемый content-type: {ct}")
+                write!(f, "unsupported content type: {ct}")
             }
         }
     }

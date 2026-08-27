@@ -42,6 +42,7 @@ use crate::syn_chat::SynChatCtx;
 use crate::templates::{self, convert, model::NodeStateData, ConnData, NodeData, Template, TemplateKind};
 
 use super::executor::ToolError;
+use crate::agent::json_repair::repair_bracket_tail;
 
 /// Главный entrypoint из `executor::execute`.
 pub async fn run(args_json: &str) -> Result<String, ToolError> {
@@ -1020,50 +1021,6 @@ fn unwrap_json_string(
         )
     });
     Ok((val, note))
-}
-
-/// Пересобрать скобочный хвост JSON'а. Модели регулярно закрывают вложенность
-/// не в том порядке (`…"}}]}` вместо `…"}}}]`) или недокрывают её вовсе.
-/// Срезаем хвост из закрывающих скобок и дописываем заново по стеку,
-/// посчитанному на срезанном префиксе. Ничего не додумываем: незакрытая
-/// строка или скобки, не сходящиеся по типу, — отказ. Результат всё равно
-/// проверяется парсером у вызывающего.
-fn repair_bracket_tail(text: &str) -> Option<String> {
-    let head = text.trim_end_matches(|c: char| c == '}' || c == ']' || c.is_whitespace());
-    let mut stack: Vec<char> = Vec::new();
-    let mut in_string = false;
-    let mut escaped = false;
-    for c in head.chars() {
-        if in_string {
-            match (escaped, c) {
-                (true, _) => escaped = false,
-                (false, '\\') => escaped = true,
-                (false, '"') => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_string = true,
-            '{' => stack.push('}'),
-            '[' => stack.push(']'),
-            '}' | ']' => {
-                if stack.pop()? != c {
-                    return None;
-                }
-            }
-            _ => {}
-        }
-    }
-    if in_string || stack.is_empty() {
-        return None;
-    }
-    let mut out = head.to_string();
-    while let Some(c) = stack.pop() {
-        out.push(c);
-    }
-    // Хвост сошёлся сам — чинить было нечего, и предупреждать не о чем.
-    (out != text.trim_end()).then_some(out)
 }
 
 /// Обрезка длинного фрагмента для сообщения агенту.

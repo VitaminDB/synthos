@@ -18,6 +18,7 @@
 //! - [`tools`]    — агентские инструменты (bash, web_read) + executor.
 
 pub mod audio;
+pub mod json_repair;
 pub mod schema;
 pub mod state;
 pub mod storage;

@@ -860,6 +860,11 @@ impl StreamParser {
     }
 }
 
+/// Заметка в историю после хода, который не дал ни вызова, ни текста.
+/// Уходит от лица пользователя: system лежит в голове контекста, и вставка
+/// туда обнулила бы префикс-KV всего диалога ради одного хода.
+const EMPTY_TURN_NOTE: &str = "[System note: your previous turn produced      neither a tool call nor a text answer — the whole budget went into      reasoning. If you meant to call a tool, send the call again as valid      JSON: arguments as a real structure, every bracket closed in the right      order. Otherwise answer with text.]";
+
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
 /// append history → next turn. Прерывается по abort, EOS-only ответу (no
 /// tool_calls) или по достижении `max_turns` (настройка «Глубина основного
@@ -1393,6 +1398,13 @@ async fn run_agent_loop(
                     break;
                 }
                 empty_answer = true;
+                // Без заметки повтор идентичен: та же история даёт тот же
+                // префикс-KV и тот же вывод байт в байт — в логах это видно
+                // как два хода по одинаковому числу токенов. Заметка меняет
+                // контекст и заодно говорит, чего от модели ждали: чаще
+                // всего сюда приводит `<tool_call>` с битым JSON, который
+                // парсер не смог принять.
+                history.push(Message::user(EMPTY_TURN_NOTE));
                 continue;
             }
             // Обычный текстовый ответ. commit_streaming_tail сделает

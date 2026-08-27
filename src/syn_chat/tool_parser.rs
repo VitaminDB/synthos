@@ -247,7 +247,17 @@ fn parse_tool_call_body(body: &str) -> Option<(RawToolCall, ToolCallFormat)> {
 }
 
 fn parse_tool_call_json_qwen(body: &str) -> Option<RawToolCall> {
-    let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
+    // Скобочный хвост чиним до разбора: модели устойчиво промахиваются на
+    // закрытии длинного значения (`…"}}]}` вместо `…"}}}]`), и такой блок
+    // раньше выбрасывался целиком — ход впустую, а модель при том же
+    // префикс-KV повторяла его байт в байт.
+    let (v, repaired) = crate::agent::json_repair::parse_with_repair(body.trim())?;
+    if repaired {
+        tracing::warn!(
+            tool_call_body = %body.trim(),
+            "скобки в <tool_call> закрыты не в том порядке — пересобрали хвост"
+        );
+    }
     let name = v.get("name")?.as_str()?.to_string();
     let arguments_json = match v.get("arguments") {
         Some(args) => serde_json::to_string(args).ok()?,
@@ -395,6 +405,23 @@ mod tests {
         let part3 = p.feed("ot");
         // "<tooot" — больше не префикс, эмитим всё.
         assert_eq!(part3.clean_delta, "<tooot");
+    }
+
+    /// Реальный вызов из чата: `data` закрыт, элемент массива — нет, лишняя
+    /// `}` уехала за `]`. Раньше парсер выбрасывал такой блок целиком, и ход
+    /// уходил впустую.
+    #[test]
+    fn out_of_order_brackets_are_repaired() {
+        let mut p = ToolCallParser::new();
+        p.feed(
+            "<tool_call>\n{\"name\":\"pipelines\",\"arguments\":{\"action\":\"apply\",\
+             \"set_state\":[{\"node\":9,\"state\":{\"kind\":\"TextView\",\
+             \"data\":{\"output_text\":\"[verse]\"}}]}}\n</tool_call>",
+        );
+        let (calls, _tail) = p.finish();
+        assert_eq!(calls.len(), 1, "вызов принят после починки скобок");
+        assert_eq!(calls[0].name, "pipelines");
+        assert!(calls[0].arguments_json.contains("\"node\":9"), "{}", calls[0].arguments_json);
     }
 
     #[test]

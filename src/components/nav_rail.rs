@@ -249,19 +249,22 @@ fn tile_with_label(
             .gap(2.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 body,
-                Text::new(label).max_lines(1).class(label_class),
+                Text::new(label.clone()).max_lines(1).class(label_class),
             ]
     };
-    draggable_tile(tile, entry)
+    draggable_tile(tile, label, entry)
 }
 
-/// Draggable → DropArea → контент; снаружи — контекстное меню.
-fn draggable_tile(tile: impl Widget + 'static, entry: RailEntry) -> impl Widget {
+/// Draggable → DropArea → контент; снаружи — контекстное меню. `label` —
+/// подпись призрака на случай, если фреймворк не сможет нарисовать живой
+/// снимок плитки.
+fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) -> impl Widget {
     let key = entry.key();
     let drop_key = key.clone();
     let entry_click = entry.clone();
     let entry_close = entry.clone();
     let dnd = Draggable::new(DRAG_TYPE_TILE, key)
+        .label(label)
         .on_click(move || rail::open(&entry_click))
         .child(
             DropArea::new()
@@ -371,7 +374,9 @@ fn separator_tile(ts: u64, entry: RailEntry) -> impl Widget {
         .child(Center::new().child(DecoratedBox::new().class("nav-rail-separator")));
     let key = entry.key();
     let drop_key = key.clone();
-    let dnd = Draggable::new(DRAG_TYPE_TILE, key).child(
+    let dnd = Draggable::new(DRAG_TYPE_TILE, key)
+        .label(tr!("nav.add.separator"))
+        .child(
         DropArea::new()
             .accept_types(vec![DRAG_TYPE_TILE.to_string()])
             .on_drop(move |data| rail::move_before(&data.payload, &drop_key))

@@ -201,6 +201,7 @@ chat.session.pipeline.llm_reload_failed_unknown = "LLM 在运行期间被卸载�
 chat.session.error.model_path_unknown = "模型路径未知"
 chat.session.error.stopped_suffix = " 生成已停止，历史记录完好。请澄清任务或点击「继续」。"
 chat.session.error.turn_cap_reached = "已达到代理的轮次上限 {max_turns} 而停止——模型一直在调用工具。点击「继续」以提供更多轮次"
+chat.session.error.empty_answer = "模型结束了本轮但没有给出回答 — 全部预算都用在了推理上。点击“继续”再给它一轮"
 chat.session.error.attachment_rejected = "附件未发送给模型：{reason}"
 chat.pipeline.warning.ltx_non_distilled = "节点 {node_id}（LTX Checkpoint）：「{name}」——LTX 各阶段按蒸馏版调度运行（stage1 8 步 + stage2 3 步），使用非蒸馏 checkpoint 会得到模糊的视频。请使用 ltx-2.3-22b-distilled-1.1.syn。"
 chat.pipeline.error.no_active_chat = "没有活动的聊天"

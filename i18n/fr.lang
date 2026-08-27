@@ -201,6 +201,7 @@ chat.session.pipeline.llm_reload_failed_unknown = "Le LLM a été déchargé pou
 chat.session.error.model_path_unknown = "chemin du modèle inconnu"
 chat.session.error.stopped_suffix = " Génération arrêtée, l'historique est intact. Précisez la tâche ou cliquez sur « Continuer »."
 chat.session.error.turn_cap_reached = "arrêté à la limite de {max_turns} tours de l'agent — le modèle n'a fait qu'appeler des outils. Cliquez sur « Continuer » pour lui donner plus de tours"
+chat.session.error.empty_answer = "le modèle a terminé son tour sans réponse — tout le budget est parti dans le raisonnement. Cliquez sur « Continuer » pour lui donner un tour de plus"
 chat.session.error.attachment_rejected = "Pièce jointe non envoyée au modèle : {reason}"
 chat.pipeline.warning.ltx_non_distilled = "nœud {node_id} (LTX Checkpoint) : « {name} » — les étapes LTX suivent le planning distillé (8 pas stage1 + 3 stage2), et un checkpoint non distillé donne une vidéo floue sur ce planning. Utilisez ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "aucune discussion active"

@@ -994,6 +994,21 @@ fn unwrap_json_string(
     // берём его и называем отброшенный хвост, вместо отказа целиком.
     let mut stream = serde_json::Deserializer::from_str(text).into_iter::<serde_json::Value>();
     let Some(Ok(val)) = stream.next() else {
+        // Третий случай: скобки закрыты не в том порядке — `…"}}]}` вместо
+        // `…"}}}]`. Пересобираем хвост и, если после этого JSON валиден,
+        // работаем с ним: иначе агент видит «передай структурой», меняет
+        // формулировку, а не скобки, и повторяет ту же ошибку.
+        if let Some(fixed) = repair_bracket_tail(text) {
+            if let Ok(val) = serde_json::from_str(&fixed) {
+                return Ok((
+                    val,
+                    Some(format!(
+                        "⚠ {field}: the closing brackets were out of order and got \
+                         rebuilt. Check that the applied value is what you meant."
+                    )),
+                ));
+            }
+        }
         return Err(err(e));
     };
     let rest = text[stream.byte_offset().min(text.len())..].trim();
@@ -1005,6 +1020,50 @@ fn unwrap_json_string(
         )
     });
     Ok((val, note))
+}
+
+/// Пересобрать скобочный хвост JSON'а. Модели регулярно закрывают вложенность
+/// не в том порядке (`…"}}]}` вместо `…"}}}]`) или недокрывают её вовсе.
+/// Срезаем хвост из закрывающих скобок и дописываем заново по стеку,
+/// посчитанному на срезанном префиксе. Ничего не додумываем: незакрытая
+/// строка или скобки, не сходящиеся по типу, — отказ. Результат всё равно
+/// проверяется парсером у вызывающего.
+fn repair_bracket_tail(text: &str) -> Option<String> {
+    let head = text.trim_end_matches(|c: char| c == '}' || c == ']' || c.is_whitespace());
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in head.chars() {
+        if in_string {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                if stack.pop()? != c {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if in_string || stack.is_empty() {
+        return None;
+    }
+    let mut out = head.to_string();
+    while let Some(c) = stack.pop() {
+        out.push(c);
+    }
+    // Хвост сошёлся сам — чинить было нечего, и предупреждать не о чем.
+    (out != text.trim_end()).then_some(out)
 }
 
 /// Обрезка длинного фрагмента для сообщения агенту.
@@ -1635,6 +1694,31 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["node"], 3);
         assert!(notes.iter().any(|n| n.contains("connect")), "{notes:?}");
+    }
+
+    /// Скобки, закрытые не в том порядке (реальный вызов модели: `…"}}]}`
+    /// вместо `…"}}}]`), чинятся, а не роняют apply.
+    #[test]
+    fn coerce_array_repairs_out_of_order_brackets() {
+        let broken = "[{\"node\": 3, \"state\": {\"kind\": \"TextView\", \"data\": \
+                      {\"output_text\": \"tags\"}}}, {\"node\": 4, \"state\": {\"kind\": \
+                      \"TextView\", \"data\": {\"output_text\": \"lyrics\"}}]}";
+        let v = serde_json::json!({ "set_state": broken });
+        let mut notes = Vec::new();
+        let items = coerce_array(&v, "set_state", &mut notes).unwrap().expect("есть");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1]["node"], 4);
+        assert_eq!(items[1]["state"]["data"]["output_text"], "lyrics");
+        assert!(notes.iter().any(|n| n.contains("brackets")), "{notes:?}");
+    }
+
+    /// Чинится только скобочный хвост: оборванная строка остаётся ошибкой.
+    #[test]
+    fn repair_bracket_tail_gives_up_on_truncated_string() {
+        assert!(repair_bracket_tail("[{\"a\": \"unterminated").is_none());
+        assert_eq!(repair_bracket_tail("[{\"a\": 1}").as_deref(), Some("[{\"a\": 1}]"));
+        // Сбалансированному тексту чинить нечего.
+        assert!(repair_bracket_tail("[{\"a\": 1}]").is_none());
     }
 
     /// Фильтр нод матчится и по CamelCase-имени варианта state: модель

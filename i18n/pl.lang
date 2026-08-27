@@ -201,6 +201,7 @@ chat.session.pipeline.llm_reload_failed_unknown = "LLM został wyładowany na cz
 chat.session.error.model_path_unknown = "ścieżka modelu nieznana"
 chat.session.error.stopped_suffix = " Generowanie zatrzymane, historia nienaruszona. Doprecyzuj zadanie lub naciśnij „Kontynuuj”."
 chat.session.error.turn_cap_reached = "zatrzymano na limicie {max_turns} ruchów agenta — model przez cały czas wywoływał narzędzia. Naciśnij „Kontynuuj”, aby dać mu więcej ruchów"
+chat.session.error.empty_answer = "model zakończył ruch bez odpowiedzi — cały budżet poszedł na rozumowanie. Naciśnij „Kontynuuj”, aby dać mu kolejny ruch"
 chat.session.error.attachment_rejected = "Załącznik nie został wysłany do modelu: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "noda {node_id} (LTX Checkpoint): „{name}” — etapy LTX działają wg harmonogramu distilled (8 kroków stage1 + 3 stage2), a niedystylowany checkpoint da na nim rozmyte wideo. Użyj ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "brak aktywnego czatu"

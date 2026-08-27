@@ -202,6 +202,7 @@ chat.session.pipeline.llm_reload_failed_unknown = "El LLM se descargó durante l
 chat.session.error.model_path_unknown = "ruta del modelo desconocida"
 chat.session.error.stopped_suffix = " Generación detenida, el historial está intacto. Aclare la tarea o pulse «Continuar»."
 chat.session.error.turn_cap_reached = "detenido en el límite de {max_turns} turnos del agente: el modelo estuvo llamando herramientas todo el tiempo. Pulse «Continuar» para darle más turnos"
+chat.session.error.empty_answer = "el modelo terminó su turno sin dar respuesta: todo el presupuesto se fue en razonamiento. Pulse «Continuar» para darle otro turno"
 chat.session.error.attachment_rejected = "Adjunto no enviado al modelo: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "nodo {node_id} (LTX Checkpoint): «{name}»: las etapas de LTX siguen el programa distilado (8 pasos stage1 + 3 stage2), y un checkpoint no distilado produce vídeo borroso en él. Use ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "no hay ningún chat activo"

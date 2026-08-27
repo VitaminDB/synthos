@@ -201,6 +201,7 @@ chat.session.pipeline.llm_reload_failed_unknown = "Das LLM wurde für den Lauf e
 chat.session.error.model_path_unknown = "Modellpfad unbekannt"
 chat.session.error.stopped_suffix = " Generierung gestoppt, der Verlauf ist unverändert. Präzisieren Sie die Aufgabe oder klicken Sie auf „Fortsetzen“."
 chat.session.error.turn_cap_reached = "gestoppt am Zuglimit des Agenten von {max_turns} — das Modell hat die ganze Zeit Tools aufgerufen. Klicken Sie auf „Fortsetzen“, um weitere Züge zu geben"
+chat.session.error.empty_answer = "das Modell hat seinen Zug ohne Antwort beendet — das gesamte Budget ging ins Nachdenken. Klicken Sie auf „Fortsetzen“, um einen weiteren Zug zu geben"
 chat.session.error.attachment_rejected = "Anhang nicht an das Modell gesendet: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "Node {node_id} (LTX Checkpoint): „{name}“ — die LTX-Stufen laufen nach dem distilled-Schema (8 Schritte Stage1 + 3 Stage2), ein nicht destillierter Checkpoint ergibt dabei unscharfes Video. Verwenden Sie ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "kein aktiver Chat"

@@ -1010,6 +1010,10 @@ async fn run_agent_loop(
     // с пустым assistant-плейсхолдером, в логе — ничего, и снаружи это
     // выглядело как зависшая без ошибки генерация.
     let mut answered = false;
+    // Ход без вызовов и без текста: весь бюджет ушёл в reasoning, который
+    // оборвался на полуслове. Это не ответ — раньше цикл принимал его за
+    // ответ и выходил, оставляя в ленте пустой пузырь и брошенную работу.
+    let mut empty_answer = false;
 
     // Guard от вырождения в петлю. Счётчики приходят из ленты, поэтому
     // переживают «Прервать» и «Продолжить» — иначе кнопка просто
@@ -1376,8 +1380,24 @@ async fn run_agent_loop(
         }
 
         if raw_calls.is_empty() {
+            if clean_text.trim().is_empty() {
+                // Одна повторная попытка: ход в историю не попал, поэтому
+                // просто перезапускаем его. Второй пустой подряд — сдаёмся,
+                // чтобы не жечь бюджет на молчание.
+                log::warn!(
+                    "[syn_chat] ход без вызовов и без текста ({tokens_this_turn} ток. \
+                     ушли в reasoning); {}",
+                    if empty_answer { "второй подряд — останавливаемся" } else { "повторяем" }
+                );
+                if empty_answer {
+                    break;
+                }
+                empty_answer = true;
+                continue;
+            }
             // Обычный текстовый ответ. commit_streaming_tail сделает
             // финализацию в send_message wrapper'е.
+            empty_answer = false;
             answered = true;
             break;
         }
@@ -1661,6 +1681,23 @@ async fn run_agent_loop(
                 "{reason}{}",
                 tr!("chat.session.error.stopped_suffix")
             )));
+        });
+    } else if empty_answer {
+        let ctx_empty = ctx.clone();
+        run_on_main_thread(move || {
+            // Пустой пузырь этого хода убираем — он выглядит как «повисло».
+            ctx_empty.messages.update(|m| {
+                if m.last()
+                    .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
+                    .unwrap_or(false)
+                {
+                    m.pop();
+                }
+            });
+            // «Продолжить» отдаёт агенту ещё ход с целой историей — ровно то,
+            // что здесь нужно.
+            ctx_empty.turn_cap_reached.set(true);
+            ctx_empty.error.set(Some(tr!("chat.session.error.empty_answer")));
         });
     } else if !answered {
         log::warn!(

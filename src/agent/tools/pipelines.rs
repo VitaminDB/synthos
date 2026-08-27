@@ -438,6 +438,33 @@ fn enum_hints_lines(kind: NodeKind) -> Vec<String> {
         .collect()
 }
 
+/// Подсказки для path-полей, у которых пустое значение = «взять бандл из
+/// каталога по имени». Enum-таблица их не покрывает (это строки, не индексы),
+/// а без списка кандидатов агент не знал, чем переключить связку на turbo или
+/// на лёгкий LM, и оставлял дефолт. Первое имя в списке — то, что резолвится
+/// при пустом поле.
+fn path_hints_lines(kind: NodeKind) -> Vec<String> {
+    use crate::pages::node_editor::nodes::acestep::generate;
+    let named = |field: &str, names: &[&str]| {
+        let vals = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| if i == 0 { format!("{n} (default)") } else { (*n).to_string() })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{field} (null = pick from models_dir): {vals}")
+    };
+    match kind {
+        NodeKind::AceStepCheckpoint => vec![
+            named("lm_path", generate::LM_NAMES),
+            named("text_encoder_path", generate::TEXT_ENC_NAMES),
+            named("dit_path", generate::DIT_NAMES),
+            named("vae_path", generate::VAE_NAMES),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 fn state_example(kind: NodeKind) -> Option<String> {
     let rt = registry::default_runtime(kind);
     let g = rt.lock().ok()?;
@@ -543,7 +570,7 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         if let Some(state) = state_example(*kind) {
             out.push_str(&format!("state (example with defaults): {state}\n"));
         }
-        for line in enum_hints_lines(*kind) {
+        for line in enum_hints_lines(*kind).into_iter().chain(path_hints_lines(*kind)) {
             out.push_str(&format!("  {line}\n"));
         }
     }
@@ -989,6 +1016,39 @@ fn resolve_node_ref(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<u64, S
 /// Связь: `from_node`/`to_node` принимают то же, что и `set_state[].node`.
 /// Один элемент `set_state`: резолв ноды, разбор state, проверка kind,
 /// применение. Ошибка описывает конкретный элемент, а не весь вызов.
+/// Слить патч-`state` с текущим состоянием ноды: верхнеуровневые ключи `data`
+/// из патча перекрывают текущие, остальные сохраняются. Патч без `data` или с
+/// другим `kind` возвращается как есть — про несовпадение варианта вызывающий
+/// выдаёт отдельную ошибку.
+fn merge_state_patch(
+    current: Option<&NodeStateData>,
+    patch: serde_json::Value,
+) -> serde_json::Value {
+    let Some(cur) = current.and_then(|s| serde_json::to_value(s).ok()) else {
+        return patch;
+    };
+    let (Some(cur_obj), Some(patch_obj)) = (cur.as_object(), patch.as_object()) else {
+        return patch;
+    };
+    if cur_obj.get("kind") != patch_obj.get("kind") {
+        return patch;
+    }
+    let Some(patch_data) = patch_obj.get("data").and_then(|d| d.as_object()) else {
+        return patch;
+    };
+    let mut data = cur_obj
+        .get("data")
+        .and_then(|d| d.as_object())
+        .cloned()
+        .unwrap_or_default();
+    for (k, v) in patch_data {
+        data.insert(k.clone(), v.clone());
+    }
+    let mut merged = cur_obj.clone();
+    merged.insert("data".to_string(), serde_json::Value::Object(data));
+    serde_json::Value::Object(merged)
+}
+
 fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
     let node_ref = item
         .get("node")
@@ -996,13 +1056,19 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     let node_id = resolve_node_ref(node_ref, ctx)?;
     let state_v = item.get("state").cloned().ok_or("the state field is required")?;
     let state_v = unwrap_json_string(&state_v, "state")?;
-    let state: NodeStateData = serde_json::from_value(state_v)
-        .map_err(|e| format!("node {node_id}: failed to parse state: {e}"))?;
     let nodes = ctx.nodes.get_untracked();
     let node = nodes
         .iter()
         .find(|n| n.id.0 == node_id)
         .ok_or_else(|| format!("node {node_id} not found in the graph"))?;
+    // Патч, а не замена: агент правит одно-два поля («поставь turbo-DiT»),
+    // а `#[serde(default)]` на *StateData добил бы остальные дефолтами —
+    // device_idx уехал бы в CPU, кванты и sampler-параметры откатились бы
+    // молча. Недостающие ключи берём из текущего state ноды.
+    let current = node.runtime.lock().ok().and_then(|g| convert::runtime_to_state(&g));
+    let state_v = merge_state_patch(current.as_ref(), state_v);
+    let state: NodeStateData = serde_json::from_value(state_v)
+        .map_err(|e| format!("node {node_id}: failed to parse state: {e}"))?;
     // Совпадение варианта state с kind ноды проверяем заранее:
     // apply_state_to_runtime при несовпадении молча no-op'ает, а агенту
     // нужна честная ошибка.
@@ -1381,6 +1447,67 @@ mod tests {
         assert!(inv.contains("HF model directory"), "{inv}");
         assert!(!inv.contains("readme.txt"), "{inv}");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Патч из одного поля не откатывает остальные: `device_idx` (GPU) и
+    /// кванты переживают точечную смену DiT на turbo.
+    #[test]
+    fn merge_state_patch_keeps_unmentioned_fields() {
+        use crate::templates::model::AceStepCheckpointStateData;
+        let current = NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
+            models_dir: Some("/models".into()),
+            device_idx: 1,
+            quant_dit_idx: 2,
+            resident: true,
+            ..Default::default()
+        });
+        let patch = serde_json::json!({
+            "kind": "AceStepCheckpoint",
+            "data": { "dit_path": "/models/acestep_v15_xl_turbo.syn" }
+        });
+        let merged: NodeStateData =
+            serde_json::from_value(merge_state_patch(Some(&current), patch)).expect("parse");
+        let NodeStateData::AceStepCheckpoint(d) = merged else { panic!("wrong variant") };
+        assert_eq!(d.dit_path.as_deref(), Some("/models/acestep_v15_xl_turbo.syn"));
+        assert_eq!(d.models_dir.as_deref(), Some("/models"));
+        assert_eq!(d.device_idx, 1);
+        assert_eq!(d.quant_dit_idx, 2);
+        assert!(d.resident);
+    }
+
+    /// Патч с другим `kind` не мержится — вызывающий должен увидеть чужой
+    /// вариант и выдать ошибку, а не тихо применить поля текущего.
+    #[test]
+    fn merge_state_patch_leaves_foreign_kind_alone() {
+        use crate::templates::model::AceStepCheckpointStateData;
+        let current = NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
+            device_idx: 1,
+            ..Default::default()
+        });
+        let patch = serde_json::json!({ "kind": "TextView", "data": { "output_text": "x" } });
+        let merged = merge_state_patch(Some(&current), patch.clone());
+        assert_eq!(merged, patch);
+    }
+
+    /// Агент видит, каким именем переключить связку на turbo/1.7b, и какое
+    /// имя подставится при пустом path-поле.
+    #[test]
+    fn path_hints_list_acestep_bundles() {
+        let lines = path_hints_lines(NodeKind::AceStepCheckpoint).join("\n");
+        assert!(lines.contains("acestep_5hz_lm_4b.syn (default)"), "{lines}");
+        assert!(lines.contains("acestep_5hz_lm_1.7b.syn"), "{lines}");
+        assert!(lines.contains("acestep_v15_xl_base.syn (default)"), "{lines}");
+        assert!(lines.contains("acestep_v15_xl_turbo.syn"), "{lines}");
+        assert!(path_hints_lines(NodeKind::Add).is_empty());
+    }
+
+    /// Дефолтная связка ACE-Step: 4b-LM + xl_base, кванты выключены.
+    #[test]
+    fn acestep_checkpoint_defaults_are_4b_base_dense() {
+        use crate::pages::node_editor::nodes::acestep::{self, generate};
+        assert_eq!(generate::LM_NAMES[0], "acestep_5hz_lm_4b.syn");
+        assert_eq!(generate::DIT_NAMES[0], "acestep_v15_xl_base.syn");
+        assert_eq!(acestep::QUANT_OPTIONS[acestep::default_storage_idx()], "none");
     }
 
     /// Пример state снимается с default_runtime и несёт правильный тег.

@@ -54,9 +54,11 @@ fn resident_cache() -> &'static Arc<Mutex<Option<MusicComponentCache>>> {
 
 /// Дефолтные имена 4 бандлов в каталоге моделей (зеркалит CLI `music`).
 /// Для LM и DiT — список кандидатов по убыванию приоритета: берётся первый
-/// существующий в каталоге (1.7b → 4b; base → turbo), чтобы каталог только с
-/// 4b-LM или только с turbo-DiT работал без override'ов.
-pub const LM_NAMES: &[&str] = &["acestep_5hz_lm_1.7b.syn", "acestep_5hz_lm_4b.syn"];
+/// существующий в каталоге (4b → 1.7b; base → turbo), чтобы каталог только с
+/// 1.7b-LM или только с turbo-DiT работал без override'ов. Дефолт связки —
+/// 4b-LM + xl_base (полное качество); turbo/1.7b выбираются override-полями
+/// Checkpoint-ноды (в т. ч. агентом через `pipelines apply set_state`).
+pub const LM_NAMES: &[&str] = &["acestep_5hz_lm_4b.syn", "acestep_5hz_lm_1.7b.syn"];
 pub const TEXT_ENC_NAMES: &[&str] = &["qwen3-embedding-0.6b.syn"];
 pub const DIT_NAMES: &[&str] = &["acestep_v15_xl_base.syn", "acestep_v15_xl_turbo.syn"];
 pub const VAE_NAMES: &[&str] = &["acestep_vae.syn"];
@@ -986,7 +988,7 @@ mod tests {
         }
     }
 
-    /// Каталог с 4b-LM и turbo-DiT (без 1.7b/base) резолвится без override'ов —
+    /// Каталог с 1.7b-LM и turbo-DiT (без 4b/base) резолвится без override'ов —
     /// раньше жёсткие имена давали «bundle не найден».
     #[test]
     fn resolve_paths_falls_back_to_alternate_names() {
@@ -994,20 +996,20 @@ mod tests {
         touch(
             dir.path(),
             &[
-                "acestep_5hz_lm_4b.syn",
+                "acestep_5hz_lm_1.7b.syn",
                 "qwen3-embedding-0.6b.syn",
                 "acestep_v15_xl_turbo.syn",
                 "acestep_vae.syn",
             ],
         );
         let (lm, te, dit, vae) = resolve_paths(&handle(dir.path())).expect("resolve");
-        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_4b.syn");
+        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_1.7b.syn");
         assert_eq!(te.file_name().unwrap(), "qwen3-embedding-0.6b.syn");
         assert_eq!(dit.file_name().unwrap(), "acestep_v15_xl_turbo.syn");
         assert_eq!(vae.file_name().unwrap(), "acestep_vae.syn");
     }
 
-    /// Оба варианта в каталоге — берётся первый по приоритету (1.7b / base).
+    /// Оба варианта в каталоге — берётся первый по приоритету (4b / base).
     #[test]
     fn resolve_paths_prefers_first_candidate() {
         let dir = tempfile::tempdir().unwrap();
@@ -1023,7 +1025,7 @@ mod tests {
             ],
         );
         let (lm, _, dit, _) = resolve_paths(&handle(dir.path())).expect("resolve");
-        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_1.7b.syn");
+        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_4b.syn");
         assert_eq!(dit.file_name().unwrap(), "acestep_v15_xl_base.syn");
     }
 

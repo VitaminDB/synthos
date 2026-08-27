@@ -18,8 +18,12 @@ partial rotary 0.25, словарь 248 320, контекст 262 144. MTP-го�
 `ensure_media_tower` / `encode_image` / `generate_streaming_media` диспатчат
 в `HybridPipeline`, блок промпта — `<|vision_start|><|image_pad|>…<|vision_end|>`);
 башню загрузчик берёт из `tensors:main` — отдельного компонента `vision` у
-HF-упаковки нет. Видео гибрид не принимает (только Muse Glimmer), M-RoPE
-для картинок движок не применяет — позиции обычные 1D.
+HF-упаковки нет. Видео: `prepare_video` в `synaptix-vlm-qwen3` (ffprobe/ffmpeg,
+2 fps, ≤64 кадров, ≤4096 токенов на ролик, группа = 2 кадра → temporal-патч,
+башня кодирует группы независимо), блок промпта на группу —
+`<{t:.1} seconds><|vision_start|><|video_pad|>…<|vision_end|>`, как у
+HF-процессора Qwen3-VL. M-RoPE движок не применяет — позиции обычные 1D,
+временну́ю шкалу модель видит по текстовым таймкодам.
 Гейты: z-гейт GDN — SiLU (`output_gate_type: "swish"` в конфиге), гейт
 внимания — sigmoid; ровно так synaptix и считает.
 

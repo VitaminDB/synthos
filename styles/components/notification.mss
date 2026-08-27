@@ -1,4 +1,4 @@
-/* Notification host — стек уведомлений в правом верхнем углу.
+/* Notification host — стек уведомлений в правом нижнем углу (над voice-FAB).
  * Размещение и margin от title-bar контролируются Portal'ом
  * (см. components/notification.rs::view), здесь только стиль карточек.
  *
@@ -33,6 +33,7 @@ Notification.severity-error   { accent-color: var(--error, #EF4444); }
 
 /* Synthos-специфичный класс для дополнительной кастомизации (если потребуется). */
 .synthos-notification-host {
-    /* Резерв под frameless title-bar и гap справа управляется Portal'ом
-     * (margin_top/margin_right в notification.rs). */
+    /* Отступы от нижнего/правого края (над voice-FAB) задаёт Portal
+     * (margin_bottom/margin_right в notification.rs), направление стека —
+     * `grow_up(true)` там же. */
 }

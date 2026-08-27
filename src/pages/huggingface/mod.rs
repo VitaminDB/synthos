@@ -8,14 +8,17 @@
 //!
 //! ```text
 //! Stack [
-//!   Column(.hf-page) [
-//!     header::view()                       // title + search + chips
-//!     SplitView Horizontal (split_ratio) [
-//!       list_panel::view()                  // карточки моделей
-//!       detail_panel::view()                // README + Files
+//!   workspace_frame [
+//!     page_header                        // «HuggingFace», пилюля + поле поиска по Hub
+//!     SplitView (hf_left_split_ratio) [
+//!       list_panel                       // чипы сортировки + карточки моделей
+//!       SplitView (hf_right_split_ratio) [
+//!         detail_panel::view             // шапка репозитория + README
+//!         detail_panel::files_view       // файлы + загрузки
+//!       ]
 //!     ]
 //!   ]
-//!   dialogs::view()                         // cache-dir prompt (Portal)
+//!   dialogs::view()                      // cache-dir prompt (Portal)
 //! ]
 //! ```
 
@@ -37,23 +40,40 @@ pub mod verify;
 
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::{SplitDirection, SplitView};
+
+use crate::components::page_header::{self, HeaderSpec};
+use crate::components::workspace_frame::{self, FrameSpec, Pane};
+use crate::context::AppCtx;
+use crate::icons::MI_CLOUD_DOWNLOAD;
 
 pub use state::HuggingFaceCtx;
 
 pub fn view() -> impl Widget {
+    let app = use_context::<AppCtx>();
+    let (left_visible, right_visible) = app.panels.huggingface;
+
+    let identity = page_header::identity_text(
+        MI_CLOUD_DOWNLOAD,
+        "HuggingFace".to_string(),
+        tr!("hf.header.subtitle"),
+    );
+    let header = page_header::view(
+        HeaderSpec::new(identity)
+            .center_extra(DecoratedBox::new().class("hf-header-search").child(header::search_bar()))
+            .toggles(Some(left_visible), Some(right_visible)),
+    );
+
+    let spec = FrameSpec::new("hf-split", || Box::new(detail_panel::view()))
+        .left(Pane::new(left_visible, app.hf_left_split_ratio, 260.0, || {
+            Box::new(list_panel::view())
+        }))
+        .right(Pane::new(right_visible, app.hf_right_split_ratio, 260.0, || {
+            Box::new(detail_panel::files_view())
+        }));
+
     let main = DecoratedBox::new()
         .class("hf-page")
-        .child(mgui! {
-            Column::new()
-                .gap(0.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    header::view(),
-                    DecoratedBox::new()
-                        .class("hf-body grow")
-                        .child(body_split()),
-                ]
-        });
+        .child(workspace_frame::view(header, spec));
 
     mgui! {
         Stack::new() => [
@@ -61,18 +81,4 @@ pub fn view() -> impl Widget {
             dialogs::view(),
         ]
     }
-}
-
-fn body_split() -> impl Widget {
-    Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let ratio = ctx.split_ratio;
-        let split = SplitView::new(list_panel::view(), detail_panel::view())
-            .class("hf-split")
-            .direction(SplitDirection::Horizontal)
-            .ratio_signal(ratio)
-            .min_size(260.0)
-            .divider_width(6.0);
-        vec![Box::new(split)]
-    })
 }

@@ -1,7 +1,6 @@
-//! Верхняя часть страницы HuggingFace: заголовок + warning + search-bar +
-//! сортировочные чипы.
+//! Элементы поиска по Hub: поле запроса (встаёт в общую шапку рядом с
+//! пилюлей глобального поиска) и сортировочные чипы (над списком моделей).
 
-use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
 use syngui::widgets::TextField;
@@ -11,30 +10,8 @@ use crate::icons::MI_SEARCH;
 use super::actions;
 use super::state::{HuggingFaceCtx, SortMode};
 
-pub fn view() -> impl Widget {
-    DecoratedBox::new().class("hf-header").child(mgui! {
-        Column::new()
-            .gap(12.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                title_row(),
-                search_bar(),
-                sort_chips(),
-            ]
-    })
-}
-
-fn title_row() -> impl Widget {
-    mgui! {
-        Row::new()
-            .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Text::new("HuggingFace").class("hf-title"),
-                Text::new(tr!("hf.header.subtitle")).class("hf-subtitle"),
-            ]
-    }
-}
-
-fn search_bar() -> impl Widget {
+/// Поле поиска по Hub для центра общей шапки.
+pub fn search_bar() -> impl Widget {
     Reactive::new(|| -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<HuggingFaceCtx>();
         let current = ctx.search_query.get_untracked();
@@ -54,7 +31,8 @@ fn search_bar() -> impl Widget {
     })
 }
 
-fn sort_chips() -> impl Widget {
+/// Чипы сортировки + фильтр GGUF — над списком моделей.
+pub fn sort_chips() -> impl Widget {
     Reactive::new(|| -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<HuggingFaceCtx>();
         let current = ctx.sort_mode.get();

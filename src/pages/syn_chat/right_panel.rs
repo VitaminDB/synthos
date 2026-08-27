@@ -1,6 +1,7 @@
-//! Правая панель Syn-чата: TabBar с тремя табами — «Инструменты» (tools/skills,
-//! первая по умолчанию), «Параметры» (модель + sampling + контекст + thinking)
-//! и «Детали» (статистика последней генерации).
+//! Правая панель Syn-чата: TabBar с двумя табами — «Параметры» (модель +
+//! sampling + контекст + thinking, первая по умолчанию) и «Детали»
+//! (статистика последней генерации). Инструменты и скилы — в левой панели
+//! (`left_panel`).
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -10,10 +11,7 @@ use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::{Slider, SpinBox, TextField, Toggle};
 
-use crate::components::right_panel::tools_panel;
-use crate::context::{
-    SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS, SYN_RIGHT_PANEL_TOOLS,
-};
+use crate::context::{SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS};
 use crate::icons::*;
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::{SynChatCtx, SynModelRegistry};
@@ -23,7 +21,6 @@ pub fn view() -> impl Widget {
     let tab = ctx.right_panel_tab;
 
     let tabbar = TabBar::new()
-        .tab(Tab::new(tr!("chat.right.tab.tools"), SYN_RIGHT_PANEL_TOOLS, &tab).icon(MI_AUTO_AWESOME))
         .tab(Tab::new(tr!("chat.right.tab.params"), SYN_RIGHT_PANEL_PARAMS, &tab).icon(MI_TUNE))
         .tab(Tab::new(tr!("chat.right.tab.details"), SYN_RIGHT_PANEL_DETAILS, &tab).icon(MI_SPEED))
         .class("right-panel-tabbar-inner");
@@ -31,8 +28,7 @@ pub fn view() -> impl Widget {
     let body = DecoratedBox::new().class("right-panel-body").child(move || {
         let child: Box<dyn Widget> = match tab.get() {
             SYN_RIGHT_PANEL_DETAILS => Box::new(details_tab()),
-            SYN_RIGHT_PANEL_PARAMS => Box::new(params_tab()),
-            _ => Box::new(tools_tab()),
+            _ => Box::new(params_tab()),
         };
         Stack::new().fit(StackFit::Expand).children(vec![child])
     });
@@ -45,19 +41,6 @@ pub fn view() -> impl Widget {
                 body,
             ]
         })
-}
-
-// ─────────────────────── ТАБ «ИНСТРУМЕНТЫ» ───────────────────────
-
-fn tools_tab() -> impl Widget {
-    ScrollView::new().vertical().child(mgui! {
-        Column::new()
-            .gap(16.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                tools_panel::tools_section(),
-                tools_panel::skills_section(),
-            ]
-    })
 }
 
 // ─────────────────────── ТАБ «ПАРАМЕТРЫ» ───────────────────────

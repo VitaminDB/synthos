@@ -1,4 +1,5 @@
-//! Верхняя панель действий страницы SynExplorer.
+//! Действия страницы SynExplorer — правый кластер общей шапки
+//! (`components::page_header`). Отдельной строки-тулбара больше нет.
 //!
 //! `ToolButton::tooltip(...)` заполняет только accessibility-label (для
 //! screen reader'ов), визуально hover-tooltip он не рисует. Чтобы пользователь
@@ -17,9 +18,9 @@ use crate::icons::{
 use super::actions;
 use super::state::{LoadState, SynExplorerCtx};
 
-pub fn view() -> impl Widget {
+pub fn header_actions() -> impl Widget {
     DecoratedBox::new()
-        .class("syn-explorer-toolbar")
+        .class("syn-explorer-actions")
         .child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
             let ctx = use_context::<SynExplorerCtx>();
             let active = ctx.active_bundle.get();
@@ -126,26 +127,19 @@ pub fn view() -> impl Widget {
                         Tooltip::new(btn_import, tr!("explorer.toolbar.import.tooltip")),
                         Tooltip::new(btn_extract, tr!("explorer.toolbar.extract.tooltip")),
                         Tooltip::new(btn_delete, tr!("explorer.toolbar.delete.tooltip")),
-                        DecoratedBox::new().class("syn-toolbar-spacer grow"),
-                        status_label(load_state, dirty),
                     ]
             };
             vec![Box::new(row)]
         }))
 }
 
-fn status_label(state: LoadState, dirty: bool) -> impl Widget {
-    let (text, cls) = match state {
-        LoadState::Idle => {
-            if dirty {
-                (tr!("explorer.unsaved_edits"), "syn-toolbar-status dirty")
-            } else {
-                (String::new(), "syn-toolbar-status")
-            }
-        }
-        LoadState::Loading => (tr!("explorer.toolbar.status.loading"), "syn-toolbar-status busy"),
-        LoadState::Saving => (tr!("explorer.toolbar.status.saving"), "syn-toolbar-status busy"),
-        LoadState::Creating => (tr!("explorer.toolbar.status.creating"), "syn-toolbar-status busy"),
-    };
-    Text::new(text).class(cls)
+/// Текст состояния для подзаголовка шапки: «Загрузка…», «Есть несохранённые
+/// правки» или `None`, когда сказать нечего.
+pub fn status_text(state: LoadState, dirty: bool) -> Option<String> {
+    match state {
+        LoadState::Idle => dirty.then(|| tr!("explorer.unsaved_edits")),
+        LoadState::Loading => Some(tr!("explorer.toolbar.status.loading")),
+        LoadState::Saving => Some(tr!("explorer.toolbar.status.saving")),
+        LoadState::Creating => Some(tr!("explorer.toolbar.status.creating")),
+    }
 }

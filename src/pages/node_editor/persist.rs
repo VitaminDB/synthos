@@ -63,6 +63,10 @@ pub struct TabState {
     /// Pan/zoom.
     #[serde(default)]
     pub viewport: Option<ViewportData>,
+    /// Unix-миллисекунды появления в рейле (порядок плиток). `0` у файлов
+    /// до плиточного рейла — тогда штамп назначается при restore.
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 /// Состояние всего workspace'а node-editor'а.
@@ -956,6 +960,7 @@ mod tests {
             }],
             connections: Vec::new(),
             viewport: None,
+            created_at: 0,
         };
         let state = WorkspaceState {
             tabs: vec![tab.clone()],
@@ -1005,6 +1010,7 @@ mod tests {
             }],
             connections: Vec::new(),
             viewport: None,
+            created_at: 0,
         };
         let saved = WorkspaceState {
             tabs: vec![tab],
@@ -1054,6 +1060,7 @@ mod tests {
             nodes: Vec::new(),
             connections: Vec::new(),
             viewport: None,
+            created_at: 0,
         };
         let state = WorkspaceState {
             tabs: vec![agent_tab],
@@ -1068,12 +1075,12 @@ mod tests {
 
         let ws = EditorWorkspace::from_state(restored);
         let tabs = ws.tabs.get_untracked();
-        // Агентская вкладка восстановлена + добавлена видимая Untitled.
-        assert_eq!(tabs.len(), 2);
+        // Восстановлена только агентская вкладка; Untitled больше не
+        // досоздаётся — пустой рейл показывает заглушку.
+        assert_eq!(tabs.len(), 1);
         assert_eq!(ws.agent_tab_for_chat("chat-abc"), Some(tabs[0].id));
-        // Активной стала видимая, а не скрытая.
-        let active = ws.active.get_untracked().unwrap();
-        assert_ne!(active, tabs[0].id);
+        // Скрытая вкладка активной не становится.
+        assert_eq!(ws.active.get_untracked(), None);
 
         // reveal показывает вкладку и активирует её.
         ws.reveal(tabs[0].id);

@@ -1,19 +1,22 @@
 //! Страница редактора нод.
 //!
 //! Layout:
-//! - Column root (на весь грид-route):
-//!   1. TabsBar — открытые вкладки в стилистике терминальных табов.
+//! - workspace_frame без боковых панелей (канвас на всю ширину):
+//!   1. page_header — название графа (inline-rename), шаблон-источник,
+//!      Run/Pause/Stop с таймером, «Шаблоны», «Сохранить как шаблон».
 //!   2. canvas-area:
 //!      Stack:
 //!        - PanZoomViewport (с padding-frame, dot-grid не цепляется к
 //!          границам shell'а).
-//!        - Column[overlay_row, Spacer]:
-//!            overlay_row = Row[Toolbar, Spacer, RunControls] — верхняя
-//!            overlay-полоса с zoom-toolbar слева и Run/Stop/Pause справа.
+//!        - Column[overlay_row, Spacer]: overlay_row = Row[Toolbar] —
+//!          zoom-toolbar слева сверху канваса.
+//!        - Панель «Модели в памяти» справа сверху.
 //!        - PopupMenu (Add Node) — overlay через `is_open` сигнал ctx.
 //!
-//! Каждая вкладка владеет своим [`NodeEditorCtx`]. View переключается
-//! через `EditorWorkspace.active` — реактивно через Reactive-обёртки.
+//! Открытые графы — плитки нав-рейла (`crate::rail`), полосы вкладок на
+//! странице нет. Каждый граф владеет своим [`NodeEditorCtx`]. View
+//! переключается через `EditorWorkspace.active` — реактивно через
+//! Reactive-обёртки.
 
 pub mod controls;
 pub mod eval;
@@ -26,7 +29,6 @@ pub mod run_controls;
 pub mod state;
 pub mod style_dialog;
 pub mod tabs;
-pub mod tabs_bar;
 pub mod template_preview;
 pub mod timing;
 pub mod types;
@@ -35,28 +37,152 @@ pub mod wires;
 use syngui::input::MouseButton;
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::containers::PanZoomViewport;
+use syngui::widget::styled::StyledWidget;
+use syngui::widgets::containers::{GestureDetector, PanZoomViewport};
 use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
-use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, Stack, ToolButton};
+use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, Stack, TextField, ToolButton};
 
-use crate::icons::{MI_FIT_SCREEN, MI_ZOOM_IN, MI_ZOOM_OUT};
+use crate::components::page_header::{self, HeaderSpec};
+use crate::components::workspace_frame::{self, expand, FrameSpec};
+use crate::icons::{
+    MI_DASHBOARD_CUSTOMIZE, MI_FIT_SCREEN, MI_HUB, MI_PSYCHOLOGY, MI_SAVE, MI_TUNE, MI_ZOOM_IN,
+    MI_ZOOM_OUT,
+};
 
 use self::registry::{NodeCategory, REGISTRY};
 use self::state::NodeEditorCtx;
-use self::tabs::EditorWorkspace;
+use self::tabs::{EditorWorkspace, OpenTab};
 
-/// Корневой view страницы — Column[TabsBar, canvas-area].
+/// Корневой view страницы — каркас без боковых панелей: шапка + канвас.
 pub fn view() -> impl Widget {
     DecoratedBox::new()
-        .child(mgui! {
-            Column::new()
-                .gap(0.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    tabs_bar::view(),
-                    canvas_area(),
-                ]
-        })
+        .child(workspace_frame::view(
+            header(),
+            FrameSpec::new("node-editor-h-split", || Box::new(canvas_area())),
+        ))
         .class("node-editor-root")
+}
+
+// ─────────────────────────────── Шапка ───────────────────────────────
+
+fn header() -> impl Widget {
+    let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(identity_reactive));
+    let actions = DecoratedBox::new().child(actions_reactive);
+    page_header::view(HeaderSpec::new(identity).actions(actions))
+}
+
+/// Активный граф: иконка по происхождению, название с inline-rename,
+/// подзаголовок — шаблон-источник и признак несохранённых правок.
+fn identity_reactive() -> Stack {
+    let ws = use_context::<EditorWorkspace>();
+    let active = ws.active.get();
+    let tab = active.and_then(|id| ws.tabs.get().into_iter().find(|t| t.id == id));
+    let Some(tab) = tab else {
+        return expand(page_header::identity_text(
+            MI_HUB,
+            tr!("nav.nodes"),
+            tr!("nodes.empty.title"),
+        ));
+    };
+    let icon = if tab.agent_chat.get_untracked().is_some() {
+        MI_PSYCHOLOGY
+    } else if tab.source.get_untracked().is_some() {
+        MI_HUB
+    } else {
+        MI_TUNE
+    };
+    expand(page_header::identity(
+        page_header::icon_bubble(icon),
+        DecoratedBox::new().child(move || title_block(tab)),
+        DecoratedBox::new().child(move || subtitle_block(tab)),
+    ))
+}
+
+/// Название графа: клик — поле ввода, Enter — новое имя.
+fn title_block(tab: OpenTab) -> StyledWidget<DecoratedBox> {
+    let editing = tab_editing_flag(tab.id.0);
+    let title = tab.title.get();
+    if editing.get() {
+        let field = TextField::new()
+            .text(title)
+            .on_submit(move |s| {
+                let t = s.trim().to_string();
+                if !t.is_empty() {
+                    tab.title.set(t);
+                }
+                editing.set(false);
+            })
+            .class("chat-header-title-edit");
+        DecoratedBox::new().class("chat-header-title-wrap").child(field)
+    } else {
+        let clickable = GestureDetector::new()
+            .on_click(move || editing.set(true))
+            .child(Text::new(title).max_lines(1).class("page-header-title"));
+        DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
+    }
+}
+
+/// Флаг «идёт переименование» на граф — в статике, потому что шапка
+/// пересобирается роутером и локальный сигнал терял бы состояние.
+fn tab_editing_flag(id: u64) -> RwSignal<bool> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static FLAGS: OnceLock<Mutex<HashMap<u64, RwSignal<bool>>>> = OnceLock::new();
+    let map = FLAGS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    *guard.entry(id).or_insert_with(|| use_signal(false))
+}
+
+fn subtitle_block(tab: OpenTab) -> DecoratedBox {
+    let dirty = tab.dirty.get();
+    let source = tab.source.get();
+    let mut text = match source.as_deref().and_then(template_title) {
+        Some(name) => tr!("nodes.header.from_template", name = name),
+        None if tab.agent_chat.get_untracked().is_some() => tr!("nodes.header.agent_graph"),
+        None => tr!("nodes.header.scratch"),
+    };
+    if dirty {
+        text.push_str(" · ");
+        text.push_str(&tr!("nodes.header.unsaved"));
+    }
+    DecoratedBox::new().child(Text::new(text).max_lines(1).class("page-header-subtitle"))
+}
+
+fn template_title(id: &str) -> Option<String> {
+    crate::templates::list_all()
+        .into_iter()
+        .find(|t| t.id == id)
+        .map(|t| crate::i18n::template_name(&t))
+}
+
+/// Действия: Run/Pause/Stop с таймером (пилюля переехала с канваса),
+/// окно шаблонов, сохранить граф как шаблон.
+fn actions_reactive() -> Stack {
+    let ws = use_context::<EditorWorkspace>();
+    let Some(ctx) = ws.active_ctx() else {
+        return expand(Box::new(
+            page_header::action_button(
+                MI_DASHBOARD_CUSTOMIZE,
+                tr!("nodes.header.templates"),
+                move || ws.template_picker_open.set(true),
+            ),
+        ));
+    };
+    let row = mgui! {
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            run_controls::view(ctx),
+            page_header::action_divider(),
+            page_header::action_button(
+                MI_DASHBOARD_CUSTOMIZE,
+                tr!("nodes.header.templates"),
+                move || ws.template_picker_open.set(true),
+            ),
+            page_header::action_button(MI_SAVE, tr!("nodes.header.save_template"), || {
+                crate::components::template_picker::save_or_update_current();
+            }),
+        ]
+    };
+    expand(Box::new(row))
 }
 
 /// Активная вкладка → её Stack canvas. При смене active id Reactive
@@ -138,10 +264,8 @@ fn canvas_for(ctx: NodeEditorCtx) -> impl Widget {
     DecoratedBox::new().child(frame_inner).class("ne-canvas-frame")
 }
 
-/// Верхняя «overlay-полоса» canvas'а: zoom-toolbar слева, run-pill в центре,
-/// невидимый balance-spacer справа. Notification-host (Portal::TopEnd) живёт
-/// в правом-верхнем углу окна — кладём run-pill в центр, чтобы snackbar его
-/// не перекрывал.
+/// Верхняя «overlay-полоса» canvas'а: zoom-toolbar слева. Run-пилюля
+/// переехала в общую шапку страницы.
 ///
 /// **Pass-through events**: возвращаем `Padding` напрямую (без DecoratedBox-
 /// обёртки). Stack растянет padding на всю canvas, но прозрачные layout-
@@ -149,21 +273,12 @@ fn canvas_for(ctx: NodeEditorCtx) -> impl Widget {
 /// уходит на viewport ниже. DecoratedBox в overlay-host раньше перехватывал
 /// все события и блокировал pan/zoom — поэтому его и нет.
 ///
-/// Layout (Row, MainAxis::SpaceBetween):
-///   [toolbar 160px] — [run_controls 132px] — [balance 160px (visually empty)]
-/// SpaceBetween + одинаковая ширина крайних элементов центрирует pill без
-/// RwSignal-зависимости от ширины canvas'а.
-fn overlay_row(ctx: NodeEditorCtx, toolbar: Box<dyn Widget>) -> impl Widget {
-    let balance = DecoratedBox::new().class("ne-overlay-balance");
+fn overlay_row(_ctx: NodeEditorCtx, toolbar: Box<dyn Widget>) -> impl Widget {
     let row = Row::new()
         .gap(0.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
-        .main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .children(vec![
-            toolbar,
-            Box::new(run_controls::view(ctx)) as Box<dyn Widget>,
-            Box::new(balance) as Box<dyn Widget>,
-        ]);
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .children(vec![toolbar]);
 
     // Padding без DecoratedBox-обёртки: Padding/Row реализуют
     // `passthrough_hit_test() == true`, поэтому пустые места строки

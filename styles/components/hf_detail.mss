@@ -56,6 +56,14 @@
     border-bottom-color: var(--border-soft);
 }
 
+/* Заголовок правой панели файлов — на месте бывшего TabBar. */
+.hf-files-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 12px 0 10px 0;
+}
+
 .hf-detail-content {
     padding: var(--spacing-md);
     height: 100%;

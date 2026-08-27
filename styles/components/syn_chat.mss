@@ -10,6 +10,11 @@
   background-color: var(--bg-panel);
 }
 
+.syn-chat-left {
+  /* Инструменты/скилы слева — тот же вид, что у правой панели. */
+  background-color: var(--bg-panel);
+}
+
 /* ─────────────── Drag-разделители (IDE-стиль) ─────────────── */
 
 /* Hit-area 6px задаётся `divider_width(6.0)` в Rust, визуальная полоска —
@@ -226,38 +231,3 @@
   color: var(--text);
 }
 
-.chat-header-title-wrap {
-  cursor: pointer;
-}
-
-.chat-header-title-edit {
-  font-size: 15px;
-  font-weight: 600;
-  background-color: var(--bg-window);
-  border: 1px solid var(--primary);
-  border-radius: 4px;
-  padding: 2px 6px;
-}
-
-.chat-header-empty {
-  padding: 10px 16px;
-  color: var(--text-muted);
-}
-
-.chat-header-empty-icon {
-  font-size: 20px;
-}
-
-.chat-header-empty-text {
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.chat-header-active {
-  padding: 8px 16px;
-}
-
-.chat-header-subtitle {
-  font-size: 11px;
-  color: var(--text-muted);
-}

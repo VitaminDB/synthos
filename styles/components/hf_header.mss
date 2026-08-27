@@ -1,24 +1,4 @@
-/* Верхняя часть страницы HuggingFace: title + warning + search + chips. */
-
-.hf-header {
-    padding: var(--spacing-lg);
-    background-color: var(--bg-shell);
-    border-bottom-width: 1px;
-    border-bottom-color: var(--border-soft);
-}
-
-.hf-title {
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: -0.2px;
-}
-
-.hf-subtitle {
-    font-size: 13px;
-    color: var(--text-subtle);
-    margin-left: var(--spacing-xs);
-}
+/* Поиск по Hub (поле — в общей шапке, чипы — над списком моделей). */
 
 /* Search bar */
 

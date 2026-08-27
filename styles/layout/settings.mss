@@ -48,7 +48,7 @@
  * Внутренние панели (.skills-panel / .models-panel) — прозрачные, фон
  * и отступы контролирует этот wrapper. */
 .settings-right {
-    width: 360px;
+    /* Ширину задаёт SplitView (`settings_right_split_ratio`). */
     height: 100%;
     background-color: var(--bg-panel);
     border-left-width: 1px;
@@ -80,4 +80,85 @@
     font-size: 13px;
     color: var(--text-muted);
     text-align: center;
+}
+
+/* Центр настроек внутри каркаса: занимает весь слот между панелями. */
+.settings-content {
+    height: 100%;
+}
+
+/* ─── Раздел «Архив» ─────────────────────────────────────────────── */
+.settings-archive-row {
+    padding: 12px 16px 12px 16px;
+}
+
+.settings-archive-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.settings-archive-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.settings-archive-meta {
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+
+.settings-archive-restore {
+    border-radius: 10px;
+    padding: 6px 12px;
+    background-color: var(--primary-soft);
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.settings-archive-restore:hover {
+    background-color: var(--primary);
+    color: var(--on-primary);
+}
+
+.settings-archive-delete {
+    color: var(--text-muted);
+    border-radius: 10px;
+}
+
+.settings-archive-delete:hover {
+    color: var(--error);
+    background-color: var(--surface-hover);
+}
+
+.settings-archive-clear {
+    border-radius: 10px;
+    padding: 6px 12px;
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.settings-archive-clear:hover {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.settings-archive-empty-icon {
+    icon-size: 40px;
+    color: var(--text-subtle);
+}
+
+.settings-archive-empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.settings-archive-empty-hint {
+    font-size: 13px;
+    color: var(--text-muted);
 }

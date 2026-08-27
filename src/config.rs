@@ -442,6 +442,12 @@ pub struct CodeSessionConfig {
     /// следующего save'а (нет смысла хранить позицию для закрытого файла).
     #[serde(default)]
     pub editor_states: HashMap<String, EditorStateConfig>,
+    /// Unix-миллисекунды создания сессии — порядок плитки в нав-рейле среди
+    /// графов и чатов. `None` у конфигов до плиточного рейла: тогда время
+    /// назначается по позиции в списке при загрузке (см.
+    /// `pages::code_editor::state::CodeEditorCtx::new`).
+    #[serde(default)]
+    pub created_at: Option<u64>,
 }
 
 /// Сериализуемая копия `syngui::widgets::input::code_editor::EditorPersistedState`
@@ -627,6 +633,24 @@ pub struct AppConfig {
     /// Положение правого разделителя (центр ↔ панель параметров).
     #[serde(default = "default_syn_chat_right_split_ratio")]
     pub syn_chat_right_split_ratio: f32,
+    /// Разделители страницы HuggingFace: список моделей ↔ README ↔ файлы.
+    #[serde(default = "default_hf_left_split_ratio")]
+    pub hf_left_split_ratio: f32,
+    #[serde(default = "default_hf_right_split_ratio")]
+    pub hf_right_split_ratio: f32,
+    /// Разделители страницы настроек: разделы ↔ контент ↔ правая панель.
+    #[serde(default = "default_settings_left_split_ratio")]
+    pub settings_left_split_ratio: f32,
+    #[serde(default = "default_settings_right_split_ratio")]
+    pub settings_right_split_ratio: f32,
+    /// Видимость левой/правой панели по страницам — тогглы в общей шапке.
+    #[serde(default)]
+    pub panels: PanelsConfig,
+    /// Разделители в списке плиток нав-рейла: unix-миллисекунды создания
+    /// каждого. Плитки и разделители сортируются по времени вместе, так что
+    /// разделитель, добавленный через «+», встаёт после последней плитки.
+    #[serde(default)]
+    pub rail_separators: Vec<u64>,
     /// Системный prompt для Syn-чата. Пусто — в `build_history` не
     /// добавляется. Редактируется в правой панели → Параметры → «Система».
     #[serde(default)]
@@ -1140,6 +1164,12 @@ impl Default for AppConfig {
             search_recent: Vec::new(),
             syn_chat_left_split_ratio: default_syn_chat_left_split_ratio(),
             syn_chat_right_split_ratio: default_syn_chat_right_split_ratio(),
+            hf_left_split_ratio: default_hf_left_split_ratio(),
+            hf_right_split_ratio: default_hf_right_split_ratio(),
+            settings_left_split_ratio: default_settings_left_split_ratio(),
+            settings_right_split_ratio: default_settings_right_split_ratio(),
+            panels: PanelsConfig::default(),
+            rail_separators: Vec::new(),
             syn_chat_system_prompt: String::new(),
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             syn_chat_quant: SynChatQuantConfig::default(),
@@ -1180,6 +1210,79 @@ pub fn default_syn_chat_left_split_ratio() -> f32 {
 /// Дефолт правого разделителя. При окне 1600px даёт ~320px на панель параметров.
 pub fn default_syn_chat_right_split_ratio() -> f32 {
     0.80
+}
+
+/// HuggingFace: список моделей слева ~26% ширины.
+pub fn default_hf_left_split_ratio() -> f32 {
+    0.26
+}
+
+/// HuggingFace: панель файлов справа ~30% ширины.
+pub fn default_hf_right_split_ratio() -> f32 {
+    0.70
+}
+
+/// Настройки: колонка разделов ~19% (≈300px при 1600px).
+pub fn default_settings_left_split_ratio() -> f32 {
+    0.19
+}
+
+/// Настройки: правая панель ~24% (≈360px при 1600px).
+pub fn default_settings_right_split_ratio() -> f32 {
+    0.76
+}
+
+/// Видимость боковых панелей по страницам. Каждая страница трёхпанельного
+/// каркаса (`components::workspace_frame`) держит пару флагов; тогглы в
+/// общей шапке пишут в сигналы `context::PanelsCtx`, автосейв — сюда.
+/// По умолчанию всё открыто — как выглядело приложение до тогглов.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PanelsConfig {
+    #[serde(default = "default_true")]
+    pub syn_chat_left: bool,
+    #[serde(default = "default_true")]
+    pub syn_chat_right: bool,
+    #[serde(default = "default_true")]
+    pub code_left: bool,
+    #[serde(default = "default_true")]
+    pub code_right: bool,
+    #[serde(default = "default_true")]
+    pub syn_explorer_left: bool,
+    #[serde(default = "default_true")]
+    pub syn_explorer_right: bool,
+    #[serde(default = "default_true")]
+    pub huggingface_left: bool,
+    #[serde(default = "default_true")]
+    pub huggingface_right: bool,
+    #[serde(default = "default_true")]
+    pub settings_left: bool,
+    #[serde(default = "default_true")]
+    pub settings_right: bool,
+}
+
+impl Default for PanelsConfig {
+    fn default() -> Self {
+        Self {
+            syn_chat_left: true,
+            syn_chat_right: true,
+            code_left: true,
+            code_right: true,
+            syn_explorer_left: true,
+            syn_explorer_right: true,
+            huggingface_left: true,
+            huggingface_right: true,
+            settings_left: true,
+            settings_right: true,
+        }
+    }
+}
+
+/// Unix-миллисекунды «сейчас» — общий штамп `created_at` для плиток рейла.
+pub fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Резолвит пользовательский путь кэша HF-моделей. Пустая строка — дефолт

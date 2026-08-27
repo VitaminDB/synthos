@@ -27,6 +27,7 @@ const TABS: &[Tab] = &[
     Tab { key: "ai_models", icon: MI_AUTO_AWESOME },
     Tab { key: "knowledge_base", icon: MI_MENU_BOOK },
     Tab { key: "terminal", icon: MI_TERMINAL },
+    Tab { key: "archive", icon: MI_INBOX },
     Tab { key: "about", icon: MI_INFO },
 ];
 

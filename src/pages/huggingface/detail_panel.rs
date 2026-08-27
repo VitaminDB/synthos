@@ -1,14 +1,13 @@
-//! Правая панель: детали выбранной модели — README или список файлов.
+//! Детали выбранной модели: центр страницы — шапка репозитория + README
+//! ([`view`]), правая панель — список файлов с загрузками ([`files_view`]).
 //!
-//! Подписана на `selected_model`, `model_details`, `readme_*`, `detail_tab`,
-//! `downloads`.
+//! Подписаны на `selected_model`, `model_details`, `readme_*`, `downloads`.
 
 use syngui::mgui;
 use syngui::mss::{MssColor, StyleValue};
 use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
 use syngui::widgets::input::{Checkbox, SpinBox, Toggle};
-use syngui::widgets::navigation::{Tab, TabBar};
 use syngui::widgets::visual::MarkdownView;
 
 use crate::context::AppCtx;
@@ -19,8 +18,7 @@ use crate::icons::{
 
 use super::download;
 use super::state::{
-    DlStatus, DownloadState, HfModelDetails, HfSibling, HuggingFaceCtx, TAB_FILES, TAB_README,
-    VerifyStatus,
+    DlStatus, DownloadState, HfModelDetails, HfSibling, HuggingFaceCtx, VerifyStatus,
 };
 
 pub fn view() -> impl Widget {
@@ -49,25 +47,46 @@ fn placeholder_view() -> impl Widget {
 }
 
 fn detail_body(repo_id: String) -> impl Widget {
-    let ctx_tab = use_context::<HuggingFaceCtx>().detail_tab;
-    let tab_bar = TabBar::new()
-        .tab(Tab::new("README", TAB_README, &ctx_tab))
-        .tab(Tab::new(tr!("hf.detail.tab.files"), TAB_FILES, &ctx_tab));
-
-    let rid_for_header = repo_id.clone();
     mgui! {
         Column::new()
             .gap(0.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 DecoratedBox::new().class("hf-detail-header").child(
-                    detail_header_row(rid_for_header)
+                    detail_header_row(repo_id)
                 ),
-                DecoratedBox::new().class("hf-detail-tabs").child(tab_bar),
-                DecoratedBox::new().class("hf-detail-content grow").child(
-                    tab_content(repo_id)
-                ),
+                DecoratedBox::new().class("hf-detail-content grow").child(readme_tab()),
             ]
     }
+}
+
+/// Правая панель: файлы репозитория и их загрузки.
+pub fn files_view() -> impl Widget {
+    DecoratedBox::new().class("hf-detail-panel hf-files-panel").child(Reactive::new(
+        || -> Vec<Box<dyn Widget>> {
+            let ctx = use_context::<HuggingFaceCtx>();
+            let Some(repo_id) = ctx.selected_model.get() else {
+                return vec![Box::new(files_placeholder())];
+            };
+            vec![Box::new(mgui! {
+                Column::new()
+                    .gap(0.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                        DecoratedBox::new().class("hf-detail-tabs").child(
+                            Text::new(tr!("hf.detail.tab.files")).class("hf-files-panel-title")
+                        ),
+                        DecoratedBox::new().class("hf-detail-content grow").child(
+                            files_tab(repo_id)
+                        ),
+                    ]
+            })]
+        },
+    ))
+}
+
+fn files_placeholder() -> impl Widget {
+    Center::new().child(
+        Text::new(tr!("hf.detail.files.placeholder")).class("hf-detail-placeholder-hint"),
+    )
 }
 
 /// Заголовок detail-панели: аватар автора + repo_id (заголовок) + downloads/likes.
@@ -162,18 +181,6 @@ fn human_count(n: u64) -> String {
     } else {
         n.to_string()
     }
-}
-
-fn tab_content(repo_id: String) -> impl Widget {
-    Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let tab = ctx.detail_tab.get();
-        if tab == TAB_README {
-            vec![Box::new(readme_tab())]
-        } else {
-            vec![Box::new(files_tab(repo_id.clone()))]
-        }
-    })
 }
 
 fn readme_tab() -> impl Widget {

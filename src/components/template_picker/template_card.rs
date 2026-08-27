@@ -111,6 +111,7 @@ pub fn view(t: Template) -> impl Widget {
                     move || {
                         let ws = use_context::<EditorWorkspace>();
                         ws.open_template(&t_for_open);
+                        crate::rail::navigate("nodes");
                     }
                 })
                 .child(inner),
@@ -122,6 +123,7 @@ pub fn view(t: Template) -> impl Widget {
             match action {
                 "open" => {
                     ws.open_template(&t_for_menu);
+                    crate::rail::navigate("nodes");
                 }
                 "rename" => {
                     edit_state_for_menu.editing.set(true);

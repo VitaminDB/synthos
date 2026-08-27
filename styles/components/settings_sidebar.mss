@@ -3,7 +3,7 @@
  * у списка чатов. Это обеспечивает визуальную преемственность. */
 
 .settings-sidebar {
-    width: 300px;
+    /* Ширину задаёт SplitView (`settings_left_split_ratio`). */
     height: 100%;
     background-color: var(--bg-chats);
     border-right-width: 1px;

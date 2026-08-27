@@ -49,19 +49,60 @@
     background-color: var(--border-soft);
 }
 
-/* ─── Динамические code-сессии ─────────────────────────────────────────
- * Сегмент между primary-кластером и кнопкой `+`. Содержит реактивный
- * список сессий (по одной кнопке-папке на каждую) и сам `+`.
- * Стили per-item наследуются от `.nav-rail-item`; здесь — только
- * акцент для кнопки добавления, чтобы визуально отделить её от сессий
- * без потери симметрии.
+/* ─── Плитки рабочих пространств ───────────────────────────────────────
+ * Сегмент между логотипом и футером: code-сессии, графы нод, чаты и
+ * разделители в порядке создания (`crate::rail`) плюс кнопка `+`.
+ * Стили per-item наследуются от `.nav-rail-item`; здесь — плитка чата
+ * (аватар в рамке), разделитель и акцент кнопки добавления.
  * ──────────────────────────────────────────────────────────────────── */
 
+/* Хост сегмента растягивается на всю свободную высоту рейла (`.grow`),
+ * ScrollView внутри прокручивает плитки, когда они не влезают. */
+.nav-rail-scroll-host {
+    padding: 8px 0 8px 0;
+}
+
+.nav-rail-scroll {
+    height: 100%;
+}
+
 .nav-rail-sessions {
-    /* Без фиксированной высоты — сегмент растёт под количеством сессий.
-     * При большом количестве sidebar остаётся scrollable благодаря
-     * SpaceBetween в основном Column'е (top уезжает вверх, footer
-     * фиксирован). */
+}
+
+/* Плитка чата: аватар с инициалами в рамке того же размера, что кнопки
+ * рейла. Выбранная — акцентная рамка + мягкий фон. */
+.nav-rail-chat-tile {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    border-width: 2px;
+    border-color: transparent;
+    background-color: transparent;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.nav-rail-chat-tile:hover {
+    background-color: var(--surface-hover);
+}
+
+.nav-rail-chat-tile.selected {
+    border-color: var(--primary);
+    background-color: var(--primary-soft);
+}
+
+/* Разделитель: 1px-линия внутри невидимой зоны 40×12 — по ней можно
+ * попасть правой кнопкой, чтобы удалить. */
+.nav-rail-separator-hit {
+    width: 40px;
+    height: 12px;
+}
+
+.nav-rail-separator {
+    width: 32px;
+    height: 1px;
+    background-color: var(--border);
 }
 
 .nav-rail-item-add {

@@ -59,12 +59,8 @@ Tooltip {
 
 /* ─── Toolbar ───────────────────────────────────────────────────── */
 
-.syn-explorer-toolbar {
-    height: 56px;
-    padding: 10px 16px 10px 16px;
-    background-color: var(--bg-panel);
-    border-bottom-width: 1px;
-    border-color: var(--syn-divider);
+/* Кнопки бывшего toolbar'а — правый кластер общей шапки. */
+.syn-explorer-actions {
 }
 
 .syn-toolbar-btn {
@@ -108,24 +104,6 @@ Tooltip {
     margin: 0 6px 0 6px;
 }
 
-.syn-toolbar-spacer {
-    background-color: transparent;
-}
-
-.syn-toolbar-status {
-    color: var(--text-muted);
-    font-size: 12px;
-    padding: 0 8px 0 8px;
-}
-
-.syn-toolbar-status.dirty {
-    color: var(--primary);
-    font-weight: 600;
-}
-
-.syn-toolbar-status.busy {
-    color: var(--primary);
-}
 
 /* ─── Left panel ────────────────────────────────────────────────── */
 

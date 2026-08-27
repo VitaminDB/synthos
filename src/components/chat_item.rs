@@ -89,7 +89,7 @@ pub fn row_generic(
     )
 }
 
-fn display_title(title: &str) -> String {
+pub fn display_title(title: &str) -> String {
     let t = title.trim();
     if t.is_empty() {
         tr!("chat.item.untitled")
@@ -140,7 +140,7 @@ fn display_preview(preview: &str) -> String {
     out.trim().to_string()
 }
 
-fn initials_from_title(title: &str) -> String {
+pub fn initials_from_title(title: &str) -> String {
     let t = title.trim();
     if t.is_empty() {
         return "AI".to_string();

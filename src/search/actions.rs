@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use syngui::prelude::*;
 
-use crate::context::{AppCtx, SYN_RIGHT_PANEL_TOOLS};
+use crate::context::AppCtx;
 use crate::syn_chat::{registry, SynChatCtx, SynModelRegistry};
 
 use super::model::{SearchAction, SearchCommand, SearchItem};
@@ -40,9 +40,9 @@ pub fn run(search: &SearchCtx, item: &SearchItem, secondary: bool) {
             open_settings("skills");
         }
         SearchAction::Tool(_) => {
-            use_context::<SynChatCtx>()
-                .right_panel_tab
-                .set(SYN_RIGHT_PANEL_TOOLS);
+            // Инструменты живут в левой панели чата — раскрыть её, если
+            // пользователь её сворачивал.
+            use_context::<AppCtx>().panels.syn_chat.0.set(true);
             navigate("syn_chat");
         }
         SearchAction::ToggleTool(key) => toggle_tool(&key),
@@ -143,9 +143,9 @@ fn run_command(command: SearchCommand) {
         }
         SearchCommand::DeleteChat => {
             let ctx = use_context::<SynChatCtx>();
-            // Удаление необратимо: как и корзина в списке чатов, команда
-            // только поднимает диалог подтверждения.
-            ctx.pending_delete.set(registry::active_meta());
+            // В архив — как и корзина в шапке, команда только поднимает
+            // диалог подтверждения (`archive_dialog`).
+            ctx.pending_archive.set(registry::active_meta());
             navigate("syn_chat");
         }
         SearchCommand::LoadModel => {

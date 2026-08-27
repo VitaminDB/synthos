@@ -1,9 +1,11 @@
-//! EditorWorkspace — мульти-вкладочный контекст редактора нод.
+//! EditorWorkspace — контекст открытых графов редактора нод.
 //!
-//! Каждая вкладка владеет собственным [`NodeEditorCtx`] (граф, pan/zoom,
-//! menu-state). Workspace оркестрирует список открытых вкладок и активную;
-//! здесь же живёт глобальный `RunState` (Run/Pause/Stop) и состояние
-//! collapsible Templates-панели слева от canvas.
+//! Каждый открытый граф («вкладка», исторически) владеет собственным
+//! [`NodeEditorCtx`] (граф, pan/zoom, menu-state). Полосы вкладок больше
+//! нет: графы показываются плитками в нав-рейле вперемешку с code-сессиями
+//! и чатами (см. `crate::rail`). Workspace оркестрирует список открытых
+//! графов и активный; здесь же живёт глобальный `RunState` (Run/Pause/Stop)
+//! и флаг окна выбора шаблонов.
 //!
 //! Чистые helpers (поиск/имя «Untitled N») вынесены отдельно для тестов.
 
@@ -31,9 +33,13 @@ pub struct OpenTab {
     /// `Some(chat_id)` — служебная вкладка агента Syn-чата: граф в ней
     /// собирает и запускает инструмент `pipelines`, по одной на чат.
     pub agent_chat: RwSignal<Option<String>>,
-    /// Скрыта из полосы вкладок. Агентские вкладки рождаются скрытыми и
+    /// Скрыта из рейла. Агентские графы рождаются скрытыми и
     /// показываются переходом из чата ([`EditorWorkspace::reveal`]).
     pub hidden: RwSignal<bool>,
+    /// Unix-миллисекунды появления графа в рейле — порядок плитки среди
+    /// code-сессий и чатов. Сигнал, а не число: `reveal` переставляет
+    /// агентский граф в конец, как только что созданный.
+    pub created_at: RwSignal<u64>,
     pub ctx: NodeEditorCtx,
 }
 
@@ -72,8 +78,8 @@ impl RunState {
 pub struct EditorWorkspace {
     /// Список открытых вкладок.
     pub tabs: RwSignal<Vec<OpenTab>>,
-    /// id активной вкладки. `None` редко бывает — при закрытии последней
-    /// мы автоматически открываем новую `Untitled`.
+    /// id активного графа. `None` — открытых графов нет (или остались одни
+    /// скрытые агентские): страница нод показывает заглушку «нажмите +».
     pub active: RwSignal<Option<TabId>>,
     /// Run/Pause/Stop pill справа сверху на canvas.
     pub run_state: RwSignal<RunState>,
@@ -90,6 +96,9 @@ pub struct EditorWorkspace {
     pub template_picker_open: RwSignal<bool>,
     /// Auto-increment id для новых вкладок.
     pub next_tab_id: RwSignal<u64>,
+    /// Граф, для которого открыт диалог «закрыть с несохранёнными
+    /// изменениями» (см. `components::graph_close_dialog`). `None` — закрыт.
+    pub pending_close: RwSignal<Option<TabId>>,
 }
 
 impl EditorWorkspace {
@@ -103,16 +112,16 @@ impl EditorWorkspace {
             run_total: use_signal(0_usize),
             template_picker_open: use_signal(false),
             next_tab_id: use_signal(1_u64),
+            pending_close: use_signal(None),
         };
-        // Стартовая Untitled-вкладка — у пользователя всегда есть куда
-        // кликать сразу после запуска.
-        ws.new_untitled();
+        // Стартовой Untitled-вкладки больше нет: графы живут плитками в
+        // рейле, и пустой рейл — нормальное состояние (заглушка «нажмите +»).
         ws
     }
 
-    /// Сконструировать workspace, восстановив сохранённые вкладки из
+    /// Сконструировать workspace, восстановив сохранённые графы из
     /// `~/.config/synthos/workspace.json`. При отсутствии файла или его
-    /// порче — fallback на одну `Untitled`-вкладку (поведение [`Self::new`]).
+    /// порче — пустой workspace (поведение [`Self::new`]).
     pub fn new_or_restore() -> Self {
         let Some(state) = persist::load() else {
             return Self::new();
@@ -120,8 +129,8 @@ impl EditorWorkspace {
         Self::from_state(state)
     }
 
-    /// Построить workspace по уже загруженному [`WorkspaceState`]. Если
-    /// `tabs` пуст — создаётся одна `Untitled`, чтобы canvas не был пустым.
+    /// Построить workspace по уже загруженному [`WorkspaceState`]. Пустой
+    /// список графов остаётся пустым — рейл покажет только «+».
     pub fn from_state(state: WorkspaceState) -> Self {
         let ws = Self {
             tabs: use_signal(Vec::<OpenTab>::new()),
@@ -132,15 +141,25 @@ impl EditorWorkspace {
             run_total: use_signal(0_usize),
             template_picker_open: use_signal(false),
             next_tab_id: use_signal(state.next_tab_id.max(1)),
+            pending_close: use_signal(None),
         };
         if state.tabs.is_empty() {
-            ws.new_untitled();
             return ws;
         }
 
+        // Файлы до плиточного рейла не знают `created_at`: таким графам
+        // даём штампы по порядку списка, чтобы прежняя расстановка
+        // сохранилась и они встали раньше всего, что создадут сегодня.
+        let legacy_base =
+            crate::config::now_millis().saturating_sub(state.tabs.len() as u64);
         let mut tabs = Vec::with_capacity(state.tabs.len());
-        for ts in &state.tabs {
-            tabs.push(make_tab_from_state(ts));
+        for (idx, ts) in state.tabs.iter().enumerate() {
+            let created_at = if ts.created_at == 0 {
+                legacy_base + idx as u64
+            } else {
+                ts.created_at
+            };
+            tabs.push(make_tab_from_state(ts, created_at));
         }
         // next_tab_id должен быть больше максимального восстановленного id —
         // иначе новые `new_untitled` будут конфликтовать.
@@ -163,14 +182,8 @@ impl EditorWorkspace {
                     .map(|t| t.id)
             });
 
-        let no_visible = active.is_none();
         ws.tabs.set(tabs);
         ws.active.set(active);
-        if no_visible {
-            // Остались одни скрытые (агентские) вкладки — полоса не должна
-            // быть пустой.
-            ws.new_untitled();
-        }
         ws
     }
 
@@ -203,6 +216,7 @@ impl EditorWorkspace {
             last_saved_fp: use_signal(0),
             agent_chat: use_signal(None),
             hidden: use_signal(false),
+            created_at: use_signal(crate::config::now_millis()),
             ctx: NodeEditorCtx::new(),
         };
         persist::install_dirty_for_tab(tab);
@@ -235,6 +249,7 @@ impl EditorWorkspace {
             last_saved_fp: use_signal(0),
             agent_chat: use_signal(Some(chat_id.to_string())),
             hidden: use_signal(true),
+            created_at: use_signal(crate::config::now_millis()),
             ctx,
         };
         persist::install_dirty_for_tab(tab);
@@ -253,27 +268,27 @@ impl EditorWorkspace {
             .map(|t| t.id)
     }
 
-    /// Показать скрытую вкладку в полосе и активировать — переход по
-    /// ссылке «открыть граф» из чата.
+    /// Показать скрытый граф плиткой в рейле и активировать — переход по
+    /// ссылке «открыть граф» из чата. Плитка встаёт в конец рейла, как
+    /// только что созданная: пользователь ищет её глазами именно там.
     pub fn reveal(&self, id: TabId) {
         let tabs = self.tabs.get_untracked();
         if let Some(t) = tabs.iter().find(|t| t.id == id) {
             if t.hidden.get_untracked() {
                 t.hidden.set(false);
+                t.created_at.set(crate::config::now_millis());
             }
         }
         self.activate(id);
     }
 
-    /// Открыть шаблон. Если уже открыт во вкладке — просто активирует
-    /// её. Иначе — создаёт новую, грузит туда содержимое шаблона.
+    /// Открыть шаблон новым графом. Всегда новая копия — даже если этот
+    /// шаблон уже открыт в другой плитке: выбор в окне шаблонов означает
+    /// «хочу ещё один такой», а не «покажи тот». Повторам даётся суффикс
+    /// «(2)», «(3)», чтобы плитки различались подписью.
     pub fn open_template(&self, t: &Template) -> TabId {
         let tabs_now = self.tabs.get_untracked();
-        if let Some(existing) = find_tab_by_template(&tabs_now, &t.id) {
-            self.active.set(Some(existing));
-            self.template_picker_open.set(false);
-            return existing;
-        }
+        let title = unique_title(&tabs_now, &crate::i18n::template_name(t));
 
         let id_n = self.next_tab_id.get_untracked();
         self.next_tab_id.set(id_n + 1);
@@ -285,12 +300,13 @@ impl EditorWorkspace {
 
         let tab = OpenTab {
             id,
-            title: use_signal(crate::i18n::template_name(t)),
+            title: use_signal(title),
             source: use_signal(Some(t.id.clone())),
             dirty: use_signal(false),
             last_saved_fp: use_signal(0),
             agent_chat: use_signal(None),
             hidden: use_signal(false),
+            created_at: use_signal(crate::config::now_millis()),
             ctx,
         };
         persist::install_dirty_for_tab(tab);
@@ -303,9 +319,10 @@ impl EditorWorkspace {
         id
     }
 
-    /// Закрыть вкладку. Если видимых не осталось — создать пустую
-    /// `Untitled`: полоса вкладок не должна быть пустой, а canvas не должен
-    /// молча показывать скрытый агентский граф.
+    /// Закрыть граф немедленно, без вопросов. Если закрыли активный —
+    /// активным становится ближайший ВИДИМЫЙ слева (скрытые агентские
+    /// графы пользователю не подсовываем); если видимых не осталось —
+    /// `None`, и страница показывает заглушку «нажмите +».
     pub fn close(&self, id: TabId) {
         let mut tabs = self.tabs.get_untracked();
         let idx = match tabs.iter().position(|t| t.id == id) {
@@ -313,13 +330,9 @@ impl EditorWorkspace {
             None => return,
         };
         tabs.remove(idx);
-        if !tabs.iter().any(|t| !t.hidden.get_untracked()) {
-            self.tabs.set(tabs);
-            self.new_untitled();
-            return;
+        if self.pending_close.get_untracked() == Some(id) {
+            self.pending_close.set(None);
         }
-        // Если закрыли активную — переключиться на ближайшую ВИДИМУЮ слева
-        // (скрытые агентские вкладки пользователю не подсовываем).
         if self.active.get_untracked() == Some(id) {
             let next_id = tabs[..idx.min(tabs.len())]
                 .iter()
@@ -330,6 +343,28 @@ impl EditorWorkspace {
             self.active.set(next_id);
         }
         self.tabs.set(tabs);
+    }
+
+    /// Закрыть граф из рейла: с несохранёнными изменениями — сначала
+    /// диалог (`pending_close`), чистый — сразу.
+    pub fn request_close(&self, id: TabId) {
+        let dirty = self
+            .tabs
+            .get_untracked()
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.dirty.get_untracked())
+            .unwrap_or(false);
+        if dirty {
+            self.pending_close.set(Some(id));
+        } else {
+            self.close(id);
+        }
+    }
+
+    /// Вкладка по id.
+    pub fn tab(&self, id: TabId) -> Option<OpenTab> {
+        self.tabs.get_untracked().into_iter().find(|t| t.id == id)
     }
 
     /// Сделать вкладку активной (без перестройки списка).
@@ -363,7 +398,7 @@ pub fn find_tab_by_template(tabs: &[OpenTab], template_id: &str) -> Option<TabId
 /// добавляет одну для первого UI-впечатления), применяет нод и связи
 /// через `apply_to_ctx` — это же путь, которым грузятся шаблоны, поэтому
 /// все per-kind `NodeStateData` корректно проставляются в свежий runtime.
-fn make_tab_from_state(ts: &TabState) -> OpenTab {
+fn make_tab_from_state(ts: &TabState, created_at: u64) -> OpenTab {
     let ctx = NodeEditorCtx::new();
     ctx.nodes.set(Vec::new());
     ctx.connections.set(Vec::new());
@@ -394,10 +429,28 @@ fn make_tab_from_state(ts: &TabState) -> OpenTab {
         last_saved_fp: use_signal(0),
         agent_chat: use_signal(ts.agent_chat.clone()),
         hidden: use_signal(ts.hidden),
+        created_at: use_signal(created_at),
         ctx,
     };
     persist::install_dirty_for_tab(tab);
     tab
+}
+
+/// Уникальная подпись для новой копии шаблона: «Имя», «Имя (2)», «Имя (3)»…
+pub fn unique_title(tabs: &[OpenTab], base: &str) -> String {
+    let titles: std::collections::HashSet<String> =
+        tabs.iter().map(|t| t.title.get_untracked()).collect();
+    if !titles.contains(base) {
+        return base.to_string();
+    }
+    let mut n = 2usize;
+    loop {
+        let candidate = format!("{base} ({n})");
+        if !titles.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /// Подобрать имя следующей `Untitled`-вкладки. Считает занятые номера,

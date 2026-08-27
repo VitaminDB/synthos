@@ -214,3 +214,18 @@ pub const MI_OPEN_IN_NEW: &str         = "\u{E89E}";
 pub const MI_INSERT_DRIVE_FILE: &str   = "\u{E24D}";
 /// «visibility» уже есть выше; «fullscreen» — раскрыть превью на всё окно.
 pub const MI_FULLSCREEN: &str          = "\u{E5D0}";
+
+// --- Оболочка: плитки рейла, общая шапка, архив
+/// «vertical_split» / «view_sidebar» — тогглы левой и правой панели в шапке.
+pub const MI_VERTICAL_SPLIT: &str      = "\u{E949}";
+pub const MI_VIEW_SIDEBAR: &str        = "\u{F114}";
+/// «horizontal_rule» — пункт «Разделитель» в меню «+» рейла.
+pub const MI_HORIZONTAL_RULE: &str     = "\u{F108}";
+/// «dashboard_customize» — открыть окно шаблонов из шапки нод.
+pub const MI_DASHBOARD_CUSTOMIZE: &str = "\u{E99B}";
+/// «inbox» — раздел «Архив» в настройках; «unarchive» — вернуть чат;
+/// «delete_forever» — удалить насовсем; «delete_sweep» — очистить архив.
+pub const MI_INBOX: &str               = "\u{E156}";
+pub const MI_UNARCHIVE: &str           = "\u{E169}";
+pub const MI_DELETE_FOREVER: &str      = "\u{E92B}";
+pub const MI_DELETE_SWEEP: &str        = "\u{E16C}";

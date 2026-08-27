@@ -11,7 +11,18 @@ use super::{actions, card};
 use super::state::{DlStatus, HfModel, HuggingFaceCtx, ListLoadState};
 
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("hf-list-panel").child(Reactive::new(
+    DecoratedBox::new().class("hf-list-panel").child(mgui! {
+        Column::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                DecoratedBox::new().class("hf-list-chips").child(super::header::sort_chips()),
+                DecoratedBox::new().class("grow").child(list_body()),
+            ]
+    })
+}
+
+fn list_body() -> impl Widget {
+    DecoratedBox::new().class("hf-list-body").child(Reactive::new(
         || -> Vec<Box<dyn Widget>> {
             let ctx = use_context::<HuggingFaceCtx>();
             let state = ctx.list_state.get();

@@ -56,8 +56,6 @@ pub enum ListLoadState {
 }
 
 // 0 — README, 1 — Files. Используется как TabState.
-pub const TAB_README: usize = 0;
-pub const TAB_FILES: usize = 1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DlStatus {
@@ -235,8 +233,6 @@ pub struct HuggingFaceCtx {
     /// README выбранной модели. Пусто = «нет README» или ещё не загружено.
     pub readme_text: RwSignal<String>,
     pub readme_loading: RwSignal<bool>,
-    /// TabBar handle: 0 = README, 1 = Files.
-    pub detail_tab: RwSignal<usize>,
     /// Per-file карта скачиваний. Ключ: `"{repo_id}/{filename}"`.
     pub downloads: RwSignal<HashMap<String, DownloadState>>,
     /// Каталог кэша HF-моделей (синхронизирован с `AppConfig.hf_cache_dir`).
@@ -252,8 +248,6 @@ pub struct HuggingFaceCtx {
     /// мы сохраняем здесь список (repo_id, filename) и после accept_default /
     /// pick_folder отдаём их в download::start_download.
     pub pending_download: RwSignal<Vec<(String, String)>>,
-    /// Положение разделителя между списком и detail-панелью.
-    pub split_ratio: RwSignal<f32>,
     /// Сколько файлов скачивается параллельно. Синхронизирован с
     /// `AppConfig.hf_concurrent_downloads`. Изменения через SpinBox toolbar'а
     /// или Settings → HuggingFace немедленно перезапускают `try_drain_queue`,
@@ -343,13 +337,11 @@ impl HuggingFaceCtx {
             model_details: use_signal(None),
             readme_text: use_signal(String::new()),
             readme_loading: use_signal(false),
-            detail_tab: use_signal(TAB_README),
             downloads: use_signal(HashMap::new()),
             cache_dir: use_signal(cfg.hf_cache_dir.clone()),
             token: use_signal(token0),
             cache_dir_dialog_open: use_signal(false),
             pending_download: use_signal(Vec::new()),
-            split_ratio: use_signal(0.25),
             concurrent_limit: use_signal(cfg.hf_concurrent_downloads.max(1)),
             segments_per_file: use_signal(cfg.hf_segments_per_file.clamp(1, 16)),
             speed_limit_mbps: use_signal(cfg.hf_speed_limit_mbps),

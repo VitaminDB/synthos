@@ -46,7 +46,9 @@ pub fn load_all() {
     let ctx = use_context::<SynChatCtx>();
     ctx.loading.set(true);
     let metas = storage::list_meta();
-    if let Some(top) = metas.first().cloned() {
+    // Активным становится самый свежий из НЕархивных: архивные чаты в
+    // рейле не видны, и открывать их молча нельзя.
+    if let Some(top) = metas.iter().find(|m| !m.archived).cloned() {
         ctx.chats.set(metas);
         select_internal(&top.id, &ctx);
     } else {
@@ -70,6 +72,7 @@ pub fn create_new() -> String {
         model_name: None,
         messages: Vec::new(),
         syn_params: None,
+        archived: false,
     };
     storage::save(&stored);
     ctx.chats.update(|list| list.insert(0, stored.to_meta()));
@@ -143,19 +146,87 @@ pub fn delete(id: &str) {
     let was_active = ctx.active_chat_id.get_untracked().as_deref() == Some(id);
     ctx.chats.update(|list| list.retain(|m| m.id != id));
     if was_active {
-        let next_id = ctx.chats.get_untracked().first().map(|m| m.id.clone());
-        match next_id {
-            Some(id) => select_internal(&id, &ctx),
-            None => {
-                ctx.loading.set(true);
-                ctx.active_chat_id.set(None);
-                ctx.messages.set(Vec::new());
-                ctx.input.set(String::new());
-                ctx.pending_attachments.set(Vec::new());
-                ctx.loading.set(false);
-            }
+        select_next_visible(&ctx);
+    }
+}
+
+/// После ухода активного чата (архив/удаление) — открыть самый свежий из
+/// оставшихся видимых или очистить ленту, если таких нет.
+fn select_next_visible(ctx: &SynChatCtx) {
+    let next_id = ctx
+        .chats
+        .get_untracked()
+        .iter()
+        .find(|m| !m.archived)
+        .map(|m| m.id.clone());
+    match next_id {
+        Some(id) => select_internal(&id, ctx),
+        None => {
+            ctx.loading.set(true);
+            ctx.active_chat_id.set(None);
+            ctx.messages.set(Vec::new());
+            ctx.input.set(String::new());
+            ctx.pending_attachments.set(Vec::new());
+            ctx.loading.set(false);
         }
     }
+}
+
+/// Убрать чат в архив: файл остаётся, в рейле плитка исчезает. Активный
+/// чат перед этим сохраняется — иначе автосейв, не найдя его в списке,
+/// потерял бы последние сообщения.
+pub fn archive(id: &str) {
+    let ctx = use_context::<SynChatCtx>();
+    let was_active = ctx.active_chat_id.get_untracked().as_deref() == Some(id);
+    if was_active {
+        if let Some(mut snap) = snapshot_current() {
+            snap.archived = true;
+            storage::save(&snap);
+        }
+    } else if let Some(mut stored) = storage::load(id) {
+        stored.archived = true;
+        storage::save(&stored);
+    }
+    ctx.chats.update(|list| {
+        if let Some(m) = list.iter_mut().find(|m| m.id == id) {
+            m.archived = true;
+        }
+    });
+    if was_active {
+        select_next_visible(&ctx);
+    }
+}
+
+/// Вернуть чат из архива в рейл и сделать его активным.
+pub fn unarchive(id: &str) {
+    let ctx = use_context::<SynChatCtx>();
+    if let Some(mut stored) = storage::load(id) {
+        stored.archived = false;
+        storage::save(&stored);
+    }
+    ctx.chats.update(|list| {
+        if let Some(m) = list.iter_mut().find(|m| m.id == id) {
+            m.archived = false;
+        }
+    });
+    select_internal(id, &ctx);
+}
+
+/// Удалить насовсем все чаты из архива.
+pub fn clear_archive() {
+    let ctx = use_context::<SynChatCtx>();
+    let ids: Vec<String> = ctx
+        .chats
+        .get_untracked()
+        .iter()
+        .filter(|m| m.archived)
+        .map(|m| m.id.clone())
+        .collect();
+    for id in ids {
+        storage::delete(&id);
+    }
+    crate::syn_chat::attach::gc_after_delete();
+    ctx.chats.update(|list| list.retain(|m| !m.archived));
 }
 
 pub fn rename_active(title: String) {
@@ -192,13 +263,14 @@ pub fn snapshot_current() -> Option<StoredChat> {
         .into_iter()
         .find(|m| m.id == id)?;
     let messages: Vec<ChatMsg> = ctx.messages.get_untracked();
-    let created_at = storage::load(&id).map(|c| c.created_at).unwrap_or_else(unix_secs);
+    let on_disk = storage::load(&id);
+    let created_at = on_disk.as_ref().map(|c| c.created_at).unwrap_or_else(unix_secs);
     // Имя модели раньше не сохранялось вообще: по файлу чата нельзя было
     // понять, какой бандл отвечал, — а разбор поведения агента без этого
     // сводится к угадыванию. Пишем имя текущего бандла; если модель ещё не
     // загружена — оставляем то, что было записано раньше.
     let model_name = current_model_name()
-        .or_else(|| storage::load(&id).and_then(|c| c.model_name));
+        .or_else(|| on_disk.as_ref().and_then(|c| c.model_name.clone()));
     Some(StoredChat {
         id: meta.id.clone(),
         title: meta.title.clone(),
@@ -207,6 +279,7 @@ pub fn snapshot_current() -> Option<StoredChat> {
         model_name,
         messages,
         syn_params: Some(ctx.params.get_untracked()),
+        archived: meta.archived,
     })
 }
 

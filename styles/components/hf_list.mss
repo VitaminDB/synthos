@@ -10,6 +10,15 @@
     height: 100%;
 }
 
+/* Чипы сортировки над списком. */
+.hf-list-chips {
+    padding: 0 0 2px 0;
+}
+
+.hf-list-body {
+    height: 100%;
+}
+
 /* Заголовок секции в списке («Качается» / «Модели»). */
 .hf-list-section {
     font-size: 11px;

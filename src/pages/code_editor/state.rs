@@ -196,6 +196,9 @@ pub struct CodeSession {
     /// Пути с внешним изменением, конфликтующим с dirty-буфером. Заполняется
     /// `fs_watcher::apply_batch`; UI показывает диалог разрешения по одному.
     pub conflicts: RwSignal<Vec<PathBuf>>,
+    /// Unix-миллисекунды создания — порядок плитки в нав-рейле. Persist:
+    /// `CodeSessionConfig.created_at`.
+    pub created_at: u64,
 }
 
 impl CodeSession {
@@ -223,6 +226,7 @@ impl CodeSession {
         right_split_ratio_init: f32,
         soft_wrap_init: bool,
         editor_states_init: HashMap<PathBuf, EditorPersistedState>,
+        created_at: u64,
     ) -> Self {
         let root_folder = use_signal(folder);
         let tree_nodes = use_signal(Vec::new());
@@ -382,6 +386,7 @@ impl CodeSession {
             soft_wrap,
             editor_states,
             conflicts,
+            created_at,
         };
 
         // Запустить FS-watcher и git-status worker, если папка валидна.
@@ -442,6 +447,7 @@ impl CodeEditorCtx {
         let next_id = use_signal(1u64);
 
         let mut built: Vec<CodeSession> = Vec::with_capacity(sessions_cfg.len());
+        let legacy_base = crate::config::now_millis().saturating_sub(sessions_cfg.len() as u64);
         for cfg in &sessions_cfg {
             let id = next_id.get_untracked();
             next_id.set(id.wrapping_add(1));
@@ -477,6 +483,11 @@ impl CodeEditorCtx {
                     )
                 })
                 .collect();
+            // Конфиги до плиточного рейла не знают `created_at`: даём им
+            // штампы по порядку списка, чтобы прежняя расстановка сохранилась.
+            let created_at = cfg
+                .created_at
+                .unwrap_or_else(|| legacy_base + built.len() as u64);
             let session = CodeSession::new(
                 id,
                 folder,
@@ -487,6 +498,7 @@ impl CodeEditorCtx {
                 right_split_ratio,
                 cfg.soft_wrap,
                 editor_states,
+                created_at,
             );
             drafts::install_draft_autosave(session);
             built.push(session);
@@ -557,6 +569,7 @@ impl CodeEditorCtx {
             default_code_editor_right_split_ratio(),
             false, // soft_wrap default off — пользователь включает по желанию
             HashMap::new(),
+            crate::config::now_millis(),
         );
         drafts::install_draft_autosave(session);
         self.sessions.update(|v| v.push(session));

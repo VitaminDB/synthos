@@ -34,6 +34,7 @@ pub const SETTINGS_ROUTES: &[&str] = &[
     "audio_models",
     "ai_models",
     "knowledge_base",
+    "archive",
     "about",
 ];
 
@@ -184,12 +185,58 @@ impl Default for VoiceFabCtx {
     }
 }
 
-/// Состояние переключателя табов в правом сайдбаре страницы syn_chat.
-/// 0 — «Инструменты» (tools/skills, первая по умолчанию),
-/// 1 — «Параметры» (модель + sampling), 2 — «Детали» (метрики).
-pub const SYN_RIGHT_PANEL_TOOLS: usize = 0;
-pub const SYN_RIGHT_PANEL_PARAMS: usize = 1;
-pub const SYN_RIGHT_PANEL_DETAILS: usize = 2;
+/// Состояние переключателя табов в правой панели страницы syn_chat.
+/// 0 — «Параметры» (модель + sampling), 1 — «Детали» (метрики).
+/// Инструменты и скилы живут в левой панели (`pages::syn_chat::left_panel`).
+pub const SYN_RIGHT_PANEL_PARAMS: usize = 0;
+pub const SYN_RIGHT_PANEL_DETAILS: usize = 1;
+
+/// Видимость боковых панелей трёхпанельного каркаса
+/// (`components::workspace_frame`) по страницам. Пара `(левая, правая)`.
+/// Тогглы в общей шапке пишут сюда; `install_config_autosave` переливает
+/// в `AppConfig.panels`.
+#[derive(Clone, Copy)]
+pub struct PanelsCtx {
+    pub syn_chat: (RwSignal<bool>, RwSignal<bool>),
+    pub code: (RwSignal<bool>, RwSignal<bool>),
+    pub syn_explorer: (RwSignal<bool>, RwSignal<bool>),
+    pub huggingface: (RwSignal<bool>, RwSignal<bool>),
+    pub settings: (RwSignal<bool>, RwSignal<bool>),
+}
+
+impl PanelsCtx {
+    pub fn from_config(cfg: &crate::config::PanelsConfig) -> Self {
+        Self {
+            syn_chat: (use_signal(cfg.syn_chat_left), use_signal(cfg.syn_chat_right)),
+            code: (use_signal(cfg.code_left), use_signal(cfg.code_right)),
+            syn_explorer: (
+                use_signal(cfg.syn_explorer_left),
+                use_signal(cfg.syn_explorer_right),
+            ),
+            huggingface: (
+                use_signal(cfg.huggingface_left),
+                use_signal(cfg.huggingface_right),
+            ),
+            settings: (use_signal(cfg.settings_left), use_signal(cfg.settings_right)),
+        }
+    }
+
+    /// Снимок для автосейва (`.get()` — подписка эффекта на все флаги).
+    pub fn to_config(&self) -> crate::config::PanelsConfig {
+        crate::config::PanelsConfig {
+            syn_chat_left: self.syn_chat.0.get(),
+            syn_chat_right: self.syn_chat.1.get(),
+            code_left: self.code.0.get(),
+            code_right: self.code.1.get(),
+            syn_explorer_left: self.syn_explorer.0.get(),
+            syn_explorer_right: self.syn_explorer.1.get(),
+            huggingface_left: self.huggingface.0.get(),
+            huggingface_right: self.huggingface.1.get(),
+            settings_left: self.settings.0.get(),
+            settings_right: self.settings.1.get(),
+        }
+    }
+}
 
 /// Реактивное состояние подсистемы инструментов (tools).
 ///
@@ -410,4 +457,15 @@ pub struct AppCtx {
     /// Путь к ACE-Step VAE bundle'у (`acestep_vae.syn`). Используется нодами
     /// VaeEncode/VaeDecode. Сохраняется в `AppConfig.acestep_vae_bundle_path`.
     pub acestep_vae_bundle_path: RwSignal<Option<String>>,
+    /// Видимость левой/правой панели по страницам (тогглы в общей шапке).
+    /// Persist: `AppConfig.panels`.
+    pub panels: PanelsCtx,
+    /// Разделители нав-рейла — штампы `created_at` (unix-мс). Persist:
+    /// `AppConfig.rail_separators`. См. `crate::rail`.
+    pub rail_separators: RwSignal<Vec<u64>>,
+    /// Разделители страниц HuggingFace и настроек (persist в `AppConfig`).
+    pub hf_left_split_ratio: RwSignal<f32>,
+    pub hf_right_split_ratio: RwSignal<f32>,
+    pub settings_left_split_ratio: RwSignal<f32>,
+    pub settings_right_split_ratio: RwSignal<f32>,
 }

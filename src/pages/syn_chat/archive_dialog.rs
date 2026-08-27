@@ -1,28 +1,26 @@
-//! Portal-диалог подтверждения удаления чата.
+//! Portal-диалог подтверждения переноса чата в архив.
 //!
-//! Источник — [`SynChatCtx::pending_delete`]: корзина в строке списка
-//! (`chats_column`) только взводит сигнал, а необратимое
-//! `registry::delete` (файл чата + GC блобов вложений) вызывается уже
-//! отсюда, после явного подтверждения.
+//! Источник — [`SynChatCtx::pending_archive`]: корзина в шапке чата и
+//! «Закрыть» в контекстном меню плитки рейла только взводят сигнал, а
+//! `registry::archive` вызывается уже отсюда, после подтверждения. Файл чата
+//! при этом остаётся на диске — вернуть его можно из Настройки → Архив,
+//! удаление насовсем живёт там же.
 //!
-//! Разметка и классы — те же, что у `code_editor::dialogs`
-//! (`code-editor-dialog-card` / `-danger` / `-title` / `-hint` / `-path` /
-//! `-btn-secondary` / `-btn-danger`), чтобы подтверждение удаления
-//! выглядело одинаково во всём приложении и не заводило второй набор
-//! стилей.
+//! Смонтирован в shell'е (`lib.rs::build_app`): плитку чата закрывают с
+//! любой страницы. Разметка и классы — те же, что у `code_editor::dialogs`.
 
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::overlay::PortalAnchor;
 
-use crate::icons::{MI_CLOSE, MI_DELETE};
+use crate::icons::{MI_ARCHIVE, MI_CLOSE};
 use crate::syn_chat::{registry, SynChatCtx};
 
 pub fn view() -> impl Widget {
     let is_open = use_signal(false);
     create_effect(move || {
         let ctx = use_context::<SynChatCtx>();
-        let has = ctx.pending_delete.get().is_some();
+        let has = ctx.pending_archive.get().is_some();
         if is_open.get_untracked() != has {
             is_open.set(has);
         }
@@ -34,11 +32,11 @@ pub fn view() -> impl Widget {
         .backdrop(true)
         .anchor(PortalAnchor::Center)
         .on_close(|| {
-            use_context::<SynChatCtx>().pending_delete.set(None);
+            use_context::<SynChatCtx>().pending_archive.set(None);
         })
         .child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
             let ctx = use_context::<SynChatCtx>();
-            let Some(meta) = ctx.pending_delete.get() else {
+            let Some(meta) = ctx.pending_archive.get() else {
                 return vec![Box::new(
                     DecoratedBox::new().class("code-editor-dialog-empty"),
                 )];
@@ -50,27 +48,27 @@ pub fn view() -> impl Widget {
 fn confirm_card(id: String, title: String) -> impl Widget {
     let confirm = move || {
         let ctx = use_context::<SynChatCtx>();
-        ctx.pending_delete.set(None);
-        registry::delete(&id);
+        ctx.pending_archive.set(None);
+        registry::archive(&id);
     };
     let cancel = || {
-        use_context::<SynChatCtx>().pending_delete.set(None);
+        use_context::<SynChatCtx>().pending_archive.set(None);
     };
     let shown_title = if title.trim().is_empty() {
-        tr!("chat.delete_dialog.untitled")
+        tr!("chat.archive_dialog.untitled")
     } else {
         title
     };
 
     mgui! {
-        DecoratedBox::new().class("code-editor-dialog-card code-editor-dialog-danger") => [
+        DecoratedBox::new().class("code-editor-dialog-card") => [
             Column::new()
                 .gap(14.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new(tr!("chat.delete_dialog.title")).class("code-editor-dialog-title"),
-                    Text::new(tr!("chat.delete_dialog.hint", title = shown_title))
+                    Text::new(tr!("chat.archive_dialog.title")).class("code-editor-dialog-title"),
+                    Text::new(tr!("chat.archive_dialog.hint", title = shown_title))
                         .class("code-editor-dialog-hint"),
-                    Text::new(tr!("chat.delete_dialog.detail"))
+                    Text::new(tr!("chat.archive_dialog.detail"))
                         .class("code-editor-dialog-path"),
                     Row::new()
                         .gap(10.0)
@@ -79,10 +77,10 @@ fn confirm_card(id: String, title: String) -> impl Widget {
                                 .leading_icon(MI_CLOSE)
                                 .on_click(cancel)
                                 .class("code-editor-dialog-btn-secondary"),
-                            Button::new(tr!("app.delete"))
-                                .leading_icon(MI_DELETE)
+                            Button::new(tr!("chat.archive_dialog.confirm"))
+                                .leading_icon(MI_ARCHIVE)
                                 .on_click(confirm)
-                                .class("code-editor-dialog-btn-danger"),
+                                .class("code-editor-dialog-btn-primary"),
                         ],
                 ]
         ]

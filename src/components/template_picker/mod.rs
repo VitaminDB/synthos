@@ -1,8 +1,10 @@
 //! Всплывающее окно выбора шаблонов графа нод.
 //!
-//! Модальный [`Portal`] по центру экрана. Открывается кнопкой «+» в баре
-//! вкладок node-editor'а (сигнал [`EditorWorkspace::template_picker_open`]),
-//! закрывается по backdrop / Escape / крестику / выбору шаблона.
+//! Модальный [`Portal`] по центру экрана. Открывается пунктом «Нодовый
+//! редактор» в меню «+» нав-рейла и кнопкой «Шаблоны» в шапке нод (сигнал
+//! [`EditorWorkspace::template_picker_open`]), закрывается по backdrop /
+//! Escape / крестику / выбору шаблона. Выбор всегда открывает новую копию
+//! графа плиткой в рейле.
 //!
 //! Внутри:
 //! - **шапка** — заголовок + «Сохранить текущий граф» / «Сохранить как
@@ -259,10 +261,15 @@ pub fn bump_revision() {
 /// шаблон с авто-именем. Пользователь сразу может переименовать через
 /// двойной клик в карточке. После create — активная вкладка привязывается
 /// к новому шаблону (`tab.source`), dirty/fingerprint сбрасываются.
-fn save_current_as_template() {
+pub fn save_current_as_template() {
     let ws = use_context::<EditorWorkspace>();
-    let app = use_context::<AppCtx>();
     let Some(tab) = active_tab(&ws) else { return };
+    save_tab_as_template(&tab);
+}
+
+/// Сохранить граф `tab` новым custom-шаблоном. `true` — сохранено.
+pub fn save_tab_as_template(tab: &crate::pages::node_editor::tabs::OpenTab) -> bool {
+    let app = use_context::<AppCtx>();
     let (nodes, conns, viewport) = templates::convert::snapshot(&tab.ctx);
     let mut t = Template::empty(tab.title.get_untracked(), templates::TemplateKind::Full);
     if t.name.trim().is_empty() {
@@ -275,35 +282,39 @@ fn save_current_as_template() {
         Ok(saved) => {
             tab.source.set(Some(saved.id.clone()));
             tab.title.set(saved.name.clone());
-            mark_tab_saved(&tab);
+            mark_tab_saved(tab);
             app.notifications.success(tr!("templates.notify.saved", name = saved.name));
             bump_revision();
+            true
         }
         Err(e) => {
             app.notifications.error(tr!("templates.notify.save_failed", error = e));
+            false
         }
     }
 }
 
-/// Обновляет шаблон, из которого открыта активная вкладка (`tab.source`).
-/// Если вкладка не привязана (Untitled) ИЛИ привязана к builtin — fallback
+/// Обновляет шаблон, из которого открыт активный граф (`tab.source`).
+/// Если граф не привязан (Untitled) ИЛИ привязан к builtin — fallback
 /// на «Save as new».
-fn save_or_update_current() {
+pub fn save_or_update_current() {
     let ws = use_context::<EditorWorkspace>();
-    let app = use_context::<AppCtx>();
     let Some(tab) = active_tab(&ws) else { return };
+    save_or_update_tab(&tab);
+}
 
+/// То же для произвольного графа (диалог закрытия плитки). `true` —
+/// шаблон записан на диск.
+pub fn save_or_update_tab(tab: &crate::pages::node_editor::tabs::OpenTab) -> bool {
+    let app = use_context::<AppCtx>();
     let Some(src_id) = tab.source.get_untracked() else {
-        save_current_as_template();
-        return;
+        return save_tab_as_template(tab);
     };
     let Some(existing) = templates::storage::load_one(&src_id) else {
-        save_current_as_template();
-        return;
+        return save_tab_as_template(tab);
     };
     if existing.builtin {
-        save_current_as_template();
-        return;
+        return save_tab_as_template(tab);
     }
 
     let (nodes, conns, viewport) = templates::convert::snapshot(&tab.ctx);
@@ -319,12 +330,14 @@ fn save_or_update_current() {
     };
     match templates::storage::save(&updated) {
         Ok(()) => {
-            mark_tab_saved(&tab);
+            mark_tab_saved(tab);
             app.notifications.success(tr!("templates.notify.updated", name = updated.name));
             bump_revision();
+            true
         }
         Err(e) => {
             app.notifications.error(tr!("templates.notify.update_failed", error = e));
+            false
         }
     }
 }

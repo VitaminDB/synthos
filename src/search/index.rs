@@ -101,6 +101,7 @@ const SETTINGS: &[(&str, &str)] = &[
     ("ai_models", MI_AUTO_AWESOME),
     ("knowledge_base", MI_MENU_BOOK),
     ("terminal", MI_TERMINAL),
+    ("archive", MI_INBOX),
     ("about", MI_INFO),
 ];
 
@@ -172,6 +173,7 @@ fn settings_keywords(key: &str) -> &'static [&'static str] {
         "ai_models" => &["квантование", "llm", "qwen", "muse", "attention", "квант", "models"],
         "knowledge_base" => &["rag", "база знаний", "коллекции", "эмбеддинги", "kb", "knowledge"],
         "terminal" => &["терминал", "шрифт терминала", "vte", "terminal", "font"],
+        "archive" => &["архив", "закрытые чаты", "восстановить", "archive", "archived", "restore"],
         "about" => &["о программе", "версия", "лицензия", "about", "version"],
         _ => &[],
     }
@@ -205,8 +207,8 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         command: SearchCommand::DeleteChat,
-        key: "search.cmd.delete_chat",
-        icon: MI_DELETE,
+        key: "search.cmd.archive_chat",
+        icon: MI_ARCHIVE,
         keywords: &["удалить чат", "delete chat"],
     },
     CommandSpec {
@@ -333,7 +335,9 @@ fn scan_messages(dir: &PathBuf) -> Vec<MessageEntry> {
             continue;
         };
         if let Ok(chat) = serde_json::from_str::<StoredChat>(&text) {
-            chats.push(chat);
+            if !chat.archived {
+                chats.push(chat);
+            }
         }
     }
     // Свежие чаты индексируются первыми: если упрёмся в потолок, обрежется
@@ -501,7 +505,8 @@ fn push_commands(items: &mut Vec<SearchItem>) {
 
 fn push_chats(items: &mut Vec<SearchItem>) {
     let ctx = use_context::<SynChatCtx>();
-    for meta in ctx.chats.get().iter() {
+    // Архивные чаты в выдачу не идут: их место — Настройки → Архив.
+    for meta in ctx.chats.get().iter().filter(|m| !m.archived) {
         items.push(
             SearchItem::new(
                 format!("chat:{}", meta.id),

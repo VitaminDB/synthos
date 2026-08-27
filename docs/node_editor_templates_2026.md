@@ -1,5 +1,10 @@
 # Node Editor: Templates / Multi-tab / Run-controls (2026-05-10, synthos 0.1.77)
 
+> **2026-08-27.** Полосы вкладок на странице больше нет: открытые графы —
+> плитки нав-рейла, Run-пилюля и кнопки шаблонов — в общей шапке, выбор
+> шаблона всегда создаёт новую копию. См. `docs/workspace_shell_2026.md`;
+> ниже — исходное описание, модель `EditorWorkspace`/`Template`/CRUD актуальна.
+
 Расширение `pages/node_editor` до ComfyUI-подобного workflow:
 - **Левая Templates-панель** (collapsible) с builtin + custom шаблонами.
 - **Multi-tab editor** в стилистике терминальных вкладок (Zed/VSCode-like).

@@ -7,7 +7,7 @@ use syngui::context_provider::use_context;
 
 use super::api;
 use super::download;
-use super::state::{HfModelDetails, HuggingFaceCtx, ListLoadState, TAB_README};
+use super::state::{HfModelDetails, HuggingFaceCtx, ListLoadState};
 
 /// Закоммитить текущий `search_query` и перезагрузить список.
 pub fn commit_search() {
@@ -62,7 +62,6 @@ pub fn select_model(repo_id: String) {
     ctx.model_details.set(None);
     ctx.readme_text.set(String::new());
     ctx.readme_loading.set(true);
-    ctx.detail_tab.set(TAB_README);
     ctx.selected_files.update(|s| s.clear());
 
     let details_sig = ctx.model_details;

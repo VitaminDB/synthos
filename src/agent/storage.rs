@@ -44,6 +44,11 @@ pub struct StoredChat {
     pub messages: Vec<ChatMsg>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syn_params: Option<SamplingParams>,
+    /// Чат убран из рейла в архив (Настройки → Архив). Файл остаётся на
+    /// диске, история цела; «Вернуть» снимает флаг, «Удалить» из архива
+    /// стирает файл насовсем.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
 }
 
 impl Default for StoredChat {
@@ -56,6 +61,7 @@ impl Default for StoredChat {
             model_name: None,
             messages: Vec::new(),
             syn_params: None,
+            archived: false,
         }
     }
 }
@@ -67,8 +73,10 @@ impl StoredChat {
             id: self.id.clone(),
             title: self.title.clone(),
             preview: preview_from_messages(&self.messages),
+            created_at: self.created_at,
             updated_at: self.updated_at,
             model_name: self.model_name.clone(),
+            archived: self.archived,
         }
     }
 }

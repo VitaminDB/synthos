@@ -8,13 +8,13 @@
 //!
 //! ```text
 //! Stack [
-//!   Column(.syn-explorer-page) [
-//!     toolbar::view()
+//!   workspace_frame(.syn-explorer-page) [
+//!     page_header                         // имя пакета + путь/статус, кнопки toolbar'а
 //!     SplitView Horizontal (left_split_ratio) [
-//!       left_panel::view()
+//!       left_panel::view()                // закладки
 //!       SplitView Horizontal (right_split_ratio) [
 //!         center (Reactive: tabs+content or placeholder)
-//!         right_panel::view()
+//!         right_panel::view()             // дерево пакета
 //!       ]
 //!     ]
 //!   ]
@@ -39,50 +39,43 @@ pub mod tree_build;
 
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::{SplitDirection, SplitView};
 
 pub use state::SynExplorerCtx;
 
+use crate::components::page_header::{self, HeaderSpec};
+use crate::components::workspace_frame::{self, expand, FrameSpec, Pane};
+use crate::context::AppCtx;
 use crate::icons::{MI_FOLDER_OPEN, MI_INVENTORY_2};
 
 pub fn view() -> impl Widget {
+    let app = use_context::<AppCtx>();
+    let ctx = use_context::<SynExplorerCtx>();
+    let (left_visible, right_visible) = app.panels.syn_explorer;
+
+    let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(identity_reactive));
+    let header = page_header::view(
+        HeaderSpec::new(identity)
+            .actions(toolbar::header_actions())
+            .toggles(Some(left_visible), Some(right_visible)),
+    );
+
+    let spec = FrameSpec::new("syn-explorer-h-split", || {
+        Box::new(
+            DecoratedBox::new()
+                .class("syn-explorer-center")
+                .child(center_or_placeholder()),
+        )
+    })
+    .left(Pane::new(left_visible, ctx.left_split_ratio, 220.0, || {
+        Box::new(left_panel::view())
+    }))
+    .right(Pane::new(right_visible, ctx.right_split_ratio, 180.0, || {
+        Box::new(right_panel::view())
+    }));
+
     let main = DecoratedBox::new()
         .class("syn-explorer-page")
-        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
-            let ctx = use_context::<SynExplorerCtx>();
-            // Подписки на ratio'ы — выясняются в SplitView::ratio_signal.
-            let left_ratio = ctx.left_split_ratio;
-            let right_ratio = ctx.right_split_ratio;
-
-            let center = DecoratedBox::new()
-                .class("syn-explorer-center")
-                .child(center_or_placeholder());
-
-            let center_with_right = SplitView::new(center, right_panel::view())
-                .class("syn-explorer-h-split")
-                .direction(SplitDirection::Horizontal)
-                .ratio_signal(right_ratio)
-                .min_size(180.0)
-                .divider_width(6.0);
-
-            let split = SplitView::new(left_panel::view(), center_with_right)
-                .class("syn-explorer-h-split")
-                .direction(SplitDirection::Horizontal)
-                .ratio_signal(left_ratio)
-                .min_size(220.0)
-                .divider_width(6.0);
-
-            vec![Box::new(mgui! {
-                Column::new()
-                    .gap(0.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        toolbar::view(),
-                        DecoratedBox::new()
-                            .class("syn-explorer-body grow")
-                            .child(split),
-                    ]
-            })]
-        }));
+        .child(workspace_frame::view(header, spec));
 
     mgui! {
         Stack::new() => [
@@ -90,6 +83,33 @@ pub fn view() -> impl Widget {
             dialogs::view(),
         ]
     }
+}
+
+/// Идентичность: имя открытого пакета и его путь (или статус операции);
+/// без пакета — название раздела.
+fn identity_reactive() -> Stack {
+    let ctx = use_context::<SynExplorerCtx>();
+    let active = ctx.active_bundle.get();
+    let load_state = ctx.load_state.get();
+    let (title, subtitle) = match active {
+        Some(b) => {
+            let path = b.path.get();
+            let dirty = b.dirty.get();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            let sub = toolbar::status_text(load_state, dirty)
+                .unwrap_or_else(|| path.display().to_string());
+            (name, sub)
+        }
+        None => (
+            tr!("nav.syn_explorer"),
+            toolbar::status_text(load_state, false)
+                .unwrap_or_else(|| tr!("explorer.header.no_bundle")),
+        ),
+    };
+    expand(page_header::identity_text(MI_INVENTORY_2, title, subtitle))
 }
 
 /// Центр страницы — Reactive, который рисует табы/контент когда пакет открыт,

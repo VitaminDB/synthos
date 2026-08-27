@@ -404,10 +404,14 @@ pub struct ChatMeta {
     pub title: String,
     /// Превью последнего сообщения (≤ 80 символов, char-boundary-safe).
     pub preview: String,
+    /// Unix-секунды создания — порядок плиток в нав-рейле.
+    pub created_at: u64,
     /// Unix-секунды последнего обновления — для сортировки «новые сверху».
     pub updated_at: u64,
     /// Имя модели, с которой велась последняя переписка (или None).
     pub model_name: Option<String>,
+    /// Чат в архиве: в рейле не показывается, доступен из Настройки → Архив.
+    pub archived: bool,
 }
 
 // (ChatCtx старого llama-чата удалён — нативный Syn-чат использует

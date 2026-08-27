@@ -59,11 +59,11 @@ pub struct SynChatCtx {
     /// запуске генерации. UI показывает по нему кнопку «Продолжить»:
     /// история цела, надо лишь дать циклу ещё бюджет ходов.
     pub turn_cap_reached: RwSignal<bool>,
-    /// Чат, для которого открыт диалог подтверждения удаления. `None` —
-    /// диалог закрыт. Удаление необратимо (файл чата + GC блобов), поэтому
-    /// корзина в списке только взводит этот сигнал, а сам `registry::delete`
-    /// вызывается уже из диалога — см. `pages::syn_chat::delete_dialog`.
-    pub pending_delete: RwSignal<Option<ChatMeta>>,
+    /// Чат, для которого открыт диалог подтверждения архива. `None` —
+    /// диалог закрыт. Корзина в шапке и «Закрыть» плитки рейла только
+    /// взводят этот сигнал, а `registry::archive` вызывается уже из диалога
+    /// — см. `pages::syn_chat::archive_dialog`.
+    pub pending_archive: RwSignal<Option<ChatMeta>>,
     /// Поколение поля ввода — для пересоздания editor после очистки.
     pub input_gen: RwSignal<u64>,
     /// Кол-во токенов в `input` (вычисляется debounced'но в фоне).
@@ -96,7 +96,7 @@ pub struct SynChatCtx {
     /// (`CompactionMarker.iteration`, стабилен в отличие от индекса).
     /// Эфемерно, не persist'ится. Дефолт — закрыт.
     pub compaction_open: RwSignal<HashMap<u32, bool>>,
-    /// Активный таб правой панели: 0=Инструменты, 1=Параметры, 2=Детали.
+    /// Активный таб правой панели: 0=Параметры, 1=Детали.
     /// См. `context::SYN_RIGHT_PANEL_*`.
     pub right_panel_tab: RwSignal<usize>,
     /// Индекс сообщения, на которое привёл глобальный поиск. Пузырёк с этим
@@ -150,7 +150,7 @@ impl SynChatCtx {
             pending_attachments: use_signal(Vec::new()),
             attach_busy: use_signal(0),
             viewer: use_signal(None),
-            pending_delete: use_signal(None),
+            pending_archive: use_signal(None),
             turn_cap_reached: use_signal(false),
             input_gen: use_signal(0),
             input_tokens: use_signal(0),

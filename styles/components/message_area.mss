@@ -40,3 +40,14 @@
     0%   { opacity: 0; transform: translateY(6px); }
     100% { opacity: 1; transform: translateY(0); }
 }
+
+/* Пузырёк, на который привёл глобальный поиск: рамка держится, пока
+ * пользователь не переключит чат — по ней видно, какое именно сообщение
+ * нашлось, когда лента длинная. */
+.msg-search-highlight {
+    border-width: 1px;
+    border-color: var(--primary);
+    border-radius: 14px;
+    background-color: var(--primary-soft);
+    padding: 4px;
+}

@@ -1,5 +1,11 @@
-//! Шапка Syn-чата: avatar + title (inline-rename по двойному клику) +
-//! subtitle (имя модели) + actions (compact / clear / delete).
+//! Верхняя панель Syn-чата — одна строка на всю ширину центра:
+//! аватар + название (inline-rename по клику) + имя модели слева, пилюля
+//! глобального поиска по центру, действия над чатом справа.
+//!
+//! Раньше здесь было два ряда: отдельная строка поиска-заглушки (с
+//! «Usage and plan») и отдельная шапка чата. Полезного в первом ряду не
+//! было ничего, а 70 логических пикселей ленты он забирал — поэтому ряды
+//! слиты в один, а поиск стал настоящим (`crate::search`).
 //!
 //! Кнопка сжатия зовёт `syn_chat::compact::compact_now` (ручной autocompact);
 //! disabled, пока идёт генерация или в ленте нет кандидатов на сжатие.
@@ -12,6 +18,7 @@ use syngui::widgets::TextField;
 
 use crate::components::chat_item::tone_for;
 use crate::icons::*;
+use crate::search;
 use crate::syn_chat::{registry, SynChatCtx, SynModelRegistry};
 
 pub fn view() -> impl Widget {
@@ -33,24 +40,35 @@ fn header_body_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         let can_compact =
             !pending && crate::syn_chat::compact::find_compact_range(&msgs).is_some();
 
-        let Some(id) = active else {
-            return empty_header();
-        };
-        let Some(meta) = chats.into_iter().find(|m| m.id == id) else {
-            return empty_header();
-        };
-        active_header(meta.id, meta.title, can_compact)
+        let meta = active
+            .as_ref()
+            .and_then(|id| chats.into_iter().find(|m| &m.id == id));
+        match meta {
+            Some(meta) => active_header(meta.id, meta.title, can_compact),
+            None => empty_header(),
+        }
     }
 }
 
+/// Ряд без активного чата: подсказка слева, поиск на своём месте — он
+/// работает и когда открывать нечего.
 fn empty_header() -> StyledWidget<DecoratedBox> {
-    DecoratedBox::new().class("chat-header-empty").child(mgui! {
+    let left = mgui! {
         Row::new()
             .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .main_axis_alignment(MainAxisAlignment::Start) => [
+            .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_PSYCHOLOGY).class("chat-header-empty-icon"),
-                Text::new(tr!("chat.header.empty_hint")).class("chat-header-empty-text"),
+                Text::new(tr!("chat.header.empty_hint")).max_lines(1).class("chat-header-empty-text"),
+            ]
+    };
+    DecoratedBox::new().class("chat-header-empty").child(mgui! {
+        Row::new()
+            .gap(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                left,
+                search_slot(),
+                DecoratedBox::new().class("chat-header-actions-placeholder"),
             ]
     })
 }
@@ -59,18 +77,27 @@ fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<D
     let tone = tone_for(&id);
     let initials = initials_from_title(&title);
 
-    let avatar = Avatar::new().text(initials).size(34.0).class(tone);
+    let avatar = Avatar::new().text(initials).size(30.0).class(tone);
     let title_block = title_block_reactive(title.clone());
     let subtitle = subtitle_reactive();
 
     let info_col = Column::new()
-        .gap(2.0)
+        .gap(1.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .child(title_block)
         .child(subtitle);
 
+    let identity = mgui! {
+        Row::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center) => [
+                avatar,
+                info_col,
+            ]
+    };
+
     let actions_row = mgui! {
-        Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+        Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             ToolButton::new(MI_COMPRESS)
                 .tooltip(tr!("chat.header.compact.tooltip"))
                 .disabled(!can_compact)
@@ -87,8 +114,14 @@ fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<D
                 .class("chat-header-action"),
             ToolButton::new(MI_DELETE)
                 .tooltip(tr!("chat.header.delete.tooltip"))
-                .on_click(move || registry::delete(&id))
-                .class("chat-header-action"),
+                .on_click(move || {
+                    // Удаление необратимо — корзина только поднимает диалог
+                    // подтверждения (`delete_dialog`), как и в списке чатов.
+                    let ctx = use_context::<SynChatCtx>();
+                    let meta = ctx.chats.get_untracked().into_iter().find(|m| m.id == id);
+                    ctx.pending_delete.set(meta);
+                })
+                .class("chat-header-action chat-header-action-danger"),
         ]
     };
 
@@ -99,15 +132,23 @@ fn active_header(id: String, title: String, can_compact: bool) -> StyledWidget<D
                 .gap(12.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                    Row::new()
-                        .gap(12.0)
-                        .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            avatar,
-                            info_col,
-                        ],
+                    identity,
+                    search_slot(),
                     actions_row,
                 ]
         })
+}
+
+/// Пилюля поиска по центру свободного места шапки. Обойма растягивается,
+/// сама пилюля — нет: ширина у неё своя (`.search-trigger`), а справа
+/// остаётся воздух под будущие кнопки.
+fn search_slot() -> impl Widget {
+    DecoratedBox::new().class("grow chat-header-search").child(
+        Row::new()
+            .main_axis_alignment(MainAxisAlignment::Center)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(search::trigger::view()),
+    )
 }
 
 fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
@@ -144,7 +185,7 @@ fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedB
                 .on_click(move || {
                     flag.store(true, Ordering::Relaxed);
                 })
-                .child(Text::new(current_title).class("chat-header-title"));
+                .child(Text::new(current_title).max_lines(1).class("chat-header-title"));
             DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
         }
     }

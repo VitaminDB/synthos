@@ -54,6 +54,13 @@ pub const MI_REMOVE: &str              = "\u{E15B}";
 pub const MI_CROP_SQUARE: &str         = "\u{E3B6}";
 pub const MI_CIRCLE: &str              = "\u{EF4A}";
 pub const MI_KEYBOARD_COMMAND_KEY: &str = "\u{EAE7}";
+/// «keyboard_return» — клавиша Enter в подсказках панели поиска.
+pub const MI_KEYBOARD_RETURN: &str     = "\u{E166}";
+/// «arrow_upward» / «arrow_downward» — стрелки навигации по выдаче поиска.
+pub const MI_ARROW_UPWARD: &str        = "\u{E5D8}";
+pub const MI_ARROW_DOWNWARD: &str      = "\u{E5DB}";
+/// «search_off» — пустая выдача поиска.
+pub const MI_SEARCH_OFF: &str          = "\u{EA76}";
 
 // --- Настройки и подстраницы
 pub const MI_TUNE: &str                = "\u{E429}";

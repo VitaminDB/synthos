@@ -99,6 +99,10 @@ pub struct SynChatCtx {
     /// Активный таб правой панели: 0=Инструменты, 1=Параметры, 2=Детали.
     /// См. `context::SYN_RIGHT_PANEL_*`.
     pub right_panel_tab: RwSignal<usize>,
+    /// Индекс сообщения, на которое привёл глобальный поиск. Пузырёк с этим
+    /// индексом подсвечивается рамкой, пока пользователь не переключит чат
+    /// или не кликнет по ленте. Эфемерно, не persist'ится.
+    pub highlight_msg: RwSignal<Option<usize>>,
 
     /// Положение левого разделителя (список чатов ↔ центр). Биндится к
     /// `SplitView::ratio_signal`; drag пишет в сигнал, а
@@ -161,6 +165,7 @@ impl SynChatCtx {
             tool_body_open: use_signal(HashMap::new()),
             compaction_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
+            highlight_msg: use_signal(None),
             left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),
             last_prompt_tokens: use_signal(0),

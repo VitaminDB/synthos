@@ -1,8 +1,17 @@
+/* Верхняя панель чата — одна строка: идентификация чата, пилюля поиска,
+ * действия. Вертикальные отступы задают внутренние `.chat-header-active` /
+ * `.chat-header-empty` (см. syn_chat.mss), здесь только фон и разделитель:
+ * двойной padding раздувал панель на два десятка лишних пикселей. */
 .chat-header {
-    padding: 18px 24px 18px 24px;
     background-color: var(--bg-shell);
     border-bottom-width: 1px;
     border-color: var(--border-soft);
+}
+
+.chat-header-title {
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
 }
 
 .chat-header-name {
@@ -22,10 +31,31 @@
     border-color: var(--border);
     background-color: var(--bg-shell);
     color: var(--text-muted);
-    transition: background-color var(--duration-fast) var(--ease-standard);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
 }
 
 .chat-header-action:hover { background-color: var(--surface-hover); }
+
+/* Удаление чата — единственное необратимое действие в ряду, поэтому на
+ * hover оно краснеет: перепутать его с «очистить» не выйдет. */
+.chat-header-action-danger:hover {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+/* Обойма пилюли поиска: забирает место между блоком чата и кнопками, но
+ * сама пилюля держит свои 380px и стоит по центру обоймы — растянутая на
+ * всю шапку строка выглядела грубо и не оставляла места будущим кнопкам. */
+.chat-header-search {
+    padding: 0 12px 0 12px;
+}
+
+/* Распорка справа в ряду без активного чата: держит пилюлю поиска ровно
+ * там же, где она стоит в активном состоянии. */
+.chat-header-actions-placeholder {
+    width: 96px;
+}
 
 /* ── Индикатор использования контекста llama ──────────────────────────────── */
 .chat-header-ctx {

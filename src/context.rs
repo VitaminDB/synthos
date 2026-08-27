@@ -22,7 +22,6 @@ pub const ROUTES: &[&str] = &[
     "music",
     "code",
     "nodes",
-    "voice_history",
     "syn_explorer",
     "huggingface",
     "settings",
@@ -185,35 +184,6 @@ impl Default for VoiceFabCtx {
     }
 }
 
-/// История голосовых записей (Sprint 2).
-///
-/// `recordings` — список метаданных всех сохранённых записей в порядке
-/// убывания `created_at`. Заполняется один раз при старте через
-/// `voice_history::storage::load_index()`; пополняется при каждом
-/// финальном Stop в FAB-окне (через `app.voice_history.recordings.update`).
-/// `selected` — id записи, выбранной в правой панели плеера; `None` пока
-/// пользователь не кликнет ни на одну строку.
-#[derive(Clone, Copy)]
-pub struct VoiceHistoryCtx {
-    pub recordings: RwSignal<Vec<crate::pages::voice_history::storage::VoiceRecording>>,
-    pub selected: RwSignal<Option<String>>,
-}
-
-impl VoiceHistoryCtx {
-    pub fn new() -> Self {
-        Self {
-            recordings: use_signal(Vec::new()),
-            selected: use_signal(None),
-        }
-    }
-}
-
-impl Default for VoiceHistoryCtx {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Состояние переключателя табов в правом сайдбаре страницы syn_chat.
 /// 0 — «Инструменты» (tools/skills, первая по умолчанию),
 /// 1 — «Параметры» (модель + sampling), 2 — «Детали» (метрики).
@@ -342,10 +312,6 @@ pub struct AppCtx {
     pub audio: AudioCtx,
     /// Глобальный голосовой FAB + панель распознавания (доступны на всех страницах).
     pub voice: VoiceFabCtx,
-    /// История голосовых записей (Sprint 2). `recordings` загружается из
-    /// `~/.config/synthos/voice/index.json` при старте приложения и обновляется
-    /// при каждом финальном Stop в FAB-окне.
-    pub voice_history: VoiceHistoryCtx,
     /// Системные метрики (CPU/RAM/GPU/VRAM). Фоновый поток опрашивает
     /// sysinfo/NVML раз в секунду для вкладки «Детали».
     pub metrics: Arc<MetricsState>,

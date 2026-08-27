@@ -6,4 +6,3 @@ pub mod node_editor;
 pub mod settings;
 pub mod syn_chat;
 pub mod syn_explorer;
-pub mod voice_history;

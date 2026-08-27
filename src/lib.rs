@@ -25,6 +25,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod models;
 pub mod pages;
+pub mod search;
 pub mod skills;
 pub mod styles;
 pub mod syn_chat;
@@ -33,7 +34,7 @@ pub mod templates;
 use components::titlebar;
 use config::AppConfig;
 use context::{
-    AppCtx, GeneralCtx, ToolsCtx, VoiceFabCtx, VoiceHistoryCtx, INITIAL_ROUTE,
+    AppCtx, GeneralCtx, ToolsCtx, VoiceFabCtx, INITIAL_ROUTE,
     INITIAL_SETTINGS_ROUTE, ROUTES, SETTINGS_ROUTES,
 };
 use metrics::MetricsState;
@@ -125,6 +126,9 @@ pub fn run_desktop() {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
+            // Глобальный поиск: контекст и эффект сборки индекса. Ставится
+            // после `load_all` — первый же индекс видит загруженные чаты.
+            search::install();
             Box::new(DecoratedBox::new().class("grow").child(move || {
                 syngui::i18n::subscribe();
                 build_app()
@@ -186,6 +190,9 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
+            // Глобальный поиск: контекст и эффект сборки индекса. Ставится
+            // после `load_all` — первый же индекс видит загруженные чаты.
+            search::install();
             Box::new(DecoratedBox::new().class("grow").child(move || {
                 syngui::i18n::subscribe();
                 build_app()
@@ -223,7 +230,7 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
 
 /// Активная тема: в режиме «следовать системе» её выбирает светлота системной
 /// схемы, иначе — ручной выбор пользователя.
-fn active_theme(
+pub(crate) fn active_theme(
     appearance: context::AppearanceCtx,
     theme_key: RwSignal<String>,
 ) -> theme_data::SynthosTheme {
@@ -326,12 +333,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let selected_audio_model = use_signal(saved.selected_audio_model.clone());
     let audio = agent::audio::AudioCtx::new();
     let voice = VoiceFabCtx::new();
-    let voice_history = VoiceHistoryCtx::new();
-    // Загрузить индекс записей с диска (Sprint 2). Не паническая ошибка —
-    // отсутствие файла или его повреждение → пустой список и работа продолжается.
-    voice_history
-        .recordings
-        .set(pages::voice_history::storage::load_index());
     let metrics = Arc::new(MetricsState::new());
     let tools = ToolsCtx::new(saved.tools_active.clone());
 
@@ -397,7 +398,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         selected_audio_model,
         audio,
         voice,
-        voice_history,
         metrics,
         tools,
         terminal_font_family,
@@ -931,7 +931,6 @@ fn build_app() -> impl Widget {
 
     let routes = RouterView::new(top_router)
         .route("syn_chat", || Box::new(pages::syn_chat::view()))
-        .route("voice_history", || Box::new(pages::voice_history::view()))
         .route("code", || Box::new(pages::code_editor::view()))
         .route("nodes", || Box::new(pages::node_editor::view()))
         .route("syn_explorer", || Box::new(pages::syn_explorer::view()))
@@ -947,24 +946,30 @@ fn build_app() -> impl Widget {
     // overlay-слоем самим Portal'ом — обходя layout shell'а, нам достаточно
     // просто включить `voice_fab::view()` в общий Stack-уровень.
     let notification_view = components::notification::view(ctx.notifications.clone());
+    // Оболочка обёрнута хоткей-скоупом поиска: Ctrl+K / Ctrl+F работают на
+    // любой странице, а сама панель живёт отдельным overlay-слоем.
+    let shell = search::hotkey_scope(mgui! {
+        DecoratedBox::new().class("window-backdrop") => [
+            DecoratedBox::new().clip(true).class("shell") => [
+                Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    titlebar::view(),
+                    DecoratedBox::new().class("grow").child(mgui! {
+                        Row::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                            components::nav_rail::view(),
+                            DecoratedBox::new().class("grow").child(routes),
+                        ]
+                    }),
+                    DecoratedBox::new().class("window-statusbar"),
+                ]
+            ]
+        ]
+    });
     mgui! {
         Stack::new().clip(false) => [
-            DecoratedBox::new().class("window-backdrop") => [
-                DecoratedBox::new().clip(true).class("shell") => [
-                    Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        titlebar::view(),
-                        DecoratedBox::new().class("grow").child(mgui! {
-                            Row::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                                components::nav_rail::view(),
-                                DecoratedBox::new().class("grow").child(routes),
-                            ]
-                        }),
-                        DecoratedBox::new().class("window-statusbar"),
-                    ]
-                ]
-            ],
+            shell,
             components::template_picker::view(),
             components::voice_fab::view(),
+            search::panel::view(),
             notification_view,
         ]
     }

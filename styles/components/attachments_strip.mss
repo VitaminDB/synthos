@@ -235,7 +235,7 @@ ToolButton.input-attach:hover {
 
 .chat-media-stage {
     height: 236px;
-    background-color: var(--surface-sunken);
+    background-color: var(--bg-search);
     overflow: hidden;
     cursor: pointer;
 }
@@ -248,7 +248,7 @@ ToolButton.input-attach:hover {
 .chat-media-poster-empty {
     width: 420px;
     height: 236px;
-    background-color: var(--surface-sunken);
+    background-color: var(--bg-search);
 }
 
 .chat-media-image {
@@ -262,7 +262,7 @@ ToolButton.input-attach:hover {
     height: 56px;
     border-radius: 28px;
     background-color: rgba(0, 0, 0, 0.55);
-    color: var(--text-on-primary);
+    color: var(--on-primary);
     font-size: 28px;
 }
 
@@ -272,7 +272,7 @@ ToolButton.input-attach:hover {
 
 .chat-media-audio {
     padding: 10px 12px 10px 12px;
-    background-color: var(--surface-sunken);
+    background-color: var(--bg-search);
 }
 
 .chat-media-waveform {
@@ -288,12 +288,12 @@ ToolButton.input-attach:hover {
 
 .chat-media-play-small:hover {
     background-color: var(--primary);
-    color: var(--text-on-primary);
+    color: var(--on-primary);
 }
 
 .chat-media-actions {
     padding: 6px 8px 6px 10px;
-    background-color: var(--surface);
+    background-color: var(--bg-panel);
     border-width: 0;
 }
 

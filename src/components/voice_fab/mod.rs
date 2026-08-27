@@ -12,7 +12,7 @@
 mod actions;
 mod aura;
 mod central_fab;
-mod fab_button;
+pub mod fab_button;
 mod panel;
 
 use syngui::mgui;

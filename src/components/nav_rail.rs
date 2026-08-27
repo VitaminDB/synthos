@@ -24,7 +24,6 @@ const PRIMARY: &[Item] = &[
 ];
 
 const FOOTER_UTILITY: &[Item] = &[
-    Item { icon: MI_HISTORY,        route: "voice_history", tooltip_key: "nav.voice_history" },
     Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip_key: "nav.syn_explorer" },
     Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip_key: "nav.huggingface" },
     Item { icon: MI_SETTINGS,       route: "settings",      tooltip_key: "nav.settings" },

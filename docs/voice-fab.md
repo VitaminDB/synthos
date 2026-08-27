@@ -18,9 +18,7 @@ AppCtx
  │     ├─ accumulated:       RwSignal<String>     // конкатенация всех чанков
  │     ├─ last_transcript:   RwSignal<String>
  │     └─ focus_target:      RwSignal<FocusTarget>
- └─ voice_history: VoiceHistoryCtx                // история записей
-       ├─ recordings: RwSignal<Vec<VoiceRecording>>
-       └─ selected:   RwSignal<Option<String>>
+ └─ (истории записей больше нет — см. «История записей» ниже)
 ```
 
 ## Файлы
@@ -33,16 +31,10 @@ app/synthos/src/
     panel.rs         — overlay-окно (Portal::Center, modal, backdrop)
     aura.rs          — custom Canvas с пульсирующими кольцами и барами
     actions.rs       — реактивный actions_row + Copy/Paste/Restart/Close
-  pages/voice_history/
-    mod.rs           — Row [list, player_pane]
-    storage.rs       — VoiceRecording + load_index/save_session/delete/load_wav_pcm
-    list_item.rs     — карточка одной записи (превью, длительность, дата)
-    player_pane.rs   — AudioPlayer + ProgressBar + Play/Stop
 
 app/synthos/styles/components/
   voice_fab.mss      — .fab-voice + keyframes voice-fab-idle-pulse
   voice_panel.mss    — .voice-overlay-card + keyframes voice-panel-fade-in
-  voice_history.mss  — список + плеер
 ```
 
 ## Цикл записи
@@ -59,7 +51,6 @@ Idle ─click_FAB→ panel_open=true; voice_start()
 
 ─click_Mic→ voice_resume() → новый AudioRecorder
 ─click_Stop→ voice_stop() → ... + awaiting_actions=true
-                            + voice_history::save_session(WAV+index)
 
 ─click_Copy   → syngui::clipboard::copy(&accumulated)
 ─click_Paste  → paste_to_target() → chat.input ИЛИ pty (если route=code+terminal)
@@ -129,14 +120,15 @@ create_effect(move || {
 
 UI настройки — Settings → Общие → «Окно голосового распознавания».
 
-## История записей
+## История записей (удалена, 2026-08-27)
 
-- WAV-файлы: `~/.config/synthos/voice/{id}.wav` (id = unix_nanos hex).
-- Индекс: `~/.config/synthos/voice/index.json` — `Vec<VoiceRecording>`,
-  отсортирован по убыванию `created_at`.
-- При `voice_stop` (final_chunk=true) → `save_session(transcript, wav_bytes)`
-  записывает WAV + index, обновляет `voice_history.recordings` сигнал.
-- `load_wav_pcm(id)` декодирует WAV в `Arc<[f32]>` mono для AudioPlayer.
+Страница «История голоса», её маршрут, `VoiceHistoryCtx` и модуль
+`pages/voice_history` удалены целиком. Запись больше нигде не сохраняется:
+`on_transcription_done` отдаёт только текст, WAV живёт ровно до конца
+транскрипции (поле `PendingFinalize.wav` и параметр `wav_bytes` убраны).
+
+Старые данные с прошлых версий остаются лежать в
+`~/.config/synthos/voice/` — приложение их не читает, удалять руками.
 
 ## MVP-ограничения и future-work
 
@@ -155,5 +147,4 @@ UI настройки — Settings → Общие → «Окно голосов�
 - `cargo test -p synthos` — все 115 тестов проходят, включая новый
   `old_general_config_without_voice_font_fields_deserializes`.
 - Smoke-test: запустить synthos → FAB виден на всех страницах → click → запись →
-  Pause → текст в окне → Resume → Stop → Copy/Paste/Restart → переход в
-  «История голоса» → плеер играет запись.
+  Pause → текст в окне → Resume → Stop → Copy/Paste/Restart.

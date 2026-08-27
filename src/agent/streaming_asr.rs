@@ -91,7 +91,7 @@ fn apply_event(actx: AudioCtx, ev: StreamingAsrEvent) {
                 .ok()
                 .and_then(|mut g| g.take())
             {
-                on_transcription_done(actx, Ok(text), pending.sink, pending.wav);
+                on_transcription_done(actx, Ok(text), pending.sink);
             }
         }
         StreamingAsrEvent::Error(msg) => {
@@ -105,7 +105,7 @@ fn apply_event(actx: AudioCtx, ev: StreamingAsrEvent) {
                 .and_then(|mut g| g.take())
             {
                 actx.transcribing.set(false);
-                on_transcription_done(actx, Err(msg), pending.sink, pending.wav);
+                on_transcription_done(actx, Err(msg), pending.sink);
             }
         }
     }

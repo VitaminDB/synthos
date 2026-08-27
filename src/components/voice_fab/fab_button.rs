@@ -58,7 +58,9 @@ fn reactive_fab() -> impl Fn() -> StyledWidget<ToolButton> + Send + Sync + 'stat
     }
 }
 
-fn open_panel_and_record() {
+/// Открыть окно распознавания и начать запись. Зовётся кликом по FAB и
+/// командой «Голосовой ввод» из глобального поиска.
+pub fn open_panel_and_record() {
     let app = use_context::<AppCtx>();
     if app.voice.panel_open.get_untracked() {
         return;

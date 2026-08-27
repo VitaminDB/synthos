@@ -57,12 +57,16 @@ fn scroll_list() -> impl Widget {
         // пересобирается без отдельного эффекта.
         let tool_mode = use_context::<AppCtx>().general.tool_display_mode.get();
 
+        // Индекс сообщения, на которое привёл глобальный поиск: пузырёк
+        // обводится рамкой, пока пользователь не сменит чат.
+        let highlight = ctx.highlight_msg.get();
+
         let body: Box<dyn Widget> = if !has_active {
             Box::new(no_chat_hero())
         } else if msgs.is_empty() && !pending {
             Box::new(empty_hero())
         } else {
-            Box::new(populated(msgs, pending, &tool_mode))
+            Box::new(populated(msgs, pending, &tool_mode, highlight))
         };
 
         DecoratedBox::new()
@@ -98,7 +102,12 @@ fn empty_hero() -> impl Widget {
     })
 }
 
-fn populated(msgs: Vec<ChatMsg>, pending: bool, tool_mode: &str) -> impl Widget {
+fn populated(
+    msgs: Vec<ChatMsg>,
+    pending: bool,
+    tool_mode: &str,
+    highlight: Option<usize>,
+) -> impl Widget {
     let mut items: Vec<Box<dyn Widget>> = Vec::new();
     items.push(Box::new(date_divider::view(&format_date_today())));
 
@@ -142,13 +151,24 @@ fn populated(msgs: Vec<ChatMsg>, pending: bool, tool_mode: &str) -> impl Widget 
                     && vi == last_vis
                     && msg.role == ChatMsgRole::Assistant
                     && msg.body.is_empty();
-                items.push(message_bubble::view(
+                let bubble = message_bubble::view(
                     msg,
                     idx,
                     is_typing,
                     is_last_assistant,
                     tool_mode,
-                ));
+                );
+                items.push(if highlight == Some(idx) {
+                    Box::new(
+                        DecoratedBox::new().class("msg-search-highlight").child(
+                            Column::new()
+                                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                                .children(vec![bubble]),
+                        ),
+                    )
+                } else {
+                    bubble
+                });
             }
             LaneEntry::Group(mut g) => {
                 // Индексы группы — в «видимом» пространстве; для ключей

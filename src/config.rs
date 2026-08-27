@@ -609,6 +609,11 @@ pub struct AppConfig {
     /// слишком дорого без необходимости).
     #[serde(default)]
     pub last_syn_model: Option<String>,
+    /// Ключи элементов, недавно выбранных в глобальном поиске (свежие в
+    /// начале, не больше `search::RECENT_LIMIT`). Показываются группой
+    /// «Недавнее» при пустом запросе.
+    #[serde(default)]
+    pub search_recent: Vec<String>,
     /// Каталог моделей для ВСЕХ пайплайнов: .syn-бандлы, LoRA/.safetensors,
     /// HF-каталоги. Агентский инструмент `pipelines` (action=list)
     /// перечисляет его содержимое, чтобы модель могла проставить пути в
@@ -1132,6 +1137,7 @@ impl Default for AppConfig {
             hf_token: String::new(),
             syn_chat_defaults: SamplingParams::default(),
             last_syn_model: None,
+            search_recent: Vec::new(),
             syn_chat_left_split_ratio: default_syn_chat_left_split_ratio(),
             syn_chat_right_split_ratio: default_syn_chat_right_split_ratio(),
             syn_chat_system_prompt: String::new(),

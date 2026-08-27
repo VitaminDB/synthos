@@ -1,6 +1,6 @@
+pub mod event_hook;
 pub mod nav_rail;
 pub mod chat_item;
-pub mod search_bar;
 pub mod date_divider;
 pub mod right_panel;
 pub mod titlebar;

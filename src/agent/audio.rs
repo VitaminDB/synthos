@@ -65,7 +65,6 @@ pub enum TranscriptSink {
 #[derive(Clone)]
 pub struct PendingFinalize {
     pub sink: TranscriptSink,
-    pub wav: Vec<u8>,
 }
 
 /// Глобальный аудио-контекст: единая `RecordingSession` + ASR-модель +
@@ -352,7 +351,7 @@ fn stop_and_send_with_sink(actx: AudioCtx, app: AppCtx, sink: TranscriptSink) {
         // RecorderState уже дропнут → ASR-loop делает финальный inference
         // и эмитит Final. Это занимает ~1-3с в зависимости от размера остатка.
         if let Ok(mut g) = actx.streaming_pending.lock() {
-            *g = Some(PendingFinalize { sink, wav });
+            *g = Some(PendingFinalize { sink });
         }
         return;
     }
@@ -367,7 +366,6 @@ fn stop_and_send_with_sink(actx: AudioCtx, app: AppCtx, sink: TranscriptSink) {
 fn fallback_transcribe(actx: AudioCtx, sink: TranscriptSink, wav: Vec<u8>) {
     let actx_send = actx.clone();
     let asr_holder = actx.asr.clone();
-    let wav_for_callback = wav.clone();
     spawn(async move {
         let wav_for_asr = wav;
         let result = tokio::task::spawn_blocking(move || {
@@ -386,9 +384,7 @@ fn fallback_transcribe(actx: AudioCtx, sink: TranscriptSink, wav: Vec<u8>) {
             Ok(inner) => inner,
             Err(join_err) => Err(format!("spawn_blocking join: {join_err}")),
         };
-        run_on_main_thread(move || {
-            on_transcription_done(actx_send, final_result, sink, wav_for_callback)
-        });
+        run_on_main_thread(move || on_transcription_done(actx_send, final_result, sink));
     });
 }
 
@@ -396,7 +392,6 @@ pub fn on_transcription_done(
     actx: AudioCtx,
     result: Result<String, String>,
     sink: TranscriptSink,
-    wav_bytes: Vec<u8>,
 ) {
     actx.transcribing.set(false);
     let app = use_context::<AppCtx>();
@@ -442,12 +437,6 @@ pub fn on_transcription_done(
                     voice.refined_gen.update(|n| *n = n.wrapping_add(1));
                     if final_chunk {
                         voice.awaiting_actions.set(true);
-                        // Sprint 2: сохранить запись на диск + добавить в индекс.
-                        // Делает отдельный модуль, чтобы audio.rs не знал про
-                        // структуру voice_history.
-                        crate::pages::voice_history::storage::save_session(
-                            &app, &merged, &wav_bytes,
-                        );
                     }
                 }
             }

@@ -438,6 +438,21 @@ fn enum_hints_lines(kind: NodeKind) -> Vec<String> {
         .collect()
 }
 
+/// Заметка про железные поля. Enum-таблица показывает агенту, что `1=nvfp4`,
+/// и он трактует это как приглашение «оптимизировать»: увидев мало свободной
+/// VRAM (её занимает сама чат-LLM), включал квант на DiT и энкодере и ронял
+/// качество. VRAM под прогон освобождает `run free_vram=true`, а не квант.
+fn hardware_note(kind: NodeKind) -> Option<&'static str> {
+    let has_hw = enum_hints(kind)
+        .iter()
+        .any(|(f, _)| f.starts_with("quant") || *f == "storage_idx" || *f == "device_idx");
+    has_hw.then_some(
+        "note: device_idx / quant_* / compute_idx already carry the right defaults for \
+         this machine — keep them unless the user asks. Quantization trades quality for \
+         VRAM; to free VRAM use action=run with free_vram=true instead.",
+    )
+}
+
 /// Подсказки для path-полей, у которых пустое значение = «взять бандл из
 /// каталога по имени». Enum-таблица их не покрывает (это строки, не индексы),
 /// а без списка кандидатов агент не знал, чем переключить связку на turbo или
@@ -570,7 +585,11 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         if let Some(state) = state_example(*kind) {
             out.push_str(&format!("state (example with defaults): {state}\n"));
         }
-        for line in enum_hints_lines(*kind).into_iter().chain(path_hints_lines(*kind)) {
+        for line in enum_hints_lines(*kind)
+            .into_iter()
+            .chain(path_hints_lines(*kind))
+            .chain(hardware_note(*kind).map(str::to_string))
+        {
             out.push_str(&format!("  {line}\n"));
         }
     }
@@ -755,6 +774,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
             template.nodes.len(),
             template.connections.len()
         ));
+        notes.extend(unknown_graph_state_fields(&graph));
     }
 
     // Ошибки по отдельным элементам не отменяют весь apply: половина графа,
@@ -866,6 +886,32 @@ fn variant_tag(s: &NodeStateData) -> Option<String> {
         .get("kind")?
         .as_str()
         .map(str::to_string)
+}
+
+/// Неизвестные ключи `state.data` в agent-JSON графа. В отличие от
+/// `set_state` здесь это предупреждение, а не отказ: граф из десятка нод не
+/// стоит ронять целиком из-за одного лишнего ключа. Но и молчать нельзя —
+/// serde их выбрасывает, и нода уезжает в прогон со старым значением.
+fn unknown_graph_state_fields(graph: &serde_json::Value) -> Vec<String> {
+    let Some(nodes) = graph.get("nodes").and_then(|n| n.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, node) in nodes.iter().enumerate() {
+        let Some(slug) = node.get("kind").and_then(|k| k.as_str()) else { continue };
+        let Some(kind) = NodeKind::ALL.iter().find(|k| kind_slug(**k) == slug) else { continue };
+        let Some(state) = node.get("state") else { continue };
+        let reference = registry::default_runtime(*kind)
+            .lock()
+            .ok()
+            .and_then(|g| convert::runtime_to_state(&g));
+        if let Err(e) = check_state_fields(reference.as_ref(), state) {
+            let id = node.get("id").and_then(|x| x.as_u64());
+            let at = id.map(|n| format!("node {n}")).unwrap_or_else(|| format!("nodes[{i}]"));
+            out.push(format!("⚠ {at} ({slug}): {e}"));
+        }
+    }
+    out
 }
 
 /// Собрать Template из agent-JSON `{nodes, connections}`. Послабления к
@@ -1049,6 +1095,39 @@ fn merge_state_patch(
     serde_json::Value::Object(merged)
 }
 
+/// Проверить ключи `data` патча против полей варианта и вернуть список тех,
+/// что реально применятся. Неизвестный ключ — ошибка, а не пустое место:
+/// `serde(default)` молча проглатывал выдуманное поле (агент прислал
+/// TextView `text` вместо `output_text`), tool рапортовал «state updated»,
+/// и прогон уходил со старым текстом — про это никто не узнавал до
+/// прослушивания результата.
+fn check_state_fields(
+    reference: Option<&NodeStateData>,
+    patch: &serde_json::Value,
+) -> Result<Vec<String>, String> {
+    let Some(patch_data) = patch.get("data").and_then(|d| d.as_object()) else {
+        return Ok(Vec::new());
+    };
+    let names: Vec<String> = patch_data.keys().cloned().collect();
+    let Some(known) = reference
+        .and_then(|s| serde_json::to_value(s).ok())
+        .and_then(|v| v.get("data").and_then(|d| d.as_object()).cloned())
+    else {
+        return Ok(names);
+    };
+    let unknown: Vec<String> =
+        names.iter().filter(|k| !known.contains_key(*k)).map(|k| format!("\"{k}\"")).collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown state field(s) {} — they would be silently dropped. \
+             Fields of this node: {}",
+            unknown.join(", "),
+            known.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    Ok(names)
+}
+
 fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
     let node_ref = item
         .get("node")
@@ -1061,23 +1140,15 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
         .iter()
         .find(|n| n.id.0 == node_id)
         .ok_or_else(|| format!("node {node_id} not found in the graph"))?;
-    // Патч, а не замена: агент правит одно-два поля («поставь turbo-DiT»),
-    // а `#[serde(default)]` на *StateData добил бы остальные дефолтами —
-    // device_idx уехал бы в CPU, кванты и sampler-параметры откатились бы
-    // молча. Недостающие ключи берём из текущего state ноды.
-    let current = node.runtime.lock().ok().and_then(|g| convert::runtime_to_state(&g));
-    let state_v = merge_state_patch(current.as_ref(), state_v);
-    let state: NodeStateData = serde_json::from_value(state_v)
-        .map_err(|e| format!("node {node_id}: failed to parse state: {e}"))?;
     // Совпадение варианта state с kind ноды проверяем заранее:
     // apply_state_to_runtime при несовпадении молча no-op'ает, а агенту
     // нужна честная ошибка.
-    let expected = registry::default_runtime(node.kind)
+    let reference = registry::default_runtime(node.kind)
         .lock()
         .ok()
-        .and_then(|g| convert::runtime_to_state(&g))
-        .and_then(|s| variant_tag(&s));
-    let got = variant_tag(&state);
+        .and_then(|g| convert::runtime_to_state(&g));
+    let expected = reference.as_ref().and_then(variant_tag);
+    let got = state_v.get("kind").and_then(|x| x.as_str()).map(str::to_string);
     if expected != got {
         return Err(format!(
             "node {node_id} ({}) expects state kind={}, but got {}",
@@ -1086,10 +1157,25 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
             got.unwrap_or_else(|| "—".into())
         ));
     }
+    let changed = check_state_fields(reference.as_ref(), &state_v)
+        .map_err(|e| format!("node {node_id}: {e}"))?;
+    // Патч, а не замена: агент правит одно-два поля («поставь turbo-DiT»),
+    // а `#[serde(default)]` на *StateData добил бы остальные дефолтами —
+    // device_idx уехал бы в CPU, кванты и sampler-параметры откатились бы
+    // молча. Недостающие ключи берём из текущего state ноды.
+    let current = node.runtime.lock().ok().and_then(|g| convert::runtime_to_state(&g));
+    let state_v = merge_state_patch(current.as_ref(), state_v);
+    let state: NodeStateData = serde_json::from_value(state_v)
+        .map_err(|e| format!("node {node_id}: failed to parse state: {e}"))?;
     if let Ok(rt) = node.runtime.lock() {
         convert::apply_state_to_runtime(&rt, &state);
     }
-    Ok(format!("state of node {node_id} updated"))
+    // Перечисляем применённые поля: «updated» без списка не отличить от
+    // «принял вызов и ничего не поменял».
+    Ok(match changed.is_empty() {
+        true => format!("state of node {node_id}: nothing to change (data is empty)"),
+        false => format!("state of node {node_id} updated: {}", changed.join(", ")),
+    })
 }
 
 fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnData, String> {
@@ -1392,7 +1478,8 @@ mod tests {
         assert_eq!(t.connections.len(), 1);
     }
 
-    /// Неизвестные ключи внутри state.data не валят парсинг (serde default).
+    /// Неизвестные ключи внутри state.data не валят парсинг (serde default),
+    /// но apply о них предупреждает — иначе поле теряется беззвучно.
     #[test]
     fn template_from_value_tolerates_unknown_state_fields() {
         let graph = serde_json::json!({
@@ -1406,6 +1493,9 @@ mod tests {
         });
         let t = template_from_value(&graph).expect("parse");
         assert!(t.nodes[0].state.is_some());
+        let warns = unknown_graph_state_fields(&graph).join("\n");
+        assert!(warns.contains("made_up_field"), "{warns}");
+        assert!(warns.contains("ltx_text_encoder"), "{warns}");
     }
 
     /// Дефолтные чекпойнты без путей — pre-check прогона это ловит.
@@ -1473,6 +1563,31 @@ mod tests {
         assert_eq!(d.device_idx, 1);
         assert_eq!(d.quant_dit_idx, 2);
         assert!(d.resident);
+    }
+
+    /// Выдуманное поле — ошибка со списком настоящих, а не молчаливая потеря
+    /// (агент слал TextView `text` вместо `output_text`, и текст песни не
+    /// доезжал до графа).
+    #[test]
+    fn check_state_fields_rejects_unknown_key() {
+        use crate::templates::model::TextViewStateData;
+        let reference = NodeStateData::TextView(TextViewStateData::default());
+        let patch = serde_json::json!({ "kind": "TextView", "data": { "text": "песня" } });
+        let err = check_state_fields(Some(&reference), &patch).expect_err("must fail");
+        assert!(err.contains("\"text\""), "{err}");
+        assert!(err.contains("output_text"), "{err}");
+
+        let ok = serde_json::json!({ "kind": "TextView", "data": { "output_text": "песня" } });
+        assert_eq!(check_state_fields(Some(&reference), &ok).unwrap(), vec!["output_text"]);
+    }
+
+    /// У нод с device/quant/compute есть заметка «не трогай без просьбы» —
+    /// иначе агент включает квант, увидев мало свободной VRAM.
+    #[test]
+    fn hardware_note_covers_checkpoint_nodes() {
+        assert!(hardware_note(NodeKind::AceStepCheckpoint).is_some());
+        assert!(hardware_note(NodeKind::LtxCheckpoint).is_some());
+        assert!(hardware_note(NodeKind::TextView).is_none());
     }
 
     /// Патч с другим `kind` не мержится — вызывающий должен увидеть чужой

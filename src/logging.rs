@@ -125,6 +125,58 @@ pub fn init() {
             log_dir = %log_dir.display(),
             "файловое логирование инициализировано (rolling daily)"
         );
+        prune_old_logs(&log_dir, RETENTION_DAYS);
+    }
+}
+
+/// Сколько дней держим старые `synthos.YYYY-MM-DD.log`.
+const RETENTION_DAYS: u64 = 30;
+
+/// Удаляет ротированные логи старше `days` дней. `tracing-appender` их
+/// только создаёт и никогда не убирает — за три месяца каталог набирал
+/// десятки гигабайт (одна сессия с DEBUG'ом h2 давала ~1 ГБ в сутки).
+///
+/// Трогает строго `synthos.*.log` в каталоге логов, не рекурсивно и не
+/// по симлинкам; текущий файл (сегодняшний) под порог не попадает.
+/// Ошибки удаления игнорируются: чистка не должна мешать старту.
+fn prune_old_logs(log_dir: &std::path::Path, days: u64) {
+    let Ok(entries) = std::fs::read_dir(log_dir) else { return };
+    let cutoff = match std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(days * 24 * 60 * 60))
+    {
+        Some(t) => t,
+        None => return,
+    };
+    let (mut removed, mut freed) = (0usize, 0u64);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.starts_with("synthos.") || !name.ends_with(".log") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(modified) = meta.modified() else { continue };
+        if modified >= cutoff {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+            freed += meta.len();
+        }
+    }
+    if removed > 0 {
+        tracing::info!(
+            removed,
+            freed_mb = freed / (1024 * 1024),
+            days,
+            "старые логи удалены"
+        );
     }
 }
 
@@ -168,6 +220,32 @@ mod tests {
     /// параллельными потоками — без сериализации они флачат, перетирая
     /// XDG_STATE_HOME/HOME друг у друга посреди проверки.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Ретеншн сносит только старые `synthos.*.log` и не трогает свежие
+    /// и чужие файлы.
+    #[test]
+    fn prune_removes_only_old_synthos_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("synthos.2020-01-01.log");
+        let fresh = dir.path().join("synthos.2026-08-27.log");
+        let alien = dir.path().join("other.2020-01-01.log");
+        for p in [&old, &fresh, &alien] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        // Состарим два файла на 60 дней: удалиться должен только synthos.*.
+        let ancient = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(60 * 24 * 60 * 60);
+        for p in [&old, &alien] {
+            let f = std::fs::File::options().write(true).open(p).unwrap();
+            f.set_modified(ancient).unwrap();
+        }
+
+        prune_old_logs(dir.path(), 30);
+
+        assert!(!old.exists(), "старый лог должен быть удалён");
+        assert!(fresh.exists(), "свежий лог трогать нельзя");
+        assert!(alien.exists(), "чужие файлы трогать нельзя");
+    }
 
     #[test]
     fn log_dir_with_xdg_state_home() {

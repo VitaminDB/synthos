@@ -29,8 +29,6 @@ pub fn view() -> impl Widget {
                         Text::new(tr!("settings.general.subtitle")).class("settings-page-subtitle"),
 
                         section(tr!("settings.general.section.interface"), vec![
-                            text_row(MI_CONTACTS, tr!("settings.general.display_name"),
-                                tr!("settings.general.display_name.desc"), g.display_name),
                             dropdown_row(MI_TRANSLATE, tr!("settings.general.language"),
                                 tr!("settings.general.language.desc"), g.language,
                                 crate::i18n::language_items()),

@@ -21,7 +21,10 @@ HF — трёхстрочная шапка, у редактора кода — �
 │+ │                       │                                          │                   │
 │  │                                                                                      │
 │▣ │  рейл: плитки code-сессий (▤), графов (⬡), чатов (AB), разделители (─)               │
-│☁ │  и «+» → меню: Редактор кода · Нодовый редактор · Чат · Разделитель                  │
+│☁ │  и «+» → меню: Редактор кода · Нодовый редактор · Чат · Разделитель;                 │
+│──│  футер снизу вверх: настройки — язык — Syn-пакеты/HF (аватара пользователя нет)      │
+│文│                                                                                      │
+│──│                                                                                      │
 │⚙ │                                                                                      │
 └──┴──────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -39,10 +42,19 @@ HF — трёхстрочная шапка, у редактора кода — �
 |---|---|---|---|---|
 | code-сессия | `CodeEditorCtx.sessions` | папка / документ + бейдж терминалов | `switch_to` + маршрут `code` | `CodeEditorCtx::close` |
 | граф нод | `EditorWorkspace.tabs` (не `hidden`) | hub / tune (Untitled) / psychology (агентский); «•» в подписи — не сохранён | `activate` + маршрут `nodes` | `request_close`: dirty → диалог, иначе сразу |
-| чат | `SynChatCtx.chats` (не `archived`) | аватар с инициалами и tone-цветом, акцентная рамка у активного | `registry::select` + маршрут `syn_chat` | подтверждение → архив |
+| чат | `SynChatCtx.chats` (не `archived`) | аватар с инициалами и tone-цветом на подложке `.nav-rail-item.selected` у активного | `registry::select` + маршрут `syn_chat` | подтверждение → архив |
 | разделитель | `AppCtx.rail_separators` | тонкая линия (зона 40×12 для правого клика) | — | удалить |
 
-Порядок — по `created_at` (unix-мс), вперемешку по типам, tie-break по типу и id.
+Порядок по умолчанию — по `created_at` (unix-мс), вперемешку по типам, tie-break
+по типу и id. Плитки и разделители перетаскиваются (`Draggable` с ключом
+`RailEntry::key` — `code:<created_at>` / `graph:<id>` / `chat:<id>` / `sep:<ts>`;
+`DropArea` на каждой плитке → `rail::move_before`, на «+» → `rail::move_to_end`).
+После первого перетаскивания порядок фиксируется списком ключей
+`AppConfig.rail_order`: известные ключи идут по списку, новые плитки — следом по
+времени создания, ключи исчезнувших плиток отбрасываются при следующем
+перетаскивании. Так разделителями можно группировать плитки как угодно.
+`Draggable` глотает только левую кнопку, поэтому клик по плитке —
+`Draggable::on_click`, а правая кнопка по-прежнему открывает «Закрыть».
 Штампы: `CodeSessionConfig.created_at` (config.json), `TabState.created_at`
 (workspace.json), `StoredChat.created_at` (секунды × 1000), сами разделители —
 это и есть список штампов `AppConfig.rail_separators`. Конфигам до этой версии
@@ -135,7 +147,7 @@ ratio-сигналами; линия разделителя проходит и 
 Удалены: `src/pages/syn_chat/chats_column.rs`, `src/pages/node_editor/tabs_bar.rs`,
 `styles/components/{chats_column,node_editor_tabs,chat_header}.mss`.
 
-Конфиг: `AppConfig.{panels, rail_separators, hf_left/right_split_ratio,
+Конфиг: `AppConfig.{panels, rail_separators, rail_order, hf_left/right_split_ratio,
 settings_left/right_split_ratio}`, `CodeSessionConfig.created_at`;
 `workspace.json`: `TabState.created_at`; файлы чатов: `archived`.
 
@@ -151,7 +163,6 @@ i18n: блок «Оболочка» в конце каждого каталог�
 
 * Хоткеи переключения плиток (Ctrl+Tab, Ctrl+1..9) — по решению пользователя не
   сейчас.
-* Drag-reorder плиток в рейле: порядок только по времени создания.
 * Левая панель чата пока с одной вкладкой «Инструменты» — каркас с `TabBar`
   готов под соседние вкладки.
 * Панели у нод (палитра нод, свойства) — не заложены: решение «без панелей».

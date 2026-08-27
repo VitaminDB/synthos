@@ -69,18 +69,17 @@
 .nav-rail-sessions {
 }
 
-/* Плитка чата: аватар с инициалами в рамке того же размера, что кнопки
- * рейла. Выбранная — акцентная рамка + мягкий фон. */
+/* Плитка чата: аватар с инициалами на подложке того же размера и формы,
+ * что кнопки рейла. Выбранная — та же мягкая подложка, что у
+ * `.nav-rail-item.selected`; рамки нет — квадрат с обводкой вокруг круга
+ * выглядел чужеродно. */
 .nav-rail-chat-tile {
     width: 40px;
     height: 40px;
     border-radius: 12px;
-    border-width: 2px;
-    border-color: transparent;
     background-color: transparent;
     cursor: pointer;
-    transition: background-color var(--duration-fast) var(--ease-standard),
-                border-color var(--duration-fast) var(--ease-standard);
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .nav-rail-chat-tile:hover {
@@ -88,7 +87,6 @@
 }
 
 .nav-rail-chat-tile.selected {
-    border-color: var(--primary);
     background-color: var(--primary-soft);
 }
 

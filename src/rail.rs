@@ -5,7 +5,10 @@
 //! Теперь всё это — плитки одного списка: code-сессия (папка), граф
 //! (хаб), чат (аватар) и разделитель, добавленный пользователем через «+».
 //! Порядок — по времени появления (`created_at`), вперемешку по типам:
-//! новое встаёт в конец, как вкладка в браузере.
+//! новое встаёт в конец, как вкладка в браузере. Перетаскиванием плитки
+//! можно переставить (`move_before` / `move_to_end`) — тогда порядок
+//! фиксируется списком ключей `AppCtx.rail_order`, а разделители позволяют
+//! группировать плитки как удобно.
 //!
 //! Источники данных остаются на своих местах (`CodeEditorCtx`,
 //! `EditorWorkspace`, `SynChatCtx`, `AppCtx.rail_separators`) — модуль лишь
@@ -32,6 +35,18 @@ pub enum RailEntry {
 }
 
 impl RailEntry {
+    /// Стабильный ключ плитки — для `rail_order` и payload'а перетаскивания.
+    /// У code-сессий runtime-id переназначаются при загрузке, поэтому ключ —
+    /// штамп создания (уникален: миграция раздаёт их по индексу).
+    pub fn key(&self) -> String {
+        match self {
+            RailEntry::Code(s) => format!("code:{}", s.created_at),
+            RailEntry::Graph(t) => format!("graph:{}", t.id.0),
+            RailEntry::Chat(m) => format!("chat:{}", m.id),
+            RailEntry::Separator(ts) => format!("sep:{ts}"),
+        }
+    }
+
     /// Unix-миллисекунды появления в рейле.
     fn created_at(&self) -> u64 {
         match self {
@@ -93,7 +108,44 @@ pub fn entries() -> Vec<RailEntry> {
             .cmp(&b.created_at())
             .then_with(|| a.tie_key().cmp(&b.tie_key()))
     });
+    // Ручной порядок поверх хронологического: известные ключи — по списку,
+    // неизвестные (новые плитки) — следом, по времени создания.
+    let order = app.rail_order.get();
+    if !order.is_empty() {
+        let rank = |e: &RailEntry| {
+            let k = e.key();
+            order.iter().position(|o| *o == k).unwrap_or(usize::MAX)
+        };
+        out.sort_by_key(rank);
+    }
     out
+}
+
+/// Перетаскивание: поставить плитку `src` перед `target`. Список ключей
+/// пересобирается из текущего порядка, так что ключи исчезнувших плиток
+/// отбрасываются сами.
+pub fn move_before(src: &str, target: &str) {
+    if src == target {
+        return;
+    }
+    let mut keys: Vec<String> = entries().iter().map(RailEntry::key).collect();
+    let Some(from) = keys.iter().position(|k| k == src) else { return };
+    let moved = keys.remove(from);
+    let Some(to) = keys.iter().position(|k| k == target) else {
+        keys.insert(from.min(keys.len()), moved);
+        return;
+    };
+    keys.insert(to, moved);
+    use_context::<AppCtx>().rail_order.set(keys);
+}
+
+/// Перетаскивание на «+» (или в пустое место под плитками) — в конец.
+pub fn move_to_end(src: &str) {
+    let mut keys: Vec<String> = entries().iter().map(RailEntry::key).collect();
+    let Some(from) = keys.iter().position(|k| k == src) else { return };
+    let moved = keys.remove(from);
+    keys.push(moved);
+    use_context::<AppCtx>().rail_order.set(keys);
 }
 
 /// Перейти на маршрут верхнего уровня (no-op, если уже там).

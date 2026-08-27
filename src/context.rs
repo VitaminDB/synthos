@@ -463,6 +463,9 @@ pub struct AppCtx {
     /// Разделители нав-рейла — штампы `created_at` (unix-мс). Persist:
     /// `AppConfig.rail_separators`. См. `crate::rail`.
     pub rail_separators: RwSignal<Vec<u64>>,
+    /// Ручной порядок плиток рейла (ключи `rail::RailEntry::key`). Persist:
+    /// `AppConfig.rail_order`.
+    pub rail_order: RwSignal<Vec<String>>,
     /// Разделители страниц HuggingFace и настроек (persist в `AppConfig`).
     pub hf_left_split_ratio: RwSignal<f32>,
     pub hf_right_split_ratio: RwSignal<f32>,

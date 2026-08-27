@@ -651,6 +651,13 @@ pub struct AppConfig {
     /// разделитель, добавленный через «+», встаёт после последней плитки.
     #[serde(default)]
     pub rail_separators: Vec<u64>,
+    /// Ручной порядок плиток рейла после перетаскивания: ключи
+    /// `code:<created_at>` / `graph:<id>` / `chat:<id>` / `sep:<ts>` в порядке
+    /// показа. Плитки, которых здесь нет (новые), встают в конец по времени
+    /// создания; ключи исчезнувших плиток отбрасываются при следующем
+    /// перетаскивании. Пусто — порядок только по `created_at`.
+    #[serde(default)]
+    pub rail_order: Vec<String>,
     /// Системный prompt для Syn-чата. Пусто — в `build_history` не
     /// добавляется. Редактируется в правой панели → Параметры → «Система».
     #[serde(default)]
@@ -1170,6 +1177,7 @@ impl Default for AppConfig {
             settings_right_split_ratio: default_settings_right_split_ratio(),
             panels: PanelsConfig::default(),
             rail_separators: Vec::new(),
+            rail_order: Vec::new(),
             syn_chat_system_prompt: String::new(),
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             syn_chat_quant: SynChatQuantConfig::default(),

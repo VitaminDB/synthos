@@ -12,22 +12,27 @@
 //! │    │
 //! │ ▣  │  Syn-пакеты
 //! │ ☁  │  HuggingFace (+ бейдж активных загрузок)
-//! │ ⚙  │  Настройки
+//! │────│
 //! │ 文 │  язык интерфейса
-//! │ AB │  аватар пользователя
+//! │────│
+//! │ ⚙  │  Настройки
 //! └────┘
 //! ```
 //!
 //! Верхних иконок-разделов «Чат» и «Ноды» больше нет: к чату и графу
 //! ведут их плитки, а новые создаются через «+». Клик по плитке —
 //! `rail::open`, «Закрыть» в контекстном меню — `rail::request_close`.
+//! Плитки (и разделители) перетаскиваются: `Draggable` с ключом плитки в
+//! payload, `DropArea` на каждой плитке (`rail::move_before`) и на «+»
+//! (`rail::move_to_end`) — так плитки группируются разделителями.
 
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::containers::{GestureDetector, Positioned, Stack};
+use syngui::widgets::containers::{Positioned, Stack};
 use syngui::widgets::feedback::Tooltip;
 use syngui::widgets::overlay::context_menu::ContextMenu;
 use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
+use syngui::widgets::overlay::{Draggable, DropArea};
 use syngui::widgets::visual::{Badge, Image, ImageFit};
 
 use crate::components::chat_item::{display_title, initials_from_title, tone_for};
@@ -49,8 +54,15 @@ struct Item {
 const FOOTER_UTILITY: &[Item] = &[
     Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip_key: "nav.syn_explorer" },
     Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip_key: "nav.huggingface" },
+];
+
+const FOOTER_SETTINGS: &[Item] = &[
     Item { icon: MI_SETTINGS,       route: "settings",      tooltip_key: "nav.settings" },
 ];
+
+/// `drag_type` перетаскивания плиток — свой, чтобы DropArea рейла не
+/// реагировала на drop'ы из других мест (вкладки открытых файлов).
+const DRAG_TYPE_TILE: &str = "nav-rail-tile";
 
 pub fn view() -> impl Widget {
     DecoratedBox::new().class("nav-rail").child(mgui! {
@@ -75,6 +87,8 @@ fn top_cluster() -> impl Widget {
     }
 }
 
+/// Футер снизу вверх: настройки — разделитель — язык — разделитель —
+/// утилиты (Syn-пакеты, HuggingFace). Аватара пользователя нет.
 fn bottom_cluster() -> impl Widget {
     mgui! {
         Column::new()
@@ -83,8 +97,10 @@ fn bottom_cluster() -> impl Widget {
             .class("nav-rail-footer") => [
                 DecoratedBox::new().class("nav-rail-divider"),
                 rail_column(FOOTER_UTILITY),
+                DecoratedBox::new().class("nav-rail-divider"),
                 language_button(),
-                avatar(),
+                DecoratedBox::new().class("nav-rail-divider"),
+                rail_column(FOOTER_SETTINGS),
             ]
     }
 }
@@ -109,31 +125,6 @@ fn language_button() -> impl Widget {
             ctx.general.language.set(id.to_string());
         });
     Stack::new().clip(false).child(btn).child(menu)
-}
-
-fn avatar() -> impl Widget {
-    Reactive::new(move || {
-        let ctx = use_context::<AppCtx>();
-        let name = ctx.general.display_name.get();
-        vec![Box::new(
-            Avatar::new()
-                .text(initials(&name))
-                .size(40.0)
-                .class("avatar-slate"),
-        ) as Box<dyn Widget>]
-    })
-}
-
-fn initials(name: &str) -> String {
-    let mut out = String::new();
-    for word in name.split_whitespace().take(2) {
-        if let Some(c) = word.chars().next() {
-            for up in c.to_uppercase() {
-                out.push(up);
-            }
-        }
-    }
-    out
 }
 
 fn logo() -> impl Widget {
@@ -213,13 +204,19 @@ fn workspaces_segment() -> impl Widget {
             .gap(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .class("nav-rail-sessions");
-        for (idx, entry) in entries.iter().enumerate() {
+        let mut code_idx = 0usize;
+        for entry in entries.iter() {
             let active = rail::is_active(entry);
             let tile: Box<dyn Widget> = match entry {
-                RailEntry::Code(s) => Box::new(code_tile(*s, idx, active)),
-                RailEntry::Graph(t) => Box::new(graph_tile(*t, active)),
-                RailEntry::Chat(m) => Box::new(chat_tile(m.id.clone(), m.title.clone(), active)),
-                RailEntry::Separator(ts) => Box::new(separator_tile(*ts)),
+                RailEntry::Code(s) => {
+                    code_idx += 1;
+                    Box::new(code_tile(*s, code_idx, active, entry.clone()))
+                }
+                RailEntry::Graph(t) => Box::new(graph_tile(*t, active, entry.clone())),
+                RailEntry::Chat(m) => {
+                    Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
+                }
+                RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
             };
             col = col.child(Stack::new().children(vec![tile]));
         }
@@ -231,8 +228,11 @@ fn workspaces_segment() -> impl Widget {
         .child(ScrollView::new().vertical().class("nav-rail-scroll").child(list))
 }
 
-/// Общая обёртка плитки: кнопка/аватар + подпись под ней + контекстное
-/// меню «Закрыть».
+/// Общая обёртка плитки: визуал + подпись, перетаскивание (клик —
+/// `rail::open`, drop сверху — `rail::move_before`) и контекстное меню
+/// «Закрыть». `Draggable` глотает MouseDown левой кнопки, поэтому у
+/// внутренних кнопок своих on_click нет; правая кнопка проходит к
+/// `ContextMenu`.
 fn tile_with_label(
     body: impl Widget + 'static,
     label: String,
@@ -252,35 +252,46 @@ fn tile_with_label(
                 Text::new(label).max_lines(1).class(label_class),
             ]
     };
+    draggable_tile(tile, entry)
+}
+
+/// Draggable → DropArea → контент; снаружи — контекстное меню.
+fn draggable_tile(tile: impl Widget + 'static, entry: RailEntry) -> impl Widget {
+    let key = entry.key();
+    let drop_key = key.clone();
+    let entry_click = entry.clone();
+    let entry_close = entry.clone();
+    let dnd = Draggable::new(DRAG_TYPE_TILE, key)
+        .on_click(move || rail::open(&entry_click))
+        .child(
+            DropArea::new()
+                .accept_types(vec![DRAG_TYPE_TILE.to_string()])
+                .on_drop(move |data| rail::move_before(&data.payload, &drop_key))
+                .child(tile),
+        );
     ContextMenu::new()
         .items(vec![MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE)])
         .on_select(move |action| {
             if action == "close" {
-                rail::request_close(&entry);
+                rail::request_close(&entry_close);
             }
         })
-        .child(tile)
+        .child(dnd)
 }
 
-fn code_tile(session: CodeSession, idx: usize, is_selected: bool) -> impl Widget {
+fn code_tile(session: CodeSession, idx: usize, is_selected: bool, entry: RailEntry) -> impl Widget {
     let folder = session.root_folder.get_untracked();
     let icon = if folder.is_some() { MI_FOLDER } else { MI_DESCRIPTION };
     let label = folder
         .as_ref()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx + 1));
+        .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx));
     let btn_class = if is_selected {
         "nav-rail-item selected"
     } else {
         "nav-rail-item"
     };
-
-    let entry = RailEntry::Code(session);
-    let entry_click = entry.clone();
-    let btn = ToolButton::new(icon)
-        .tooltip(label.clone())
-        .on_click(move || rail::open(&entry_click))
-        .class(btn_class);
+    let btn = ToolButton::new(icon).tooltip(label.clone()).class(btn_class);
 
     // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
     // Цвет по занятости (busy_count пишет семплер terminal_activity;
@@ -310,7 +321,7 @@ fn code_tile(session: CodeSession, idx: usize, is_selected: bool) -> impl Widget
     tile_with_label(btn_stack, label, is_selected, entry)
 }
 
-fn graph_tile(tab: OpenTab, is_selected: bool) -> impl Widget {
+fn graph_tile(tab: OpenTab, is_selected: bool, entry: RailEntry) -> impl Widget {
     // Иконка по происхождению графа: агентский (раскрыт из чата),
     // из шаблона или Untitled.
     let icon = if tab.agent_chat.get_untracked().is_some() {
@@ -331,53 +342,41 @@ fn graph_tile(tab: OpenTab, is_selected: bool) -> impl Widget {
     } else {
         "nav-rail-item"
     };
-    let entry = RailEntry::Graph(tab);
-    let entry_click = entry.clone();
-    let btn = ToolButton::new(icon)
-        .tooltip(title)
-        .on_click(move || rail::open(&entry_click))
-        .class(btn_class);
+    let btn = ToolButton::new(icon).tooltip(title).class(btn_class);
     tile_with_label(btn, label, is_selected, entry)
 }
 
-fn chat_tile(id: String, title: String, is_selected: bool) -> impl Widget {
+fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
     let shown = display_title(&title);
     let avatar = Avatar::new()
         .text(initials_from_title(&title))
-        .size(34.0)
+        .size(32.0)
         .class(tone_for(&id));
     let ring_class = if is_selected {
         "nav-rail-chat-tile selected"
     } else {
         "nav-rail-chat-tile"
     };
-    let meta = crate::agent::state::ChatMeta {
-        id: id.clone(),
-        title: title.clone(),
-        preview: String::new(),
-        created_at: 0,
-        updated_at: 0,
-        model_name: None,
-        archived: false,
-    };
-    let entry = RailEntry::Chat(meta);
-    let entry_click = entry.clone();
-    let body = GestureDetector::new()
-        .on_click(move || rail::open(&entry_click))
-        .child(
-            DecoratedBox::new()
-                .class(ring_class)
-                .child(Center::new().child(avatar)),
-        );
+    let body = DecoratedBox::new()
+        .class(ring_class)
+        .child(Center::new().child(avatar));
     tile_with_label(Tooltip::new(body, shown.clone()), shown, is_selected, entry)
 }
 
 /// Разделитель: тонкая линия в широкой невидимой зоне — чтобы по ней можно
-/// было попасть правой кнопкой и удалить.
-fn separator_tile(ts: u64) -> impl Widget {
+/// было попасть правой кнопкой (удалить) и ухватить для перетаскивания.
+fn separator_tile(ts: u64, entry: RailEntry) -> impl Widget {
     let line = DecoratedBox::new()
         .class("nav-rail-separator-hit")
         .child(Center::new().child(DecoratedBox::new().class("nav-rail-separator")));
+    let key = entry.key();
+    let drop_key = key.clone();
+    let dnd = Draggable::new(DRAG_TYPE_TILE, key).child(
+        DropArea::new()
+            .accept_types(vec![DRAG_TYPE_TILE.to_string()])
+            .on_drop(move |data| rail::move_before(&data.payload, &drop_key))
+            .child(line),
+    );
     ContextMenu::new()
         .items(vec![MenuItem::new("remove", tr!("app.delete")).icon(MI_CLOSE)])
         .on_select(move |action| {
@@ -385,10 +384,10 @@ fn separator_tile(ts: u64) -> impl Widget {
                 rail::remove_separator(ts);
             }
         })
-        .child(line)
+        .child(dnd)
 }
 
-/// «+» — меню выбора, что создать.
+/// «+» — меню выбора, что создать. Сброс плитки на «+» ставит её в конец.
 fn add_button() -> impl Widget {
     let open = use_signal(false);
     let pos = use_signal(Point::zero());
@@ -399,6 +398,10 @@ fn add_button() -> impl Widget {
             open.set(true);
         })
         .class("nav-rail-item nav-rail-item-add");
+    let drop = DropArea::new()
+        .accept_types(vec![DRAG_TYPE_TILE.to_string()])
+        .on_drop(|data| rail::move_to_end(&data.payload))
+        .child(btn);
     let menu = PopupMenu::new()
         .items(vec![
             MenuItem::new("code", tr!("nav.add.code")).icon(MI_CODE),
@@ -416,5 +419,5 @@ fn add_button() -> impl Widget {
             "separator" => rail::add_separator(),
             _ => {}
         });
-    Stack::new().clip(false).child(btn).child(menu)
+    Stack::new().clip(false).child(drop).child(menu)
 }

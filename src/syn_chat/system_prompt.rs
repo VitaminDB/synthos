@@ -93,7 +93,13 @@ pub fn build(env: &PromptEnv) -> String {
              next. Silently going in circles is not allowed.\n\
              6. Before an irreversible action (modifying or deleting \
              files, installing packages, network requests with side \
-             effects), state in one sentence what you're about to do.\n",
+             effects), state in one sentence what you're about to do.\n\
+             7. Tool arguments are JSON values, not text. Pass an array or \
+             an object as a real structure — \"set_state\": [{...}] — never \
+             as a quoted string with escaped JSON inside, and never glue \
+             several arguments into one string. Long values are where \
+             brackets go wrong: check that every one you opened is closed, \
+             in the right order, before you send the call.\n",
         );
         // Правила пайплайнов — только когда инструмент активен: текст
         // зависит лишь от набора инструментов (как и строка со списком),
@@ -187,6 +193,15 @@ mod tests {
         assert!(s.contains("bash, web"));
         assert!(s.contains("32 turns"));
         assert!(s.contains("Every call must yield a new fact"));
+    }
+
+    /// Правило про структурные аргументы — общее для всех инструментов,
+    /// а не часть pipelines-блока: строкой аргументы шлют и в bash, и в web.
+    #[test]
+    fn build_demands_structured_tool_arguments() {
+        let s = build(&env());
+        assert!(s.contains("Tool arguments are JSON values, not text"), "{s}");
+        assert!(s.contains("never as a quoted string"), "{s}");
     }
 
     #[test]

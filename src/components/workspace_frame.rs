@@ -1,34 +1,38 @@
-//! Трёхпанельный каркас страницы: `[левая | центр | правая]` под общей
-//! шапкой ([`super::page_header`]).
+//! Трёхпанельный каркас страницы: `[левая | центр | правая]`, у каждой
+//! колонки — свой заголовок одной высоты ([`super::panel_header`]).
 //!
 //! ```text
-//! Column [
-//!   header
-//!   body (Reactive по visible-сигналам) {
-//!     SplitView(left, SplitView(center, right))   — обе панели видны
-//!     SplitView(left, center)                     — правая скрыта
-//!     SplitView(center, right)                    — левая скрыта
-//!     center                                      — обе скрыты / панелей нет
-//!   }
-//! ]
+//! Reactive по visible-сигналам {
+//!   SplitView(left_col, SplitView(center_col, right_col))  — обе панели видны
+//!   SplitView(left_col, center_col)                        — правая скрыта
+//!   SplitView(center_col, right_col)                       — левая скрыта
+//!   center_col                                             — обе скрыты / панелей нет
+//! }
+//! col = Column[ .panel-header [тоггл? | контент | тоггл?], .grow body ]
 //! ```
 //!
-//! Боковые панели строятся лениво (`Pane::build`) и только когда видимы:
-//! скрытая панель не занимает ни места, ни памяти. Положения разделителей
-//! — сигналы страницы (persist в `AppConfig.*_split_ratio`), видимость —
-//! `context::PanelsCtx`.
+//! Тоггл левой панели стоит у левого края её заголовка, правой — у правого
+//! края её заголовка; когда панель скрыта, тоггл переезжает к тому же краю
+//! центрального заголовка. Боковые панели строятся лениво и только пока
+//! видимы. Положения разделителей — сигналы страницы (persist в
+//! `AppConfig.*_split_ratio`), видимость — `context::PanelsCtx`.
 
 use syngui::prelude::*;
 use syngui::widgets::{SplitDirection, SplitView};
 
+use super::panel_header;
+
+type Builder = Box<dyn Fn() -> Box<dyn Widget> + Send + Sync>;
+
 /// Боковая панель каркаса.
 pub struct Pane {
-    /// Строитель содержимого — зовётся при каждой пересборке тела, пока
-    /// панель видима.
-    pub build: Box<dyn Fn() -> Box<dyn Widget> + Send + Sync>,
+    /// Контент заголовка (без тоггла — его добавляет каркас).
+    pub header: Builder,
+    /// Тело панели.
+    pub body: Builder,
     /// Положение разделителя между этой панелью и центром.
     pub ratio: RwSignal<f32>,
-    /// Показывать ли панель (тоггл в шапке).
+    /// Показывать ли панель (тоггл в заголовке).
     pub visible: RwSignal<bool>,
     /// Минимальная ширина обеих сторон разделителя, px.
     pub min_size: f32,
@@ -39,10 +43,12 @@ impl Pane {
         visible: RwSignal<bool>,
         ratio: RwSignal<f32>,
         min_size: f32,
-        build: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
+        header: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
+        body: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
     ) -> Self {
         Self {
-            build: Box::new(build),
+            header: Box::new(header),
+            body: Box::new(body),
             ratio,
             visible,
             min_size,
@@ -50,23 +56,27 @@ impl Pane {
     }
 }
 
-/// Описание тела страницы. `split_class` — MSS-класс разделителей
+/// Описание страницы. `split_class` — MSS-класс разделителей
 /// (`.syn-chat-h-split`, `.code-editor-h-split`, …): цвет линии и accent.
 pub struct FrameSpec {
     pub split_class: &'static str,
     pub left: Option<Pane>,
-    pub center: Box<dyn Fn() -> Box<dyn Widget> + Send + Sync>,
+    /// Контент центрального заголовка — обычно `panel_header::center(...)`.
+    pub center_header: Builder,
+    pub center: Builder,
     pub right: Option<Pane>,
 }
 
 impl FrameSpec {
     pub fn new(
         split_class: &'static str,
+        center_header: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
         center: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
     ) -> Self {
         Self {
             split_class,
             left: None,
+            center_header: Box::new(center_header),
             center: Box::new(center),
             right: None,
         }
@@ -83,47 +93,110 @@ impl FrameSpec {
     }
 }
 
-/// Каркас: шапка сверху, тело под ней на всю оставшуюся высоту.
-pub fn view(header: impl Widget + 'static, spec: FrameSpec) -> impl Widget {
-    let body = DecoratedBox::new()
-        .class("grow workspace-body")
-        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> { vec![build_body(&spec)] }));
-    Column::new()
-        .gap(0.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+/// Каркас целиком.
+pub fn view(spec: FrameSpec) -> impl Widget {
+    DecoratedBox::new()
         .class("workspace-frame")
-        .child(header)
-        .child(body)
+        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> { vec![build(&spec)] }))
 }
 
-fn build_body(spec: &FrameSpec) -> Box<dyn Widget> {
+fn build(spec: &FrameSpec) -> Box<dyn Widget> {
     // `.get()` на visible — подписка Reactive'а: тоггл перестраивает тело.
     let left_on = spec.left.as_ref().map(|p| p.visible.get()).unwrap_or(false);
     let right_on = spec.right.as_ref().map(|p| p.visible.get()).unwrap_or(false);
 
-    let center = (spec.center)();
+    // Тогглы скрытых панелей — в центральном заголовке, чтобы панель
+    // можно было вернуть.
+    let lead: Option<Box<dyn Widget>> = match &spec.left {
+        Some(p) if !left_on => Some(Box::new(panel_header::left_toggle(p.visible))),
+        _ => None,
+    };
+    let trail: Option<Box<dyn Widget>> = match &spec.right {
+        Some(p) if !right_on => Some(Box::new(panel_header::right_toggle(p.visible))),
+        _ => None,
+    };
+    let center = column(
+        "panel-header--center",
+        "workspace-center",
+        lead,
+        (spec.center_header)(),
+        trail,
+        (spec.center)(),
+    );
+
     let with_right: Box<dyn Widget> = match (&spec.right, right_on) {
-        (Some(pane), true) => Box::new(
-            SplitView::new(expand(center), expand((pane.build)()))
-                .class(spec.split_class)
-                .direction(SplitDirection::Horizontal)
-                .ratio_signal(pane.ratio)
-                .min_size(pane.min_size)
-                .divider_width(6.0),
-        ),
-        _ => center,
+        (Some(pane), true) => {
+            let col = column(
+                "panel-header--side",
+                "workspace-side workspace-right",
+                None,
+                (pane.header)(),
+                Some(Box::new(panel_header::right_toggle(pane.visible))),
+                (pane.body)(),
+            );
+            Box::new(
+                SplitView::new(center, col)
+                    .class(spec.split_class)
+                    .direction(SplitDirection::Horizontal)
+                    .ratio_signal(pane.ratio)
+                    .min_size(pane.min_size)
+                    .divider_width(6.0),
+            )
+        }
+        _ => Box::new(center),
     };
     match (&spec.left, left_on) {
-        (Some(pane), true) => Box::new(
-            SplitView::new(expand((pane.build)()), expand(with_right))
-                .class(spec.split_class)
-                .direction(SplitDirection::Horizontal)
-                .ratio_signal(pane.ratio)
-                .min_size(pane.min_size)
-                .divider_width(6.0),
-        ),
+        (Some(pane), true) => {
+            let col = column(
+                "panel-header--side",
+                "workspace-side workspace-left",
+                Some(Box::new(panel_header::left_toggle(pane.visible))),
+                (pane.header)(),
+                None,
+                (pane.body)(),
+            );
+            Box::new(
+                SplitView::new(col, expand(with_right))
+                    .class(spec.split_class)
+                    .direction(SplitDirection::Horizontal)
+                    .ratio_signal(pane.ratio)
+                    .min_size(pane.min_size)
+                    .divider_width(6.0),
+            )
+        }
         _ => with_right,
     }
+}
+
+/// Колонка каркаса: заголовок фиксированной высоты + тело на остаток.
+fn column(
+    header_class: &'static str,
+    column_class: &'static str,
+    leading: Option<Box<dyn Widget>>,
+    content: Box<dyn Widget>,
+    trailing: Option<Box<dyn Widget>>,
+    body: Box<dyn Widget>,
+) -> Stack {
+    let mut row = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center);
+    if let Some(w) = leading {
+        row = row.child(Stack::new().children(vec![w]));
+    }
+    row = row.child(DecoratedBox::new().class("grow").child(expand(content)));
+    if let Some(w) = trailing {
+        row = row.child(Stack::new().children(vec![w]));
+    }
+    let header = DecoratedBox::new()
+        .class(format!("panel-header {header_class}"))
+        .child(row);
+    let col = Column::new()
+        .gap(0.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .class(column_class)
+        .child(header)
+        .child(DecoratedBox::new().class("grow workspace-body").child(expand(body)));
+    expand(Box::new(col))
 }
 
 /// `Box<dyn Widget>` сам по себе не `Widget` — оборачиваем в Stack на всю

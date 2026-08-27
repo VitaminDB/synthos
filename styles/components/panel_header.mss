@@ -1,58 +1,83 @@
-/* Общая шапка страницы (`components::page_header`): одна строка на всю
- * ширину контента — тогглы панелей по краям, идентичность слева, пилюля
- * глобального поиска по центру, действия справа. */
+/* Заголовки панелей трёхпанельного каркаса (`components::panel_header`,
+ * `components::workspace_frame`): у каждой колонки свой заголовок одной
+ * высоты — тогглы у внешних краёв, идентичность и поиск в центре. */
 
-.page-header {
-    background-color: var(--bg-shell);
+.panel-header {
+    height: 52px;
+    padding: 0 8px 0 8px;
     border-bottom-width: 1px;
     border-color: var(--border-soft);
-    padding: 8px 12px 8px 12px;
 }
 
-.page-header-left {
-    /* Левый кластер не растягивается: пилюля в центре забирает всё
-     * свободное место через `.page-header-center.grow`. */
+.panel-header--center {
+    background-color: var(--bg-shell);
 }
 
-.page-header-identity {
+.panel-header--side {
+    background-color: var(--bg-panel);
+}
+
+.workspace-frame {
+    height: 100%;
+}
+
+.workspace-body {
+}
+
+/* Заголовок боковой панели: иконка + текст. */
+.panel-header-side-icon {
+    icon-size: 18px;
+    color: var(--text-muted);
+}
+
+.panel-header-side-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.panel-header-left {
+}
+
+.panel-header-identity {
     padding: 0 4px 0 0;
 }
 
 /* Круглая подложка с иконкой страницы — той же высоты, что аватар чата,
- * чтобы шапка не меняла высоту между разделами. */
-.page-header-icon-bubble {
+ * чтобы заголовок не менял высоту между разделами. */
+.panel-header-icon-bubble {
     width: 30px;
     height: 30px;
     border-radius: 10px;
     background-color: var(--primary-soft);
 }
 
-.page-header-icon {
+.panel-header-icon {
     icon-size: 18px;
     color: var(--primary);
 }
 
-.page-header-title {
+.panel-header-title {
     color: var(--text);
     font-size: 15px;
     font-weight: 600;
 }
 
-.page-header-subtitle {
+.panel-header-subtitle {
     font-size: 11px;
     color: var(--text-muted);
 }
 
 /* Обойма пилюли поиска: забирает место между идентичностью и кнопками, но
  * сама пилюля держит свои 380px и стоит по центру обоймы. */
-.page-header-center {
+.panel-header-center {
     padding: 0 12px 0 12px;
 }
 
-.page-header-right {
+.panel-header-right {
 }
 
-.page-header-action {
+.panel-header-action {
     border-radius: 10px;
     border-width: 1px;
     border-color: var(--border);
@@ -62,16 +87,15 @@
                 color var(--duration-fast) var(--ease-standard);
 }
 
-.page-header-action:hover { background-color: var(--surface-hover); }
+.panel-header-action:hover { background-color: var(--surface-hover); }
 
-/* Архив чата / удаление — единственные «опасные» действия в ряду:
- * на hover краснеют, чтобы не перепутать с «очистить». */
-.page-header-action-danger:hover {
+/* Архив чата — «опасное» действие в ряду: на hover краснеет. */
+.panel-header-action-danger:hover {
     color: var(--error);
     border-color: var(--error);
 }
 
-.page-header-action-divider {
+.panel-header-action-divider {
     width: 1px;
     height: 22px;
     background-color: var(--border);
@@ -80,7 +104,7 @@
 
 /* Тоггл боковой панели: приглушён, пока панель скрыта, акцентный — пока
  * открыта. */
-.page-header-toggle {
+.panel-header-toggle {
     width: 32px;
     height: 32px;
     icon-size: 18px;
@@ -91,17 +115,17 @@
                 color var(--duration-fast) var(--ease-standard);
 }
 
-.page-header-toggle:hover {
+.panel-header-toggle:hover {
     background-color: var(--surface-hover);
     color: var(--text);
 }
 
-.page-header-toggle--on {
+.panel-header-toggle--on {
     color: var(--primary);
 }
 
-/* Распорка справа в шапке чата без активного чата: держит пилюлю поиска
- * ровно там же, где она стоит с открытым чатом. */
+/* Распорка справа в заголовке чата без активного чата: держит пилюлю
+ * поиска ровно там же, где она стоит с открытым чатом. */
 .chat-header-actions-placeholder {
     width: 96px;
 }

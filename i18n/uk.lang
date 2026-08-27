@@ -1434,3 +1434,4 @@ settings.archive.clear_dialog.body = "Усі чати з архіву буде �
 settings.archive.empty.title = "Архів порожній"
 settings.archive.empty.hint = "Закриті чати з'являться тут."
 search.cmd.archive_chat = "Перемістити поточний чат в архів"
+code.tree.open_folder_tooltip = "Відкрити теку…"

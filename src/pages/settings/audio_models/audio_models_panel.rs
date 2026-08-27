@@ -17,7 +17,6 @@ pub fn view() -> impl Widget {
         .class("skills-panel models-panel")
         .child(mgui! {
             Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(),
                 DecoratedBox::new().class("grow").child(
                     Padding::symmetric(8.0, 8.0).child(list_reactive()),
                 ),
@@ -25,7 +24,8 @@ pub fn view() -> impl Widget {
         })
 }
 
-fn header() -> impl Widget {
+/// Заголовок панели — в общей строке заголовков каркаса настроек.
+pub fn header() -> impl Widget {
     mgui! {
         DecoratedBox::new().class("skills-panel-header") => [
             Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [

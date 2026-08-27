@@ -1415,3 +1415,4 @@ settings.archive.clear_dialog.body = "アーカイブ内のすべてのチャッ
 settings.archive.empty.title = "アーカイブは空です"
 settings.archive.empty.hint = "閉じたチャットはここに表示されます。"
 search.cmd.archive_chat = "現在のチャットをアーカイブ"
+code.tree.open_folder_tooltip = "フォルダーを開く…"

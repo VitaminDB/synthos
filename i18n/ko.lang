@@ -1415,3 +1415,4 @@ settings.archive.clear_dialog.body = "보관된 모든 채팅이 완전히 삭�
 settings.archive.empty.title = "보관함이 비어 있습니다"
 settings.archive.empty.hint = "닫은 채팅이 여기에 표시됩니다."
 search.cmd.archive_chat = "현재 채팅 보관"
+code.tree.open_folder_tooltip = "폴더 열기…"

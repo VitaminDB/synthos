@@ -1427,3 +1427,4 @@ settings.archive.clear_dialog.body = "Todos los chats archivados se eliminarán 
 settings.archive.empty.title = "El archivo está vacío"
 settings.archive.empty.hint = "Los chats cerrados aparecerán aquí."
 search.cmd.archive_chat = "Archivar el chat actual"
+code.tree.open_folder_tooltip = "Abrir carpeta…"

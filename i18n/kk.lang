@@ -1418,3 +1418,4 @@ settings.archive.clear_dialog.body = "Мұрағаттағы барлық чат
 settings.archive.empty.title = "Мұрағат бос"
 settings.archive.empty.hint = "Жабылған чаттар осында пайда болады."
 search.cmd.archive_chat = "Ағымдағы чатты мұрағатқа жіберу"
+code.tree.open_folder_tooltip = "Қалтаны ашу…"

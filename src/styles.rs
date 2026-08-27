@@ -27,7 +27,7 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/search.mss"),
         "\n",
-        include_str!("../styles/components/page_header.mss"),
+        include_str!("../styles/components/panel_header.mss"),
         include_str!("../styles/components/workspace_frame.mss"),
         "\n",
         include_str!("../styles/components/message_area.mss"),

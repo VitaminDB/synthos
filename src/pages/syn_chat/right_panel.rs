@@ -1,7 +1,8 @@
 //! Правая панель Syn-чата: TabBar с двумя табами — «Параметры» (модель +
 //! sampling + контекст + thinking, первая по умолчанию) и «Детали»
-//! (статистика последней генерации). Инструменты и скилы — в левой панели
-//! (`left_panel`).
+//! (статистика последней генерации). TabBar ([`header`]) живёт в строке
+//! заголовков каркаса, тело ([`body`]) — под ним. Инструменты и скилы — в
+//! левой панели (`left_panel`).
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -16,15 +17,19 @@ use crate::icons::*;
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::{SynChatCtx, SynModelRegistry};
 
-pub fn view() -> impl Widget {
+pub fn header() -> impl Widget {
     let ctx = use_context::<SynChatCtx>();
     let tab = ctx.right_panel_tab;
-
     let tabbar = TabBar::new()
         .tab(Tab::new(tr!("chat.right.tab.params"), SYN_RIGHT_PANEL_PARAMS, &tab).icon(MI_TUNE))
         .tab(Tab::new(tr!("chat.right.tab.details"), SYN_RIGHT_PANEL_DETAILS, &tab).icon(MI_SPEED))
         .class("right-panel-tabbar-inner");
+    DecoratedBox::new().class("right-panel-tabbar").child(tabbar)
+}
 
+pub fn body() -> impl Widget {
+    let ctx = use_context::<SynChatCtx>();
+    let tab = ctx.right_panel_tab;
     let body = DecoratedBox::new().class("right-panel-body").child(move || {
         let child: Box<dyn Widget> = match tab.get() {
             SYN_RIGHT_PANEL_DETAILS => Box::new(details_tab()),
@@ -32,15 +37,7 @@ pub fn view() -> impl Widget {
         };
         Stack::new().fit(StackFit::Expand).children(vec![child])
     });
-
-    DecoratedBox::new()
-        .class("right-panel syn-chat-right")
-        .child(mgui! {
-            Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                DecoratedBox::new().class("right-panel-tabbar").child(tabbar),
-                body,
-            ]
-        })
+    DecoratedBox::new().class("right-panel syn-chat-right").child(body)
 }
 
 // ─────────────────────── ТАБ «ПАРАМЕТРЫ» ───────────────────────

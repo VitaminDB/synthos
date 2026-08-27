@@ -1,7 +1,7 @@
 pub mod event_hook;
 pub mod graph_close_dialog;
 pub mod nav_rail;
-pub mod page_header;
+pub mod panel_header;
 pub mod workspace_frame;
 pub mod chat_item;
 pub mod date_divider;

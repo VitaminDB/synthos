@@ -2,8 +2,9 @@
 //!
 //! Layout:
 //! - workspace_frame без боковых панелей (канвас на всю ширину):
-//!   1. page_header — название графа (inline-rename), шаблон-источник,
-//!      Run/Pause/Stop с таймером, «Шаблоны», «Сохранить как шаблон».
+//!   1. заголовок (panel_header::center) — название графа (inline-rename),
+//!      шаблон-источник, поиск, Run/Pause/Stop с таймером, «Шаблоны»,
+//!      «Сохранить как шаблон».
 //!   2. canvas-area:
 //!      Stack:
 //!        - PanZoomViewport (с padding-frame, dot-grid не цепляется к
@@ -42,7 +43,7 @@ use syngui::widgets::containers::{GestureDetector, PanZoomViewport};
 use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
 use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, Stack, TextField, ToolButton};
 
-use crate::components::page_header::{self, HeaderSpec};
+use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::{self, expand, FrameSpec};
 use crate::icons::{
     MI_DASHBOARD_CUSTOMIZE, MI_FIT_SCREEN, MI_HUB, MI_PSYCHOLOGY, MI_SAVE, MI_TUNE, MI_ZOOM_IN,
@@ -53,22 +54,23 @@ use self::registry::{NodeCategory, REGISTRY};
 use self::state::NodeEditorCtx;
 use self::tabs::{EditorWorkspace, OpenTab};
 
-/// Корневой view страницы — каркас без боковых панелей: шапка + канвас.
+/// Корневой view страницы — каркас без боковых панелей: заголовок + канвас.
 pub fn view() -> impl Widget {
     DecoratedBox::new()
-        .child(workspace_frame::view(
-            header(),
-            FrameSpec::new("node-editor-h-split", || Box::new(canvas_area())),
-        ))
+        .child(workspace_frame::view(FrameSpec::new(
+            "node-editor-h-split",
+            || Box::new(header()),
+            || Box::new(canvas_area()),
+        )))
         .class("node-editor-root")
 }
 
-// ─────────────────────────────── Шапка ───────────────────────────────
+// ───────────────────────────── Заголовок ─────────────────────────────
 
 fn header() -> impl Widget {
     let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(identity_reactive));
     let actions = DecoratedBox::new().child(actions_reactive);
-    page_header::view(HeaderSpec::new(identity).actions(actions))
+    panel_header::center(CenterSpec::new(identity).actions(actions))
 }
 
 /// Активный граф: иконка по происхождению, название с inline-rename,
@@ -78,7 +80,7 @@ fn identity_reactive() -> Stack {
     let active = ws.active.get();
     let tab = active.and_then(|id| ws.tabs.get().into_iter().find(|t| t.id == id));
     let Some(tab) = tab else {
-        return expand(page_header::identity_text(
+        return expand(panel_header::identity_text(
             MI_HUB,
             tr!("nav.nodes"),
             tr!("nodes.empty.title"),
@@ -91,8 +93,8 @@ fn identity_reactive() -> Stack {
     } else {
         MI_TUNE
     };
-    expand(page_header::identity(
-        page_header::icon_bubble(icon),
+    expand(panel_header::identity(
+        panel_header::icon_bubble(icon),
         DecoratedBox::new().child(move || title_block(tab)),
         DecoratedBox::new().child(move || subtitle_block(tab)),
     ))
@@ -117,7 +119,7 @@ fn title_block(tab: OpenTab) -> StyledWidget<DecoratedBox> {
     } else {
         let clickable = GestureDetector::new()
             .on_click(move || editing.set(true))
-            .child(Text::new(title).max_lines(1).class("page-header-title"));
+            .child(Text::new(title).max_lines(1).class("panel-header-title"));
         DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
     }
 }
@@ -145,7 +147,7 @@ fn subtitle_block(tab: OpenTab) -> DecoratedBox {
         text.push_str(" · ");
         text.push_str(&tr!("nodes.header.unsaved"));
     }
-    DecoratedBox::new().child(Text::new(text).max_lines(1).class("page-header-subtitle"))
+    DecoratedBox::new().child(Text::new(text).max_lines(1).class("panel-header-subtitle"))
 }
 
 fn template_title(id: &str) -> Option<String> {
@@ -161,7 +163,7 @@ fn actions_reactive() -> Stack {
     let ws = use_context::<EditorWorkspace>();
     let Some(ctx) = ws.active_ctx() else {
         return expand(Box::new(
-            page_header::action_button(
+            panel_header::action_button(
                 MI_DASHBOARD_CUSTOMIZE,
                 tr!("nodes.header.templates"),
                 move || ws.template_picker_open.set(true),
@@ -171,13 +173,13 @@ fn actions_reactive() -> Stack {
     let row = mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             run_controls::view(ctx),
-            page_header::action_divider(),
-            page_header::action_button(
+            panel_header::action_divider(),
+            panel_header::action_button(
                 MI_DASHBOARD_CUSTOMIZE,
                 tr!("nodes.header.templates"),
                 move || ws.template_picker_open.set(true),
             ),
-            page_header::action_button(MI_SAVE, tr!("nodes.header.save_template"), || {
+            panel_header::action_button(MI_SAVE, tr!("nodes.header.save_template"), || {
                 crate::components::template_picker::save_or_update_current();
             }),
         ]

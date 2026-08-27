@@ -7,26 +7,28 @@
     background-color: transparent;
 }
 
+/* Заголовок панели теперь живёт в `.panel-header` каркаса (одна строка
+ * 52px), поэтому без вертикальных отступов и с компактной иконкой. */
 .skills-panel-header {
     background-color: transparent;
-    padding: 0 12px 24px 12px;
+    padding: 0;
 }
 
 .skills-panel-header-icon-wrap {
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     border-radius: 10px;
     background-color: var(--primary-soft);
 }
 
 .skills-panel-header-icon {
     color: var(--primary);
-    icon-size: 20px;
+    icon-size: 18px;
 }
 
 .skills-panel-header-title {
-    font-size: 20px;
-    font-weight: 700;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--text);
 }
 

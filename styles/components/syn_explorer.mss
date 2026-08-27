@@ -105,6 +105,12 @@ Tooltip {
 }
 
 
+/* Заголовки боковых панелей («Закладки +», «Файлы пакета N ⤓») теперь
+ * живут в `.panel-header` каркаса — обёртка без своих отступов и фона. */
+.syn-panel-header-row {
+    background-color: transparent;
+}
+
 /* ─── Left panel ────────────────────────────────────────────────── */
 
 .syn-explorer-left-panel {

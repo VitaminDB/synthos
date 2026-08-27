@@ -1,5 +1,5 @@
-//! Действия страницы SynExplorer — правый кластер общей шапки
-//! (`components::page_header`). Отдельной строки-тулбара больше нет.
+//! Действия страницы SynExplorer — правый кластер центрального заголовка
+//! (`components::panel_header`). Отдельной строки-тулбара больше нет.
 //!
 //! `ToolButton::tooltip(...)` заполняет только accessibility-label (для
 //! screen reader'ов), визуально hover-tooltip он не рисует. Чтобы пользователь

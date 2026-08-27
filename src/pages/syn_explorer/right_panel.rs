@@ -17,20 +17,15 @@ use crate::icons::{MI_DEPLOYED_CODE, MI_DOWNLOAD};
 use super::actions;
 use super::state::{SynExplorerCtx, TabKind};
 
+/// Тело панели — дерево. Заголовок ([`header`]) кладёт каркас в общую
+/// строку заголовков.
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("syn-explorer-right-panel").child(mgui! {
-        Column::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(),
-                body(),
-            ]
-    })
+    DecoratedBox::new().class("syn-explorer-right-panel").child(body())
 }
 
-fn header() -> impl Widget {
+pub fn header() -> impl Widget {
     DecoratedBox::new()
-        .class("syn-bookmark-section-header")
+        .class("syn-panel-header-row")
         .child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
             let ctx = use_context::<SynExplorerCtx>();
             let count = ctx

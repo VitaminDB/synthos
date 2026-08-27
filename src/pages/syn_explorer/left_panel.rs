@@ -1,5 +1,5 @@
 //! Левая панель страницы SynExplorer:
-//! - заголовок «Закладки» + кнопка `+`
+//! - заголовок «Закладки» + кнопка `+` ([`header`] — в строке заголовков каркаса)
 //! - вертикальный ListView закладок
 //! - ниже — список `.syn` файлов из выбранной папки (карточки)
 //!
@@ -38,7 +38,6 @@ fn bookmarks_section() -> impl Widget {
         Column::new()
             .gap(0.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                bookmarks_header(),
                 Reactive::new(|| -> Vec<Box<dyn Widget>> {
                     let ctx = use_context::<SynExplorerCtx>();
                     let bookmarks = ctx.bookmarks.get();
@@ -67,9 +66,10 @@ fn bookmarks_section() -> impl Widget {
     }
 }
 
-fn bookmarks_header() -> impl Widget {
+/// Заголовок панели: «Закладки» + добавить папку.
+pub fn header() -> impl Widget {
     DecoratedBox::new()
-        .class("syn-bookmark-section-header")
+        .class("syn-panel-header-row")
         .child(mgui! {
             Row::new()
                 .gap(8.0)

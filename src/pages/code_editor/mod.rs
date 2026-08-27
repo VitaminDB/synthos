@@ -7,17 +7,15 @@
 //! Reactive-обёртки в дочерних panel'ях пересобираются.
 //!
 //! ```text
-//! workspace_frame [
-//!   page_header                         ─── папка сессии + путь, поиск, тогглы панелей
-//!   SplitView(Horizontal, session.left_split_ratio)        (только при наличии активной сессии)
-//!   ├── file_tree                        ─── header(folder + open_btn) + Reactive(TreeView)
+//! workspace_frame                                          (только при наличии активной сессии)
+//!   [▤ папка · путь  ⎘] [файл · каталог   🔍 поиск   ↵ ⟲ 💾] [Открытые файлы · N ▥]   ← заголовки
+//!   ├── file_tree                        ─── Reactive(TreeView)
 //!   └── SplitView(Horizontal, session.right_split_ratio)
 //!       ├── center                       ─── вертикальный SplitView(editor↔terminal)
 //!       │   └── SplitView(Vertical, session.split_ratio)
-//!       │       ├── editor_pane          ─── header(filename + save) + Reactive(CodeEditor)
+//!       │       ├── editor_pane          ─── Reactive(CodeEditor)
 //!       │       └── terminal_pane        ─── tabs + Reactive(Terminal::attach)
-//!       └── open_files                   ─── header(счётчик) + Reactive(ListView)
-//! ]
+//!       └── open_files                   ─── Reactive(ListView)
 //! ```
 //!
 //! Размеры splitter'ов индивидуальны на каждую сессию (`split_ratio`, `left_split_ratio`,
@@ -50,7 +48,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::{SplitDirection, SplitView};
 
-use crate::components::page_header::{self, HeaderSpec};
+use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::{self, expand, FrameSpec, Pane};
 use crate::context::AppCtx;
 use crate::icons::{MI_CODE, MI_DESCRIPTION, MI_FOLDER};
@@ -68,10 +66,19 @@ pub fn view() -> impl Widget {
             let _ = code.active_id.get();
 
             let Some(session) = code.active_session() else {
-                return vec![Box::new(workspace_frame::view(
-                    header(None),
-                    FrameSpec::new("code-editor-h-split", || Box::new(no_session_placeholder())),
-                ))];
+                return vec![Box::new(workspace_frame::view(FrameSpec::new(
+                    "code-editor-h-split",
+                    || {
+                        Box::new(panel_header::center(CenterSpec::new(
+                            panel_header::identity_text(
+                                MI_CODE,
+                                tr!("search.page.code"),
+                                tr!("code.mod.no_session.title"),
+                            ),
+                        )))
+                    },
+                    || Box::new(no_session_placeholder()),
+                )))];
             };
 
             // Lazy-init первого таба терминала в активной сессии. Guard через
@@ -83,14 +90,26 @@ pub fn view() -> impl Widget {
             }
 
             let (left_visible, right_visible) = app.panels.code;
-            let spec = FrameSpec::new("code-editor-h-split", move || Box::new(center(session)))
-                .left(Pane::new(left_visible, session.left_split_ratio, 160.0, || {
-                    Box::new(file_tree::view())
-                }))
-                .right(Pane::new(right_visible, session.right_split_ratio, 160.0, || {
-                    Box::new(open_files::view())
-                }));
-            vec![Box::new(workspace_frame::view(header(Some(session)), spec))]
+            let spec = FrameSpec::new(
+                "code-editor-h-split",
+                || Box::new(center_header()),
+                move || Box::new(center(session)),
+            )
+            .left(Pane::new(
+                left_visible,
+                session.left_split_ratio,
+                160.0,
+                move || Box::new(left_header(session)),
+                || Box::new(file_tree::view()),
+            ))
+            .right(Pane::new(
+                right_visible,
+                session.right_split_ratio,
+                160.0,
+                || Box::new(open_files::header()),
+                || Box::new(open_files::view()),
+            ));
+            vec![Box::new(workspace_frame::view(spec))]
         }));
 
     // Раньше здесь был локальный Snackbar в Stack'е; миграция на
@@ -114,29 +133,26 @@ fn center(session: state::CodeSession) -> impl Widget {
     )
 }
 
-/// Общая шапка: имя папки сессии + путь к корню. Кнопки «открыть папку» и
-/// «сохранить» остаются в панелях рядом с деревом и файлом.
-fn header(session: Option<state::CodeSession>) -> impl Widget {
-    let app = use_context::<AppCtx>();
-    let (left_visible, right_visible) = app.panels.code;
-    let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(move || {
+/// Заголовок левой панели: папка сессии + путь к корню, справа — кнопка
+/// «Открыть папку».
+fn left_header(session: state::CodeSession) -> impl Widget {
+    let identity = DecoratedBox::new().class("grow").child(move || {
         let code = use_context::<CodeEditorCtx>();
         let _ = code.session_gen.get();
-        let folder = session.and_then(|s| s.root_folder.get());
-        let (icon, title, subtitle) = match (&session, &folder) {
-            (Some(_), Some(path)) => (
+        let (icon, title, subtitle) = match session.root_folder.get() {
+            Some(path) => (
                 MI_FOLDER,
                 path.file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.display().to_string()),
                 path.display().to_string(),
             ),
-            (Some(s), None) => {
+            None => {
                 let idx = code
                     .sessions
                     .get_untracked()
                     .iter()
-                    .position(|x| x.id == s.id)
+                    .position(|x| x.id == session.id)
                     .unwrap_or(0);
                 (
                     MI_DESCRIPTION,
@@ -144,20 +160,23 @@ fn header(session: Option<state::CodeSession>) -> impl Widget {
                     tr!("code.header.no_folder"),
                 )
             }
-            (None, _) => (
-                MI_CODE,
-                tr!("search.page.code"),
-                tr!("code.mod.no_session.title"),
-            ),
         };
-        expand(page_header::identity_text(icon, title, subtitle))
-    }));
-    let toggles = if session.is_some() {
-        (Some(left_visible), Some(right_visible))
-    } else {
-        (None, None)
-    };
-    page_header::view(HeaderSpec::new(identity).toggles(toggles.0, toggles.1))
+        expand(panel_header::identity_text(icon, title, subtitle))
+    });
+    mgui! {
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            identity,
+            file_tree::open_folder_button(),
+        ]
+    }
+}
+
+/// Центральный заголовок: активный файл + поиск + действия над файлом.
+fn center_header() -> impl Widget {
+    panel_header::center(
+        CenterSpec::new(Box::new(editor_pane::header_identity()))
+            .actions(editor_pane::header_actions()),
+    )
 }
 
 /// Пустой стейт страницы — нет ни одной сессии. Кликабельных action'ов

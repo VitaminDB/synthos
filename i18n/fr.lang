@@ -1428,3 +1428,4 @@ settings.archive.clear_dialog.body = "Toutes les discussions archivées seront s
 settings.archive.empty.title = "L'archive est vide"
 settings.archive.empty.hint = "Les discussions fermées apparaîtront ici."
 search.cmd.archive_chat = "Archiver la discussion actuelle"
+code.tree.open_folder_tooltip = "Ouvrir un dossier…"

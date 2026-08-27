@@ -1,6 +1,6 @@
-//! Шапка страницы чата поверх общего [`page_header`]: аватар + название
-//! (inline-rename по клику) + имя модели слева, пилюля глобального поиска
-//! по центру, действия над чатом справа, тогглы боковых панелей по краям.
+//! Центральный заголовок страницы чата ([`panel_header::center`]): аватар +
+//! название (inline-rename по клику) + имя модели слева, пилюля глобального
+//! поиска по центру, действия над чатом справа.
 //!
 //! Кнопка сжатия зовёт `syn_chat::compact::compact_now` (ручной autocompact);
 //! disabled, пока идёт генерация или в ленте нет кандидатов на сжатие.
@@ -14,17 +14,16 @@ use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::TextField;
 
 use crate::components::chat_item::{initials_from_title, tone_for};
-use crate::components::page_header::{self, HeaderSpec};
+use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::expand;
 use crate::icons::*;
 use crate::syn_chat::{registry, SynChatCtx, SynModelRegistry};
 
-pub fn view(left_visible: RwSignal<bool>, right_visible: RwSignal<bool>) -> impl Widget {
+pub fn center() -> impl Widget {
     let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(identity_reactive()));
-    let spec = HeaderSpec::new(identity)
-        .actions(DecoratedBox::new().child(actions_reactive()))
-        .toggles(Some(left_visible), Some(right_visible));
-    page_header::view(spec)
+    panel_header::center(
+        CenterSpec::new(identity).actions(DecoratedBox::new().child(actions_reactive())),
+    )
 }
 
 /// Блок идентичности: с активным чатом — аватар/название/модель, без него
@@ -44,16 +43,16 @@ fn identity_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                     .text(initials_from_title(&meta.title))
                     .size(30.0)
                     .class(tone_for(&meta.id));
-                expand(page_header::identity(
+                expand(panel_header::identity(
                     avatar,
                     DecoratedBox::new().child(title_block_reactive(meta.title)),
                     DecoratedBox::new().child(subtitle_reactive()),
                 ))
             }
-            None => expand(page_header::identity(
-                page_header::icon_bubble(MI_PSYCHOLOGY),
-                page_header::title_text(tr!("chat.header.empty_hint")),
-                page_header::subtitle_text(tr!("chat.header.empty_sub")),
+            None => expand(panel_header::identity(
+                panel_header::icon_bubble(MI_PSYCHOLOGY),
+                panel_header::title_text(tr!("chat.header.empty_hint")),
+                panel_header::subtitle_text(tr!("chat.header.empty_sub")),
             )),
         }
     }
@@ -82,8 +81,8 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                     .tooltip(tr!("chat.header.compact.tooltip"))
                     .disabled(!can_compact)
                     .on_click(|| crate::syn_chat::compact::compact_now())
-                    .class("page-header-action"),
-                page_header::action_button(MI_CLEAR_ALL, tr!("chat.header.clear.tooltip"), || {
+                    .class("panel-header-action"),
+                panel_header::action_button(MI_CLEAR_ALL, tr!("chat.header.clear.tooltip"), || {
                     let ctx = use_context::<SynChatCtx>();
                     ctx.messages.set(Vec::new());
                     ctx.streaming_body.set(String::new());
@@ -98,7 +97,7 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                         let meta = ctx.chats.get_untracked().into_iter().find(|m| m.id == id);
                         ctx.pending_archive.set(meta);
                     })
-                    .class("page-header-action page-header-action-danger"),
+                    .class("panel-header-action page-header-action-danger"),
             ]
         };
         expand(Box::new(row))
@@ -139,7 +138,7 @@ fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedB
                 .on_click(move || {
                     flag.store(true, Ordering::Relaxed);
                 })
-                .child(Text::new(current_title).max_lines(1).class("page-header-title"));
+                .child(Text::new(current_title).max_lines(1).class("panel-header-title"));
             DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
         }
     }
@@ -166,7 +165,7 @@ fn subtitle_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
             tr!("chat.model.not_loaded")
         };
         DecoratedBox::new()
-            .child(Text::new(text).max_lines(1).class("page-header-subtitle"))
+            .child(Text::new(text).max_lines(1).class("panel-header-subtitle"))
             .class("chat-header-subtitle-wrap")
     }
 }

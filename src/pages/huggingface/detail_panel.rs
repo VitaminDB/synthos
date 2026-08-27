@@ -67,18 +67,9 @@ pub fn files_view() -> impl Widget {
             let Some(repo_id) = ctx.selected_model.get() else {
                 return vec![Box::new(files_placeholder())];
             };
-            vec![Box::new(mgui! {
-                Column::new()
-                    .gap(0.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                        DecoratedBox::new().class("hf-detail-tabs").child(
-                            Text::new(tr!("hf.detail.tab.files")).class("hf-files-panel-title")
-                        ),
-                        DecoratedBox::new().class("hf-detail-content grow").child(
-                            files_tab(repo_id)
-                        ),
-                    ]
-            })]
+            vec![Box::new(
+                DecoratedBox::new().class("hf-detail-content").child(files_tab(repo_id)),
+            )]
         },
     ))
 }

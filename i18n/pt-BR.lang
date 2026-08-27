@@ -1422,3 +1422,4 @@ settings.archive.clear_dialog.body = "Todas as conversas arquivadas serão exclu
 settings.archive.empty.title = "O arquivo está vazio"
 settings.archive.empty.hint = "As conversas fechadas vão aparecer aqui."
 search.cmd.archive_chat = "Arquivar a conversa atual"
+code.tree.open_folder_tooltip = "Abrir pasta…"

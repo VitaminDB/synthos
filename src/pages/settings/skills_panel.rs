@@ -17,7 +17,6 @@ use crate::skills::Skill;
 pub fn view() -> impl Widget {
     DecoratedBox::new().class("skills-panel").child(mgui! {
         Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-            header(),
             DecoratedBox::new().class("grow").child(move || {
                 let body = list_body();
                 Padding::symmetric(4.0, 4.0).child(
@@ -28,7 +27,8 @@ pub fn view() -> impl Widget {
     })
 }
 
-fn header() -> impl Widget {
+/// Заголовок панели — в общей строке заголовков каркаса настроек.
+pub fn header() -> impl Widget {
     DecoratedBox::new().class("skills-panel-header").child(mgui! {
         Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
             DecoratedBox::new().class("skills-panel-header-icon-wrap") => [

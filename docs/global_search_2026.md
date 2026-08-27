@@ -25,7 +25,7 @@
 lib.rs::run              → search::install()          // контекст + эффект индекса
 lib.rs::build_app        → search::hotkey_scope(shell) // Ctrl+K / Ctrl+F
                          → search::panel::view()       // PopupPanel в overlay-слое
-components/page_header   → search::trigger::view()     // пилюля — в общей шапке каждой страницы
+components/panel_header  → search::trigger::view()     // пилюля — в центральном заголовке каждой страницы
 ```
 
 | Файл | Что делает |
@@ -101,8 +101,8 @@ components/page_header   → search::trigger::view()     // пилюля — в 
   эту переменную `surface_alpha_mss` не трогает, и сквозь выдачу не видно
   ленту чата.
 * **Якорь.** Панель прижимается левым верхним углом к пилюле, так что поле
-  ввода ложится ровно на неё. С 2026-08-27 пилюля стоит в общей шапке каждой
-  страницы (`components/page_header`, см. `docs/workspace_shell_2026.md`), так
+  ввода ложится ровно на неё. С 2026-08-27 пилюля стоит в центральном заголовке
+  каждой страницы (`components/panel_header`, см. `docs/workspace_shell_2026.md`), так
   что якорь есть всегда; центрирование по `root_bounds` осталось запасным
   путём на случай, если шапка ещё не отчиталась о геометрии.
 * **Недавнее** живёт в `AppConfig.search_recent` (до 8 ключей) и

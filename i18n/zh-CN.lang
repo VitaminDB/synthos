@@ -1413,3 +1413,4 @@ settings.archive.clear_dialog.body = "归档中的所有聊天都将被永久删
 settings.archive.empty.title = "归档为空"
 settings.archive.empty.hint = "已关闭的聊天会显示在这里。"
 search.cmd.archive_chat = "归档当前聊天"
+code.tree.open_folder_tooltip = "打开文件夹…"

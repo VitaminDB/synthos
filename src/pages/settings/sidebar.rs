@@ -36,8 +36,9 @@ pub fn view() -> impl Widget {
         let ctx = use_context::<AppCtx>();
         let active = ctx.selected_settings_tab.get();
 
-        let mut items: Vec<Box<dyn Widget>> = Vec::with_capacity(TABS.len() + 1);
-        items.push(Box::new(Text::new(tr!("settings.title")).class("settings-sidebar-title")));
+        // Заголовок «Настройки» — в строке заголовков каркаса
+        // (`mod.rs`), здесь только пункты.
+        let mut items: Vec<Box<dyn Widget>> = Vec::with_capacity(TABS.len());
         for t in TABS {
             items.push(Box::new(tab_row(*t, active == t.key)));
         }

@@ -1440,3 +1440,4 @@ settings.archive.clear_dialog.body = "Все чаты из архива буду
 settings.archive.empty.title = "Архив пуст"
 settings.archive.empty.hint = "Закрытые чаты появятся здесь."
 search.cmd.archive_chat = "Убрать текущий чат в архив"
+code.tree.open_folder_tooltip = "Открыть папку…"

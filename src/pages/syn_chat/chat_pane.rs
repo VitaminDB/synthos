@@ -1,6 +1,5 @@
-//! Центральная панель Syn-чата: лента + ввод. Шапка — общая для всех
-//! страниц (`chat_header` → `components::page_header`), она стоит над
-//! всем каркасом, а не над центром.
+//! Центральная панель Syn-чата: лента + ввод. Заголовок колонки
+//! (`chat_header::center`) рисует каркас `components::workspace_frame`.
 
 use syngui::mgui;
 use syngui::prelude::*;

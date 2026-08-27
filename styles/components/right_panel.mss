@@ -7,10 +7,10 @@
     background-color: var(--bg-panel);
 }
 
+/* Обёртка TabBar в заголовке правой панели чата: фон и границу даёт
+ * `.panel-header`, здесь только контекст для селекторов `Tab`. */
 .right-panel-tabbar {
-    background-color: var(--bg-panel);
-    border-bottom-width: 1px;
-    border-color: var(--border-soft);
+    background-color: transparent;
 }
 
 /* Сам элемент TabBar: делим ширину между табами поровну. Класс стоит

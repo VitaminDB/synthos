@@ -1,21 +1,18 @@
 //! Маршрут `syn_chat` — чат с in-process Qwen3.6 inference через
 //! [`crate::syn_chat`] (без llama-server).
 //!
-//! Компоновка — общий трёхпанельный каркас ([`workspace_frame`]) под общей
-//! шапкой ([`chat_header`]): инструменты и скилы слева, лента + ввод в
-//! центре, параметры модели и метрики справа. Списка чатов на странице
+//! Компоновка — общий трёхпанельный каркас ([`workspace_frame`]): у каждой
+//! колонки свой заголовок одной высоты. Инструменты и скилы слева, лента +
+//! ввод в центре (заголовок — [`chat_header`]: аватар, название, поиск,
+//! действия), параметры модели и метрики справа. Списка чатов на странице
 //! больше нет — чаты живут плитками в нав-рейле (`crate::rail`).
 //!
 //! ```text
 //! Stack [
 //!   workspace_frame [
-//!     chat_header                          // идентичность, поиск, действия
 //!     SplitView (left_split_ratio) [
-//!       left_panel                         // Инструменты / Скилы
-//!       SplitView (right_split_ratio) [
-//!         chat_pane                        // лента + ввод
-//!         right_panel                      // Параметры / Детали
-//!       ]
+//!       [▤ Инструменты      ] [аватар · название · поиск · действия] [Параметры|Детали ▥]
+//!       left_panel::body      chat_pane                              right_panel::body
 //!     ]
 //!   ]
 //!   tool_confirm                           // Portal с диалогом подтверждения
@@ -58,14 +55,26 @@ pub fn view() -> impl Widget {
     let ctx = use_context::<crate::syn_chat::SynChatCtx>();
     let (left_visible, right_visible) = app.panels.syn_chat;
 
-    let spec = FrameSpec::new("syn-chat-h-split", || Box::new(chat_pane::view()))
-        .left(Pane::new(left_visible, ctx.left_split_ratio, 200.0, || {
-            Box::new(left_panel::view())
-        }))
-        .right(Pane::new(right_visible, ctx.right_split_ratio, 240.0, || {
-            Box::new(right_panel::view())
-        }));
-    let frame = workspace_frame::view(chat_header::view(left_visible, right_visible), spec);
+    let spec = FrameSpec::new(
+        "syn-chat-h-split",
+        || Box::new(chat_header::center()),
+        || Box::new(chat_pane::view()),
+    )
+    .left(Pane::new(
+        left_visible,
+        ctx.left_split_ratio,
+        200.0,
+        || Box::new(left_panel::header()),
+        || Box::new(left_panel::body()),
+    ))
+    .right(Pane::new(
+        right_visible,
+        ctx.right_split_ratio,
+        240.0,
+        || Box::new(right_panel::header()),
+        || Box::new(right_panel::body()),
+    ));
+    let frame = workspace_frame::view(spec);
 
     mgui! {
         Stack::new().fit(StackFit::Expand) => [

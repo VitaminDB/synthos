@@ -1424,3 +1424,4 @@ settings.archive.clear_dialog.body = "Arşivdeki tüm sohbetler kalıcı olarak 
 settings.archive.empty.title = "Arşiv boş"
 settings.archive.empty.hint = "Kapatılan sohbetler burada görünecek."
 search.cmd.archive_chat = "Geçerli sohbeti arşivle"
+code.tree.open_folder_tooltip = "Klasör aç…"

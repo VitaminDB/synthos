@@ -53,19 +53,14 @@ fn reorder_open_files(session: CodeSession, src: PathBuf, target: PathBuf) {
     });
 }
 
+/// Тело панели — список. Заголовок ([`header`]) кладёт каркас в общую
+/// строку заголовков.
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("code-editor-files-panel").child(mgui! {
-        Column::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(),
-                body(),
-            ]
-    })
+    DecoratedBox::new().class("code-editor-files-panel").child(body())
 }
 
-fn header() -> impl Widget {
-    DecoratedBox::new().class("code-editor-files-header").child(move || {
+pub fn header() -> impl Widget {
+    DecoratedBox::new().child(move || {
         let code = use_context::<CodeEditorCtx>();
         let count = code
             .active_session()
@@ -76,7 +71,7 @@ fn header() -> impl Widget {
         } else {
             tr!("code.open_files.header.title_count", count = count.to_string())
         };
-        Text::new(label).class("code-editor-files-title")
+        Text::new(label).max_lines(1).class("panel-header-side-title")
     })
 }
 

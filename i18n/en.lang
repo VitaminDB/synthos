@@ -1429,3 +1429,4 @@ settings.archive.clear_dialog.body = "All archived chats will be deleted for goo
 settings.archive.empty.title = "The archive is empty"
 settings.archive.empty.hint = "Closed chats will appear here."
 search.cmd.archive_chat = "Archive current chat"
+code.tree.open_folder_tooltip = "Open folder…"

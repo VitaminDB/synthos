@@ -1429,3 +1429,4 @@ settings.archive.clear_dialog.body = "Wszystkie zarchiwizowane czaty zostaną us
 settings.archive.empty.title = "Archiwum jest puste"
 settings.archive.empty.hint = "Zamknięte czaty pojawią się tutaj."
 search.cmd.archive_chat = "Przenieś bieżący czat do archiwum"
+code.tree.open_folder_tooltip = "Otwórz folder…"

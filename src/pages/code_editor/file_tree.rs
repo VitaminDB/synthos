@@ -32,54 +32,27 @@ use super::fs_ops::PLACEHOLDER_PREFIX;
 use super::git_status::{self, GitPalette, GHOST_PREFIX};
 use super::state::{self, CodeEditorCtx, CodeSession};
 
+/// Тело панели — дерево. Заголовок (папка + кнопка «открыть») собирает
+/// `mod.rs::left_header` в общей строке заголовков каркаса.
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("code-editor-tree-panel").child(mgui! {
-        Column::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(),
-                body(),
-            ]
-    })
+    DecoratedBox::new().class("code-editor-tree-panel").child(body())
 }
 
-fn header() -> impl Widget {
-    DecoratedBox::new().class("code-editor-tree-header").child(mgui! {
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                // Имя папки слева. Reactive подписан на root_folder активной сессии.
-                Reactive::new(move || -> Vec<Box<dyn Widget>> {
-                    let code = use_context::<CodeEditorCtx>();
-                    let _ = code.session_gen.get();
-                    let name = code
-                        .active_session()
-                        .and_then(|s| {
-                            s.root_folder.get().as_ref().and_then(|p| {
-                                p.file_name().map(|n| n.to_string_lossy().to_string())
-                            })
-                        })
-                        .unwrap_or_else(|| tr!("code.tree.header.no_project"));
-                    vec![Box::new(Text::new(name).class("code-editor-tree-folder-name"))]
-                }),
-                // Растягивающийся spacer прижимает ToolButton к правому краю.
-                DecoratedBox::new().class("code-editor-header-spacer"),
-                // ToolButton — на каждом клике открываем нативный picker.
-                // Если активной сессии нет (промежуточное состояние закрытия) —
-                // ничего не делаем; нормальный путь — sidebar+/file_tree всегда
-                // имеют активную сессию.
-                ToolButton::new(MI_FOLDER_OPEN)
-                    .on_click(move || {
-                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                            let code = use_context::<CodeEditorCtx>();
-                            if let Some(session) = code.active_session_untracked() {
-                                state::set_root_folder(session, path);
-                            }
-                        }
-                    })
-                    .class("code-editor-open-folder-btn"),
-            ]
-    })
+/// Кнопка «Открыть папку» — на каждом клике открываем нативный picker.
+/// Если активной сессии нет (промежуточное состояние закрытия) — ничего
+/// не делаем; нормальный путь — рейл всегда даёт активную сессию.
+pub fn open_folder_button() -> impl Widget {
+    ToolButton::new(MI_FOLDER_OPEN)
+        .tooltip(tr!("code.tree.open_folder_tooltip"))
+        .on_click(move || {
+            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                let code = use_context::<CodeEditorCtx>();
+                if let Some(session) = code.active_session_untracked() {
+                    state::set_root_folder(session, path);
+                }
+            }
+        })
+        .class("code-editor-open-folder-btn")
 }
 
 fn body() -> impl Widget {

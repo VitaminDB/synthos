@@ -23,22 +23,21 @@ use crate::icons::{
 };
 
 use super::dialogs::DialogKind;
+use crate::components::panel_header;
+
 use super::file_icons;
 use super::state::{self, is_dirty, CodeEditorCtx, CodeSession};
 
+/// Тело панели — редактор. Заголовок (файл + действия) собирает
+/// `mod.rs::center_header` из [`header_identity`] и [`header_actions`].
 pub fn view() -> impl Widget {
-    DecoratedBox::new().class("code-editor-edit-pane").child(mgui! {
-        Column::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(),
-                body(),
-            ]
-    })
+    DecoratedBox::new().class("code-editor-edit-pane").child(body())
 }
 
-fn header() -> impl Widget {
-    DecoratedBox::new().class("code-editor-edit-header").child(move || {
+/// Идентичность активного файла для центрального заголовка: иконка типа,
+/// имя, dirty-точка; подзаголовок — каталог файла.
+pub fn header_identity() -> impl Widget {
+    DecoratedBox::new().child(move || {
         let code = use_context::<CodeEditorCtx>();
         let child: Box<dyn Widget> = match code.active_session() {
             None => Box::new(DecoratedBox::new()),
@@ -47,32 +46,23 @@ fn header() -> impl Widget {
                 let contents = session.file_contents.get();
                 let disk = session.disk_contents.get();
 
-                let label = active
+                let name = active
                     .as_ref()
-                    .map(|p| p.display().to_string())
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                     .unwrap_or_else(|| tr!("code.editor.no_file_selected"));
+                let dir = active
+                    .as_ref()
+                    .and_then(|p| p.parent().map(|d| d.display().to_string()))
+                    .unwrap_or_default();
                 let dirty = active
                     .as_ref()
                     .map(|p| is_dirty(&contents, &disk, p))
                     .unwrap_or(false);
-
                 let dirty_class = if dirty {
                     "code-editor-dirty-dot active"
                 } else {
                     "code-editor-dirty-dot"
                 };
-                let save_class = if dirty {
-                    "code-editor-save-btn enabled"
-                } else {
-                    "code-editor-save-btn"
-                };
-                let wrap_enabled = session.soft_wrap.get();
-                let wrap_class = if wrap_enabled {
-                    "code-editor-wrap-btn enabled"
-                } else {
-                    "code-editor-wrap-btn"
-                };
-
                 // Иконка типа активного файла. Для пустого active —
                 // generic MI_DESCRIPTION (placeholder будет «Файл не выбран»).
                 let (header_icon, header_icon_class) = match active.as_ref() {
@@ -85,15 +75,54 @@ fn header() -> impl Widget {
                     ),
                     None => (MI_DESCRIPTION, "code-editor-edit-icon".to_string()),
                 };
+                let title = mgui! {
+                    Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                        Text::new(name).max_lines(1).class("panel-header-title"),
+                        DecoratedBox::new().class(dirty_class),
+                    ]
+                };
+                panel_header::identity(
+                    Icon::new(header_icon).class(header_icon_class),
+                    title,
+                    Text::new(dir).max_lines(1).class("panel-header-subtitle"),
+                )
+            }
+        };
+        Stack::new().fit(StackFit::Expand).children(vec![child])
+    })
+}
+
+/// Действия над файлом: перенос строк, история, сохранить.
+pub fn header_actions() -> impl Widget {
+    DecoratedBox::new().child(move || {
+        let code = use_context::<CodeEditorCtx>();
+        let child: Box<dyn Widget> = match code.active_session() {
+            None => Box::new(DecoratedBox::new()),
+            Some(session) => {
+                let active = session.active_file.get();
+                let contents = session.file_contents.get();
+                let disk = session.disk_contents.get();
+                let dirty = active
+                    .as_ref()
+                    .map(|p| is_dirty(&contents, &disk, p))
+                    .unwrap_or(false);
+
+                let save_class = if dirty {
+                    "code-editor-save-btn enabled"
+                } else {
+                    "code-editor-save-btn"
+                };
+                let wrap_enabled = session.soft_wrap.get();
+                let wrap_class = if wrap_enabled {
+                    "code-editor-wrap-btn enabled"
+                } else {
+                    "code-editor-wrap-btn"
+                };
 
                 Box::new(mgui! {
                     Row::new()
-                        .gap(8.0)
+                        .gap(4.0)
                         .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            Icon::new(header_icon).class(header_icon_class),
-                            Text::new(label).class("code-editor-edit-filename"),
-                            DecoratedBox::new().class(dirty_class),
-                            DecoratedBox::new().class("grow"),
                             ToolButton::new(MI_WRAP_TEXT)
                                 .tooltip(tr!("code.editor.wrap_tooltip"))
                                 .on_click(move || {

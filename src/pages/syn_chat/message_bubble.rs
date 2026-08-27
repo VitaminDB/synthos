@@ -6,19 +6,24 @@
 //! иконка инструмента, имя, время, статус и тело в моноширинной плашке.
 //! Режим отображения задаётся `GeneralCtx.tool_display_mode`
 //! (`full` / `minimal` / `hidden`), см. Settings → Общие.
+//!
+//! У текстовых пузырьков (и своих, и ассистента) есть панель действий:
+//! копировать / править / удалить (+ «перегенерировать» у последнего ответа).
+//! Правка — in-place: `SynChatCtx::editing_msg` переключает пузырёк на
+//! поле ввода (`edit_box`), сохранение — `session::edit_message`.
 
 use syngui::animation::Easing;
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::visual::MarkdownView;
-use syngui::widgets::{AnimatedSize, AnimationAxis, Reactive};
+use syngui::widgets::{AnimatedSize, AnimationAxis, MultilineTextEdit, Reactive};
 
 use crate::agent::tools::Tool;
 use crate::context::AppCtx;
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CONTENT_COPY, MI_EXPAND_LESS, MI_EXPAND_MORE,
-    MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
+    MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
+    MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
 };
 use crate::pages::node_editor::run_controls;
 use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
@@ -109,12 +114,19 @@ fn chat_row(
     let author = msg.author.clone();
     let body = msg.body.clone();
 
+    // Правка in-place: подписка на `editing_msg` идёт в scope ленты
+    // (`message_area::scroll_list`), так что смена режима её пересобирает.
+    let editing =
+        !is_typing && use_context::<SynChatCtx>().editing_msg.get() == Some(msg_idx);
+
     let avatar = Avatar::new()
         .text(msg.initials.clone())
         .size(32.0)
         .class(msg.tone_class.clone());
 
-    let bubble_child: Box<dyn Widget> = if outgoing {
+    let bubble_child: Box<dyn Widget> = if editing {
+        Box::new(edit_box(msg_idx, body.clone()))
+    } else if outgoing {
         Box::new(bubble_markdown(&body, "msg-bubble-md msg-bubble-out-md"))
     } else if is_last_assistant {
         let initial_body = body.clone();
@@ -187,10 +199,17 @@ fn chat_row(
         }
     }
     let text_is_redundant = outgoing && body.trim().is_empty() && !msg.attachments.is_empty();
-    if !text_is_redundant {
+    if !text_is_redundant || editing {
         bubble_children.push(bubble_child);
     }
 
+    // В режиме правки пузырёк растягивается: поле ввода должно быть
+    // широким независимо от длины исходного текста.
+    let bubble_class = if editing {
+        format!("{bubble_class} msg-bubble-editing")
+    } else {
+        bubble_class.to_string()
+    };
     let bubble = DecoratedBox::new().class(bubble_class).child(
         Column::new()
             .gap(8.0)
@@ -198,17 +217,24 @@ fn chat_row(
             .children(bubble_children),
     );
 
-    let show_actions = !outgoing && (!is_typing || is_last_assistant);
+    // Панель действий есть у всех текстовых пузырьков; у исходящих она
+    // стоит слева от пузырька (лента выровнена вправо). В режиме правки
+    // прячется — её место занимают «Сохранить»/«Отмена» в самом пузырьке.
+    let show_actions = !editing && (!is_typing || is_last_assistant);
     let bubble_row: Box<dyn Widget> = if show_actions {
+        let actions = actions_widget(Some(msg_idx), body.clone(), is_last_assistant && !outgoing);
+        let bubble: Box<dyn Widget> = Box::new(bubble);
+        let (children, align) = if outgoing {
+            (vec![actions, bubble], MainAxisAlignment::End)
+        } else {
+            (vec![bubble, actions], MainAxisAlignment::Start)
+        };
         Box::new(
             Row::new()
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::End)
-                .main_axis_alignment(MainAxisAlignment::Start)
-                .children(vec![
-                    Box::new(bubble) as Box<dyn Widget>,
-                    actions_widget(body.clone(), is_last_assistant),
-                ]),
+                .main_axis_alignment(align)
+                .children(children),
         )
     } else {
         Box::new(bubble)
@@ -243,11 +269,22 @@ fn chat_row(
     }
 }
 
-fn actions_widget(body: String, regen_allowed: bool) -> Box<dyn Widget> {
-    syngui::widgets::containers::reactive::IntoWidget::into_widget(actions_row(body, regen_allowed))
+/// Панель действий пузырька. `msg_idx = Some(..)` — текстовое сообщение
+/// ленты: копировать / править / удалить (+ regen); `None` — только
+/// копирование (tool-карточки и медиа-ряды правке не подлежат).
+fn actions_widget(msg_idx: Option<usize>, body: String, regen_allowed: bool) -> Box<dyn Widget> {
+    syngui::widgets::containers::reactive::IntoWidget::into_widget(actions_row(
+        msg_idx,
+        body,
+        regen_allowed,
+    ))
 }
 
-fn actions_row(body: String, regen_allowed: bool) -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Sync + 'static {
+fn actions_row(
+    msg_idx: Option<usize>,
+    body: String,
+    regen_allowed: bool,
+) -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Sync + 'static {
     move || {
         let pending = use_context::<SynChatCtx>().pending.get();
         if pending {
@@ -263,22 +300,30 @@ fn actions_row(body: String, regen_allowed: bool) -> impl Fn() -> syngui::Styled
                 syngui::clipboard::copy(&plain);
             })
             .class("msg-action-copy");
-
-        let regen: Option<_> = if regen_allowed {
-            Some(
+        let mut buttons: Vec<Box<dyn Widget>> = vec![Box::new(copy)];
+        if let Some(idx) = msg_idx {
+            buttons.push(Box::new(
+                ToolButton::new(MI_EDIT)
+                    .tooltip(tr!("chat.msg.actions.edit.tooltip"))
+                    .on_click(move || use_context::<SynChatCtx>().editing_msg.set(Some(idx)))
+                    .class("msg-action-edit"),
+            ));
+        }
+        if regen_allowed {
+            buttons.push(Box::new(
                 ToolButton::new(MI_AUTORENEW)
                     .tooltip(tr!("chat.regenerate.tooltip"))
                     .on_click(session::regenerate_last)
                     .class("msg-action-regen"),
-            )
-        } else {
-            None
-        };
-
-        let mut buttons: Vec<Box<dyn Widget>> = Vec::new();
-        buttons.push(Box::new(copy));
-        if let Some(r) = regen {
-            buttons.push(Box::new(r));
+            ));
+        }
+        if let Some(idx) = msg_idx {
+            buttons.push(Box::new(
+                ToolButton::new(MI_DELETE)
+                    .tooltip(tr!("chat.msg.actions.delete.tooltip"))
+                    .on_click(move || session::delete_message(idx))
+                    .class("msg-action-delete"),
+            ));
         }
         DecoratedBox::new().class("msg-actions").child(
             Row::new()
@@ -286,6 +331,57 @@ fn actions_row(body: String, regen_allowed: bool) -> impl Fn() -> syngui::Styled
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .children(buttons),
         )
+    }
+}
+
+/// Поле правки текста сообщения внутри пузырька. Enter — сохранить,
+/// Shift+Enter — перенос строки; «Отмена» возвращает исходный текст.
+/// Черновик живёт в `Arc<Mutex<String>>`, а не в сигнале: сигнал в scope
+/// ленты пересоздавался бы при каждом её ребилде.
+fn edit_box(msg_idx: usize, body: String) -> impl Widget {
+    use std::sync::{Arc, Mutex};
+    let draft = Arc::new(Mutex::new(body.clone()));
+    let draft_change = draft.clone();
+    let draft_save = draft.clone();
+    let editor = MultilineTextEdit::new()
+        .text(body)
+        .rows(2)
+        .max_rows(16)
+        .auto_height(true)
+        .submit_on_enter(true)
+        .on_change(move |s| {
+            if let Ok(mut d) = draft_change.lock() {
+                *d = s.to_string();
+            }
+        })
+        .on_submit(move |s| session::edit_message(msg_idx, s.to_string()))
+        .class("msg-edit-field");
+    let save = Button::new(tr!("chat.msg.edit.save"))
+        .leading_icon(MI_CHECK)
+        .on_click(move || {
+            let text = draft_save.lock().map(|d| d.clone()).unwrap_or_default();
+            session::edit_message(msg_idx, text);
+        })
+        .class("code-editor-dialog-btn-primary");
+    let cancel = Button::new(tr!("app.cancel"))
+        .leading_icon(MI_CLOSE)
+        .on_click(|| use_context::<SynChatCtx>().editing_msg.set(None))
+        .class("code-editor-dialog-btn-secondary");
+    mgui! {
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("msg-edit-box") => [
+                editor,
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .main_axis_alignment(MainAxisAlignment::End) => [
+                        Text::new(tr!("chat.msg.edit.hint")).class("msg-edit-hint"),
+                        cancel,
+                        save,
+                    ],
+            ]
     }
 }
 
@@ -681,7 +777,7 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .children(vec![
                     Box::new(card) as Box<dyn Widget>,
-                    actions_widget(msg.body.clone(), false),
+                    actions_widget(None, msg.body.clone(), false),
                 ]),
         )
     };
@@ -995,7 +1091,7 @@ fn tool_result_row(
             .main_axis_alignment(MainAxisAlignment::Start)
             .children(vec![
                 Box::new(card) as Box<dyn Widget>,
-                actions_widget(msg.body.clone(), false),
+                actions_widget(None, msg.body.clone(), false),
             ]),
     );
 

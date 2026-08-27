@@ -126,8 +126,9 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     // в CAS, но к новому чату они не прикрепляются.
     ctx.pending_attachments.set(Vec::new());
     ctx.viewer.set(None);
-    // Подсветка принадлежала прошлому переходу из поиска.
+    // Подсветка принадлежала прошлому переходу из поиска, правка — прошлой ленте.
     ctx.highlight_msg.set(None);
+    ctx.editing_msg.set(None);
     ctx.error.set(None);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());

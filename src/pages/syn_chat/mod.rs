@@ -36,6 +36,7 @@ pub mod archive_dialog;
 pub mod attachments;
 pub mod chat_header;
 pub mod chat_pane;
+pub mod clear_dialog;
 pub mod compaction_marker;
 pub mod input_panel;
 pub mod left_panel;

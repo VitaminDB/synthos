@@ -5,7 +5,8 @@
 //! Кнопка сжатия зовёт `syn_chat::compact::compact_now` (ручной autocompact);
 //! disabled, пока идёт генерация или в ленте нет кандидатов на сжатие.
 //! Корзина переносит чат в архив (Настройки → Архив) — насовсем удаляют
-//! только оттуда.
+//! только оттуда. «Очистить» удаляет все сообщения, оставляя чат
+//! (подтверждение — `clear_dialog`).
 
 use syngui::mgui;
 use syngui::prelude::*;
@@ -82,12 +83,14 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                     .disabled(!can_compact)
                     .on_click(|| crate::syn_chat::compact::compact_now())
                     .class("panel-header-action"),
-                panel_header::action_button(MI_CLEAR_ALL, tr!("chat.header.clear.tooltip"), || {
-                    let ctx = use_context::<SynChatCtx>();
-                    ctx.messages.set(Vec::new());
-                    ctx.streaming_body.set(String::new());
-                    ctx.streaming_thinking.set(String::new());
-                }),
+                // Очистка ленты — через подтверждение (`clear_dialog`): сам
+                // чат, его название и параметры остаются, уходят только
+                // сообщения. Во время генерации и на пустой ленте — disabled.
+                ToolButton::new(MI_CLEAR_ALL)
+                    .tooltip(tr!("chat.header.clear.tooltip"))
+                    .disabled(pending || msgs.is_empty())
+                    .on_click(|| use_context::<SynChatCtx>().pending_clear.set(true))
+                    .class("panel-header-action"),
                 ToolButton::new(MI_ARCHIVE)
                     .tooltip(tr!("chat.header.archive.tooltip"))
                     .on_click(move || {

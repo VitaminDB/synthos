@@ -1005,6 +1005,7 @@ fn build_app() -> impl Widget {
             components::template_picker::view(),
             components::graph_close_dialog::view(),
             pages::syn_chat::archive_dialog::view(),
+            pages::syn_chat::clear_dialog::view(),
             components::voice_fab::view(),
             search::panel::view(),
             notification_view,

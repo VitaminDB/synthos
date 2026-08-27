@@ -234,6 +234,8 @@
  * каждое сообщение кнопка должна быть заметна, чтобы пользователь знал
  * о возможности перегенерации. */
 ToolButton.msg-action-regen,
+ToolButton.msg-action-edit,
+ToolButton.msg-action-delete,
 ToolButton.msg-action-copy {
     width: 28px;
     height: 28px;
@@ -249,13 +251,55 @@ ToolButton.msg-action-copy {
 }
 
 ToolButton.msg-action-regen:hover,
+ToolButton.msg-action-edit:hover,
 ToolButton.msg-action-copy:hover {
     background-color: var(--surface-hover);
     color: var(--primary);
     opacity: 1.0;
 }
 
+/* Удаление — тревожный акцент на hover, чтобы не путать с правкой. */
+ToolButton.msg-action-delete:hover {
+    background-color: var(--surface-hover);
+    color: var(--error);
+    opacity: 1.0;
+}
+
 ToolButton.msg-action-regen:active,
+ToolButton.msg-action-edit:active,
+ToolButton.msg-action-delete:active,
 ToolButton.msg-action-copy:active {
     background-color: var(--primary-soft);
+}
+
+/* ── Правка сообщения in-place ─────────────────────────────────────────
+ * Пузырёк в режиме правки растягивается до потолка `.msg-bubble`
+ * (max-width 90%), чтобы поле ввода не сжималось по длине исходного
+ * текста. Само поле — как поле ввода чата (`.chat-input-edit`). */
+.msg-bubble-editing {
+    width: 90%;
+}
+
+.msg-edit-box {
+    min-width: 320px;
+}
+
+.msg-edit-field {
+    background-color: var(--bg-shell);
+    color: var(--text);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 10px;
+    accent-color: var(--primary);
+    font-size: 14px;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.msg-edit-field:hover {
+    border-color: var(--primary);
+}
+
+.msg-edit-hint {
+    color: var(--text-muted);
+    font-size: 11px;
 }

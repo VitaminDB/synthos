@@ -408,6 +408,7 @@ pub fn send_message(text: String) {
     }
 
     // 1. Append user-message + плейсхолдер ассистента.
+    ctx.editing_msg.set(None);
     ctx.messages.update(|m| {
         m.push(ChatMsg::user_with_attachments(text.clone(), attachments.clone()));
         m.push(ChatMsg::assistant_empty());
@@ -424,6 +425,85 @@ pub fn send_message(text: String) {
     ctx.pending.set(true);
 
     start_agent_thread(model, ctx);
+}
+
+/// Удаляет одно сообщение ленты по индексу. Во время генерации — no-op:
+/// лента принадлежит worker'у, и индексы под ним «плывут».
+pub fn delete_message(idx: usize) {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    let mut removed = false;
+    ctx.messages.update(|m| {
+        if idx < m.len() {
+            m.remove(idx);
+            removed = true;
+        }
+    });
+    if !removed {
+        return;
+    }
+    ctx.editing_msg.set(None);
+    reset_index_keyed_ui(&ctx);
+    // Префикс-KV — это токены истории по порядку; после правки середины
+    // всё дальше точки правки невалидно. Освобождаем явно, чтобы VRAM под
+    // устаревший кэш не висела до следующего хода.
+    drop_kv_session();
+}
+
+/// Заменяет текст сообщения (правка in-place). Вложения и thinking не
+/// трогаются. Во время генерации — no-op.
+pub fn edit_message(idx: usize, body: String) {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    let text = body.trim_end().to_string();
+    let mut changed = false;
+    ctx.messages.update(|m| {
+        if let Some(msg) = m.get_mut(idx) {
+            if msg.body != text {
+                msg.body = text;
+                changed = true;
+            }
+        }
+    });
+    ctx.editing_msg.set(None);
+    if changed {
+        drop_kv_session();
+    }
+}
+
+/// Очищает ленту активного чата, оставляя сам чат: название, параметры
+/// сэмплинга и плитку в рейле. Во время генерации — no-op (кнопка в шапке
+/// на это время disabled).
+pub fn clear_chat() {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    ctx.messages.set(Vec::new());
+    ctx.streaming_body.set(String::new());
+    ctx.streaming_thinking.set(String::new());
+    ctx.streaming_tool.set(String::new());
+    ctx.error.set(None);
+    ctx.turn_cap_reached.set(false);
+    ctx.editing_msg.set(None);
+    ctx.highlight_msg.set(None);
+    reset_index_keyed_ui(&ctx);
+    drop_kv_session();
+    log::info!("[syn_chat] лента чата очищена");
+}
+
+/// Сбрасывает UI-состояние, ключованное индексами сообщений (раскрытые
+/// thinking-блоки, группы и тела tool-карточек, маркеры сжатия): после
+/// удаления/очистки индексы смещаются, и старые ключи указывали бы не туда.
+fn reset_index_keyed_ui(ctx: &SynChatCtx) {
+    ctx.thinking_open.set(HashMap::new());
+    ctx.tool_group_open.set(HashMap::new());
+    ctx.tool_body_open.set(HashMap::new());
+    ctx.compaction_open.set(HashMap::new());
 }
 
 /// Прерывает текущую генерацию. Worker увидит несовпадение abort-счётчика
@@ -452,6 +532,7 @@ pub fn regenerate_last() {
     // 1. Подготовить ленту: убрать tail-assistant и tool-result/tool_call если
     // есть, добавить пустой placeholder. Для регенерации режем всё после
     // последнего user-сообщения.
+    ctx.editing_msg.set(None);
     ctx.messages.update(|m| {
         while m
             .last()

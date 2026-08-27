@@ -103,6 +103,15 @@ pub struct SynChatCtx {
     /// индексом подсвечивается рамкой, пока пользователь не переключит чат
     /// или не кликнет по ленте. Эфемерно, не persist'ится.
     pub highlight_msg: RwSignal<Option<usize>>,
+    /// Индекс сообщения, которое сейчас правится прямо в ленте: вместо
+    /// текста пузырёк показывает поле ввода (`message_bubble::edit_box`).
+    /// `None` — ничего не редактируется. Эфемерно, сбрасывается при смене
+    /// чата и при старте генерации.
+    pub editing_msg: RwSignal<Option<usize>>,
+    /// Открыт диалог подтверждения очистки ленты
+    /// (`pages::syn_chat::clear_dialog`). Кнопка в шапке только взводит
+    /// сигнал; `session::clear_chat` зовётся из диалога.
+    pub pending_clear: RwSignal<bool>,
 
     /// Положение левого разделителя (список чатов ↔ центр). Биндится к
     /// `SplitView::ratio_signal`; drag пишет в сигнал, а
@@ -166,6 +175,8 @@ impl SynChatCtx {
             compaction_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
             highlight_msg: use_signal(None),
+            editing_msg: use_signal(None),
+            pending_clear: use_signal(false),
             left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),
             last_prompt_tokens: use_signal(0),

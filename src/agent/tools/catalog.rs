@@ -207,7 +207,8 @@ pub(super) fn build_all() -> Vec<Tool> {
                         "type": "array",
                         "items": { "type": "object" },
                         "description": "action=apply: [{node:<id>, state:{kind,data}}] — \
-                            see the state JSON in action=nodes (example with defaults) \
+                            several nodes in one call, not one apply per node. \
+                            See the state JSON in action=nodes (example with defaults) \
                             or action=graph (current values). data is a patch: only the \
                             listed fields change, the rest of the node's state is kept."
                     },

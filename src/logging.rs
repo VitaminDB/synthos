@@ -61,27 +61,7 @@ pub fn init() {
                     .with_target(true)
                     .with_thread_ids(false)
                     .with_thread_names(true)
-                    .with_filter(EnvFilter::new(
-                        // html5ever/markup5ever/selectors шумят `WARN node with
-                        // weird namespace ...` при парсинге HTML readability'ем
-                        // внутри tool `web` — глушим до error.
-                        // code-editor.fs_watcher / .git_status / hyper-pool
-                        // дают сотни тысяч DEBUG строк за час (file events,
-                        // соединения keep-alive) и забивают файл; на post-mortem
-                        // отладке они не нужны — оставляем info+.
-                        //
-                        // Директивы EnvFilter матчатся по **target**, а не по
-                        // имени потока: `synthos-fs-watcher` (имя треда) не
-                        // совпадало ни с чем, и фильтр молча не работал —
-                        // отсюда логи по 500 МБ в день. Точки в target'е
-                        // EnvFilter в директиве не принимает, поэтому глушим
-                        // по общему префиксу `code-editor`.
-                        "debug,wgpu_core=warn,wgpu_hal=warn,naga=warn,\
-                         html5ever=error,markup5ever=error,selectors=error,\
-                         code-editor=info,\
-                         hyper_util::client::legacy::pool=info,\
-                         h2=info,rustls=info",
-                    )),
+                    .with_filter(EnvFilter::new(file_filter())),
             )
         }
         Err(e) => {
@@ -127,6 +107,57 @@ pub fn init() {
         );
         prune_old_logs(&log_dir, RETENTION_DAYS);
     }
+}
+
+/// Директивы фильтра файлового layer'а: `debug` для нашего кода, шумные
+/// сторонние крейты приглушены.
+///
+/// Директивы матчатся по **target**, а не по имени потока: `synthos-fs-watcher`
+/// (имя треда) не совпадало ни с чем, и фильтр молча не работал — отсюда логи
+/// по 500 МБ в день. Дефис в target'е EnvFilter не принимает, поэтому
+/// `code-editor` глушим по общему префиксу.
+///
+/// Кто и чем шумит:
+/// - `h2` — по кадру на каждый чтение/запись HTTP/2: 6.4 млн строк (99.9 %
+///   файла) за сутки работы tool `web`;
+/// - `html5ever`/`markup5ever`/`selectors` — `WARN node with weird namespace`
+///   на каждый тег при парсинге HTML readability'ем;
+/// - `code-editor` (fs_watcher/git_status) и `hyper-pool` — сотни тысяч строк
+///   в час на file events и keep-alive;
+/// - `notify` — inotify-события файловых вотчеров;
+/// - `symphonia_*` — probe формата на каждом открытии wav (плеер, превью нод).
+fn file_filter() -> String {
+    const QUIET_INFO: &[&str] = &[
+        "code-editor",
+        "hyper_util::client::legacy::pool",
+        "h2",
+        "rustls",
+    ];
+    const QUIET_WARN: &[&str] = &[
+        "wgpu_core",
+        "wgpu_hal",
+        "naga",
+        "notify",
+        "symphonia",
+        "symphonia_core",
+        "symphonia_bundle_flac",
+        "symphonia_bundle_mp3",
+        "symphonia_codec_aac",
+        "symphonia_codec_pcm",
+        "symphonia_codec_vorbis",
+        "symphonia_format_isomp4",
+        "symphonia_format_ogg",
+        "symphonia_format_riff",
+    ];
+    const QUIET_ERROR: &[&str] = &["html5ever", "markup5ever", "selectors"];
+
+    let mut directives = vec!["debug".to_string()];
+    for (targets, level) in
+        [(QUIET_INFO, "info"), (QUIET_WARN, "warn"), (QUIET_ERROR, "error")]
+    {
+        directives.extend(targets.iter().map(|t| format!("{t}={level}")));
+    }
+    directives.join(",")
 }
 
 /// Сколько дней держим старые `synthos.YYYY-MM-DD.log`.
@@ -220,6 +251,21 @@ mod tests {
     /// параллельными потоками — без сериализации они флачат, перетирая
     /// XDG_STATE_HOME/HOME друг у друга посреди проверки.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Фильтр парсится целиком: EnvFilter молча отбрасывает невалидные
+    /// директивы (`parse_lossy`), и опечатка в имени крейта означала бы
+    /// «глушение не работает» без единого признака.
+    #[test]
+    fn file_filter_parses_every_directive() {
+        let filter = file_filter();
+        let strict = tracing_subscriber::filter::EnvFilter::builder()
+            .parse(&filter)
+            .unwrap_or_else(|e| panic!("фильтр не разобрался: {e}\n{filter}"));
+        let printed = strict.to_string();
+        for target in ["notify", "symphonia_core", "h2", "wgpu_core"] {
+            assert!(printed.contains(target), "{target} потерялся: {printed}");
+        }
+    }
 
     /// Ретеншн сносит только старые `synthos.*.log` и не трогает свежие
     /// и чужие файлы.

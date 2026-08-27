@@ -515,6 +515,12 @@ fn compact_kind_list() -> String {
     out
 }
 
+/// Имя без разделителей: `ace_step_checkpoint` и `AceStepCheckpoint` дают
+/// одно и то же `acestepcheckpoint`.
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
 const FILTER_HINT: &str = "filter matches kind/title/category (not field \
      names — see those in the state example). Multiple values joined by a \
      space or comma are combined: \"ltx_checkpoint ltx_sampler_stage1\" \
@@ -557,7 +563,15 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
             meta.category.label().to_lowercase(),
             meta.subcategory.unwrap_or("").to_lowercase()
         );
-        if !tokens.iter().any(|t| hay.contains(t)) {
+        // Сравниваем и «как есть», и без разделителей: модель берёт имя из
+        // виденного ей state-JSON (`AceStepCheckpoint`) вместо slug'а
+        // (`ace_step_checkpoint`), получала «no nodes found» и шла спрашивать
+        // ноды по одной — лишние ходы на ровном месте.
+        let hay_squashed = squash(&hay);
+        if !tokens
+            .iter()
+            .any(|t| hay.contains(t) || hay_squashed.contains(&squash(t)))
+        {
             continue;
         }
         matched += 1;
@@ -762,7 +776,8 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
 
     if let Some(graph) = v.get("graph") {
         let mode = v.get("mode").and_then(|x| x.as_str()).unwrap_or("replace");
-        let graph = unwrap_json_string(graph, "graph")?;
+        let (graph, note) = unwrap_json_string(graph, "graph")?;
+        notes.extend(note);
         let template = template_from_value(&graph)?;
         match mode {
             "replace" => convert::load_into_ctx(&ctx, &template),
@@ -782,7 +797,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
     // агента пересобирать вызов целиком и терять уже верные куски.
     let mut problems: Vec<String> = Vec::new();
 
-    if let Some(items) = coerce_array(&v, "set_state")? {
+    if let Some(items) = coerce_array(&v, "set_state", &mut notes)? {
         for (i, item) in items.iter().enumerate() {
             match apply_one_state(&ctx, item) {
                 Ok(note) => notes.push(note),
@@ -791,7 +806,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         }
     }
 
-    if let Some(items) = coerce_array(&v, "connect")? {
+    if let Some(items) = coerce_array(&v, "connect", &mut notes)? {
         for (i, item) in items.iter().enumerate() {
             let res = conn_from_value(item, &ctx).and_then(|c| {
                 add_connection(&ctx, &c)?;
@@ -807,7 +822,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         }
     }
 
-    if let Some(items) = coerce_array(&v, "disconnect")? {
+    if let Some(items) = coerce_array(&v, "disconnect", &mut notes)? {
         for item in &items {
             let c = match conn_from_value(item, &ctx) {
                 Ok(c) => c,
@@ -955,18 +970,49 @@ fn template_from_value(graph: &serde_json::Value) -> Result<Template, String> {
 /// `"set_state": "[{\"node\": 13, …}]"`. Раньше такой вызов молча пролетал
 /// мимо `as_array()` и получал «apply без изменений: передай … set_state» —
 /// ошибку, отрицающую то, что агент видит в собственном вызове.
-fn unwrap_json_string(v: &serde_json::Value, field: &str) -> Result<serde_json::Value, String> {
+fn unwrap_json_string(
+    v: &serde_json::Value,
+    field: &str,
+) -> Result<(serde_json::Value, Option<String>), String> {
     let Some(raw) = v.as_str() else {
-        return Ok(v.clone());
+        return Ok((v.clone(), None));
     };
     let text = raw.trim();
-    serde_json::from_str(text).map_err(|e| {
+    let err = |e: serde_json::Error| {
         format!(
             "{field} came as a string, and it doesn't parse as JSON: {e}{}. \
              Pass the value as a structure (array/object), not as text.",
             json_error_context(text, &e)
         )
-    })
+    };
+    let e = match serde_json::from_str(text) {
+        Ok(val) => return Ok((val, None)),
+        Err(e) => e,
+    };
+    // Второй типовой случай: в одну строку склеены несколько аргументов —
+    // `"[{…}], \"connect\": []"`. Значение этого поля — первое в строке;
+    // берём его и называем отброшенный хвост, вместо отказа целиком.
+    let mut stream = serde_json::Deserializer::from_str(text).into_iter::<serde_json::Value>();
+    let Some(Ok(val)) = stream.next() else {
+        return Err(err(e));
+    };
+    let rest = text[stream.byte_offset().min(text.len())..].trim();
+    let note = (!rest.is_empty()).then(|| {
+        format!(
+            "⚠ {field}: everything after the first JSON value was ignored ({}). \
+             Pass each argument as its own field, not glued into one string.",
+            clip(rest, 80)
+        )
+    });
+    Ok((val, note))
+}
+
+/// Обрезка длинного фрагмента для сообщения агенту.
+fn clip(s: &str, max: usize) -> String {
+    match s.chars().count() > max {
+        true => format!("{}…", s.chars().take(max).collect::<String>()),
+        false => s.to_string(),
+    }
 }
 
 /// Фрагмент текста вокруг места ошибки разбора: «expected `:` at column 132»
@@ -985,14 +1031,18 @@ fn json_error_context(text: &str, e: &serde_json::Error) -> String {
 }
 
 /// Массив-аргумент: принимает массив, одиночный объект и строку с JSON.
+/// Предупреждения разбора (отброшенный хвост склеенной строки) складывает в
+/// `notes` — они уходят агенту вместе с результатом apply.
 fn coerce_array(
     v: &serde_json::Value,
     field: &str,
+    notes: &mut Vec<String>,
 ) -> Result<Option<Vec<serde_json::Value>>, String> {
     let Some(raw) = v.get(field) else {
         return Ok(None);
     };
-    let val = unwrap_json_string(raw, field)?;
+    let (val, note) = unwrap_json_string(raw, field)?;
+    notes.extend(note);
     match val {
         serde_json::Value::Array(a) => Ok(Some(a)),
         // Один элемент без обёртки — тоже понятное намерение.
@@ -1134,7 +1184,7 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
         .ok_or("the node field is required (node id or kind name)")?;
     let node_id = resolve_node_ref(node_ref, ctx)?;
     let state_v = item.get("state").cloned().ok_or("the state field is required")?;
-    let state_v = unwrap_json_string(&state_v, "state")?;
+    let (state_v, parse_note) = unwrap_json_string(&state_v, "state")?;
     let nodes = ctx.nodes.get_untracked();
     let node = nodes
         .iter()
@@ -1172,10 +1222,15 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     }
     // Перечисляем применённые поля: «updated» без списка не отличить от
     // «принял вызов и ничего не поменял».
-    Ok(match changed.is_empty() {
+    let mut msg = match changed.is_empty() {
         true => format!("state of node {node_id}: nothing to change (data is empty)"),
         false => format!("state of node {node_id} updated: {}", changed.join(", ")),
-    })
+    };
+    if let Some(note) = parse_note {
+        msg.push('\n');
+        msg.push_str(&note);
+    }
+    Ok(msg)
 }
 
 fn conn_from_value(v: &serde_json::Value, ctx: &NodeEditorCtx) -> Result<ConnData, String> {
@@ -1344,16 +1399,18 @@ mod tests {
         let v = serde_json::json!({
             "set_state": "[{\"node\": 13, \"state\": {\"kind\": \"TextView\"}}]"
         });
-        let items = coerce_array(&v, "set_state").expect("строка разбирается").expect("есть");
+        let mut notes = Vec::new();
+        let items =
+            coerce_array(&v, "set_state", &mut notes).expect("строка разбирается").expect("есть");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["node"], 13);
 
         // Одиночный объект без массива — тоже понятное намерение.
         let v = serde_json::json!({"set_state": {"node": 2, "state": {}}});
-        assert_eq!(coerce_array(&v, "set_state").unwrap().unwrap().len(), 1);
+        assert_eq!(coerce_array(&v, "set_state", &mut notes).unwrap().unwrap().len(), 1);
 
         // Поля нет — не ошибка.
-        assert!(coerce_array(&serde_json::json!({}), "set_state").unwrap().is_none());
+        assert!(coerce_array(&serde_json::json!({}), "set_state", &mut notes).unwrap().is_none());
     }
 
     /// Битый JSON внутри строки объясняется, а не прячется за «apply без
@@ -1361,7 +1418,8 @@ mod tests {
     #[test]
     fn coerce_array_reports_broken_json_string() {
         let v = serde_json::json!({"set_state": "[{\"prompt\", \"\"}]"});
-        let err = coerce_array(&v, "set_state").expect_err("битый JSON");
+        let mut notes = Vec::new();
+        let err = coerce_array(&v, "set_state", &mut notes).expect_err("битый JSON");
         assert!(err.contains("set_state came as a string"), "{err}");
         assert!(err.contains("column"), "{err}");
         assert!(err.contains("around:"), "нужен фрагмент вокруг ошибки: {err}");
@@ -1563,6 +1621,31 @@ mod tests {
         assert_eq!(d.device_idx, 1);
         assert_eq!(d.quant_dit_idx, 2);
         assert!(d.resident);
+    }
+
+    /// Строка со склеенными аргументами: берём первое значение, про хвост
+    /// говорим вслух. Раньше весь вызов отклонялся, и агент повторял его.
+    #[test]
+    fn coerce_array_recovers_value_glued_with_extra_args() {
+        let v = serde_json::json!({
+            "set_state": "[{\"node\": 3, \"state\": {}}], \"connect\": []"
+        });
+        let mut notes = Vec::new();
+        let items = coerce_array(&v, "set_state", &mut notes).unwrap().expect("есть");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["node"], 3);
+        assert!(notes.iter().any(|n| n.contains("connect")), "{notes:?}");
+    }
+
+    /// Фильтр нод матчится и по CamelCase-имени варианта state: модель
+    /// берёт его из state-JSON, а не из slug'а.
+    #[test]
+    fn nodes_filter_matches_camel_case_kind() {
+        let v = serde_json::json!({ "filter": "AceStepCheckpoint AceStepGenerate" });
+        let out = nodes_impl(&v).expect("ok");
+        assert!(out.contains("--- ace_step_checkpoint"), "{out}");
+        assert!(out.contains("--- ace_step_generate"), "{out}");
+        assert!(!out.contains("no nodes found"), "{out}");
     }
 
     /// Выдуманное поле — ошибка со списком настоящих, а не молчаливая потеря

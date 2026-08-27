@@ -181,50 +181,78 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
     }))
 }
 
-/// Аудио: волна и ⏵/⏸. Декод запускается при первом показе карточки.
+/// Аудио: волна с перемоткой и ⏵/⏸. Декод запускается при первом показе.
+///
+/// Три отдельных `Reactive` — не косметика: позиция тикает 12 раз в секунду,
+/// и общий на всю карточку пересобирал бы вместе с волной и кнопку. Клик по
+/// ней терялся между press и release (виджет успевал смениться), из-за чего
+/// пауза не срабатывала и трек доигрывал до конца.
 fn audio_stage(a: &MsgAttachment) -> Box<dyn Widget> {
     let signals = AudioSignals::new();
     let player: PlayerSlot = media_audio::new_slot();
     media_audio::ensure_decoded(a, signals, &player);
     let duration = attach::format_duration(a.duration_ms);
 
-    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let buf = signals.buf.get();
-        let playing = signals.playing.get();
-        let player = player.clone();
-        let wave: Box<dyn Widget> = match buf {
-            Some(b) => Box::new(
-                StaticWaveform::new()
-                    .pcm(Some(b))
-                    .progress(signals.progress())
-                    .height(64.0)
-                    .class("chat-media-waveform"),
-            ),
-            None => Box::new(Center::new().child(
+    let wave_player = player.clone();
+    let wave = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(b) = signals.buf.get() else {
+            return vec![Box::new(Center::new().child(
                 Text::new(tr!("chat.media.audio_decoding")).class("chat-media-meta"),
-            )),
+            ))];
         };
-        let controls = mgui! {
-            Row::new()
-                .gap(10.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
-                    .tooltip(if playing { tr!("chat.media.pause.tooltip") } else { tr!("chat.media.play.tooltip") })
-                    .on_click(move || media_audio::toggle(&player, signals))
-                    .class("chat-media-play-small"),
-                Text::new(duration.clone()).class("chat-media-meta"),
-            ]
-        };
+        let seek_player = wave_player.clone();
         vec![Box::new(
-            DecoratedBox::new().class("chat-media-audio").child(
-                Column::new()
-                    .gap(8.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![wave, Box::new(controls) as Box<dyn Widget>]),
-            ),
+            StaticWaveform::new()
+                .pcm(Some(b))
+                .progress(signals.progress())
+                .on_seek(move |t| media_audio::seek(&seek_player, signals, t))
+                .height(64.0)
+                .class("chat-media-waveform"),
         )]
-    }))
+    });
+
+    let btn_player = player.clone();
+    let play_btn = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let playing = signals.playing.get();
+        let btn_player = btn_player.clone();
+        vec![Box::new(
+            ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
+                .tooltip(if playing {
+                    tr!("chat.media.pause.tooltip")
+                } else {
+                    tr!("chat.media.play.tooltip")
+                })
+                .on_click(move || media_audio::toggle(&btn_player, signals))
+                .class("chat-media-play-small"),
+        )]
+    });
+
+    let timecode = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let pos = signals.pos.get();
+        let label = match pos > 0.0 {
+            true => format!("{} / {duration}", attach::format_duration((pos * 1000.0) as u64)),
+            false => duration.clone(),
+        };
+        vec![Box::new(Text::new(label).class("chat-media-meta"))]
+    });
+
+    let controls = mgui! {
+        Row::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+            play_btn,
+            timecode,
+        ]
+    };
+    Box::new(
+        DecoratedBox::new().class("chat-media-audio").child(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(vec![Box::new(wave) as Box<dyn Widget>, Box::new(controls)]),
+        ),
+    )
 }
 
 /// Картинка: превью во всю ширину карточки, клик — полноэкранный просмотр.

@@ -307,43 +307,52 @@ fn audio_stage(
 
     let name = a.original_name.clone();
     let duration = attach::format_duration(a.duration_ms);
-    let player = audio_player.clone();
 
-    let controls = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let buf = signals.audio.buf.get();
-        let playing = signals.audio.playing.get();
-        let pos = signals.audio.pos.get();
-        let Some(buf) = buf else {
+    // Волна и кнопка — в разных Reactive: волна перерисовывается на каждый
+    // тик позиции (12 раз в секунду), и общий блок пересобирал бы вместе с
+    // ней кнопку, теряя клик между press и release — пауза не срабатывала.
+    let wave_player = audio_player.clone();
+    let wave = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(buf) = signals.audio.buf.get() else {
             return vec![Box::new(
                 Text::new(tr!("chat.media.audio_decoding")).class("media-viewer-hint"),
             )];
         };
-        let progress = {
-            let total = buf.pcm.len() as f32 / (buf.sample_rate.max(1) as f32)
-                / buf.channels.max(1) as f32;
-            if total > 0.0 {
-                (pos / total).clamp(0.0, 1.0)
-            } else {
-                0.0
-            }
-        };
-        let player = player.clone();
-        vec![Box::new(mgui! {
-            Column::new().gap(16.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                StaticWaveform::new()
-                    .pcm(Some(buf.clone()))
-                    .progress(progress)
-                    .height(140.0)
-                    .class("media-viewer-waveform"),
-                Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).main_axis_alignment(MainAxisAlignment::Center) => [
-                    ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
-                        .tooltip(if playing { tr!("chat.media.pause.tooltip") } else { tr!("chat.media.play.tooltip") })
-                        .on_click(move || super::media_audio::toggle(&player, signals.audio))
-                        .class("media-viewer-play"),
-                ],
-            ]
-        }) as Box<dyn Widget>]
+        let seek_player = wave_player.clone();
+        vec![Box::new(
+            StaticWaveform::new()
+                .pcm(Some(buf))
+                .progress(signals.audio.progress())
+                .on_seek(move |t| super::media_audio::seek(&seek_player, signals.audio, t))
+                .height(140.0)
+                .class("media-viewer-waveform"),
+        )]
     });
+
+    let btn_player = audio_player.clone();
+    let play_btn = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let playing = signals.audio.playing.get();
+        let btn_player = btn_player.clone();
+        vec![Box::new(
+            ToolButton::new(if playing { MI_PAUSE } else { MI_PLAY_ARROW })
+                .tooltip(if playing {
+                    tr!("chat.media.pause.tooltip")
+                } else {
+                    tr!("chat.media.play.tooltip")
+                })
+                .on_click(move || super::media_audio::toggle(&btn_player, signals.audio))
+                .class("media-viewer-play"),
+        )]
+    });
+
+    let controls = mgui! {
+        Column::new().gap(16.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            wave,
+            Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).main_axis_alignment(MainAxisAlignment::Center) => [
+                play_btn,
+            ],
+        ]
+    };
 
     // Вертикальное центрирование делает сам Column (MainAxisAlignment::Center)
     // в блоке фиксированной высоты: `Center` тут не годится — он отдаёт
@@ -355,7 +364,17 @@ fn audio_stage(
                 .main_axis_alignment(MainAxisAlignment::Center)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                     Text::new(name).class("media-viewer-audio-name"),
-                    Text::new(duration).class("media-viewer-audio-meta"),
+                    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+                        let pos = signals.audio.pos.get();
+                        let label = match pos > 0.0 {
+                            true => format!(
+                                "{} / {duration}",
+                                attach::format_duration((pos * 1000.0) as u64)
+                            ),
+                            false => duration.clone(),
+                        };
+                        vec![Box::new(Text::new(label).class("media-viewer-audio-meta"))]
+                    }),
                     controls,
                 ]
         ]

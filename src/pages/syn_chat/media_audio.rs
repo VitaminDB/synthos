@@ -35,16 +35,20 @@ impl AudioSignals {
 
     /// Доля проигранного [0..1] по текущему буферу.
     pub fn progress(&self) -> f32 {
-        let Some(buf) = self.buf.get() else {
-            return 0.0;
-        };
-        let total =
-            buf.pcm.len() as f32 / buf.sample_rate.max(1) as f32 / buf.channels.max(1) as f32;
+        let total = self.duration();
         if total > 0.0 {
             (self.pos.get() / total).clamp(0.0, 1.0)
         } else {
             0.0
         }
+    }
+
+    /// Длительность декодированного буфера в секундах (0.0, пока не готов).
+    pub fn duration(&self) -> f32 {
+        let Some(buf) = self.buf.get() else {
+            return 0.0;
+        };
+        buf.pcm.len() as f32 / buf.sample_rate.max(1) as f32 / buf.channels.max(1) as f32
     }
 }
 
@@ -113,6 +117,13 @@ pub fn toggle(player: &PlayerSlot, signals: AudioSignals) {
             };
             match AudioPlayer::start(pcm, buf.sample_rate) {
                 Ok(p) => {
+                    // Перемотка до первого play двигает только `pos` (плеера
+                    // ещё нет) — переносим её в свежий плеер, иначе он
+                    // заиграл бы с нуля, а курсор стоял бы на месте клика.
+                    let from = signals.pos.get_untracked();
+                    if from > 0.0 {
+                        let _ = p.seek_seconds(from as f64);
+                    }
                     *guard = Some(p);
                     signals.playing.set(true);
                     spawn_position_poller(player.clone(), signals);
@@ -121,6 +132,25 @@ pub fn toggle(player: &PlayerSlot, signals: AudioSignals) {
             }
         }
     }
+}
+
+/// Перемотать на долю `t` ∈ [0..1] от длительности. Работает и до первого
+/// play: тогда двигается только курсор, а `toggle` стартует плеер с этой
+/// позиции.
+pub fn seek(player: &PlayerSlot, signals: AudioSignals, t: f32) {
+    let total = signals.duration();
+    if total <= 0.0 {
+        return;
+    }
+    let secs = (t.clamp(0.0, 1.0) * total) as f64;
+    if let Ok(guard) = player.lock() {
+        if let Some(p) = guard.as_ref() {
+            if let Err(e) = p.seek_seconds(secs) {
+                log::warn!("[media] перемотка: {e}");
+            }
+        }
+    }
+    signals.pos.set(secs as f32);
 }
 
 /// Тикает позицию воспроизведения в сигнал, пока звук играет.

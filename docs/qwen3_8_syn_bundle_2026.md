@@ -22,8 +22,17 @@ HF-упаковки нет. Видео: `prepare_video` в `synaptix-vlm-qwen3` 
 2 fps, ≤64 кадров, ≤4096 токенов на ролик, группа = 2 кадра → temporal-патч,
 башня кодирует группы независимо), блок промпта на группу —
 `<{t:.1} seconds><|vision_start|><|video_pad|>…<|vision_end|>`, как у
-HF-процессора Qwen3-VL. M-RoPE движок не применяет — позиции обычные 1D,
-временну́ю шкалу модель видит по текстовым таймкодам.
+HF-процессора Qwen3-VL. Позиции на медиа-промпте — M-RoPE
+(`qwen3_next_hybrid/src/mrope.rs`, порт `get_rope_index` +
+`apply_interleaved_mrope`): текст 1D, патчи картинки/группы кадров — сетка
+(t, строка, столбец) по merged-сетке башни, после блока текст продолжается с
+`max(h, w)`; частоты rotary-части поделены `mrope_section: [11, 11, 10]`
+интерливингом. Таблицы cos/sin собираются на host на весь промпт
+(`RopePositions::Tables` в common-модели), декод — 1D со сдвигом
+`max_pos + 1 − L` (`RopePositions::Shifted`). Выключатель для A/B:
+`SYN_HYBRID_MROPE=0`. Замечание: конфиг несёт `rope_type: yarn, factor 4`,
+а гибрид YaRN-масштабирование частот и mscale не применяет (как и раньше,
+для текста) — отдельный вопрос фиделити.
 Гейты: z-гейт GDN — SiLU (`output_gate_type: "swish"` в конфиге), гейт
 внимания — sigmoid; ровно так synaptix и считает.
 

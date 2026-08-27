@@ -313,7 +313,8 @@ fn vram_report(tag: &str) {
 }
 
 fn media_pad_ids(tokenizer: &synaptix::facade::llm::LlmTokenizer) -> Vec<u32> {
-    ["<|patch|>", "<|video|>"]
+    // Muse Glimmer и Qwen-гибрид: у каждой семьи свои токены-заполнители.
+    ["<|patch|>", "<|video|>", "<|image_pad|>", "<|video_pad|>"]
         .iter()
         .filter_map(|t| match tokenizer.encode(t) {
             Ok(ids) if ids.len() == 1 => Some(ids[0]),

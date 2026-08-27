@@ -14,6 +14,12 @@ Qwen3.6-27B (`synaptix-llm-qwen3-next-hybrid` + фасад `qwen3_5 → Hybrid`)
 partial rotary 0.25, словарь 248 320, контекст 262 144. MTP-голова (1 слой) —
 для спекулятивного декода; vision-башня (`model.visual.*`, 27 блоков) лежит в
 бандле и подхватывается `synaptix-vlm-qwen3` для мультимодального промпта.
+В Syn-чате картинки идут через фасад `Llm` (`supports_media` /
+`ensure_media_tower` / `encode_image` / `generate_streaming_media` диспатчат
+в `HybridPipeline`, блок промпта — `<|vision_start|><|image_pad|>…<|vision_end|>`);
+башню загрузчик берёт из `tensors:main` — отдельного компонента `vision` у
+HF-упаковки нет. Видео гибрид не принимает (только Muse Glimmer), M-RoPE
+для картинок движок не применяет — позиции обычные 1D.
 Гейты: z-гейт GDN — SiLU (`output_gate_type: "swish"` в конфиге), гейт
 внимания — sigmoid; ровно так synaptix и считает.
 

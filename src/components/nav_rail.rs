@@ -230,8 +230,10 @@ fn workspaces_segment() -> impl Widget {
 
 /// Общая обёртка плитки: визуал + подпись, перетаскивание (клик —
 /// `rail::open`, drop сверху — `rail::move_before`) и контекстное меню
-/// «Закрыть». `Draggable` глотает MouseDown левой кнопки, поэтому у
-/// внутренних кнопок своих on_click нет; правая кнопка проходит к
+/// «Закрыть». События идут от самого глубокого элемента к корню, поэтому
+/// кнопка внутри плитки обязана быть `press_passthrough` — иначе она
+/// заберёт MouseDown себе, и `Draggable` не увидит ни клика, ни старта
+/// перетаскивания (так рейл и «не кликался»). Правая кнопка проходит к
 /// `ContextMenu`.
 fn tile_with_label(
     body: impl Widget + 'static,
@@ -294,7 +296,10 @@ fn code_tile(session: CodeSession, idx: usize, is_selected: bool, entry: RailEnt
     } else {
         "nav-rail-item"
     };
-    let btn = ToolButton::new(icon).tooltip(label.clone()).class(btn_class);
+    let btn = ToolButton::new(icon)
+        .tooltip(label.clone())
+        .press_passthrough()
+        .class(btn_class);
 
     // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
     // Цвет по занятости (busy_count пишет семплер terminal_activity;
@@ -345,7 +350,10 @@ fn graph_tile(tab: OpenTab, is_selected: bool, entry: RailEntry) -> impl Widget 
     } else {
         "nav-rail-item"
     };
-    let btn = ToolButton::new(icon).tooltip(title).class(btn_class);
+    let btn = ToolButton::new(icon)
+        .tooltip(title)
+        .press_passthrough()
+        .class(btn_class);
     tile_with_label(btn, label, is_selected, entry)
 }
 

@@ -7123,6 +7123,7 @@ name = "synaptix-music-acestep"
 version = "0.1.1"
 dependencies = [
  "safetensors",
+ "serde_json",
  "synaptix-bundle",
  "synaptix-config",
  "synaptix-core",

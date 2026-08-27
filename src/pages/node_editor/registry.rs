@@ -2194,7 +2194,9 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::AceStepCheckpoint => NodeRuntime::AceStepCheckpoint {
-            models_dir: use_signal(None),
+            // Каталог моделей приложения — чтобы нода из шаблона/меню сразу
+            // резолвила 4 бандла по дефолтным именам без ручного выбора.
+            models_dir: use_signal(Some(acestep::app_models_dir())),
             lm_path: use_signal(None),
             text_encoder_path: use_signal(None),
             dit_path: use_signal(None),

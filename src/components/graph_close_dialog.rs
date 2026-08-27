@@ -56,7 +56,7 @@ fn confirm_card(tab: OpenTab) -> impl Widget {
     };
     let save = move || {
         let ws = use_context::<EditorWorkspace>();
-        if template_picker::save_or_update_tab(&tab) {
+        if template_picker::save_tab_as_template(&tab) {
             ws.pending_close.set(None);
             ws.close(id);
         }

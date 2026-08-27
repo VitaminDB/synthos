@@ -11,6 +11,22 @@ pub fn node_file_picker(
     filters: &'static [(&'static str, &'static [&'static str])],
     on_pick: impl Fn(&PathBuf) + Send + Sync + 'static,
 ) -> Box<dyn Widget> {
+    node_file_picker_placeholder(tooltip, sig, filters, || tr!("nodes.file_picker.empty"), on_pick)
+}
+
+/// То же, но с текстом-плейсхолдером для пустого сигнала — когда «файл не
+/// выбран» не значит «ничего не будет»: например, override-поля ACE-Step
+/// Checkpoint показывают дефолтное имя бандла, которое возьмётся из каталога.
+///
+/// Плейсхолдер — замыкание, потому что считается ВНУТРИ `Reactive`: если оно
+/// читает сигналы (каталог моделей), подпись сама обновится при их смене.
+pub fn node_file_picker_placeholder(
+    tooltip: impl Into<String>,
+    sig: RwSignal<Option<PathBuf>>,
+    filters: &'static [(&'static str, &'static [&'static str])],
+    placeholder: impl Fn() -> String + Send + Sync + 'static,
+    on_pick: impl Fn(&PathBuf) + Send + Sync + 'static,
+) -> Box<dyn Widget> {
     let title = tooltip.into();
     let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
         .tooltip(title.clone())
@@ -36,7 +52,7 @@ pub fn node_file_picker(
                     .unwrap_or_else(|| p.to_string_lossy().to_string());
                 Box::new(Text::new(name).class("node-file-picker-name"))
             }
-            None => Box::new(Text::new(tr!("nodes.file_picker.empty")).class("node-file-picker-empty")),
+            None => Box::new(Text::new(placeholder()).class("node-file-picker-empty")),
         };
         vec![widget]
     });

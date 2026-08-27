@@ -52,11 +52,14 @@ fn resident_cache() -> &'static Arc<Mutex<Option<MusicComponentCache>>> {
     CACHE.get_or_init(|| Arc::new(Mutex::new(None)))
 }
 
-/// Дефолтные имена 4 бандлов в каталоге `--models` (зеркалит CLI `music`).
-const LM_NAME: &str = "acestep_5hz_lm_1.7b.syn";
-const TEXT_ENC_NAME: &str = "qwen3-embedding-0.6b.syn";
-const DIT_NAME: &str = "acestep_v15_xl_base.syn";
-const VAE_NAME: &str = "acestep_vae.syn";
+/// Дефолтные имена 4 бандлов в каталоге моделей (зеркалит CLI `music`).
+/// Для LM и DiT — список кандидатов по убыванию приоритета: берётся первый
+/// существующий в каталоге (1.7b → 4b; base → turbo), чтобы каталог только с
+/// 4b-LM или только с turbo-DiT работал без override'ов.
+pub const LM_NAMES: &[&str] = &["acestep_5hz_lm_1.7b.syn", "acestep_5hz_lm_4b.syn"];
+pub const TEXT_ENC_NAMES: &[&str] = &["qwen3-embedding-0.6b.syn"];
+pub const DIT_NAMES: &[&str] = &["acestep_v15_xl_base.syn", "acestep_v15_xl_turbo.syn"];
+pub const VAE_NAMES: &[&str] = &["acestep_vae.syn"];
 
 pub const MODE_OPTIONS: &[&str] =
     &["text2music", "retake", "repaint", "extend", "edit", "cover", "extract"];
@@ -77,24 +80,34 @@ pub const KEYSCALE_OPTIONS: &[&str] = &[
 pub const TIMESIG_OPTIONS: &[&str] =
     &["N/A", "4/4", "3/4", "6/8", "2/4", "5/4", "7/8", "9/8", "12/8"];
 
-/// Резолв 4 путей-бандлов из хэндла: override → каталог/дефолтное имя
-/// (зеркалит CLI `pick`). Проверяет существование файлов.
+/// Имя бандла, которое возьмётся из каталога при пустом override'е: первое
+/// существующее из `names`, иначе первое в списке (чтобы ошибка «не найден»
+/// называла ожидаемый файл). Общая точка для резолва и для подсказок в UI
+/// Checkpoint-ноды.
+pub fn default_bundle_name<'a>(dir: Option<&std::path::Path>, names: &'a [&'a str]) -> &'a str {
+    dir.and_then(|d| names.iter().find(|n| d.join(n).exists()).copied())
+        .unwrap_or(names[0])
+}
+
+/// Резолв 4 путей-бандлов из хэндла: override → каталог/первое существующее
+/// из дефолтных имён (иначе первое имя — для понятной ошибки «не найден»).
+/// Зеркалит CLI `pick`. Проверяет существование файлов.
 pub fn resolve_paths(
     h: &AceStepModelHandle,
 ) -> std::result::Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
-    let pick = |o: &Option<PathBuf>, name: &str| -> std::result::Result<PathBuf, String> {
+    let pick = |o: &Option<PathBuf>, names: &[&str]| -> std::result::Result<PathBuf, String> {
         if let Some(p) = o {
             return Ok(p.clone());
         }
         match &h.models_dir {
-            Some(d) => Ok(d.join(name)),
-            None => Err(tr!("node.acestep_generate.error.missing_dir_or_override", name = name)),
+            Some(d) => Ok(d.join(default_bundle_name(Some(d), names))),
+            None => Err(tr!("node.acestep_generate.error.missing_dir_or_override", name = names[0])),
         }
     };
-    let lm = pick(&h.lm_path, LM_NAME)?;
-    let te = pick(&h.text_encoder_path, TEXT_ENC_NAME)?;
-    let dit = pick(&h.dit_path, DIT_NAME)?;
-    let vae = pick(&h.vae_path, VAE_NAME)?;
+    let lm = pick(&h.lm_path, LM_NAMES)?;
+    let te = pick(&h.text_encoder_path, TEXT_ENC_NAMES)?;
+    let dit = pick(&h.dit_path, DIT_NAMES)?;
+    let vae = pick(&h.vae_path, VAE_NAMES)?;
     for (label, p) in [("lm", &lm), ("text-encoder", &te), ("dit", &dit), ("vae", &vae)] {
         if !p.exists() {
             return Err(tr!(
@@ -946,4 +959,99 @@ fn worker(
     });
     error.set(None);
     running.set(false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handle(dir: &std::path::Path) -> AceStepModelHandle {
+        AceStepModelHandle {
+            models_dir: Some(dir.to_path_buf()),
+            lm_path: None,
+            text_encoder_path: None,
+            dit_path: None,
+            vae_path: None,
+            device_idx: 1,
+            quant_dit_idx: 0,
+            quant_enc_idx: 0,
+            compute_idx: 0,
+            resident: false,
+        }
+    }
+
+    fn touch(dir: &std::path::Path, names: &[&str]) {
+        for n in names {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+    }
+
+    /// Каталог с 4b-LM и turbo-DiT (без 1.7b/base) резолвится без override'ов —
+    /// раньше жёсткие имена давали «bundle не найден».
+    #[test]
+    fn resolve_paths_falls_back_to_alternate_names() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            dir.path(),
+            &[
+                "acestep_5hz_lm_4b.syn",
+                "qwen3-embedding-0.6b.syn",
+                "acestep_v15_xl_turbo.syn",
+                "acestep_vae.syn",
+            ],
+        );
+        let (lm, te, dit, vae) = resolve_paths(&handle(dir.path())).expect("resolve");
+        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_4b.syn");
+        assert_eq!(te.file_name().unwrap(), "qwen3-embedding-0.6b.syn");
+        assert_eq!(dit.file_name().unwrap(), "acestep_v15_xl_turbo.syn");
+        assert_eq!(vae.file_name().unwrap(), "acestep_vae.syn");
+    }
+
+    /// Оба варианта в каталоге — берётся первый по приоритету (1.7b / base).
+    #[test]
+    fn resolve_paths_prefers_first_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            dir.path(),
+            &[
+                "acestep_5hz_lm_1.7b.syn",
+                "acestep_5hz_lm_4b.syn",
+                "qwen3-embedding-0.6b.syn",
+                "acestep_v15_xl_base.syn",
+                "acestep_v15_xl_turbo.syn",
+                "acestep_vae.syn",
+            ],
+        );
+        let (lm, _, dit, _) = resolve_paths(&handle(dir.path())).expect("resolve");
+        assert_eq!(lm.file_name().unwrap(), "acestep_5hz_lm_1.7b.syn");
+        assert_eq!(dit.file_name().unwrap(), "acestep_v15_xl_base.syn");
+    }
+
+    /// Override сильнее каталога.
+    #[test]
+    fn resolve_paths_override_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            dir.path(),
+            &[
+                "acestep_5hz_lm_1.7b.syn",
+                "qwen3-embedding-0.6b.syn",
+                "acestep_v15_xl_base.syn",
+                "acestep_vae.syn",
+                "my_lm.syn",
+            ],
+        );
+        let mut h = handle(dir.path());
+        h.lm_path = Some(dir.path().join("my_lm.syn"));
+        let (lm, _, _, _) = resolve_paths(&h).expect("resolve");
+        assert_eq!(lm.file_name().unwrap(), "my_lm.syn");
+    }
+
+    /// Нет ни каталога, ни override'ов — понятная ошибка, а не паника.
+    #[test]
+    fn resolve_paths_without_dir_errors() {
+        let mut h = handle(std::path::Path::new("/nonexistent"));
+        h.models_dir = None;
+        assert!(resolve_paths(&h).is_err());
+    }
 }

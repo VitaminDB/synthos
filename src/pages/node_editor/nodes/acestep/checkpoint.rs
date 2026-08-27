@@ -21,7 +21,22 @@ use super::{
     dir_picker_row, field_row, make_dropdown, make_toggle, COMPUTE_OPTIONS, DEVICE_OPTIONS,
     QUANT_OPTIONS,
 };
-use crate::pages::node_editor::controls::file_picker::node_file_picker;
+use super::generate::{default_bundle_name, DIT_NAMES, LM_NAMES, TEXT_ENC_NAMES, VAE_NAMES};
+use crate::pages::node_editor::controls::file_picker::node_file_picker_placeholder;
+
+/// Плейсхолдер override-поля: имя бандла, которое реально возьмётся из
+/// текущего каталога моделей, если файл не выбран. Читает `models_dir`
+/// внутри `Reactive`, поэтому меняется вместе с каталогом.
+fn default_bundle_hint(
+    models_dir: RwSignal<Option<std::path::PathBuf>>,
+    names: &'static [&'static str],
+) -> impl Fn() -> String + Send + Sync + 'static {
+    move || {
+        let dir = models_dir.get();
+        let name = default_bundle_name(dir.as_deref(), names);
+        tr!("node.acestep_checkpoint.default_bundle", name = name)
+    }
+}
 
 const SYN_FILTER: &[(&str, &[&str])] = &[("Syn bundle", &["syn"])];
 
@@ -164,19 +179,43 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         ),
         field_row(
             "LM (override)",
-            node_file_picker(tr!("node.acestep_checkpoint.tooltip.lm_override"), lm_path, SYN_FILTER, |_| {}),
+            node_file_picker_placeholder(
+                tr!("node.acestep_checkpoint.tooltip.lm_override"),
+                lm_path,
+                SYN_FILTER,
+                default_bundle_hint(models_dir, LM_NAMES),
+                |_| {},
+            ),
         ),
         field_row(
             "Text-enc (override)",
-            node_file_picker(tr!("node.acestep_checkpoint.tooltip.text_enc_override"), text_encoder_path, SYN_FILTER, |_| {}),
+            node_file_picker_placeholder(
+                tr!("node.acestep_checkpoint.tooltip.text_enc_override"),
+                text_encoder_path,
+                SYN_FILTER,
+                default_bundle_hint(models_dir, TEXT_ENC_NAMES),
+                |_| {},
+            ),
         ),
         field_row(
             "DiT (override)",
-            node_file_picker(tr!("node.acestep_checkpoint.tooltip.dit_override"), dit_path, SYN_FILTER, |_| {}),
+            node_file_picker_placeholder(
+                tr!("node.acestep_checkpoint.tooltip.dit_override"),
+                dit_path,
+                SYN_FILTER,
+                default_bundle_hint(models_dir, DIT_NAMES),
+                |_| {},
+            ),
         ),
         field_row(
             "VAE (override)",
-            node_file_picker(tr!("node.acestep_checkpoint.tooltip.vae_override"), vae_path, SYN_FILTER, |_| {}),
+            node_file_picker_placeholder(
+                tr!("node.acestep_checkpoint.tooltip.vae_override"),
+                vae_path,
+                SYN_FILTER,
+                default_bundle_hint(models_dir, VAE_NAMES),
+                |_| {},
+            ),
         ),
         field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)),
         field_row("Quant DiT", make_dropdown(QUANT_OPTIONS, quant_dit_idx)),

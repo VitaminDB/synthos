@@ -1372,7 +1372,11 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             },
             NodeStateData::AceStepCheckpoint(data),
         ) => {
-            models_dir.set(data.models_dir.as_ref().map(PathBuf::from));
+            // `None` в шаблоне = «каталог приложения» (дефолт runtime'а из
+            // `registry::default_runtime`), а не «сбросить в пусто».
+            if let Some(dir) = &data.models_dir {
+                models_dir.set(Some(PathBuf::from(dir)));
+            }
             lm_path.set(data.lm_path.as_ref().map(PathBuf::from));
             text_encoder_path.set(data.text_encoder_path.as_ref().map(PathBuf::from));
             dit_path.set(data.dit_path.as_ref().map(PathBuf::from));
@@ -2214,6 +2218,39 @@ mod tests {
                 assert_eq!(output_text.get_untracked(), "проверка");
             }
             other => panic!("Expected AsrGigaam runtime, got {other:?}"),
+        }
+    }
+
+    /// `models_dir: None` в шаблоне не затирает дефолт runtime'а (каталог
+    /// моделей приложения) — иначе нода из builtin-шаблона приезжает пустой
+    /// и Generate падает «укажите каталог моделей».
+    #[test]
+    fn acestep_checkpoint_none_dir_keeps_runtime_default() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::AceStepCheckpoint,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
+                models_dir: None,
+                device_idx: 1,
+                ..Default::default()
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        match &*rt {
+            NodeRuntime::AceStepCheckpoint { models_dir, .. } => {
+                assert_eq!(
+                    models_dir.get_untracked(),
+                    Some(crate::pages::node_editor::nodes::acestep::app_models_dir()),
+                    "None в шаблоне должен оставить дефолтный каталог моделей"
+                );
+            }
+            other => panic!("Expected AceStepCheckpoint runtime, got {other:?}"),
         }
     }
 

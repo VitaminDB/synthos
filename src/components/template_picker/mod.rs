@@ -29,7 +29,7 @@ use syngui::widgets::{
 };
 
 use crate::context::AppCtx;
-use crate::icons::{MI_ADD, MI_CLOSE, MI_FOLDER, MI_SAVE};
+use crate::icons::{MI_CLOSE, MI_FOLDER, MI_SAVE};
 use crate::pages::node_editor::tabs::EditorWorkspace;
 use crate::templates::{self, Template, TemplateCategory};
 
@@ -87,16 +87,10 @@ fn header_row(picker_open: RwSignal<bool>) -> impl Widget {
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .main_axis_alignment(MainAxisAlignment::End)
+                    // Одна кнопка сохранения: шаблон — константа, «обновить
+                    // тот, из которого открыт» больше не существует.
                     .child(
                         ToolButton::new(MI_SAVE)
-                            .tooltip(tr!("templates.header.save_current"))
-                            .on_click(move || {
-                                save_or_update_current();
-                            })
-                            .class("tpl-picker-action"),
-                    )
-                    .child(
-                        ToolButton::new(MI_ADD)
                             .tooltip(tr!("templates.header.save_as_new"))
                             .on_click(move || {
                                 save_current_as_template();
@@ -268,6 +262,11 @@ pub fn save_current_as_template() {
 }
 
 /// Сохранить граф `tab` новым custom-шаблоном. `true` — сохранено.
+///
+/// Всегда СОЗДАЁТ новый шаблон и никогда не переписывает тот, из которого
+/// страница открыта: шаблон — константа-снимок, правки живут на странице
+/// (она автосохраняется в `workspace.json`). Имя дедуплицируется — «Имя»,
+/// «Имя (2)», … — чтобы в окне шаблонов не было двух одинаковых карточек.
 pub fn save_tab_as_template(tab: &crate::pages::node_editor::tabs::OpenTab) -> bool {
     let app = use_context::<AppCtx>();
     let (nodes, conns, viewport) = templates::convert::snapshot(&tab.ctx);
@@ -275,6 +274,7 @@ pub fn save_tab_as_template(tab: &crate::pages::node_editor::tabs::OpenTab) -> b
     if t.name.trim().is_empty() {
         t.name = tr!("templates.default_name");
     }
+    t.name = unique_template_name(&t.name);
     t.nodes = nodes;
     t.connections = conns;
     t.viewport = viewport;
@@ -294,51 +294,22 @@ pub fn save_tab_as_template(tab: &crate::pages::node_editor::tabs::OpenTab) -> b
     }
 }
 
-/// Обновляет шаблон, из которого открыт активный граф (`tab.source`).
-/// Если граф не привязан (Untitled) ИЛИ привязан к builtin — fallback
-/// на «Save as new».
-pub fn save_or_update_current() {
-    let ws = use_context::<EditorWorkspace>();
-    let Some(tab) = active_tab(&ws) else { return };
-    save_or_update_tab(&tab);
-}
-
-/// То же для произвольного графа (диалог закрытия плитки). `true` —
-/// шаблон записан на диск.
-pub fn save_or_update_tab(tab: &crate::pages::node_editor::tabs::OpenTab) -> bool {
-    let app = use_context::<AppCtx>();
-    let Some(src_id) = tab.source.get_untracked() else {
-        return save_tab_as_template(tab);
-    };
-    let Some(existing) = templates::storage::load_one(&src_id) else {
-        return save_tab_as_template(tab);
-    };
-    if existing.builtin {
-        return save_tab_as_template(tab);
+/// Свободное имя для нового шаблона: «Имя», «Имя (2)», «Имя (3)»…
+/// Сравнение — по всем шаблонам (builtin + custom), чтобы копия builtin'а
+/// не выглядела в списке его дублем.
+fn unique_template_name(base: &str) -> String {
+    let taken: std::collections::HashSet<String> =
+        templates::list_all().into_iter().map(|t| t.name).collect();
+    if !taken.contains(base) {
+        return base.to_string();
     }
-
-    let (nodes, conns, viewport) = templates::convert::snapshot(&tab.ctx);
-    let updated = Template {
-        id: existing.id.clone(),
-        builtin: false,
-        name: tab.title.get_untracked(),
-        description: existing.description.clone(),
-        kind: existing.kind,
-        nodes,
-        connections: conns,
-        viewport,
-    };
-    match templates::storage::save(&updated) {
-        Ok(()) => {
-            mark_tab_saved(tab);
-            app.notifications.success(tr!("templates.notify.updated", name = updated.name));
-            bump_revision();
-            true
+    let mut n = 2usize;
+    loop {
+        let candidate = format!("{base} ({n})");
+        if !taken.contains(&candidate) {
+            return candidate;
         }
-        Err(e) => {
-            app.notifications.error(tr!("templates.notify.update_failed", error = e));
-            false
-        }
+        n += 1;
     }
 }
 

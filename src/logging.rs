@@ -6,7 +6,7 @@
 //! - macOS:   `~/.local/state/synthos/logs/` (тот же путь, не лезем в `~/Library/Logs/`).
 //! - Windows: `%LOCALAPPDATA%\synthos\logs` или `<HOME>\.local\state\synthos\logs`.
 //!
-//! Файлы ротируются по дням: `synthos.log.YYYY-MM-DD`. `tracing-appender`
+//! Файлы ротируются по дням: `synthos.YYYY-MM-DD.log`. `tracing-appender`
 //! сам открывает новый файл каждый день и оставляет старые рядом — без
 //! автоматической очистки. На длительной перспективе пользователь может
 //! запустить `find ~/.local/state/synthos/logs -mtime +30 -delete` или мы
@@ -79,7 +79,8 @@ pub fn init() {
                         "debug,wgpu_core=warn,wgpu_hal=warn,naga=warn,\
                          html5ever=error,markup5ever=error,selectors=error,\
                          code-editor=info,\
-                         hyper_util::client::legacy::pool=info",
+                         hyper_util::client::legacy::pool=info,\
+                         h2=info,rustls=info",
                     )),
             )
         }

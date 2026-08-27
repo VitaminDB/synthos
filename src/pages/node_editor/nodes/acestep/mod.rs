@@ -39,6 +39,18 @@ pub mod vae_encode;
 
 use synaptix_core::{device::Device, dtype::DType};
 
+/// Каталог моделей приложения (настройка «Каталог моделей», `AppConfig.models_dir`,
+/// с раскрытием `~`). Дефолт поля «Каталог моделей» у ACE-Step Checkpoint:
+/// шаблоны кладут `models_dir: None`, и раньше нода из шаблона приходила
+/// пустой — пользователю приходилось руками выбирать каталог и все 4 бандла.
+/// Вне UI-контекста (тесты) — `~/Storage/syn_models`.
+pub fn app_models_dir() -> std::path::PathBuf {
+    let raw = syngui::context_provider::try_use_context::<crate::context::AppCtx>()
+        .map(|c| c.models_dir.get_untracked())
+        .unwrap_or_default();
+    crate::config::resolve_models_dir(&raw)
+}
+
 /// Доступные устройства. 0 = CPU, 1 = GPU (CUDA → Metal auto-detect).
 pub const DEVICE_OPTIONS: &[&str] = &["CPU", "GPU (auto)"];
 

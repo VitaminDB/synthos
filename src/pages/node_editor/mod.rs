@@ -143,9 +143,11 @@ fn subtitle_block(tab: OpenTab) -> DecoratedBox {
         None if tab.agent_chat.get_untracked().is_some() => tr!("nodes.header.agent_graph"),
         None => tr!("nodes.header.scratch"),
     };
+    // Страница всегда автосохраняется в workspace.json — «не сохранено»
+    // здесь врало бы. Метка означает «отличается от своего шаблона».
     if dirty {
         text.push_str(" · ");
-        text.push_str(&tr!("nodes.header.unsaved"));
+        text.push_str(&tr!("nodes.header.modified"));
     }
     DecoratedBox::new().child(Text::new(text).max_lines(1).class("panel-header-subtitle"))
 }
@@ -180,7 +182,9 @@ fn actions_reactive() -> Stack {
                 move || ws.template_picker_open.set(true),
             ),
             panel_header::action_button(MI_SAVE, tr!("nodes.header.save_template"), || {
-                crate::components::template_picker::save_or_update_current();
+                // Всегда новый шаблон: тот, из которого открыта страница,
+                // остаётся неизменным (шаблон = константа).
+                crate::components::template_picker::save_current_as_template();
             }),
         ]
     };

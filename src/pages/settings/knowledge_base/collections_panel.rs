@@ -131,10 +131,12 @@ fn create_collection() {
     let slot: std::sync::Arc<std::sync::Mutex<Option<crate::kb::CollectionMeta>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     let slot2 = slot.clone();
+    // `tr!` подписывается на сигнал языка — переводим до `update`, а не внутри.
+    let default_name = tr!("settings.knowledge_base.panel.new_name");
     app.kb.registry.update(move |reg| {
         match reg.create(
-            tr!("settings.knowledge_base.panel.new_name"),
-            model_basename.clone(),
+            default_name,
+            model_basename,
             dim,
             cfg.chunk_target_tokens as i32,
             cfg.chunk_overlap_tokens as i32,

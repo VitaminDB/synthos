@@ -67,38 +67,44 @@ pub fn verify_file(ctx: HuggingFaceCtx, notif: NotificationCtx, key: String) {
             .await
             .unwrap_or_else(|e| Err(format!("verify thread panic: {e}")));
         run_on_main_thread(move || {
+            // Статус и текст нотификации считаем до `update`: замыкание
+            // сигнала — не место для i18n и нотификаций.
+            let status = match (res, &expected) {
+                (Err(msg), _) => VerifyStatus::Error(msg),
+                (Ok(actual), Some(exp)) if actual.eq_ignore_ascii_case(exp) => {
+                    VerifyStatus::Match { sha256: actual, has_expected: true }
+                }
+                (Ok(actual), Some(exp)) => {
+                    VerifyStatus::Mismatch { actual, expected: exp.clone() }
+                }
+                (Ok(actual), None) => {
+                    VerifyStatus::Match { sha256: actual, has_expected: false }
+                }
+            };
+            let message = match &status {
+                VerifyStatus::Error(msg) => Some(tr!(
+                    "hf.error.verify_failed",
+                    name = fname_show, error = msg
+                )),
+                VerifyStatus::Mismatch { actual, expected } => Some(tr!(
+                    "hf.error.verify_mismatch",
+                    name = fname_show, expected = expected, actual = actual
+                )),
+                _ => None,
+            };
+
+            let mut applied = false;
             downloads.update(|m| {
-                let Some(d) = m.get_mut(&key) else { return };
-                match (res, &expected) {
-                    (Err(msg), _) => {
-                        d.verify = VerifyStatus::Error(msg.clone());
-                        notif.error(tr!("hf.error.verify_failed", name = fname_show, error = msg));
-                    }
-                    (Ok(actual), Some(exp)) => {
-                        if actual.eq_ignore_ascii_case(exp) {
-                            d.verify = VerifyStatus::Match {
-                                sha256: actual,
-                                has_expected: true,
-                            };
-                        } else {
-                            d.verify = VerifyStatus::Mismatch {
-                                actual: actual.clone(),
-                                expected: exp.clone(),
-                            };
-                            notif.error(tr!(
-                                "hf.error.verify_mismatch",
-                                name = fname_show, expected = exp, actual = actual
-                            ));
-                        }
-                    }
-                    (Ok(actual), None) => {
-                        d.verify = VerifyStatus::Match {
-                            sha256: actual,
-                            has_expected: false,
-                        };
-                    }
+                if let Some(d) = m.get_mut(&key) {
+                    d.verify = status;
+                    applied = true;
                 }
             });
+            if applied {
+                if let Some(message) = message {
+                    notif.error(message);
+                }
+            }
         });
     });
 }

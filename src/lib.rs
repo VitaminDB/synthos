@@ -93,6 +93,10 @@ pub fn run_desktop() {
         .with_window_state(ctx.appearance.window_state)
         .run(move |_| {
             provide_context(ctx.clone());
+            // Снимок до автосейва: `install_config_autosave` пишет файл сразу
+            // при установке, и `restore_last_view` увидел бы уже стартовые
+            // значения вместо сохранённых при выходе.
+            let startup_cfg = AppConfig::load();
             let code_ctx = build_code_editor_ctx();
             provide_context(code_ctx);
             // Семплер занятости терминалов — для бейджей на плитках сессий
@@ -127,6 +131,7 @@ pub fn run_desktop() {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
+            restore_last_view(&startup_cfg);
             // Глобальный поиск: контекст и эффект сборки индекса. Ставится
             // после `load_all` — первый же индекс видит загруженные чаты.
             search::install();
@@ -157,6 +162,10 @@ fn android_main(app: syngui::app::AndroidApp) {
         .with_dynamic_theme(theme_mss)
         .run(move |_| {
             provide_context(ctx.clone());
+            // Снимок до автосейва: `install_config_autosave` пишет файл сразу
+            // при установке, и `restore_last_view` увидел бы уже стартовые
+            // значения вместо сохранённых при выходе.
+            let startup_cfg = AppConfig::load();
             let code_ctx = build_code_editor_ctx();
             provide_context(code_ctx);
             // Семплер занятости терминалов — для бейджей на плитках сессий
@@ -191,6 +200,7 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_voice_auto_record(&ctx);
             metrics::system::start_sampler(ctx.metrics.clone());
             syn_chat::registry::load_all();
+            restore_last_view(&startup_cfg);
             // Глобальный поиск: контекст и эффект сборки индекса. Ставится
             // после `load_all` — первый же индекс видит загруженные чаты.
             search::install();
@@ -199,6 +209,57 @@ fn android_main(app: syngui::app::AndroidApp) {
                 build_app()
             }))
         });
+}
+
+/// Вернуть пользователя туда, где он закрыл приложение.
+///
+/// Стартовый маршрут `INITIAL_ROUTE` — `syn_chat`, и без восстановления
+/// запуск всегда открывал страницу чата: у кого в рейле только code-сессии,
+/// тот получал пустое «Select or create a chat» вместо своего проекта.
+/// Активные сущности внутри страниц восстанавливают свои владельцы
+/// (`active_code_session` в конфиге, `active` в workspace.json), здесь —
+/// только страница и активный чат.
+///
+/// Вызывается после `registry::load_all()`: список чатов уже загружен, и
+/// сохранённый id можно проверить на существование (чат мог быть удалён или
+/// заархивирован в прошлой сессии). Конфиг приходит снимком, снятым до
+/// `install_config_autosave`: тот effect выполняется сразу при создании и
+/// успевает переписать файл стартовыми значениями (`syn_chat`, чат не
+/// выбран) — перечитывать его здесь было бы поздно.
+/// Маршрут для восстановления: сохранённый, если он всё ещё существует в
+/// `ROUTES` (набор меняется между версиями — выкинутая страница не должна
+/// уводить старт в никуда).
+fn restorable_route(saved: &AppConfig) -> Option<&str> {
+    saved
+        .last_route
+        .as_deref()
+        .filter(|r| context::ROUTES.contains(r))
+}
+
+fn restore_last_view(saved: &AppConfig) {
+    let chat = use_context::<syn_chat::SynChatCtx>();
+    if let Some(id) = saved.last_chat_id.as_deref() {
+        if chat.chats.get_untracked().iter().any(|m| m.id == id && !m.archived) {
+            syn_chat::registry::select(id);
+        }
+    }
+    if let Some(route) = restorable_route(saved) {
+        rail::navigate(route);
+    }
+    // Показывать на чат-странице нечего (чат не восстановился или его
+    // удалили) — открываем первую плитку рейла, обычно code-сессию. Иначе
+    // приложение встречает пустым плейсхолдером при живом рабочем окружении.
+    let app = use_context::<AppCtx>();
+    if app.current_route.get_untracked() == "syn_chat"
+        && chat.active_chat_id.get_untracked().is_none()
+    {
+        if let Some(entry) = rail::entries()
+            .into_iter()
+            .find(|e| !matches!(e, rail::RailEntry::Separator(_)))
+        {
+            rail::open(&entry);
+        }
+    }
 }
 
 /// Загружает persist-слой (sessions + active index) и собирает менеджер
@@ -505,6 +566,8 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
 /// сессии: правка любого из них триггерит save.
 fn install_config_autosave(ctx: &AppCtx) {
     let theme_key = ctx.theme_key;
+    let current_route = ctx.current_route;
+    let active_chat_id = use_context::<syn_chat::SynChatCtx>().active_chat_id;
     let a = ctx.appearance;
     let g = ctx.general;
     let tools_active = ctx.tools.active;
@@ -622,6 +685,10 @@ fn install_config_autosave(ctx: &AppCtx) {
             audio_autostart: false,
             code_sessions: sessions_cfg,
             active_code_session: active_idx,
+            // Что показывать на следующем старте: страница + активный чат
+            // (у code/graph свои поля — active_code_session и workspace.json).
+            last_route: Some(current_route.get()),
+            last_chat_id: active_chat_id.get(),
             // Legacy-поле зачищаем явно: миграция один раз произошла в
             // build_code_editor_ctx, держать копию пути больше не нужно.
             last_code_folder: None,
@@ -1010,5 +1077,22 @@ fn build_app() -> impl Widget {
             search::panel::view(),
             notification_view,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Восстанавливаем только известный маршрут: имя из старой версии
+    /// (страница переименована/удалена) не должно уводить старт в никуда.
+    #[test]
+    fn restorable_route_filters_unknown() {
+        let mut cfg = AppConfig::default();
+        assert_eq!(restorable_route(&cfg), None);
+        cfg.last_route = Some("code".into());
+        assert_eq!(restorable_route(&cfg), Some("code"));
+        cfg.last_route = Some("music_studio_legacy".into());
+        assert_eq!(restorable_route(&cfg), None);
     }
 }

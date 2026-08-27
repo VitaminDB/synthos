@@ -407,6 +407,13 @@ pub fn send_message(text: String) {
         return;
     }
 
+    // Чата может не быть вовсе (все заархивированы, свежий запуск): лента
+    // тогда живёт в воздухе — автосейв без `active_chat_id` ничего не
+    // сохраняет, и ход уходит впустую. Заводим чат до первого сообщения.
+    if ctx.active_chat_id.get_untracked().is_none() {
+        crate::syn_chat::registry::create_new();
+    }
+
     // 1. Append user-message + плейсхолдер ассистента.
     ctx.editing_msg.set(None);
     ctx.messages.update(|m| {

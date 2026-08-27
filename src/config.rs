@@ -530,6 +530,16 @@ pub struct AppConfig {
     /// потому что runtime-id'ы переинициализируются при загрузке).
     #[serde(default)]
     pub active_code_session: Option<usize>,
+    /// Страница, открытая на момент выхода (значение из `context::ROUTES`).
+    /// Без неё старт всегда падал на `syn_chat`, даже когда у пользователя
+    /// открыты только code-сессии, — приложение встречало пустым
+    /// «Select or create a chat».
+    #[serde(default)]
+    pub last_route: Option<String>,
+    /// Активный чат на момент выхода. Восстанавливается только если чат ещё
+    /// существует (не удалён и не заархивирован).
+    #[serde(default)]
+    pub last_chat_id: Option<String>,
     /// LEGACY (эпоха одной активной папки): корень последнего открытого
     /// проекта. При первом запуске новой версии мигрируется в одну запись
     /// `code_sessions` и при следующем save'е затирается в `None`.
@@ -1148,6 +1158,8 @@ impl Default for AppConfig {
             audio_autostart: false,
             code_sessions: Vec::new(),
             active_code_session: None,
+            last_route: None,
+            last_chat_id: None,
             last_code_folder: None,
             terminal_font_family: String::new(),
             terminal_font_size: default_terminal_font_size(),

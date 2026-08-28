@@ -7154,6 +7154,7 @@ dependencies = [
  "synaptix-nn",
  "synaptix-ops",
  "synaptix-tokenizer",
+ "synaptix-vlm-qwen3",
  "thiserror 2.0.19",
 ]
 

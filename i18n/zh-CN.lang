@@ -634,6 +634,7 @@ explorer.error.missing_data.component_name_required = "每个组件都必须有�
 explorer.error.missing_data.component_dir_required = "组件「{name}」未选择 safetensors 文件夹。"
 explorer.error.insufficient_space.title = "空间不足"
 explorer.error.insufficient_space.detail = "分区 {path} 可用 {avail} GB，大约需要 {required} GB（数据量 {total} GB + 用于暂存最大组件的约 {max_comp} GB）。"
+explorer.error.insufficient_space.detail_nostage = "分区 {path} 可用 {avail} GB，而打包大约需要 {required} GB。"
 explorer.notify.bundle_opened = "包已打开"
 explorer.notify.no_unsaved_changes = "没有未保存的更改"
 explorer.notify.saved = "已保存"

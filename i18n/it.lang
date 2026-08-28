@@ -638,6 +638,7 @@ explorer.error.missing_data.component_name_required = "Ogni componente deve aver
 explorer.error.missing_data.component_dir_required = "Nessuna cartella safetensors selezionata per il componente «{name}»."
 explorer.error.insufficient_space.title = "Spazio insufficiente"
 explorer.error.insufficient_space.detail = "Sulla partizione {path} sono disponibili {avail} GB, ne servono circa {required} GB (volume dati {total} GB + altri ~{max_comp} GB per lo staging del componente più grande)."
+explorer.error.insufficient_space.detail_nostage = "Sulla partizione {path} sono disponibili {avail} GB, mentre per il pacchetto ne servono circa {required} GB."
 explorer.notify.bundle_opened = "Pacchetto aperto"
 explorer.notify.no_unsaved_changes = "Nessuna modifica da salvare"
 explorer.notify.saved = "Salvato"

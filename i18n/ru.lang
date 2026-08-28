@@ -654,6 +654,7 @@ explorer.error.quant_no_cuda.title = "Для квантования нужна �
 explorer.error.quant_no_cuda.message = "Ядра NVFP4/MXFP8 есть только под CUDA. Без карты бандл соберётся только плотным — верните у слоёв «Без кванта»."
 explorer.error.insufficient_space.title = "Недостаточно места"
 explorer.error.insufficient_space.detail = "На разделе {path} доступно {avail} ГБ, требуется примерно {required} ГБ (объём данных {total} ГБ + ещё ~{max_comp} ГБ на промежуточный stage крупнейшего компонента)."
+explorer.error.insufficient_space.detail_nostage = "На разделе {path} доступно {avail} ГБ, а для пакета нужно примерно {required} ГБ."
 explorer.tab.layers = "Слои"
 explorer.tabs.layers.tooltip = "Из чего состоит модель: vision-башня, lm_head, эмбеддинги, внимание, MLP"
 explorer.left.group.bundles = "Пакеты"

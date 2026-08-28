@@ -640,6 +640,7 @@ explorer.error.missing_data.component_name_required = "Her bileşenin boş olmay
 explorer.error.missing_data.component_dir_required = "\"{name}\" bileşeni için safetensors klasörü seçilmedi."
 explorer.error.insufficient_space.title = "Yeterli alan yok"
 explorer.error.insufficient_space.detail = "{path} bölümünde {avail} GB kullanılabilir alan var, yaklaşık {required} GB gerekiyor (veri hacmi {total} GB + en büyük bileşeni staging için yaklaşık {max_comp} GB daha)."
+explorer.error.insufficient_space.detail_nostage = "{path} bölümünde {avail} GB kullanılabilir alan var, paket için yaklaşık {required} GB gerekiyor."
 explorer.notify.bundle_opened = "Paket açıldı"
 explorer.notify.no_unsaved_changes = "Kaydedilmemiş değişiklik yok"
 explorer.notify.saved = "Kaydedildi"

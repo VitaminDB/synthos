@@ -640,6 +640,7 @@ explorer.error.missing_data.component_name_required = "Chaque composant doit avo
 explorer.error.missing_data.component_dir_required = "Aucun dossier safetensors sélectionné pour le composant « {name} »."
 explorer.error.insufficient_space.title = "Espace insuffisant"
 explorer.error.insufficient_space.detail = "La partition {path} dispose de {avail} Go, environ {required} Go sont nécessaires (volume de données {total} Go + environ {max_comp} Go de plus pour le staging du plus grand composant)."
+explorer.error.insufficient_space.detail_nostage = "La partition {path} dispose de {avail} Go, environ {required} Go sont nécessaires pour le paquet."
 explorer.notify.bundle_opened = "Paquet ouvert"
 explorer.notify.no_unsaved_changes = "Aucune modification non enregistrée"
 explorer.notify.saved = "Enregistré"

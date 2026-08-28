@@ -634,6 +634,7 @@ explorer.error.missing_data.component_name_required = "모든 구성 요소에�
 explorer.error.missing_data.component_dir_required = "구성 요소 \"{name}\"에 safetensors 폴더가 선택되지 않았습니다."
 explorer.error.insufficient_space.title = "공간 부족"
 explorer.error.insufficient_space.detail = "파티션 {path}의 사용 가능 공간은 {avail} GB이며, 약 {required} GB가 필요합니다(데이터 용량 {total} GB + 가장 큰 구성 요소를 스테이징하기 위한 약 {max_comp} GB 추가)."
+explorer.error.insufficient_space.detail_nostage = "파티션 {path}의 사용 가능 공간은 {avail} GB이지만, 패키지에는 약 {required} GB가 필요합니다."
 explorer.notify.bundle_opened = "패키지가 열림"
 explorer.notify.no_unsaved_changes = "저장하지 않은 변경 사항 없음"
 explorer.notify.saved = "저장됨"

@@ -634,6 +634,7 @@ explorer.error.missing_data.component_name_required = "すべてのコンポー�
 explorer.error.missing_data.component_dir_required = "コンポーネント「{name}」の safetensors フォルダーが選択されていません。"
 explorer.error.insufficient_space.title = "空き容量が不足しています"
 explorer.error.insufficient_space.detail = "パーティション {path} の空き容量は {avail} GB、必要容量は約 {required} GB です（データ量 {total} GB ＋ 最大のコンポーネントのステージング用に約 {max_comp} GB）。"
+explorer.error.insufficient_space.detail_nostage = "パーティション {path} の空き容量は {avail} GB ですが、パッケージには約 {required} GB が必要です。"
 explorer.notify.bundle_opened = "パッケージを開きました"
 explorer.notify.no_unsaved_changes = "未保存の変更はありません"
 explorer.notify.saved = "保存しました"

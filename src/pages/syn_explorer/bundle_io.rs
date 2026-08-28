@@ -381,6 +381,9 @@ pub struct PackOptions {
     pub cdir_json: bool,
     /// Что квантовать при упаковке. Пусто — обычная побайтовая упаковка.
     pub quant: super::quant_pack::QuantDecision,
+    /// Оценка итогового payload'а с учётом квантования — ровно та, что
+    /// показана в мастере. `None` — пакет весит столько же, сколько исходники.
+    pub payload_estimate: Option<u64>,
 }
 
 pub fn create_from_plan_async(
@@ -396,20 +399,29 @@ pub fn create_from_plan_async(
         .filter(|p| !p.as_os_str().is_empty())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    let required = plan.required_space();
+    let payload = opts.payload_estimate.unwrap_or_else(|| plan.payload_bytes());
+    let stage = staging_bytes(&plan, &opts);
+    let required = payload.saturating_add(stage).saturating_add(RESERVE_BYTES);
     let avail = synaptix_bundle::available_space(&target_dir).unwrap_or(u64::MAX);
     if avail < required {
-        ctx.show_error(
-            tr!("explorer.error.insufficient_space.title"),
+        let detail = if stage == 0 {
+            tr!(
+                "explorer.error.insufficient_space.detail_nostage",
+                path = target_dir.display(),
+                avail = gib(avail),
+                required = gib(required),
+            )
+        } else {
             tr!(
                 "explorer.error.insufficient_space.detail",
                 path = target_dir.display(),
                 avail = gib(avail),
                 required = gib(required),
-                total = gib(plan.payload_bytes()),
-                max_comp = gib(plan.max_component_bytes()),
-            ),
-        );
+                total = gib(payload),
+                max_comp = gib(stage),
+            )
+        };
+        ctx.show_error(tr!("explorer.error.insufficient_space.title"), detail);
         return;
     }
 
@@ -461,6 +473,32 @@ pub fn create_from_plan_async(
             }
         }
     });
+}
+
+/// Запас на cdir, заголовки и выравнивание чанков.
+const RESERVE_BYTES: u64 = 64 << 20;
+
+/// Пик промежуточных файлов рядом с `out.syn.tmp`.
+///
+/// `PackPlan::required_space` всегда закладывает stage крупнейшего компонента,
+/// потому что safetensors-источники пишутся в два прохода: сперва
+/// `tensors_stage*.tmp`, потом чанк в пакет. Квантуемый компонент так не
+/// пишется — `QuantizingStream` отдаёт тензоры прямо в `.syn`, tmp'а у него
+/// нет. Поэтому при квантовании главный компонент (первый включённый — так
+/// его выбирает `build_with_quant`) из расчёта stage'а выпадает.
+fn staging_bytes(plan: &PackPlan, opts: &PackOptions) -> u64 {
+    let streamed = if opts.quant.is_empty() {
+        None
+    } else {
+        plan.components.iter().position(|c| c.enabled)
+    };
+    plan.components
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| c.enabled && Some(*i) != streamed)
+        .map(|(_, c)| c.bytes)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Собрать билдер: обычный план либо, если выбрано квантование, с подменой
@@ -627,4 +665,83 @@ fn make_progress_cb(
 fn notify_info_main(msg: impl Into<String>) {
     let app = use_context::<AppCtx>();
     app.notifications.info(msg.into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::quant_pack::QuantDecision;
+    use super::*;
+    use synaptix_bundle::inspect::{LayerRole, QuantKind};
+    use synaptix_bundle::pack_plan::{Guess, GuessedMeta, PlanComponent, SourceKind};
+
+    fn comp(name: &str, bytes: u64, enabled: bool) -> PlanComponent {
+        PlanComponent {
+            name: name.to_string(),
+            paths: vec![PathBuf::from(format!("{name}.safetensors"))],
+            prefix: String::new(),
+            bytes,
+            enabled,
+            note: String::new(),
+        }
+    }
+
+    fn plan_of(components: Vec<PlanComponent>) -> PackPlan {
+        PackPlan {
+            root: PathBuf::from("/models/x"),
+            kind: SourceKind::MultiComponentDir,
+            components,
+            aux: Vec::new(),
+            meta: GuessedMeta {
+                id: "x".into(),
+                version: "1".into(),
+                arch: String::new(),
+                purpose: String::new(),
+                arch_from: Guess::Unknown,
+                purpose_from: Guess::Unknown,
+                version_from: Guess::Unknown,
+            },
+            warnings: Vec::new(),
+        }
+    }
+
+    fn opts(quant: QuantDecision) -> PackOptions {
+        PackOptions {
+            delete_sources: false,
+            sha256: false,
+            blake3: false,
+            cdir_json: false,
+            quant,
+            payload_estimate: None,
+        }
+    }
+
+    fn quanting() -> QuantDecision {
+        QuantDecision {
+            hint: String::new(),
+            by_role: vec![(LayerRole::Mlp, QuantKind::Mxfp8)],
+            by_group: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn without_quant_stage_is_the_largest_enabled_component() {
+        let plan = plan_of(vec![
+            comp("main", 300, true),
+            comp("vae", 50, true),
+            comp("dup", 900, false),
+        ]);
+        assert_eq!(staging_bytes(&plan, &opts(QuantDecision::default())), 300);
+    }
+
+    #[test]
+    fn quantized_main_is_streamed_so_only_the_rest_stages() {
+        let plan = plan_of(vec![comp("main", 300, true), comp("vae", 50, true)]);
+        assert_eq!(staging_bytes(&plan, &opts(quanting())), 50);
+    }
+
+    #[test]
+    fn single_quantized_component_needs_no_stage_at_all() {
+        let plan = plan_of(vec![comp("main", 300, true)]);
+        assert_eq!(staging_bytes(&plan, &opts(quanting())), 0);
+    }
 }

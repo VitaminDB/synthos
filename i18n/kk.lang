@@ -638,6 +638,7 @@ explorer.error.missing_data.component_name_required = "Әр компонентт
 explorer.error.missing_data.component_dir_required = "«{name}» компоненті үшін safetensors бумасы таңдалмаған."
 explorer.error.insufficient_space.title = "Орын жеткіліксіз"
 explorer.error.insufficient_space.detail = "{path} бөлімінде {avail} ГБ қолжетімді, шамамен {required} ГБ қажет (деректер көлемі {total} ГБ + ең үлкен компонентті staging үшін тағы ~{max_comp} ГБ)."
+explorer.error.insufficient_space.detail_nostage = "{path} бөлімінде {avail} ГБ қолжетімді, ал пакет үшін шамамен {required} ГБ қажет."
 explorer.notify.bundle_opened = "Пакет ашылды"
 explorer.notify.no_unsaved_changes = "Сақталмаған өзгеріс жоқ"
 explorer.notify.saved = "Сақталды"

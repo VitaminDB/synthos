@@ -380,8 +380,15 @@ pub fn start_packing(ctx: SynExplorerCtx) {
         );
         return;
     }
+    // Пакет весит столько, сколько обещано на шаге со слоями, — по этой же
+    // цифре проверяется место на разделе, иначе упаковку 175-гигабайтного
+    // пакета отказывались начинать из-за 335 ГБ исходников.
+    let payload_estimate = (!quant.is_empty())
+        .then(|| ctx.wizard.estimated_payload().map(|(_, quantized)| quantized))
+        .flatten();
     let opts = bundle_io::PackOptions {
         quant,
+        payload_estimate,
         delete_sources: ctx.wizard.delete_sources.get_untracked(),
         sha256: ctx.wizard.sha256.get_untracked(),
         blake3: ctx.wizard.blake3.get_untracked(),

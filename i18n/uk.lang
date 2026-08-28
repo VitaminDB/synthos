@@ -646,6 +646,7 @@ explorer.error.missing_data.component_name_required = "Кожен компоне
 explorer.error.missing_data.component_dir_required = "Для компонента «{name}» не вибрано папку з safetensors."
 explorer.error.insufficient_space.title = "Недостатньо місця"
 explorer.error.insufficient_space.detail = "На розділі {path} доступно {avail} ГБ, потрібно приблизно {required} ГБ (обсяг даних {total} ГБ + ще ~{max_comp} ГБ на проміжний stage найбільшого компонента)."
+explorer.error.insufficient_space.detail_nostage = "На розділі {path} доступно {avail} ГБ, а для пакета потрібно приблизно {required} ГБ."
 explorer.notify.bundle_opened = "Пакет відкрито"
 explorer.notify.no_unsaved_changes = "Немає незбережених змін"
 explorer.notify.saved = "Збережено"

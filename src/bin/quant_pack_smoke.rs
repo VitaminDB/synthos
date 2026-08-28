@@ -198,30 +198,60 @@ fn verify_readback(out: &PathBuf, shards: &[PathBuf], kind: QuantKind) -> anyhow
     let source = synaptix_io::weights::safetensors::SafetensorsLoader::open_sharded(shards)?;
 
     let mut checked = 0usize;
-    for name in manifest.tensors.keys() {
+    let mut stacks = 0usize;
+    for (name, entry) in &manifest.tensors {
+        let (slices, n, k) = entry
+            .dims()
+            .ok_or_else(|| anyhow::anyhow!("`{name}`: форма {:?} не матрица", entry.shape))?;
+        // Стопка экспертов приходит по одному весу на эксперта; обычная
+        // матрица — стопкой из одного, поэтому ветвление не нужно.
         let from_bundle = bundle
-            .load_quant(name, device)
+            .load_quant_stack(name, device)
             .ok_or_else(|| anyhow::anyhow!("`{name}`: читатель не увидел квант"))??;
+        anyhow::ensure!(
+            from_bundle.len() == slices,
+            "`{name}`: прочитано {} матриц из {slices}",
+            from_bundle.len()
+        );
+        if slices > 1 {
+            stacks += 1;
+        }
 
         // Эталон: тот же путь, которым идёт обычная загрузка плотного бандла.
         let dense = source.load_to(name, device, DType::F16)?;
-        let reference = match kind {
-            QuantKind::Nvfp4 => dense.quantize_to_nvfp4(),
-            QuantKind::Mxfp8 => dense.quantize_to_mxfp8(),
-        }?;
+        for (i, got) in from_bundle.iter().enumerate() {
+            anyhow::ensure!(
+                (got.n(), got.k()) == (n, k),
+                "`{name}` срез {i}: форма {}×{} вместо {n}×{k}",
+                got.n(),
+                got.k()
+            );
+            let slice = if slices == 1 { dense.clone() } else { dense.narrow(0, i, 1)? };
+            let slice = slice.contiguous()?.reshape((n, k))?;
+            let reference = match kind {
+                QuantKind::Nvfp4 => slice.quantize_to_nvfp4(),
+                QuantKind::Mxfp8 => slice.quantize_to_mxfp8(),
+            }?;
 
-        let (a_packed, a_scales) = host_bytes(&from_bundle)?;
-        let (b_packed, b_scales) = host_bytes(&reference)?;
-        anyhow::ensure!(
-            a_packed == b_packed,
-            "`{name}`: упакованные веса из бандла разошлись с эталоном ({} vs {} байт)",
-            a_packed.len(),
-            b_packed.len()
-        );
-        anyhow::ensure!(a_scales == b_scales, "`{name}`: масштабы разошлись с эталоном");
-        checked += 1;
+            let (a_packed, a_scales) = host_bytes(got)?;
+            let (b_packed, b_scales) = host_bytes(&reference)?;
+            anyhow::ensure!(
+                a_packed == b_packed,
+                "`{name}` срез {i}: упакованные веса из бандла разошлись с эталоном ({} vs {} байт)",
+                a_packed.len(),
+                b_packed.len()
+            );
+            anyhow::ensure!(
+                a_scales == b_scales,
+                "`{name}` срез {i}: масштабы разошлись с эталоном"
+            );
+            checked += 1;
+        }
     }
-    println!("сверено с эталоном: {checked} тензоров, расхождений нет");
+    println!(
+        "сверено с эталоном: {checked} матриц ({} тензоров, из них стопок экспертов {stacks}), расхождений нет",
+        manifest.tensors.len()
+    );
     Ok(())
 }
 

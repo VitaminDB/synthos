@@ -133,12 +133,13 @@ fn config_from_bundle(path: &PathBuf) -> anyhow::Result<MoeConfig> {
         num_experts: num("num_experts")?,
         num_experts_per_tok: num("num_experts_per_tok")?,
         shared_intermediate_size: num("shared_expert_intermediate_size").unwrap_or(0),
-        // Ключа в конфиге Qwen4Exp нет — берём поведение Qwen3-MoE.
+        // Значение по умолчанию у класса конфига — `true`, оно же у Qwen3-MoE.
         norm_topk_prob: text
             .get("norm_topk_prob")
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
         chunk: MoeConfig::qwen4_exp(hidden).chunk,
+        skip_below: 0.0,
     })
 }
 

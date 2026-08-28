@@ -6814,6 +6814,7 @@ dependencies = [
  "synaptix-llm-muse-glimmer",
  "synaptix-llm-qwen3",
  "synaptix-llm-qwen3-next-hybrid",
+ "synaptix-llm-qwen4-exp",
  "synaptix-nn",
  "synaptix-ops",
  "synaptix-runtime",
@@ -7047,6 +7048,7 @@ dependencies = [
 name = "synaptix-llm-common"
 version = "0.1.1"
 dependencies = [
+ "rayon",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-nn",
@@ -7136,6 +7138,22 @@ dependencies = [
  "synaptix-llm-common",
  "synaptix-tokenizer",
  "synaptix-vlm-qwen3",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-llm-qwen4-exp"
+version = "0.1.1"
+dependencies = [
+ "rayon",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-llm-common",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
  "thiserror 2.0.19",
 ]
 

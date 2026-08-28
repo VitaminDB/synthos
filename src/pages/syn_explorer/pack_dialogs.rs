@@ -377,6 +377,7 @@ pub fn role_label(role: LayerRole) -> String {
         LayerRole::Conv => tr!("explorer.role.conv"),
         LayerRole::Conditioning => tr!("explorer.role.conditioning"),
         LayerRole::Head => tr!("explorer.role.head"),
+        LayerRole::Router => tr!("explorer.role.router"),
         LayerRole::Vision => tr!("explorer.role.vision"),
         LayerRole::Audio => tr!("explorer.role.audio"),
         LayerRole::Vae => tr!("explorer.role.vae"),

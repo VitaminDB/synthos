@@ -856,6 +856,7 @@ Tooltip {
     --syn-role-conv:         var(--avatar-slate);
     --syn-role-conditioning: var(--avatar-orange);
     --syn-role-head:         var(--avatar-rose);
+    --syn-role-router:       var(--presence-messenger);
     --syn-role-vision:       var(--presence-telegram);
     --syn-role-audio:        var(--presence-whatsapp);
     --syn-role-vae:          var(--warning);
@@ -900,6 +901,7 @@ Tooltip {
 .syn-role-seg.role-audio,        .syn-role-dot.role-audio        { background-color: var(--syn-role-audio); }
 .syn-role-seg.role-vae,          .syn-role-dot.role-vae          { background-color: var(--syn-role-vae); }
 .syn-role-seg.role-lora,         .syn-role-dot.role-lora         { background-color: var(--syn-role-lora); }
+.syn-role-seg.role-router,       .syn-role-dot.role-router       { background-color: var(--syn-role-router); }
 
 .syn-flex-1 { flex-grow: 1; }
 .syn-flex-2 { flex-grow: 2; }

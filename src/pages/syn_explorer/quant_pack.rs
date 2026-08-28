@@ -243,15 +243,19 @@ impl QuantizingStream {
         let mut scales_out: Vec<u8> = Vec::new();
         for s in 0..slices {
             let slice = if slices == 1 {
-                host.reshape((n, k))
+                host.clone()
             } else {
-                host.narrow(0, s, 1).and_then(|t| t.reshape((n, k)))
-            }
-            .map_err(|e| format!("{name}: срез {s}: {e}"))?;
+                host.narrow(0, s, 1).map_err(|e| format!("{name}: срез {s}: {e}"))?
+            };
+            // `narrow` отдаёт вид со смещением, а `reshape` требует
+            // `offset == 0` — иначе всё, кроме нулевого эксперта, падает с
+            // «non-contiguous tensor». Перенос на устройство уплотняет данные
+            // сам, поэтому стопку разбираем в матрицу уже после него.
             let gpu = slice
                 .to_device(self.device)
                 .and_then(|t| t.contiguous())
-                .map_err(|e| format!("{name}: перенос на GPU: {e}"))?;
+                .and_then(|t| t.reshape((n, k)))
+                .map_err(|e| format!("{name}: срез {s} на GPU: {e}"))?;
             let qw = match kind {
                 QuantKind::Nvfp4 => gpu.quantize_to_nvfp4(),
                 QuantKind::Mxfp8 => gpu.quantize_to_mxfp8(),
@@ -447,6 +451,84 @@ mod tests {
     fn split_shape_rejects_convolutions() {
         assert!(split_shape(&[1152, 3, 2, 16, 16]).is_err());
         assert!(split_shape(&[5120]).is_err());
+    }
+
+    /// Порядок операций над срезом стопки экспертов: `narrow` даёт вид со
+    /// смещением, и `reshape` по нему падает — форму можно менять только у
+    /// уплотнённой копии. Ровно на этом ломалась упаковка MoE-весов начиная
+    /// со второго эксперта.
+    #[test]
+    fn expert_slice_must_be_made_contiguous_before_reshape() {
+        synaptix::init().expect("init");
+        let host = synaptix_core::tensor::Tensor::from_vec(
+            (0..24).map(|i| i as f32).collect::<Vec<f32>>(),
+            (2usize, 3usize, 4usize),
+            Device::Cpu,
+        )
+        .expect("тензор");
+
+        let second = host.narrow(0, 1, 1).expect("срез");
+        assert!(second.reshape((3usize, 4usize)).is_err(), "вид со смещением reshape'ить нельзя");
+
+        let dense = second
+            .to_device(Device::Cpu)
+            .and_then(|t| t.contiguous())
+            .and_then(|t| t.reshape((3usize, 4usize)))
+            .expect("уплотнённый срез");
+        assert_eq!(dense.dims(), &[3, 4]);
+        // Второй эксперт начинается с 12-го элемента — данные взялись
+        // от нужного среза, а не от начала стопки.
+        assert_eq!(dense.to_vec2::<f32>().expect("выгрузка")[0][0], 12.0);
+    }
+
+    /// E2E квантующего потока на стопке экспертов: то, что раньше падало
+    /// на втором срезе. Требует CUDA — без неё квант-ядер нет, и тест
+    /// молча пропускается.
+    #[test]
+    fn moe_stack_streams_all_slices() {
+        synaptix::init().expect("init");
+        if !cuda_available() {
+            eprintln!("CUDA недоступна — пропуск");
+            return;
+        }
+        let dir = std::env::temp_dir().join("synthos-quant-moe-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("каталог");
+        let path = dir.join("model.safetensors");
+        let (e, n, k) = (3usize, 128usize, 256usize);
+        write_test_safetensors(&path, "experts.down_proj", &[e, n, k]);
+
+        let mut stream =
+            QuantizingStream::new(&[path], &|_, _| Some(QuantKind::Mxfp8), Device::Cuda(0))
+                .expect("поток");
+        assert_eq!(stream.quantized_count(), 1);
+
+        let plan: Vec<StreamTensor> = stream.plan().to_vec();
+        assert_eq!(plan.len(), 2, "упакованные веса + масштабы");
+        for (i, t) in plan.iter().enumerate() {
+            let mut buf: Vec<u8> = Vec::new();
+            stream.write_tensor(i, &mut buf).expect("запись тензора");
+            let promised: usize = t.shape.iter().product();
+            assert_eq!(buf.len(), promised, "{}: обещано {promised} байт", t.name);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Минимальный safetensors: 8 байт длины заголовка, JSON, затем данные.
+    /// Веса — единицы в F16, чтобы масштабы получились осмысленными.
+    fn write_test_safetensors(path: &std::path::Path, name: &str, shape: &[usize]) {
+        let numel: usize = shape.iter().product();
+        let data = vec![0x3Cu8, 0x00].repeat(numel); // 1.0 в F16, little-endian → 00 3C
+        let data: Vec<u8> = data.chunks(2).flat_map(|c| [c[1], c[0]]).collect();
+        let header = format!(
+            r#"{{"{name}":{{"dtype":"F16","shape":{shape:?},"data_offsets":[0,{}]}}}}"#,
+            data.len()
+        );
+        let mut out = Vec::new();
+        out.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        out.extend_from_slice(header.as_bytes());
+        out.extend_from_slice(&data);
+        std::fs::write(path, out).expect("запись safetensors");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use syngui::prelude::*;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::feedback::Tooltip;
 
-use crate::icons::{MI_BOOK, MI_EDIT, MI_LIST_ALT, MI_VISIBILITY};
+use crate::icons::{MI_BOOK, MI_DEPLOYED_CODE, MI_EDIT, MI_LIST_ALT, MI_VISIBILITY};
 
 use super::state::{SynExplorerCtx, TabKind};
 
@@ -19,6 +19,7 @@ pub fn tab_bar() -> impl Widget {
                 .gap(0.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center) => [
                     tab_item(active, TabKind::Overview, MI_BOOK, tr!("explorer.tabs.overview.tooltip")),
+                    tab_item(active, TabKind::Layers, MI_DEPLOYED_CODE, tr!("explorer.tabs.layers.tooltip")),
                     tab_item(active, TabKind::Files, MI_LIST_ALT, tr!("explorer.tabs.files.tooltip")),
                     tab_item(active, TabKind::Metadata, MI_EDIT, tr!("explorer.tabs.metadata.tooltip")),
                     tab_item(active, TabKind::Preview, MI_VISIBILITY, tr!("explorer.tabs.preview.tooltip")),

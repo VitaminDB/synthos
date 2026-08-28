@@ -714,6 +714,7 @@ fn install_config_autosave(ctx: &AppCtx) {
                 .collect(),
             syn_explorer_left_split_ratio: syn.left_split_ratio.get(),
             syn_explorer_right_split_ratio: syn.right_split_ratio.get(),
+            syn_explorer_expert: syn.wizard.expert.get(),
             hf_cache_dir: hf.cache_dir.get(),
             hf_concurrent_downloads: hf.concurrent_limit.get(),
             hf_segments_per_file: hf.segments_per_file.get(),

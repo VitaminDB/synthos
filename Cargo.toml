@@ -139,7 +139,9 @@ synaptix-llm-qwen3 = { path = "../synaptix/crates/synaptix-models/llm/qwen3", de
 synaptix-llm-qwen3-next-hybrid = { path = "../synaptix/crates/synaptix-models/llm/qwen3_next_hybrid", default-features = false }
 synaptix-llm-common = { path = "../synaptix/crates/synaptix-models/llm/common", default-features = false }
 synaptix-tokenizer = { path = "../synaptix/crates/synaptix-tokenizer" }
-synaptix-bundle = { path = "../synaptix/crates/synaptix-bundle" }
+# sha256/blake3 — контрольные суммы чанков, доступные в режиме эксперта
+# на странице пакетов (`with_sha256`/`with_blake3` без фич паникуют).
+synaptix-bundle = { path = "../synaptix/crates/synaptix-bundle", features = ["sha256", "blake3"] }
 synaptix-gguf = { path = "../synaptix/crates/synaptix-gguf", optional = true }
 
 # Зонтичный фасад synaptix — единые фасады AI-подсистем (facade::llm/asr/
@@ -277,3 +279,8 @@ inherits = "release"
 codegen-units = 256
 lto = false
 incremental = true
+
+# Проверка квантующей упаковки без GUI: собирает бандл и сверяет раскладку.
+[[bin]]
+name = "quant_pack_smoke"
+path = "src/bin/quant_pack_smoke.rs"

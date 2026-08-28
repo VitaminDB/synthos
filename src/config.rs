@@ -577,6 +577,11 @@ pub struct AppConfig {
     /// Положение правого разделителя (центр ↔ TreeView содержимого).
     #[serde(default = "default_syn_explorer_right_split_ratio")]
     pub syn_explorer_right_split_ratio: f32,
+    /// Режим эксперта на странице пакетов: показывать префиксы тензоров,
+    /// пофайловый состав, точность по группам слоёв и контрольные суммы.
+    /// Липкий — включивший его один раз не должен включать снова.
+    #[serde(default)]
+    pub syn_explorer_expert: bool,
     /// Каталог-кэш для скачанных моделей со страницы HuggingFace.
     /// Пусто = `~/.local/share/synthos/hf` (см. [`resolve_hf_cache_dir`]).
     /// Спрашивается у пользователя при первом скачивании.
@@ -1168,6 +1173,7 @@ impl Default for AppConfig {
             kb: KbConfig::default(),
             syn_explorer_bookmarks: Vec::new(),
             syn_explorer_left_split_ratio: default_syn_explorer_left_split_ratio(),
+            syn_explorer_expert: false,
             syn_explorer_right_split_ratio: default_syn_explorer_right_split_ratio(),
             hf_cache_dir: String::new(),
             hf_concurrent_downloads: default_hf_concurrent_downloads(),

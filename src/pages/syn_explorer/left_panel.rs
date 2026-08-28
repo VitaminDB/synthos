@@ -9,17 +9,19 @@
 use syngui::context_provider::use_context;
 use syngui::mgui;
 use syngui::prelude::*;
+use syngui::trn;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::feedback::Tooltip;
 use syngui::widgets::overlay::{ContextMenu, MenuItem};
 
 use crate::icons::{
-    MI_BOOKMARK_ADD, MI_DELETE, MI_FOLDER, MI_FOLDER_OPEN, MI_FOLDER_ZIP,
+    MI_ADD_CIRCLE, MI_BOOKMARK_ADD, MI_DELETE, MI_DEPLOYED_CODE, MI_FOLDER, MI_FOLDER_OPEN,
+    MI_FOLDER_ZIP,
 };
 
 use super::actions;
 use super::bookmarks;
-use super::state::{SynExplorerCtx, SynFileEntry};
+use super::state::{SourceEntry, SynExplorerCtx, SynFileEntry};
 
 pub fn view() -> impl Widget {
     DecoratedBox::new().class("syn-explorer-left-panel").child(mgui! {
@@ -159,7 +161,7 @@ fn folder_header() -> impl Widget {
                     .unwrap_or_else(|| p.display().to_string()),
                 None => tr!("explorer.left.folder.default_title"),
             };
-            let count = ctx.folder_entries.get().len();
+            let count = ctx.folder_entries.get().len() + ctx.folder_sources.get().len();
             let count_label = if count == 0 {
                 String::new()
             } else {
@@ -177,12 +179,17 @@ fn folder_header() -> impl Widget {
         }))
 }
 
+/// Содержимое выбранной папки двумя группами: готовые пакеты и модели,
+/// которые ещё можно упаковать. Вторая группа — главное изменение: раньше
+/// папка с моделью выглядела пустой, и путь к упаковке начинался с
+/// многополевой формы вместо одной кнопки.
 fn folder_body() -> impl Widget {
     DecoratedBox::new().class("syn-folder-body grow").child(Reactive::new(
         || -> Vec<Box<dyn Widget>> {
             let ctx = use_context::<SynExplorerCtx>();
             let folder = ctx.selected_folder.get();
             let entries = ctx.folder_entries.get();
+            let sources = ctx.folder_sources.get();
             let active_path = ctx
                 .active_bundle
                 .get()
@@ -190,25 +197,51 @@ fn folder_body() -> impl Widget {
             if folder.is_none() {
                 return vec![Box::new(no_folder_placeholder())];
             }
-            if entries.is_empty() {
+            if entries.is_empty() && sources.is_empty() {
                 return vec![Box::new(empty_folder_placeholder())];
             }
             let mut col = Column::new()
                 .gap(4.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch);
-            for entry in entries.iter() {
-                let entry = entry.clone();
-                let is_active = active_path
-                    .as_ref()
-                    .map(|p| p == &entry.path)
-                    .unwrap_or(false);
-                col = col.child(move || bundle_card(entry.clone(), is_active));
+
+            if !entries.is_empty() {
+                let n = entries.len();
+                col = col.child(move || group_header(tr!("explorer.left.group.bundles"), n));
+                for entry in entries.iter() {
+                    let entry = entry.clone();
+                    let is_active = active_path
+                        .as_ref()
+                        .map(|p| p == &entry.path)
+                        .unwrap_or(false);
+                    col = col.child(move || bundle_card(entry.clone(), is_active));
+                }
+            }
+            if !sources.is_empty() {
+                let n = sources.len();
+                col = col.child(move || group_header(tr!("explorer.left.group.packable"), n));
+                for entry in sources.iter() {
+                    let entry = entry.clone();
+                    col = col.child(move || source_card(entry.clone()));
+                }
             }
             vec![Box::new(col)]
         },
     ))
 }
 
+fn group_header(title: String, count: usize) -> impl Widget {
+    DecoratedBox::new().class("syn-folder-group-header").child(mgui! {
+        Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Text::new(title).class("syn-folder-group-title"),
+                DecoratedBox::new().class("syn-spacer grow"),
+                Text::new(format!("{count}")).class("syn-section-count"),
+            ]
+    })
+}
+
+/// Карточка готового `.syn`: клик открывает пакет.
 fn bundle_card(entry: SynFileEntry, is_active: bool) -> impl Widget {
     let class = if is_active {
         "syn-bundle-card selected"
@@ -220,7 +253,6 @@ fn bundle_card(entry: SynFileEntry, is_active: bool) -> impl Widget {
         .map(humanize_bytes)
         .unwrap_or_else(|| "—".to_string());
     let path = entry.path.clone();
-    let path_str = path.display().to_string();
 
     let row = mgui! {
         Row::new()
@@ -234,20 +266,75 @@ fn bundle_card(entry: SynFileEntry, is_active: bool) -> impl Widget {
                         Text::new(entry.display_name.clone())
                             .max_lines(1)
                             .class("syn-bundle-card-name"),
-                        Text::new(size_label)
-                            .class("syn-bundle-card-meta"),
+                        Text::new(size_label).class("syn-bundle-card-meta"),
                     ],
             ]
     };
-    let _ = path_str;
 
     let tile = DecoratedBox::new().class(class).child(row);
-    GestureDetector::new()
-        .child(tile)
-        .on_click(move || {
-            let ctx = use_context::<SynExplorerCtx>();
-            actions::open_bundle(ctx, path.clone());
-        })
+    GestureDetector::new().child(tile).on_click(move || {
+        let ctx = use_context::<SynExplorerCtx>();
+        actions::open_bundle(ctx, path.clone());
+    })
+}
+
+/// Карточка нераспакованной модели: что это, сколько весит — и кнопка,
+/// после которой остаётся одно подтверждение.
+fn source_card(entry: SourceEntry) -> impl Widget {
+    let subtitle = source_subtitle(&entry);
+    let path_for_click = entry.path.clone();
+    let path_for_btn = entry.path.clone();
+
+    let pack_btn = Tooltip::new(
+        ToolButton::new(MI_ADD_CIRCLE)
+            .on_click(move || {
+                let ctx = use_context::<SynExplorerCtx>();
+                actions::pack_source(ctx, path_for_btn.clone());
+            })
+            .class("syn-source-card-action"),
+        tr!("explorer.left.source.pack_tooltip"),
+    );
+
+    let row = mgui! {
+        Row::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Text::new(MI_DEPLOYED_CODE).class("syn-source-card-icon"),
+                Column::new()
+                    .gap(2.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Start)
+                    .class("grow") => [
+                        Text::new(entry.display_name.clone())
+                            .max_lines(1)
+                            .class("syn-source-card-name"),
+                        Text::new(subtitle).max_lines(1).class("syn-source-card-meta"),
+                    ],
+                pack_btn,
+            ]
+    };
+
+    let tile = DecoratedBox::new().class("syn-source-card").child(row);
+    // Клик по всей карточке делает то же, что кнопка: попасть в упаковку
+    // должно быть проще, чем промахнуться мимо неё.
+    GestureDetector::new().child(tile).on_click(move || {
+        let ctx = use_context::<SynExplorerCtx>();
+        actions::pack_source(ctx, path_for_click.clone());
+    })
+}
+
+/// «qwen3_5 · 12 шардов · 43.7 ГБ» — ровно то, по чему модель узнаётся.
+fn source_subtitle(entry: &SourceEntry) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !entry.arch.is_empty() {
+        parts.push(entry.arch.clone());
+    }
+    if entry.component_count > 1 {
+        parts.push(trn!("explorer.left.source.components", entry.component_count));
+    } else if entry.shard_count > 1 {
+        parts.push(trn!("explorer.left.source.shards", entry.shard_count));
+    }
+    parts.push(humanize_bytes(entry.bytes));
+    parts.join(" · ")
 }
 
 fn no_folder_placeholder() -> impl Widget {

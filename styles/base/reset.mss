@@ -45,6 +45,23 @@ Toggle {
     transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
+/* Checkbox — привязан к теме приложения. Без этого правила виджет берёт
+ * свои хардкод-дефолты (белая заливка, серая рамка #D1D5DB) и в тёмной теме
+ * выглядит белым квадратом. `background-color` — фон невыбранной коробки,
+ * `accent-color` — заливка выбранной, `color` — подпись; галочка внутри
+ * всегда белая (checkbox.rs), и на `--primary` она контрастна в любой
+ * палитре. */
+Checkbox {
+    background-color: var(--bg-search);
+    border-color: var(--border);
+    color: var(--text);
+    accent-color: var(--primary);
+    border-width: 2px;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
 /* SpinBox — единый визуальный набор с TextField/Dropdown: `--bg-search` фон,
  * `--border-soft` бордер, 10px радиус. `accent-color` красит рамку в режиме
  * редактирования (см. spin_box.rs::build_display_list). */

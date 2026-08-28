@@ -28,8 +28,11 @@ pub mod bundle_io;
 pub mod dialogs;
 pub mod left_panel;
 pub mod right_panel;
+pub mod pack_dialogs;
+pub mod quant_pack;
 pub mod state;
 pub mod tab_files;
+pub mod tab_layers;
 pub mod tab_metadata;
 pub mod tab_overview;
 pub mod tab_preview;
@@ -154,6 +157,7 @@ fn center_with_tabs(active: state::OpenBundle) -> impl Widget {
                         let _ = active.reload_gen.get();
                         let widget: Box<dyn Widget> = match ctx.current_tab.get() {
                             state::TabKind::Overview => Box::new(tab_overview::view(active)),
+                            state::TabKind::Layers => Box::new(tab_layers::view(active)),
                             state::TabKind::Files => Box::new(tab_files::view(active)),
                             state::TabKind::Metadata => Box::new(tab_metadata::view(active)),
                             state::TabKind::Preview => Box::new(tab_preview::view(active)),

@@ -55,7 +55,7 @@ pub fn header_actions() -> impl Widget {
             let btn_new = ToolButton::new(MI_ADD_CIRCLE)
                 .on_click(|| {
                     let ctx = use_context::<SynExplorerCtx>();
-                    actions::request_create_bundle(ctx);
+                    actions::open_pack_wizard(ctx);
                 })
                 .class(enabled_class);
             let btn_save = ToolButton::new(MI_SAVE)

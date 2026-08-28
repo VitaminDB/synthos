@@ -18,15 +18,16 @@ use std::time::{Duration, Instant};
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 use syngui::{tr, trn};
+use synaptix_bundle::inspect;
+use synaptix_bundle::pack_plan::PackPlan;
 use synaptix_bundle::{
-    Bundle, BundleBuilder, BundleEditor, BundleMeta, ChunkStatus, ChunkType, FileTag,
-    ProgressEvent,
+    Bundle, BundleEditor, BundleMeta, ChunkStatus, ChunkType, ProgressEvent,
 };
 
 use crate::context::AppCtx;
 
 use super::state::{
-    install_dirty_tracker, BundleStats, CreateProgress, FileEntryView, LoadState, NewPackageForm,
+    install_dirty_tracker, BundleStats, ComponentLayers, CreateProgress, FileEntryView, LoadState,
     OpenBundle, PendingOp, SynExplorerCtx,
 };
 use super::tree_build;
@@ -84,6 +85,7 @@ struct BundleSnapshot {
     meta: BundleMeta,
     files: Vec<FileEntryView>,
     stats: BundleStats,
+    layers: Vec<ComponentLayers>,
     dir_tree: Vec<syngui::widgets::TreeNode>,
 }
 
@@ -93,8 +95,50 @@ fn snapshot(bundle: &Bundle) -> BundleSnapshot {
     let meta = bundle.meta().clone();
     let stats = compute_stats(bundle);
     let files = collect_files(bundle);
+    let layers = collect_layers(bundle);
     let dir_tree = tree_build::build_dir_tree(bundle);
-    BundleSnapshot { meta, files, stats, dir_tree }
+    BundleSnapshot { meta, files, stats, layers, dir_tree }
+}
+
+/// Разобрать состав каждого `tensors:*`-чанка. Читается только
+/// safetensors-заголовок внутри уже отображённого mmap — это миллисекунды
+/// даже на 77-гигабайтном бандле, поэтому делается сразу при открытии, а не
+/// лениво по клику на вкладку.
+fn collect_layers(bundle: &Bundle) -> Vec<ComponentLayers> {
+    let meta = bundle.meta();
+    let names: Vec<String> = bundle
+        .cdir()
+        .entries
+        .iter()
+        .filter(|e| e.is_alive() && matches!(e.kind_typed(), ChunkType::Tensors))
+        .map(|e| e.name.trim_start_matches("tensors:").to_string())
+        .collect();
+
+    let mut out = Vec::with_capacity(names.len());
+    for component in names {
+        let Ok(slice) = bundle.tensors_slice_named(&component) else {
+            continue;
+        };
+        let Ok(tensors) = inspect::read_header_slice(slice) else {
+            continue;
+        };
+        // Подсказка для нераспознанных имён: у однокомпонентного
+        // `acestep_vae.syn` чанк зовётся `main`, и роль читается только из
+        // id/purpose самого бандла.
+        let hint = format!("{component} {} {}", meta.purpose, meta.id);
+        let mut by_role: Vec<_> = inspect::bytes_by_role(&tensors, Some(&hint))
+            .into_iter()
+            .collect();
+        by_role.sort_by(|a, b| b.1.dense.cmp(&a.1.dense));
+        out.push(ComponentLayers {
+            tensor_count: tensors.len(),
+            bytes: tensors.iter().map(|t| t.bytes).sum(),
+            groups: inspect::group_tensors(&tensors, Some(&hint)),
+            by_role,
+            component,
+        });
+    }
+    out
 }
 
 fn compute_stats(bundle: &Bundle) -> BundleStats {
@@ -172,6 +216,7 @@ pub fn open_async(ctx: SynExplorerCtx, path: PathBuf) {
                         snap.meta,
                         snap.files,
                         snap.stats,
+                        snap.layers,
                         snap.dir_tree,
                     );
                     // dirty-tracker — create_effect требует thread_local
@@ -259,6 +304,7 @@ pub fn save_async(ctx: SynExplorerCtx) {
                             active.original_meta.set_always(snap.meta);
                             active.files.update(|v| *v = snap.files);
                             active.stats.set(snap.stats);
+                            active.layers.update(|v| *v = snap.layers);
                             active.dir_tree.update(|v| *v = snap.dir_tree);
                             active.pending_ops.update(|v| v.clear());
                             active.preview_cache.update(|m| m.clear());
@@ -322,78 +368,53 @@ fn apply_edits(
     Ok(())
 }
 
-/// Создать новый пакет из формы NewPackage. Worker-thread:
-/// `BundleBuilder::new(...).arch(...).purpose(...).add_safetensors_component(...)*.write(out)`.
-/// На успех автоматически открывает созданный пакет в UI. Проброс прогресса в
-/// `ctx.create_progress` идёт через throttled-callback (см. `make_progress_cb`).
-pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
-    let id = form.id.get_untracked().trim().to_string();
-    let version = form.version.get_untracked().trim().to_string();
-    let arch = form.arch.get_untracked().trim().to_string();
-    let purpose = form.purpose.get_untracked().trim().to_string();
-    let out = form.out_path.get_untracked();
-    let delete_sources = form.delete_sources.get_untracked();
+/// Упаковать модель по готовому плану. Worker-thread: `PackPlan::into_builder`
+/// → `write`. На успех открывает получившийся пакет. Прогресс идёт в
+/// `ctx.create_progress` через throttled-callback (см. `make_progress_cb`).
+///
+/// Валидация плана и заполнение метаданных остаются на стороне UI
+/// (`PackWizard::validation_error`) — сюда приходит уже согласованный план.
+pub struct PackOptions {
+    pub delete_sources: bool,
+    pub sha256: bool,
+    pub blake3: bool,
+    pub cdir_json: bool,
+    /// Что квантовать при упаковке. Пусто — обычная побайтовая упаковка.
+    pub quant: super::quant_pack::QuantDecision,
+}
 
-    if id.is_empty() {
-        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.id_required"));
-        return;
-    }
-    if version.is_empty() {
-        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.version_required"));
-        return;
-    }
-    let Some(out) = out else {
-        ctx.show_error(tr!("explorer.error.missing_data.title"), tr!("explorer.error.missing_data.out_path_required"));
-        return;
-    };
-
-    // Снимем все компоненты в worker-friendly виде (plain owned values).
-    let components_raw = form.components.get_untracked();
-    if components_raw.is_empty() {
-        ctx.show_error(
-            tr!("explorer.error.missing_data.title"),
-            tr!("explorer.error.missing_data.no_components"),
-        );
-        return;
-    }
-    let mut components: Vec<(String, PathBuf, Option<String>)> = Vec::new();
-    for c in components_raw {
-        let name = c.name.get_untracked().trim().to_string();
-        let dir = c.source_dir.get_untracked();
-        let prefix = c.prefix.get_untracked().trim().to_string();
-        if name.is_empty() {
-            ctx.show_error(
-                tr!("explorer.error.missing_data.title"),
-                tr!("explorer.error.missing_data.component_name_required"),
-            );
-            return;
-        }
-        let Some(dir) = dir else {
-            ctx.show_error(
-                tr!("explorer.error.missing_data.title"),
-                tr!("explorer.error.missing_data.component_dir_required", name = name),
-            );
-            return;
-        };
-        components.push((name, dir, if prefix.is_empty() { None } else { Some(prefix) }));
-    }
-
-    // Проверка свободного места выполняется на старте — до того как открыли
-    // tmp файл. Это даёт fail-fast: пользователь не ждёт 10 минут, чтобы
-    // получить «no space left on device» на финальном байте.
+pub fn create_from_plan_async(
+    ctx: SynExplorerCtx,
+    plan: PackPlan,
+    out: PathBuf,
+    opts: PackOptions,
+) {
+    // Место проверяем до старта: узнать про «no space left» на последнем
+    // байте после десяти минут упаковки — худший из возможных вариантов.
     let target_dir = out
         .parent()
+        .filter(|p| !p.as_os_str().is_empty())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    if let Some(err) = preflight_check_space(&components, &target_dir) {
-        ctx.show_error(tr!("explorer.error.insufficient_space.title"), err);
+    let required = plan.required_space();
+    let avail = synaptix_bundle::available_space(&target_dir).unwrap_or(u64::MAX);
+    if avail < required {
+        ctx.show_error(
+            tr!("explorer.error.insufficient_space.title"),
+            tr!(
+                "explorer.error.insufficient_space.detail",
+                path = target_dir.display(),
+                avail = gib(avail),
+                required = gib(required),
+                total = gib(plan.payload_bytes()),
+                max_comp = gib(plan.max_component_bytes()),
+            ),
+        );
         return;
     }
 
     let progress_handle = ctx.create_progress.get_untracked();
     let progress_gen = ctx.create_progress_gen;
-    // Reset прогресс перед стартом, чтобы UI не показал старые цифры
-    // в момент LoadState::Creating.
     if let Ok(mut g) = progress_handle.lock() {
         *g = CreateProgress::default();
     }
@@ -402,23 +423,33 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
 
     std::thread::spawn(move || {
         let cb = make_progress_cb(progress_handle.clone(), progress_gen);
-        let res = build_bundle(
-            &id,
-            &version,
-            &arch,
-            &purpose,
-            &components,
-            &out,
-            delete_sources,
-            cb,
-        );
+        let res = build_with_quant(plan, &opts)
+            .map(|b| {
+                let mut b = b
+                    .with_progress(cb)
+                    .with_delete_sources_after_pack(opts.delete_sources);
+                if opts.sha256 {
+                    b = b.with_sha256(true);
+                }
+                if opts.blake3 {
+                    b = b.with_blake3(true);
+                }
+                if opts.cdir_json {
+                    b = b.cdir_format(synaptix_bundle::CdirFormat::Json);
+                }
+                b
+            })
+            .and_then(|b| b.write(&out).map_err(|e| e.to_string()));
         match res {
             Ok(()) => {
                 run_on_main_thread(move || {
                     ctx.load_state.set(LoadState::Idle);
-                    // Закрываем диалог NewPackage — он отображал прогресс-зону,
-                    // и оставлять его поверх открываемого пакета было бы странно.
+                    // Диалог показывал прогресс; оставлять его поверх
+                    // открывающегося пакета было бы странно.
                     ctx.close_dialog();
+                    // Папка получила новый `.syn` — список слева обновляем,
+                    // иначе собранного пакета в нём не будет до перезахода.
+                    super::bookmarks::refresh_selected(ctx);
                     open_async(ctx, out);
                 });
             }
@@ -432,67 +463,89 @@ pub fn create_async(ctx: SynExplorerCtx, form: NewPackageForm) {
     });
 }
 
-/// Расчёт места на диске. Возвращает `Some(error_message)` если места не
-/// хватает, `None` если всё ок. Эвристика: нам нужно `total + max_component`
-/// байт на разделе `out` (tmp бандла + крупнейший tensors_stage tmp) + 64 МБ
-/// запаса на cdir/паддинги.
-fn preflight_check_space(
-    components: &[(String, PathBuf, Option<String>)],
-    target_dir: &Path,
-) -> Option<String> {
-    let mut total: u64 = 0;
-    let mut max_comp: u64 = 0;
-    for (_, dir, _) in components {
-        // Считаем все .safetensors-шарды в директории, плюс остальные файлы
-        // (которые попадут в File-чанки). Это не идеально совпадает с тем,
-        // что увидит BundleBuilder, но даёт честную верхнюю границу.
-        let mut comp_tensor_bytes: u64 = 0;
-        let mut comp_aux_bytes: u64 = 0;
-        let Ok(rd) = std::fs::read_dir(dir) else {
+/// Собрать билдер: обычный план либо, если выбрано квантование, с подменой
+/// главного компонента на квантующий поток.
+///
+/// Квантуется только главный компонент — тот, чьи слои разобраны в мастере
+/// и по которому посчитана оценка размера. Остальные компоненты копируются
+/// как есть, иначе обещанный в UI размер разошёлся бы с настоящим.
+fn build_with_quant(
+    plan: PackPlan,
+    opts: &PackOptions,
+) -> Result<synaptix_bundle::BundleBuilder, String> {
+    use super::quant_pack;
+
+    if opts.quant.is_empty() {
+        return plan.into_builder().map_err(|e| e.to_string());
+    }
+    let Some(main_idx) = plan.components.iter().position(|c| c.enabled) else {
+        return plan.into_builder().map_err(|e| e.to_string());
+    };
+
+    let device = synaptix_core::device::Device::Cuda(0);
+    let decision = opts.quant.clone();
+    let decide = move |name: &str, shape: &[usize]| decision.for_tensor(name, shape);
+    let mut stream = Some(quant_pack::QuantizingStream::new(
+        &plan.components[main_idx].paths,
+        &decide,
+        device,
+    )?);
+    let quantized = stream.as_ref().map(|s| s.quantized_count()).unwrap_or(0);
+    if quantized == 0 {
+        // Ни один тензор не подошёл — незачем городить поток и объявлять
+        // возможность формата, которой в бандле нет.
+        return plan.into_builder().map_err(|e| e.to_string());
+    }
+    let manifest = stream
+        .as_ref()
+        .ok_or_else(|| "квантующий поток потерян".to_string())?
+        .manifest_json()?;
+
+    let mut b = synaptix_bundle::BundleBuilder::new(&plan.meta.id, &plan.meta.version);
+    if !plan.meta.arch.is_empty() {
+        b = b.arch(&plan.meta.arch);
+    }
+    if !plan.meta.purpose.is_empty() {
+        b = b.purpose(&plan.meta.purpose);
+    }
+    for (i, c) in plan.components.iter().enumerate().filter(|(_, c)| c.enabled) {
+        let prefix = (!c.prefix.is_empty()).then_some(c.prefix.as_str());
+        if let Some(p) = prefix {
+            b = b.component(&c.name, p);
+        }
+        if i == main_idx {
+            b = b.add_tensor_stream(&c.name, quant_pack::boxed(stream_take(&mut stream)?));
             continue;
-        };
-        for ent in rd.flatten() {
-            let p = ent.path();
-            if !p.is_file() {
-                continue;
-            }
-            let size = match std::fs::metadata(&p) {
-                Ok(m) => m.len(),
-                Err(_) => continue,
-            };
-            let is_tensor = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.eq_ignore_ascii_case("safetensors"))
-                .unwrap_or(false);
-            if is_tensor {
-                comp_tensor_bytes = comp_tensor_bytes.saturating_add(size);
-            } else {
-                comp_aux_bytes = comp_aux_bytes.saturating_add(size);
-            }
         }
-        total = total.saturating_add(comp_tensor_bytes).saturating_add(comp_aux_bytes);
-        if comp_tensor_bytes > max_comp {
-            max_comp = comp_tensor_bytes;
-        }
+        b = b.add_safetensors_component(&c.name, c.paths.clone(), prefix);
     }
-    // Запас на cdir/паддинги/чанк-хедеры. Cdir сам редко больше 1 МБ;
-    // 64 МБ — безопасный round-up.
-    let required = total
-        .saturating_add(max_comp)
-        .saturating_add(64 * 1024 * 1024);
-    let avail = synaptix_bundle::available_space(target_dir).unwrap_or(u64::MAX);
-    if avail < required {
-        return Some(tr!(
-            "explorer.error.insufficient_space.detail",
-            path = target_dir.display(),
-            avail = format!("{:.2}", avail as f64 / (1024.0 * 1024.0 * 1024.0)),
-            required = format!("{:.2}", required as f64 / (1024.0 * 1024.0 * 1024.0)),
-            total = format!("{:.2}", total as f64 / (1024.0 * 1024.0 * 1024.0)),
-            max_comp = format!("{:.2}", max_comp as f64 / (1024.0 * 1024.0 * 1024.0)),
-        ));
+    for f in plan.aux.iter().filter(|f| f.enabled) {
+        b = b.add_file_path(&f.rel, &f.path, f.tag).map_err(|e| e.to_string())?;
     }
-    None
+    b = b
+        .add_file_bytes(
+            quant_pack::MANIFEST_NAME,
+            manifest,
+            synaptix_bundle::FileTag::Inference,
+        )
+        .map_err(|e| e.to_string())?;
+    // Читатель без поддержки раскладки обязан отказаться открывать бандл,
+    // а не искать тензоры, которых больше нет под прежними именами.
+    b = b.require_capability(quant_pack::CAP_QUANT);
+    tracing::info!(target: "syn-explorer", tensors = quantized, "упаковка с квантованием");
+    Ok(b)
+}
+
+/// Забрать поток из `Option` с внятной ошибкой вместо `unwrap`.
+fn stream_take(
+    slot: &mut Option<super::quant_pack::QuantizingStream>,
+) -> Result<super::quant_pack::QuantizingStream, String> {
+    slot.take()
+        .ok_or_else(|| "квантующий поток уже израсходован".to_string())
+}
+
+fn gib(n: u64) -> String {
+    format!("{:.2}", n as f64 / (1024.0 * 1024.0 * 1024.0))
 }
 
 /// Сборка throttled-callback'а: payload-данные пишутся в `Arc<Mutex>`, а
@@ -566,70 +619,6 @@ fn make_progress_cb(
             gen_signal.set_always(next);
         }
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_bundle(
-    id: &str,
-    version: &str,
-    arch: &str,
-    purpose: &str,
-    components: &[(String, PathBuf, Option<String>)],
-    out: &Path,
-    delete_sources: bool,
-    progress: synaptix_bundle::ProgressCallback,
-) -> Result<(), String> {
-    let mut builder = BundleBuilder::new(id, version);
-    if !arch.is_empty() {
-        builder = builder.arch(arch);
-    }
-    if !purpose.is_empty() {
-        builder = builder.purpose(purpose);
-    }
-    // Каждый компонент → отдельный `tensors:<name>` чанк. Внутри папки —
-    // model.safetensors / index.json / glob (через `resolve_safetensors_in_dir`).
-    // Aux-файлы (tokenizer.json, config.json, README.md) добавляем как File
-    // только из *первой* папки — если у пользователя multi-component, эти
-    // файлы обычно лежат рядом с одним из компонентов и дублировать их
-    // нельзя (имена в bundle root конфликтуют).
-    for (idx, (name, dir, prefix)) in components.iter().enumerate() {
-        let paths = synaptix_bundle::resolve_safetensors_in_dir(dir)
-            .map_err(|e| format!("{}: {e}", tr!("explorer.error.component_prefix", name = name)))?;
-        builder = builder.add_safetensors_component(name, paths, prefix.as_deref());
-        // Aux-файлы первого компонента.
-        if idx == 0 {
-            if let Ok(rd) = std::fs::read_dir(dir) {
-                for ent in rd.flatten() {
-                    let p = ent.path();
-                    if !p.is_file() {
-                        continue;
-                    }
-                    let ext = p
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|s| s.to_ascii_lowercase())
-                        .unwrap_or_default();
-                    if ext == "safetensors" {
-                        continue;
-                    }
-                    let aux_name = match p.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    builder = builder
-                        .add_file_path(&aux_name, &p, FileTag::Inference)
-                        .map_err(|e| format!("add_file `{aux_name}`: {e}"))?;
-                }
-            }
-        }
-    }
-    builder = builder
-        .with_progress(progress)
-        .with_delete_sources_after_pack(delete_sources);
-    builder
-        .write(out)
-        .map_err(|e| format!("write `{}`: {e}", out.display()))?;
-    Ok(())
 }
 
 /// Показать info-уведомление через глобальный `AppCtx::notifications`. ВЫЗЫВАТЬ

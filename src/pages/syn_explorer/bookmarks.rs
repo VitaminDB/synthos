@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use syngui::async_runtime::run_on_main_thread;
 use syngui::tr;
 
-use super::state::{SynExplorerCtx, SynFileEntry};
+use super::state::{SourceEntry, SynExplorerCtx, SynFileEntry};
 
 /// Добавить путь в закладки. Идемпотентно — повторное добавление того же пути
 /// — no-op. Не удаляет existing entries. Обновление signal'ов делается через
@@ -50,6 +50,7 @@ pub fn remove_bookmark(ctx: SynExplorerCtx, idx: usize) {
     if ctx.selected_folder.get_untracked().as_ref() == Some(&removed) {
         ctx.selected_folder.set(None);
         ctx.folder_entries.set(Vec::new());
+        ctx.folder_sources.set(Vec::new());
     }
 }
 
@@ -63,17 +64,20 @@ pub fn select_folder(ctx: SynExplorerCtx, path: PathBuf) {
         );
         ctx.selected_folder.set(None);
         ctx.folder_entries.set(Vec::new());
+        ctx.folder_sources.set(Vec::new());
         return;
     }
-    match scan_folder_for_syn(&path) {
-        Ok(entries) => {
+    match scan_folder(&path) {
+        Ok((bundles, sources)) => {
             ctx.selected_folder.set(Some(path));
-            ctx.folder_entries.set(entries);
+            ctx.folder_entries.set(bundles);
+            ctx.folder_sources.set(sources);
         }
         Err(e) => {
             ctx.show_error(tr!("explorer.error.read_folder.title"), e);
             ctx.selected_folder.set(Some(path));
             ctx.folder_entries.set(Vec::new());
+            ctx.folder_sources.set(Vec::new());
         }
     }
 }
@@ -87,36 +91,39 @@ pub fn refresh_selected(ctx: SynExplorerCtx) {
     select_folder(ctx, folder);
 }
 
-/// Сканировать папку на наличие `.syn`-файлов. Не открывает их (тяжёлый mmap
-/// — только при клике). Сортировка по имени для стабильного UI-порядка.
-pub fn scan_folder_for_syn(dir: &Path) -> Result<Vec<SynFileEntry>, String> {
-    let rd = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
-    let mut out: Vec<SynFileEntry> = Vec::new();
-    for ent in rd.flatten() {
-        let p = ent.path();
-        if !p.is_file() {
-            continue;
+/// Сканировать папку: готовые `.syn` и модели, которые ещё можно упаковать.
+///
+/// Раньше здесь искались только `.syn`, и папка с моделью выглядела пустой —
+/// «нет `.syn` файлов» вместо очевидного «вот модель, вот кнопка упаковать».
+/// Разбор делает `pack_plan::scan_collection`: он не открывает веса, только
+/// перечисляет файлы и читает `config.json`, поэтому остаётся мгновенным
+/// даже на каталоге с сотнями гигабайт.
+pub fn scan_folder(dir: &Path) -> Result<(Vec<SynFileEntry>, Vec<SourceEntry>), String> {
+    let items = synaptix_bundle::pack_plan::scan_collection(dir).map_err(|e| e.to_string())?;
+    let mut bundles: Vec<SynFileEntry> = Vec::new();
+    let mut sources: Vec<SourceEntry> = Vec::new();
+    for item in items {
+        match item {
+            synaptix_bundle::pack_plan::FoundItem::Bundle { path, name, bytes } => {
+                bundles.push(SynFileEntry {
+                    path,
+                    display_name: name,
+                    size: Some(bytes),
+                });
+            }
+            synaptix_bundle::pack_plan::FoundItem::Source(c) => {
+                sources.push(SourceEntry {
+                    path: c.path,
+                    display_name: c.name,
+                    bytes: c.bytes,
+                    shard_count: c.shard_count,
+                    component_count: c.component_count,
+                    arch: c.arch,
+                });
+            }
         }
-        let ext_is_syn = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.eq_ignore_ascii_case("syn"))
-            .unwrap_or(false);
-        if !ext_is_syn {
-            continue;
-        }
-        let display_name = p
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| p.display().to_string());
-        let size = std::fs::metadata(&p).ok().map(|m| m.len());
-        out.push(SynFileEntry {
-            path: p,
-            display_name,
-            size,
-        });
     }
-    out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-    Ok(out)
+    bundles.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    sources.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    Ok((bundles, sources))
 }

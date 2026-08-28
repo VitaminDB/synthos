@@ -7,7 +7,7 @@
 //! event-loop, потому что rfd на Linux использует xdg-portal (D-Bus,
 //! ожидание пользователя — естественно блокирующее в worker'е).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use syngui::async_runtime::run_on_main_thread;
@@ -17,7 +17,7 @@ use synaptix_bundle::FileTag;
 use super::bookmarks;
 use super::bundle_io;
 use super::state::{
-    DialogKind, NewPackageComponent, NewPackageForm, OpenBundle, PendingOp, SynExplorerCtx, TabKind,
+    ComponentLayers, DialogKind, OpenBundle, PackWizard, PendingOp, SynExplorerCtx, TabKind,
 };
 
 /// Открыть .syn через native file dialog. Воркер запускает rfd blocking, по
@@ -214,96 +214,276 @@ pub fn confirm_delete_file(active: OpenBundle, name: String) {
     }
 }
 
-/// Открыть диалог создания нового пакета. Сначала сбрасываем форму
-/// (общая для всего lifetime ctx).
-pub fn request_create_bundle(ctx: SynExplorerCtx) {
-    ctx.reset_new_package_form();
-    ctx.open_dialog(DialogKind::NewPackage);
+/// Упаковать конкретную модель: разбираем источник в worker'е и показываем
+/// быструю карточку подтверждения. Это и есть «в один клик» — дальше
+/// пользователю остаётся нажать «Собрать».
+pub fn pack_source(ctx: SynExplorerCtx, path: PathBuf) {
+    ctx.reset_wizard();
+    ctx.wizard.scanning.set(true);
+    ctx.open_dialog(DialogKind::PackConfirm);
+    scan_into_wizard(ctx, path);
 }
 
-/// Запустить создание из формы NewPackage (worker через bundle_io::create_async).
-pub fn create_bundle(ctx: SynExplorerCtx) {
-    bundle_io::create_async(ctx, ctx.new_package_form);
+/// Открыть мастер без выбранного источника (кнопка «+» в шапке).
+pub fn open_pack_wizard(ctx: SynExplorerCtx) {
+    ctx.reset_wizard();
+    ctx.open_dialog(DialogKind::PackWizard);
 }
 
-/// Выбрать папку-источник для конкретного компонента NewPackage.
-///
-/// `is_first` — компонент с индексом 0. Только для него мы заполняем
-/// автоматически out_path и id (компоненты 2..n — это дополнительные
-/// tensor-источники, у них своё имя но общие meta).
-pub fn pick_source_dir_for_component(
-    form: NewPackageForm,
-    component: NewPackageComponent,
-    is_first: bool,
-) {
+/// Перейти из быстрой карточки в мастер, сохранив разобранный план.
+pub fn switch_to_wizard(ctx: SynExplorerCtx) {
+    ctx.wizard.step.set(0);
+    ctx.open_dialog(DialogKind::PackWizard);
+}
+
+/// Выбрать источник вручную: каталог модели или одиночный `.safetensors`.
+/// Два отдельных действия вместо одного «выбрать» — нативные диалоги не
+/// умеют предлагать файл и папку одновременно.
+pub fn pick_source_dir(ctx: SynExplorerCtx) {
     std::thread::spawn(move || {
-        let p = match rfd::FileDialog::new()
-            .set_title(tr!("explorer.dialog.rfd.pick_component_dir"))
+        let Some(p) = rfd::FileDialog::new()
+            .set_title(tr!("explorer.dialog.rfd.pick_source_dir"))
             .pick_folder()
-        {
-            Some(p) => p,
-            None => return,
+        else {
+            return;
         };
-        run_on_main_thread(move || {
-            if is_first {
-                if form.out_path.get_untracked().is_none() {
-                    if let Some(parent) = p.parent() {
-                        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                            form.out_path
-                                .set(Some(parent.join(format!("{name}.syn"))));
-                        }
-                    }
-                }
-                if form.id.get_untracked().trim().is_empty() {
-                    if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                        form.id.set(name.to_string());
-                    }
-                }
+        run_on_main_thread(move || scan_into_wizard(ctx, p));
+    });
+}
+
+pub fn pick_source_file(ctx: SynExplorerCtx) {
+    std::thread::spawn(move || {
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("safetensors", &["safetensors"])
+            .set_title(tr!("explorer.dialog.rfd.pick_source_file"))
+            .pick_file()
+        else {
+            return;
+        };
+        run_on_main_thread(move || scan_into_wizard(ctx, p));
+    });
+}
+
+/// Разобрать источник в worker'е и заселить мастер результатом.
+///
+/// Скан дешёвый (метаданные файлов + `config.json` + safetensors-заголовки),
+/// но на сетевой ФС или холодном кеше он может занять заметное время —
+/// поэтому не на UI-потоке.
+pub fn scan_into_wizard(ctx: SynExplorerCtx, path: PathBuf) {
+    let wizard = ctx.wizard;
+    wizard.scanning.set(true);
+    let models_dir = ctx.models_dir.get_untracked();
+    std::thread::spawn(move || {
+        match synaptix_bundle::pack_plan::PackPlan::scan(&path) {
+            Ok(plan) => {
+                let layers = main_component_layers(&plan);
+                let out = default_out_path(&plan, &models_dir);
+                let plan = Arc::new(plan);
+                run_on_main_thread(move || {
+                    wizard.adopt(plan, layers);
+                    wizard.out_path.update(|v| *v = Some(out));
+                });
             }
-            component.source_dir.set(Some(p));
-        });
-    });
-}
-
-/// Добавить пустой компонент (multi-tensor бандл). По умолчанию имя
-/// `comp{N}` — пользователь редактирует в TextField.
-pub fn add_component(form: NewPackageForm) {
-    form.components.update(|v| {
-        let next_idx = v.len();
-        v.push(NewPackageComponent::new(&format!("comp{next_idx}")));
-    });
-}
-
-/// Удалить компонент по индексу. Не даём удалить последний — пакет должен
-/// иметь хотя бы один tensors-чанк (UI блокирует кнопку delete).
-pub fn remove_component(form: NewPackageForm, index: usize) {
-    form.components.update(|v| {
-        if v.len() > 1 && index < v.len() {
-            v.remove(index);
+            Err(e) => {
+                let msg = e.to_string();
+                run_on_main_thread(move || {
+                    wizard.scanning.set(false);
+                    ctx.show_error(tr!("explorer.error.scan_failed.title"), msg);
+                });
+            }
         }
     });
 }
 
-/// Выбрать out-path для NewPackage (save_file).
-pub fn pick_out_path_for_new(form: NewPackageForm) {
-    let suggested = form.id.get_untracked();
+/// Куда положить бандл по умолчанию: в каталог моделей приложения, если он
+/// существует, иначе рядом с источником. Первое важнее — именно там его
+/// ищут ноды и агент, и собранный пакет сразу оказывается «на месте».
+fn default_out_path(plan: &synaptix_bundle::pack_plan::PackPlan, models_dir: &Path) -> PathBuf {
+    if models_dir.is_dir() {
+        return plan.suggested_out(models_dir);
+    }
+    let near = if plan.root.is_dir() {
+        plan.root.parent().unwrap_or(&plan.root).to_path_buf()
+    } else {
+        plan.root
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+    plan.suggested_out(&near)
+}
+
+/// Состав главного компонента — инспектор слоёв внутри мастера.
+///
+/// Заголовки читаются у **всех** шардов компонента, а не только у первого:
+/// в первом шарде Qwen3.8 лежит vision-башня и часть слоёв, и по нему одному
+/// «состав модели» выходил бы «vision 86 %» вместо честных полутора процентов.
+/// Цена — по одному короткому чтению на шард (веса не трогаются).
+fn main_component_layers(
+    plan: &synaptix_bundle::pack_plan::PackPlan,
+) -> Option<ComponentLayers> {
+    use synaptix_bundle::inspect;
+    let comp = plan.components.iter().find(|c| c.enabled)?;
+    let mut tensors: Vec<inspect::TensorInfo> = Vec::new();
+    for shard in &comp.paths {
+        match inspect::read_header_file(shard) {
+            Ok(mut t) => tensors.append(&mut t),
+            // Битый шард не повод остаться совсем без состава: показываем
+            // то, что прочиталось, — это подсказка, а не контрольная сумма.
+            Err(e) => tracing::warn!(target: "syn-explorer", shard = %shard.display(), error = %e, "не прочитан заголовок шарда"),
+        }
+    }
+    if tensors.is_empty() {
+        return None;
+    }
+    let hint = format!("{} {} {}", comp.name, plan.meta.purpose, plan.meta.id);
+    let mut by_role: Vec<_> = inspect::bytes_by_role(&tensors, Some(&hint))
+        .into_iter()
+        .collect();
+    by_role.sort_by(|a, b| b.1.dense.cmp(&a.1.dense));
+    Some(ComponentLayers {
+        component: comp.name.clone(),
+        tensor_count: tensors.len(),
+        bytes: tensors.iter().map(|t| t.bytes).sum(),
+        groups: inspect::group_tensors(&tensors, Some(&hint)),
+        by_role,
+    })
+}
+
+/// Запустить упаковку из мастера.
+pub fn start_packing(ctx: SynExplorerCtx) {
+    if let Some(err) = ctx.wizard.validation_error() {
+        ctx.show_error(tr!("explorer.error.missing_data.title"), err);
+        return;
+    }
+    let Some(plan) = ctx.wizard.effective_plan() else {
+        return;
+    };
+    let Some(out) = ctx.wizard.out_path.get_untracked() else {
+        return;
+    };
+    let quant = ctx.wizard.quant_decision();
+    // Квантование теряет точность безвозвратно. Разрешить вместе с ним
+    // удаление исходников значило бы дать одним кликом уничтожить
+    // единственную полную копию весов.
+    if !quant.is_empty() && ctx.wizard.delete_sources.get_untracked() {
+        ctx.show_error(
+            tr!("explorer.error.quant_delete.title"),
+            tr!("explorer.error.quant_delete.message"),
+        );
+        return;
+    }
+    if !quant.is_empty() && !super::quant_pack::cuda_available() {
+        ctx.show_error(
+            tr!("explorer.error.quant_no_cuda.title"),
+            tr!("explorer.error.quant_no_cuda.message"),
+        );
+        return;
+    }
+    let opts = bundle_io::PackOptions {
+        quant,
+        delete_sources: ctx.wizard.delete_sources.get_untracked(),
+        sha256: ctx.wizard.sha256.get_untracked(),
+        blake3: ctx.wizard.blake3.get_untracked(),
+        cdir_json: ctx.wizard.cdir_json.get_untracked(),
+    };
+    bundle_io::create_from_plan_async(ctx, plan, out, opts);
+}
+
+/// Выбрать, куда писать `.syn`.
+pub fn pick_out_path(wizard: PackWizard) {
+    let suggested = wizard.id.get_untracked();
     let suggested = if suggested.is_empty() {
         "package.syn".to_string()
     } else {
         format!("{suggested}.syn")
     };
+    let start_dir = wizard
+        .out_path
+        .get_untracked()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
     std::thread::spawn(move || {
-        let path = rfd::FileDialog::new()
+        let mut dlg = rfd::FileDialog::new()
             .add_filter("Syn bundle", &["syn"])
             .set_title(tr!("explorer.dialog.rfd.pick_out_title"))
-            .set_file_name(&suggested)
-            .save_file();
-        if let Some(p) = path {
+            .set_file_name(&suggested);
+        if let Some(d) = start_dir {
+            dlg = dlg.set_directory(d);
+        }
+        if let Some(p) = dlg.save_file() {
             run_on_main_thread(move || {
-                form.out_path.set(Some(p));
+                wizard.out_path.update(|v| *v = Some(p));
             });
         }
     });
+}
+
+/// Включить/выключить компонент или файл в составе будущего бандла.
+pub fn toggle_component(wizard: PackWizard, index: usize, on: bool) {
+    wizard.components_enabled.update(|v| {
+        if let Some(slot) = v.get_mut(index) {
+            *slot = on;
+        }
+    });
+}
+
+pub fn toggle_aux(wizard: PackWizard, index: usize, on: bool) {
+    wizard.aux_enabled.update(|v| {
+        if let Some(slot) = v.get_mut(index) {
+            *slot = on;
+        }
+    });
+}
+
+/// Переименовать компонент. Имя — суффикс чанка `tensors:<name>`, по нему
+/// компонент ищут загрузчики, поэтому правка доступна только эксперту.
+pub fn set_component_name(wizard: PackWizard, index: usize, name: String) {
+    wizard.plan.update(|slot| {
+        if let Some(plan) = slot.as_mut() {
+            let mut edited = (**plan).clone();
+            if let Some(c) = edited.components.get_mut(index) {
+                c.name = name.trim().to_string();
+            }
+            *plan = Arc::new(edited);
+        }
+    });
+}
+
+/// Префикс имён тензоров компонента. Пусто — без пространства имён.
+pub fn set_component_prefix(wizard: PackWizard, index: usize, prefix: String) {
+    wizard.plan.update(|slot| {
+        if let Some(plan) = slot.as_mut() {
+            let mut edited = (**plan).clone();
+            if let Some(c) = edited.components.get_mut(index) {
+                c.prefix = prefix.trim().to_string();
+            }
+            *plan = Arc::new(edited);
+        }
+    });
+}
+
+/// Назначение файла внутри бандла. Загрузчики читают только `inference`.
+pub fn set_aux_tag(wizard: PackWizard, index: usize, tag: &str) {
+    let tag = match tag {
+        "doc" => FileTag::Doc,
+        "example" => FileTag::Example,
+        "asset" => FileTag::Asset,
+        _ => FileTag::Inference,
+    };
+    wizard.plan.update(|slot| {
+        if let Some(plan) = slot.as_mut() {
+            let mut edited = (**plan).clone();
+            if let Some(f) = edited.aux.get_mut(index) {
+                f.tag = tag;
+            }
+            *plan = Arc::new(edited);
+        }
+    });
+}
+
+/// Шаг мастера. Границы задаются вызывающим — шагов ровно три.
+pub fn goto_step(wizard: PackWizard, step: usize) {
+    wizard.step.set(step.min(2));
 }
 
 /// Активный таб → Preview. Используется при клике в TreeView, чтобы сразу

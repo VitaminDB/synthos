@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 
 use syngui::prelude::*;
 use syngui::widgets::TreeNode;
+use synaptix_bundle::inspect::{LayerGroup, LayerRole, QuantKind, SizeEstimate};
+use synaptix_bundle::pack_plan::PackPlan;
 use synaptix_bundle::{BundleMeta, ChunkType, FileTag};
 
 use crate::config::AppConfig;
@@ -23,6 +25,7 @@ use crate::config::AppConfig;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabKind {
     Overview,
+    Layers,
     Files,
     Metadata,
     Preview,
@@ -32,6 +35,7 @@ impl TabKind {
     pub fn label(self) -> String {
         match self {
             TabKind::Overview => tr!("explorer.tab.overview"),
+            TabKind::Layers => tr!("explorer.tab.layers"),
             TabKind::Files => tr!("explorer.tab.files"),
             TabKind::Metadata => tr!("explorer.tab.metadata"),
             TabKind::Preview => tr!("explorer.tab.preview"),
@@ -113,6 +117,20 @@ pub struct SynFileEntry {
     pub size: Option<u64>,
 }
 
+/// Модель, которую ещё можно упаковать: каталог HuggingFace или одиночный
+/// `.safetensors`. Заполняется `pack_plan::scan_collection` — без чтения
+/// весов, только метаданные файлов и `config.json`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceEntry {
+    pub path: PathBuf,
+    pub display_name: String,
+    pub bytes: u64,
+    pub shard_count: usize,
+    pub component_count: usize,
+    /// `model_type` из конфига; пусто — определится при построении плана.
+    pub arch: String,
+}
+
 /// Сводная статистика открытого пакета — считается один раз при `open_bundle`
 /// и обновляется при reload. Все числа доступны без повторного парсинга cdir.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -175,71 +193,360 @@ impl PendingOp {
 /// `new_package_form`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
-    NewPackage,
+    /// Быстрая карточка: «вот что распознано, вот куда положу — Собрать».
+    /// Путь — источник, план лежит в [`PackWizard::plan`].
+    PackConfirm,
+    /// Полный мастер из трёх шагов (кнопка «Настроить…»).
+    PackWizard,
     ConfirmDeleteFile { name: String },
     ConfirmCloseUnsaved,
     RenameFile { old: String },
     Error { title: String, message: String },
 }
 
-/// Один компонент multi-tensor пакета. Каждый компонент → отдельный
-/// `tensors:<name>`-чанк в `.syn`. Один компонент = одиночная безымянная
-/// модель (имя `"main"`), несколько — multi-tensor (OmniVoice lm+codec).
-#[derive(Clone, Copy)]
-pub struct NewPackageComponent {
-    /// Суффикс tensors-чанка (без `tensors:` префикса). Пустое имя — UI
-    /// валидирует и не даёт сохранить.
-    pub name: RwSignal<String>,
-    /// Папка с safetensors (model.safetensors / index.json / glob).
-    pub source_dir: RwSignal<Option<PathBuf>>,
-    /// Необязательный prefix для имён тензоров. Пустое = None.
-    pub prefix: RwSignal<String>,
+/// Слои одного `tensors:*`-чанка — то, что показывает вкладка «Слои» и
+/// шаг «Состав» мастера. Считается при открытии пакета: разбор
+/// safetensors-заголовка внутри mmap стоит миллисекунды даже на 77 ГБ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComponentLayers {
+    /// Имя компонента без префикса `tensors:`.
+    pub component: String,
+    pub tensor_count: usize,
+    pub bytes: u64,
+    /// Вес по ролям, от большего к меньшему — для полосы состава.
+    /// Каждая запись знает и размер после кванта.
+    pub by_role: Vec<(LayerRole, SizeEstimate)>,
+    pub groups: Vec<LayerGroup>,
 }
 
-impl NewPackageComponent {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: use_signal(name.to_string()),
-            source_dir: use_signal(None),
-            prefix: use_signal(String::new()),
+/// Выбранная точность для роли слоёв. `Dense` — не квантовать.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuantChoice {
+    Dense,
+    Nvfp4,
+    Mxfp8,
+}
+
+impl QuantChoice {
+    /// Значение для `BundleMeta.extra` и для выбора ядра при упаковке.
+    pub fn key(self) -> &'static str {
+        match self {
+            QuantChoice::Dense => "dense",
+            QuantChoice::Nvfp4 => "nvfp4",
+            QuantChoice::Mxfp8 => "mxfp8",
+        }
+    }
+    /// Формат для оценки размера; `None` — плотные веса.
+    pub fn kind(self) -> Option<QuantKind> {
+        match self {
+            QuantChoice::Dense => None,
+            QuantChoice::Nvfp4 => Some(QuantKind::Nvfp4),
+            QuantChoice::Mxfp8 => Some(QuantKind::Mxfp8),
+        }
+    }
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "nvfp4" => QuantChoice::Nvfp4,
+            "mxfp8" => QuantChoice::Mxfp8,
+            _ => QuantChoice::Dense,
+        }
+    }
+    pub fn label(self) -> String {
+        match self {
+            QuantChoice::Dense => tr!("explorer.quant.dense"),
+            QuantChoice::Nvfp4 => "NVFP4".to_string(),
+            QuantChoice::Mxfp8 => "MXFP8".to_string(),
         }
     }
 }
 
-/// Состояние формы создания нового пакета. Каждое поле — отдельный
-/// `RwSignal`, чтобы `TextField::on_change` мог писать без borrow.
+/// Точности, которые движок реально умеет применить к этой роли.
+///
+/// Список задан не форматом `.syn`, а тем, что делает загрузчик
+/// (`synaptix-llm-common::model::build_ext` и `PrecisionConfig`):
+/// * внимание, MLP и `lm_head` идут через `QLinear::build` — оба формата;
+/// * эмбеддинги — только MXFP8: NVFP4-ядра gather'а не существует
+///   (`QuantWeight::embed_gather` отвергает всё, кроме MXFP8), а пресет
+///   `PrecisionConfig::nvfp4()` и вовсе оставляет эмбеддинги в F16;
+/// * остальное (свёртки, нормировки, vision-башня, модуляция DiT) движок
+///   отдельной ручкой не адресует — предлагать там выбор значило бы врать.
+pub fn allowed_quants(role: LayerRole) -> &'static [QuantChoice] {
+    match role {
+        LayerRole::Attention | LayerRole::Mlp | LayerRole::LmHead => {
+            &[QuantChoice::Dense, QuantChoice::Nvfp4, QuantChoice::Mxfp8]
+        }
+        LayerRole::Embedding => &[QuantChoice::Dense, QuantChoice::Mxfp8],
+        _ => &[],
+    }
+}
+
+pub fn role_is_quantizable(role: LayerRole) -> bool {
+    !allowed_quants(role).is_empty()
+}
+
+/// Состояние упаковки: разобранный план плюс правки пользователя поверх.
+///
+/// Сам [`PackPlan`] — plain-данные из `synaptix-bundle`; он не `Copy`, поэтому
+/// живёт в `Arc`. Правки не мутируют план, а лежат рядом: так «Сбросить»
+/// сводится к очистке нескольких сигналов, а не к повторному скану диска.
 #[derive(Clone, Copy)]
-pub struct NewPackageForm {
+pub struct PackWizard {
+    /// Что паковать. None — источник ещё не выбран или идёт скан.
+    pub plan: RwSignal<Option<Arc<PackPlan>>>,
+    /// Идёт разбор источника — карточка показывает индикатор вместо состава.
+    pub scanning: RwSignal<bool>,
+    /// Текущий шаг мастера (0..=2).
+    pub step: RwSignal<usize>,
     pub id: RwSignal<String>,
     pub version: RwSignal<String>,
     pub arch: RwSignal<String>,
     pub purpose: RwSignal<String>,
-    /// Список компонент: один = single-tensor бандл, несколько = multi-tensor.
-    /// `Vec<NewPackageComponent>` (не Copy) — поэтому в `RwSignal<Vec<_>>`.
-    pub components: RwSignal<Vec<NewPackageComponent>>,
-    /// Целевой путь `.syn`. По умолчанию формируется как
-    /// `<source_dir>.syn` после выбора source первого компонента.
+    /// Куда писать. Заполняется каталогом моделей из настроек.
     pub out_path: RwSignal<Option<PathBuf>>,
-    /// Чекбокс «удалять исходные файлы после успешной паковки». По умолчанию
-    /// `false` — деструктивная опция требует явного подтверждения пользователя.
+    /// Деструктивная опция — по умолчанию выключена.
     pub delete_sources: RwSignal<bool>,
+    /// Флаги «паковать ли» по индексам `plan.components` / `plan.aux`.
+    pub components_enabled: RwSignal<Vec<bool>>,
+    pub aux_enabled: RwSignal<Vec<bool>>,
+    /// Слои главного компонента — инспектор внутри мастера.
+    pub layers: RwSignal<Option<ComponentLayers>>,
+    /// Выбранная точность по ролям слоёв.
+    pub quant: RwSignal<Vec<(LayerRole, QuantChoice)>>,
+    /// Точность для отдельных групп слоёв (ключ — `LayerGroup::pattern`).
+    /// Перекрывает выбор по роли; заполняется только в режиме эксперта.
+    pub quant_groups: RwSignal<Vec<(String, QuantChoice)>>,
+    /// Режим эксперта: префиксы тензоров, пофайловый состав, точность по
+    /// группам, контрольные суммы. Липкий — хранится в конфиге.
+    pub expert: RwSignal<bool>,
+    /// Считать SHA-256 по каждому чанку и манифест. Дорого на больших
+    /// моделях, поэтому по умолчанию выключено.
+    pub sha256: RwSignal<bool>,
+    /// Blake3 — то же, но в 5–10 раз быстрее.
+    pub blake3: RwSignal<bool>,
+    /// Писать центральный каталог как JSON вместо CBOR: читаемо глазами,
+    /// удобно при разборе полётов, чуть больше по размеру.
+    pub cdir_json: RwSignal<bool>,
 }
 
-impl NewPackageForm {
+impl PackWizard {
     pub fn new() -> Self {
         Self {
+            plan: use_signal(None),
+            scanning: use_signal(false),
+            step: use_signal(0usize),
             id: use_signal(String::new()),
-            version: use_signal("1.0.0".to_string()),
+            version: use_signal(String::new()),
             arch: use_signal(String::new()),
             purpose: use_signal(String::new()),
-            components: use_signal(vec![NewPackageComponent::new("main")]),
             out_path: use_signal(None),
             delete_sources: use_signal(false),
+            components_enabled: use_signal(Vec::new()),
+            aux_enabled: use_signal(Vec::new()),
+            layers: use_signal(None),
+            quant: use_signal(Vec::new()),
+            quant_groups: use_signal(Vec::new()),
+            expert: use_signal(false),
+            sha256: use_signal(false),
+            blake3: use_signal(false),
+            cdir_json: use_signal(false),
         }
+    }
+
+    /// Сбросить всё к «источник не выбран».
+    pub fn reset(&self) {
+        self.plan.set(None);
+        self.scanning.set(false);
+        self.step.set(0);
+        self.id.set(String::new());
+        self.version.set(String::new());
+        self.arch.set(String::new());
+        self.purpose.set(String::new());
+        self.out_path.update(|v| *v = None);
+        self.delete_sources.set(false);
+        self.components_enabled.update(|v| v.clear());
+        self.aux_enabled.update(|v| v.clear());
+        self.layers.set(None);
+        self.quant.update(|v| v.clear());
+        self.quant_groups.update(|v| v.clear());
+        // `expert` и флаги контрольных сумм — настройки пользователя, а не
+        // свойства источника: между упаковками они сохраняются.
+    }
+
+    /// Принять разобранный план: поля формы заполняются догадками, все
+    /// компоненты и файлы — своими значениями из плана.
+    pub fn adopt(&self, plan: Arc<PackPlan>, layers: Option<ComponentLayers>) {
+        self.id.set(plan.meta.id.clone());
+        self.version.set(plan.meta.version.clone());
+        self.arch.set(plan.meta.arch.clone());
+        self.purpose.set(plan.meta.purpose.clone());
+        self.components_enabled
+            .update(|v| *v = plan.components.iter().map(|c| c.enabled).collect());
+        self.aux_enabled
+            .update(|v| *v = plan.aux.iter().map(|f| f.enabled).collect());
+        // Роли — из инспектора, порядок как в полосе состава.
+        let roles: Vec<(LayerRole, QuantChoice)> = layers
+            .as_ref()
+            .map(|l| {
+                l.by_role
+                    .iter()
+                    .map(|(r, _)| (*r, QuantChoice::Dense))
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.quant.update(|v| *v = roles);
+        self.quant_groups.update(|v| v.clear());
+        self.layers.set(layers);
+        self.scanning.set(false);
+        self.plan.set(Some(plan));
+    }
+
+    /// Одна точность на все квантуемые роли — быстрый путь, где разбирать
+    /// модель по слоям пользователь не собирается.
+    pub fn set_quant_for_all(&self, choice: QuantChoice) {
+        self.quant.update(|v| {
+            for (role, slot) in v.iter_mut() {
+                // Роль может не уметь выбранный формат (эмбеддинги и NVFP4) —
+                // тогда она просто остаётся плотной, а не получает то, чего
+                // движок не применит.
+                if allowed_quants(*role).contains(&choice) {
+                    *slot = choice;
+                } else if role_is_quantizable(*role) {
+                    *slot = QuantChoice::Dense;
+                }
+            }
+        });
+        self.quant_groups.update(|v| v.clear());
+    }
+
+    /// Общая точность, выбранная «одной кнопкой»: та, которую получили все
+    /// роли, способные её принять, а остальные остались плотными. Если
+    /// картина не сводится к такому виду — None, «смешанная».
+    ///
+    /// Проверка учитывает возможности ролей: эмбеддинги не умеют NVFP4, и
+    /// без этой оговорки глобальный выбор «NVFP4» сразу же показывался бы
+    /// как «смешанный».
+    pub fn uniform_quant(&self) -> Option<QuantChoice> {
+        if !self.quant_groups.get().is_empty() {
+            return None;
+        }
+        let q = self.quant.get();
+        let matches_global = |c: QuantChoice| {
+            q.iter().filter(|(r, _)| role_is_quantizable(*r)).all(|(role, slot)| {
+                let expected = if allowed_quants(*role).contains(&c) { c } else { QuantChoice::Dense };
+                *slot == expected
+            })
+        };
+        [QuantChoice::Dense, QuantChoice::Nvfp4, QuantChoice::Mxfp8]
+            .into_iter()
+            .find(|c| matches_global(*c))
+    }
+
+    /// Выбор для роли (с учётом того, что роль может быть неквантуемой).
+    pub fn quant_for(&self, role: LayerRole) -> QuantChoice {
+        if !role_is_quantizable(role) {
+            return QuantChoice::Dense;
+        }
+        self.quant
+            .get()
+            .iter()
+            .find(|(r, _)| *r == role)
+            .map(|(_, c)| *c)
+            .unwrap_or(QuantChoice::Dense)
+    }
+
+    /// Оценка итогового payload'а с учётом выбранной точности.
+    ///
+    /// Квант применяется к главному компоненту — тому, чьи слои разобраны;
+    /// остальные компоненты и файлы входят своим размером. Это оценка, а не
+    /// обещание: реальный размер зависит ещё и от выравнивания чанков.
+    pub fn estimated_payload(&self) -> Option<(u64, u64)> {
+        let plan = self.effective_plan()?;
+        let dense_total = plan.payload_bytes();
+        let Some(layers) = self.layers.get() else {
+            return Some((dense_total, dense_total));
+        };
+        let mut quantized: u64 = 0;
+        for (role, est) in layers.by_role.iter() {
+            quantized = quantized.saturating_add(est.for_kind(self.quant_for(*role).kind()));
+        }
+        // Заменяем вес главного компонента на пересчитанный.
+        let rest = dense_total.saturating_sub(layers.bytes);
+        Some((dense_total, rest.saturating_add(quantized)))
+    }
+
+    /// Решение о квантовании в виде plain-данных для worker'а. Пустое —
+    /// упаковка обычная, побайтовая.
+    pub fn quant_decision(&self) -> crate::pages::syn_explorer::quant_pack::QuantDecision {
+        use crate::pages::syn_explorer::quant_pack::QuantDecision;
+        let Some(layers) = self.layers.get_untracked() else {
+            return QuantDecision::default();
+        };
+        let plan = self.plan.get_untracked();
+        let (purpose, id) = plan
+            .map(|p| (p.meta.purpose.clone(), p.meta.id.clone()))
+            .unwrap_or_default();
+        QuantDecision {
+            hint: format!("{} {purpose} {id}", layers.component),
+            by_role: self
+                .quant
+                .get_untracked()
+                .into_iter()
+                .filter_map(|(r, c)| c.kind().map(|k| (r, k)))
+                .collect(),
+            by_group: self
+                .quant_groups
+                .get_untracked()
+                .into_iter()
+                .filter_map(|(g, c)| c.kind().map(|k| (g, k)))
+                .collect(),
+        }
+    }
+
+    /// План с наложенными правками — то, что реально пойдёт в упаковку.
+    pub fn effective_plan(&self) -> Option<PackPlan> {
+        let base = self.plan.get_untracked()?;
+        let mut plan = (*base).clone();
+        plan.meta.id = self.id.get_untracked().trim().to_string();
+        plan.meta.version = self.version.get_untracked().trim().to_string();
+        plan.meta.arch = self.arch.get_untracked().trim().to_string();
+        plan.meta.purpose = self.purpose.get_untracked().trim().to_string();
+        let comps = self.components_enabled.get_untracked();
+        for (i, c) in plan.components.iter_mut().enumerate() {
+            if let Some(on) = comps.get(i) {
+                c.enabled = *on;
+            }
+        }
+        let aux = self.aux_enabled.get_untracked();
+        for (i, f) in plan.aux.iter_mut().enumerate() {
+            if let Some(on) = aux.get(i) {
+                f.enabled = *on;
+            }
+        }
+        Some(plan)
+    }
+
+    /// Незаполненное обязательное поле — текст ошибки для UI, либо None.
+    pub fn validation_error(&self) -> Option<String> {
+        if self.plan.get_untracked().is_none() {
+            return Some(tr!("explorer.error.missing_data.no_source"));
+        }
+        if self.id.get_untracked().trim().is_empty() {
+            return Some(tr!("explorer.error.missing_data.id_required"));
+        }
+        if self.version.get_untracked().trim().is_empty() {
+            return Some(tr!("explorer.error.missing_data.version_required"));
+        }
+        if self.out_path.get_untracked().is_none() {
+            return Some(tr!("explorer.error.missing_data.out_path_required"));
+        }
+        if !self.components_enabled.get_untracked().iter().any(|v| *v) {
+            return Some(tr!("explorer.error.missing_data.no_components"));
+        }
+        None
     }
 }
 
-impl Default for NewPackageForm {
+impl Default for PackWizard {
     fn default() -> Self {
         Self::new()
     }
@@ -262,6 +569,8 @@ pub struct OpenBundle {
     /// Список файлов внутри пакета для таба «Файлы».
     pub files: RwSignal<Vec<FileEntryView>>,
     pub stats: RwSignal<BundleStats>,
+    /// Состав каждого `tensors:*`-чанка для вкладки «Слои».
+    pub layers: RwSignal<Vec<ComponentLayers>>,
     pub dir_tree: RwSignal<Vec<TreeNode>>,
     /// Выбранный путь в TreeView (полное имя файла внутри пакета). None —
     /// пользователь ещё не кликал на узел.
@@ -286,6 +595,7 @@ impl OpenBundle {
         meta: BundleMeta,
         files: Vec<FileEntryView>,
         stats: BundleStats,
+        layers: Vec<ComponentLayers>,
         dir_tree: Vec<TreeNode>,
     ) -> Self {
         let original = meta.clone();
@@ -295,6 +605,7 @@ impl OpenBundle {
             original_meta: use_signal(original),
             files: use_signal(files),
             stats: use_signal(stats),
+            layers: use_signal(layers),
             dir_tree: use_signal(dir_tree),
             selected_path: use_signal(None),
             preview_cache: use_signal(HashMap::new()),
@@ -316,6 +627,8 @@ pub struct SynExplorerCtx {
     /// `.syn` файлы из `selected_folder`, обновляется при выборе закладки и
     /// при ручном refresh.
     pub folder_entries: RwSignal<Vec<SynFileEntry>>,
+    /// Модели из той же папки, которые ещё можно упаковать.
+    pub folder_sources: RwSignal<Vec<SourceEntry>>,
     /// Открытый пакет (single-active в MVP).
     pub active_bundle: RwSignal<Option<OpenBundle>>,
     pub current_tab: RwSignal<TabKind>,
@@ -327,11 +640,12 @@ pub struct SynExplorerCtx {
     /// Открытие RenameFile сбрасывает сюда новое имя; commit — пушит
     /// `PendingOp::Rename`.
     pub rename_buffer: RwSignal<String>,
-    /// Постоянная форма для NewPackage. Поля сбрасываются на открытии диалога
-    /// через `reset_new_package_form`. Долгоживущая (как `pending_dialog`)
-    /// — `DialogKind::NewPackage` не хранит сигналы внутри, чтобы оставаться
-    /// `PartialEq`.
-    pub new_package_form: NewPackageForm,
+    /// Состояние упаковки. Долгоживущее (как `pending_dialog`): варианты
+    /// `DialogKind` не хранят сигналов внутри, чтобы оставаться `PartialEq`.
+    pub wizard: PackWizard,
+    /// Каталог моделей приложения — путь по умолчанию для нового бандла.
+    /// Заполняется из настроек при создании контекста.
+    pub models_dir: RwSignal<PathBuf>,
     /// Прогресс сжатия `.syn`. `Arc<Mutex>` обёрнут в RwSignal только
     /// чтобы `SynExplorerCtx` остался `Copy` (`Arc<Mutex>` не Copy). Сам
     /// payload-write идёт без request_redraw: worker мутирует Mutex напрямую,
@@ -356,6 +670,7 @@ impl SynExplorerCtx {
             bookmarks: use_signal(bookmarks),
             selected_folder: use_signal(None),
             folder_entries: use_signal(Vec::new()),
+            folder_sources: use_signal(Vec::new()),
             active_bundle: use_signal(None),
             current_tab: use_signal(TabKind::Overview),
             pending_dialog: use_signal(None),
@@ -363,26 +678,21 @@ impl SynExplorerCtx {
             left_split_ratio: use_signal(cfg.syn_explorer_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_explorer_right_split_ratio),
             rename_buffer: use_signal(String::new()),
-            new_package_form: NewPackageForm::new(),
+            wizard: {
+                let w = PackWizard::new();
+                w.expert.set(cfg.syn_explorer_expert);
+                w
+            },
+            models_dir: use_signal(crate::config::resolve_models_dir(&cfg.models_dir)),
             create_progress: use_signal(Arc::new(Mutex::new(CreateProgress::default()))),
             create_progress_gen: use_signal(0u64),
         }
     }
 
-    /// Сбросить форму нового пакета (на открытие диалога).
-    pub fn reset_new_package_form(&self) {
-        let f = &self.new_package_form;
-        f.id.set(String::new());
-        f.version.set("1.0.0".to_string());
-        f.arch.set(String::new());
-        f.purpose.set(String::new());
-        // `set_always` — `NewPackageComponent` не реализует `PartialEq`
-        // (RwSignal-поля не сравниваются), поэтому обычный `set` не подходит.
-        f.components
-            .set_always(vec![NewPackageComponent::new("main")]);
-        f.out_path.update(|v| *v = None);
-        f.delete_sources.set(false);
-        // Сбрасываем прогресс — мог остаться слепок предыдущей операции.
+    /// Подготовить мастер к новой упаковке: сбросить правки и прогресс.
+    pub fn reset_wizard(&self) {
+        self.wizard.reset();
+        // Прогресс мог остаться слепком предыдущей операции.
         let progress = self.create_progress.get_untracked();
         if let Ok(mut g) = progress.lock() {
             *g = CreateProgress::default();

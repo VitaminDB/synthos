@@ -700,8 +700,9 @@ Tooltip {
     color: var(--error);
 }
 
+/* Цвета берутся из глобального правила `Checkbox` в `base/reset.mss` —
+ * здесь только размер и отступ. */
 .syn-dialog-checkbox {
-    color: var(--text);
     font-size: 13px;
     margin-top: 6px;
 }
@@ -739,4 +740,357 @@ Tooltip {
     font-size: 12px;
     font-weight: 700;
     font-family: monospace;
+}
+
+/* ─── Модели, готовые к упаковке ────────────────────────────────────
+ * Вторая группа в левой панели: то, что ещё не бандл, но может им стать.
+ * Отличается от `.syn-bundle-card` пунктирной рамкой — «черновик», а не
+ * готовый пакет.
+ * ─────────────────────────────────────────────────────────────────── */
+
+.syn-folder-group-header {
+    padding: 10px 14px 4px 14px;
+}
+
+.syn-folder-group-title {
+    color: var(--text-subtle);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.syn-source-card {
+    padding: 12px 10px 12px 14px;
+    border-radius: var(--syn-radius-card);
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--syn-divider);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.syn-source-card:hover {
+    background-color: var(--syn-card-bg-hover);
+    border-color: var(--border-strong);
+}
+
+.syn-source-card-icon {
+    color: var(--text-subtle);
+    font-size: 22px;
+}
+
+.syn-source-card-name {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.syn-source-card-meta {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.syn-source-card-action {
+    color: var(--primary);
+    font-size: 20px;
+}
+
+/* ─── Карточка упаковки и мастер ────────────────────────────────────── */
+
+.syn-pack-summary {
+    padding: 14px 16px 14px 16px;
+    border-radius: var(--syn-radius-card);
+    background-color: var(--syn-card-bg);
+}
+
+.syn-pack-summary-title {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.syn-pack-summary-line {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.syn-pack-space {
+    color: var(--text-subtle);
+    font-size: 11px;
+}
+
+.syn-pack-note {
+    color: var(--text-subtle);
+    font-size: 11px;
+}
+
+.syn-pack-warning {
+    color: var(--warning);
+    font-size: 12px;
+}
+
+.syn-guess-badge {
+    color: var(--text-subtle);
+    font-size: 10px;
+}
+
+/* Карточка мастера растёт по содержимому: общей прокрутки здесь нет.
+ * ScrollView в syngui всегда занимает всю выданную высоту, поэтому один
+ * внешний скролл раздувал бы диалог даже на пустом первом шаге. Вместо
+ * него ограничены сами длинные списки — файлы и роли слоёв. */
+.syn-wizard-body {
+    padding: 4px 0 4px 0;
+}
+
+/* ─── Инспектор слоёв ───────────────────────────────────────────────
+ * Полоса состава: доля роли задаётся `flex-grow` через классы
+ * `.syn-flex-1 … .syn-flex-100` (per-child flex в виджетах не задать, а
+ * ширина сегмента зависит от ширины панели). Сто правил — цена за то,
+ * чтобы полоса тянулась вместе с окном.
+ * ─────────────────────────────────────────────────────────────────── */
+
+:root {
+    --syn-role-embedding:    var(--avatar-blue);
+    --syn-role-lm-head:      var(--primary);
+    --syn-role-attention:    var(--avatar-violet);
+    --syn-role-mlp:          var(--avatar-green);
+    --syn-role-norm:         var(--border-strong);
+    --syn-role-conv:         var(--avatar-slate);
+    --syn-role-conditioning: var(--avatar-orange);
+    --syn-role-head:         var(--avatar-rose);
+    --syn-role-vision:       var(--presence-telegram);
+    --syn-role-audio:        var(--presence-whatsapp);
+    --syn-role-vae:          var(--warning);
+    --syn-role-lora:         var(--presence-instagram);
+    --syn-role-other:        var(--text-subtle);
+}
+
+.syn-role-bar {
+    height: 10px;
+    border-radius: var(--syn-radius-pill);
+    background-color: var(--syn-card-bg);
+}
+
+/* Сегменты стоят вплотную: зазор прибавлялся к сумме процентов и полоса
+ * вылезала за карточку. Скругление — только у всей полосы. */
+.syn-role-seg {
+    height: 10px;
+    background-color: var(--syn-role-other);
+}
+
+.syn-role-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--syn-radius-pill);
+    background-color: var(--syn-role-other);
+}
+
+.syn-role-legend {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.syn-role-seg.role-embedding,    .syn-role-dot.role-embedding    { background-color: var(--syn-role-embedding); }
+.syn-role-seg.role-lm_head,      .syn-role-dot.role-lm_head      { background-color: var(--syn-role-lm-head); }
+.syn-role-seg.role-attention,    .syn-role-dot.role-attention    { background-color: var(--syn-role-attention); }
+.syn-role-seg.role-mlp,          .syn-role-dot.role-mlp          { background-color: var(--syn-role-mlp); }
+.syn-role-seg.role-norm,         .syn-role-dot.role-norm         { background-color: var(--syn-role-norm); }
+.syn-role-seg.role-conv,         .syn-role-dot.role-conv         { background-color: var(--syn-role-conv); }
+.syn-role-seg.role-conditioning, .syn-role-dot.role-conditioning { background-color: var(--syn-role-conditioning); }
+.syn-role-seg.role-head,         .syn-role-dot.role-head         { background-color: var(--syn-role-head); }
+.syn-role-seg.role-vision,       .syn-role-dot.role-vision       { background-color: var(--syn-role-vision); }
+.syn-role-seg.role-audio,        .syn-role-dot.role-audio        { background-color: var(--syn-role-audio); }
+.syn-role-seg.role-vae,          .syn-role-dot.role-vae          { background-color: var(--syn-role-vae); }
+.syn-role-seg.role-lora,         .syn-role-dot.role-lora         { background-color: var(--syn-role-lora); }
+
+.syn-flex-1 { flex-grow: 1; }
+.syn-flex-2 { flex-grow: 2; }
+.syn-flex-3 { flex-grow: 3; }
+.syn-flex-4 { flex-grow: 4; }
+.syn-flex-5 { flex-grow: 5; }
+.syn-flex-6 { flex-grow: 6; }
+.syn-flex-7 { flex-grow: 7; }
+.syn-flex-8 { flex-grow: 8; }
+.syn-flex-9 { flex-grow: 9; }
+.syn-flex-10 { flex-grow: 10; }
+.syn-flex-11 { flex-grow: 11; }
+.syn-flex-12 { flex-grow: 12; }
+.syn-flex-13 { flex-grow: 13; }
+.syn-flex-14 { flex-grow: 14; }
+.syn-flex-15 { flex-grow: 15; }
+.syn-flex-16 { flex-grow: 16; }
+.syn-flex-17 { flex-grow: 17; }
+.syn-flex-18 { flex-grow: 18; }
+.syn-flex-19 { flex-grow: 19; }
+.syn-flex-20 { flex-grow: 20; }
+.syn-flex-21 { flex-grow: 21; }
+.syn-flex-22 { flex-grow: 22; }
+.syn-flex-23 { flex-grow: 23; }
+.syn-flex-24 { flex-grow: 24; }
+.syn-flex-25 { flex-grow: 25; }
+.syn-flex-26 { flex-grow: 26; }
+.syn-flex-27 { flex-grow: 27; }
+.syn-flex-28 { flex-grow: 28; }
+.syn-flex-29 { flex-grow: 29; }
+.syn-flex-30 { flex-grow: 30; }
+.syn-flex-31 { flex-grow: 31; }
+.syn-flex-32 { flex-grow: 32; }
+.syn-flex-33 { flex-grow: 33; }
+.syn-flex-34 { flex-grow: 34; }
+.syn-flex-35 { flex-grow: 35; }
+.syn-flex-36 { flex-grow: 36; }
+.syn-flex-37 { flex-grow: 37; }
+.syn-flex-38 { flex-grow: 38; }
+.syn-flex-39 { flex-grow: 39; }
+.syn-flex-40 { flex-grow: 40; }
+.syn-flex-41 { flex-grow: 41; }
+.syn-flex-42 { flex-grow: 42; }
+.syn-flex-43 { flex-grow: 43; }
+.syn-flex-44 { flex-grow: 44; }
+.syn-flex-45 { flex-grow: 45; }
+.syn-flex-46 { flex-grow: 46; }
+.syn-flex-47 { flex-grow: 47; }
+.syn-flex-48 { flex-grow: 48; }
+.syn-flex-49 { flex-grow: 49; }
+.syn-flex-50 { flex-grow: 50; }
+.syn-flex-51 { flex-grow: 51; }
+.syn-flex-52 { flex-grow: 52; }
+.syn-flex-53 { flex-grow: 53; }
+.syn-flex-54 { flex-grow: 54; }
+.syn-flex-55 { flex-grow: 55; }
+.syn-flex-56 { flex-grow: 56; }
+.syn-flex-57 { flex-grow: 57; }
+.syn-flex-58 { flex-grow: 58; }
+.syn-flex-59 { flex-grow: 59; }
+.syn-flex-60 { flex-grow: 60; }
+.syn-flex-61 { flex-grow: 61; }
+.syn-flex-62 { flex-grow: 62; }
+.syn-flex-63 { flex-grow: 63; }
+.syn-flex-64 { flex-grow: 64; }
+.syn-flex-65 { flex-grow: 65; }
+.syn-flex-66 { flex-grow: 66; }
+.syn-flex-67 { flex-grow: 67; }
+.syn-flex-68 { flex-grow: 68; }
+.syn-flex-69 { flex-grow: 69; }
+.syn-flex-70 { flex-grow: 70; }
+.syn-flex-71 { flex-grow: 71; }
+.syn-flex-72 { flex-grow: 72; }
+.syn-flex-73 { flex-grow: 73; }
+.syn-flex-74 { flex-grow: 74; }
+.syn-flex-75 { flex-grow: 75; }
+.syn-flex-76 { flex-grow: 76; }
+.syn-flex-77 { flex-grow: 77; }
+.syn-flex-78 { flex-grow: 78; }
+.syn-flex-79 { flex-grow: 79; }
+.syn-flex-80 { flex-grow: 80; }
+.syn-flex-81 { flex-grow: 81; }
+.syn-flex-82 { flex-grow: 82; }
+.syn-flex-83 { flex-grow: 83; }
+.syn-flex-84 { flex-grow: 84; }
+.syn-flex-85 { flex-grow: 85; }
+.syn-flex-86 { flex-grow: 86; }
+.syn-flex-87 { flex-grow: 87; }
+.syn-flex-88 { flex-grow: 88; }
+.syn-flex-89 { flex-grow: 89; }
+.syn-flex-90 { flex-grow: 90; }
+.syn-flex-91 { flex-grow: 91; }
+.syn-flex-92 { flex-grow: 92; }
+.syn-flex-93 { flex-grow: 93; }
+.syn-flex-94 { flex-grow: 94; }
+.syn-flex-95 { flex-grow: 95; }
+.syn-flex-96 { flex-grow: 96; }
+.syn-flex-97 { flex-grow: 97; }
+.syn-flex-98 { flex-grow: 98; }
+.syn-flex-99 { flex-grow: 99; }
+.syn-flex-100 { flex-grow: 100; }
+
+/* ─── Выбор точности по ролям ───────────────────────────────────────── */
+
+.syn-quant-row {
+    padding: 4px 0 4px 0;
+}
+
+.syn-quant-role {
+    color: var(--text);
+    font-size: 12px;
+}
+
+.syn-quant-pct {
+    color: var(--text-muted);
+    font-size: 11px;
+    width: 44px;
+}
+
+.syn-quant-size {
+    width: 170px;
+}
+
+.syn-quant-na {
+    color: var(--text-subtle);
+    font-size: 11px;
+    width: 150px;
+}
+
+.syn-quant-dropdown {
+    width: 150px;
+}
+
+.syn-layers-table {
+    font-size: 12px;
+}
+
+/* ─── Режим эксперта ────────────────────────────────────────────────── */
+
+.syn-expert-row {
+    padding: 2px 0 6px 26px;
+}
+
+.syn-expert-block {
+    padding: 6px 0 6px 8px;
+    border-radius: var(--syn-radius-tile);
+    background-color: var(--syn-card-bg);
+}
+
+.syn-quant-total {
+    padding: 8px 0 2px 0;
+    border-top-width: 1px;
+    border-color: var(--syn-divider);
+}
+
+.syn-quant-size-before {
+    color: var(--text-subtle);
+    font-size: 11px;
+}
+
+.syn-quant-size-after {
+    color: var(--diff-added);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.syn-quant-arrow {
+    color: var(--text-subtle);
+    font-size: 14px;
+}
+
+.syn-quant-hint {
+    color: var(--warning);
+    font-size: 10px;
+}
+
+/* Высоты подобраны так, чтобы карточка с включённым режимом эксперта
+ * укладывалась в окно целиком: прокручиваются только сами списки, а итог
+ * размера и кнопки остаются на виду. */
+.syn-aux-wrap {
+    height: 230px;
+    overflow: hidden;
+}
+
+.syn-quant-wrap {
+    height: 380px;
+    overflow: hidden;
+}
+
+/* Отступ справа — под полосу прокрутки: без него она наезжает на
+ * дропдауны точности и обрезает подписи «not quantized by the engine». */
+.syn-quant-rows {
+    padding: 0 14px 0 0;
 }

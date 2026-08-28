@@ -58,6 +58,10 @@ pub const MI_KEYBOARD_COMMAND_KEY: &str = "\u{EAE7}";
 pub const MI_KEYBOARD_RETURN: &str     = "\u{E166}";
 /// «arrow_upward» / «arrow_downward» — стрелки навигации по выдаче поиска.
 pub const MI_ARROW_UPWARD: &str        = "\u{E5D8}";
+/// «arrow_forward» — стрелка «стало» в парах «до → после» (размер после
+/// квантования). Символ U+2192 брать нельзя: его нет в шрифте интерфейса,
+/// и вместо стрелки выходит пробел.
+pub const MI_ARROW_FORWARD: &str       = "\u{E5C8}";
 pub const MI_ARROW_DOWNWARD: &str      = "\u{E5DB}";
 /// «search_off» — пустая выдача поиска.
 pub const MI_SEARCH_OFF: &str          = "\u{EA76}";

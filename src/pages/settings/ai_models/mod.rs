@@ -119,27 +119,6 @@ fn runtime_card() -> Box<dyn Widget> {
             .on_change(move |v| gemv_signal.set(v)),
     );
 
-    let chunk_signal = ctx.qwen36_prefill_chunk;
-    let chunk_items = vec![
-        DropdownItem::new("64", tr!("settings.ai_models.prefill_chunk.64")),
-        DropdownItem::new("128", "128"),
-        DropdownItem::new("256", tr!("settings.ai_models.prefill_chunk.256")),
-        DropdownItem::new("512", "512"),
-        DropdownItem::new("1024", tr!("settings.ai_models.prefill_chunk.1024")),
-        DropdownItem::new("2048", tr!("settings.ai_models.prefill_chunk.2048")),
-    ];
-    let chunk_current = chunk_signal.get_untracked().to_string();
-    let chunk_dropdown: Box<dyn Widget> = Box::new(
-        Dropdown::with_items(chunk_items)
-            .selected(chunk_current)
-            .on_change(move |s| {
-                if let Ok(n) = s.parse::<usize>() {
-                    chunk_signal.set(n);
-                }
-            })
-            .class("models-active-dropdown"),
-    );
-
     // Потолок vision-токенов на картинку-вложение. Влияет и на длину
     // промпта, и на время prefill: 4096 токенов с одной картинки — это
     // как приложить к сообщению небольшую статью.
@@ -216,12 +195,6 @@ fn runtime_card() -> Box<dyn Widget> {
                 tr!("settings.ai_models.gdr_fused"),
                 tr!("settings.ai_models.gdr_fused.desc"),
                 gdr_toggle,
-            ),
-            row_frame(
-                MI_TUNE,
-                tr!("settings.ai_models.prefill_chunk"),
-                tr!("settings.ai_models.prefill_chunk.desc"),
-                chunk_dropdown,
             ),
             row_frame(
                 MI_MEMORY,

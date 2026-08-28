@@ -431,11 +431,6 @@ pub struct AppCtx {
     /// Bit-exact; default = `true`. Сохраняется в `AppConfig.qwen36_gdr_fused`,
     /// применяется через [`synaptix::facade::llm::set_gdr_fused_disabled`].
     pub qwen36_gdr_fused: RwSignal<bool>,
-    /// Размер chunk'а в `prefill_chunked`. На 24 GB GPU + ≥13K промпте может
-    /// потребоваться уменьшить с default 1024 до 64-256. Сохраняется в
-    /// `AppConfig.qwen36_prefill_chunk`, применяется через
-    /// [`synaptix::facade::llm::set_prefill_chunk_size`].
-    pub qwen36_prefill_chunk: RwSignal<usize>,
     /// Layer-sync режим (`"auto"` / `"on"` / `"off"`). Управляет
     /// `cudaStreamSynchronize` после каждого decoder-слоя в forward'е
     /// Qwen3.6. Auto = sync только когда T > 1 (prefill) — нулевая цена на

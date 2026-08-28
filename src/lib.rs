@@ -424,7 +424,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let muse_dflash = use_signal(saved.muse_dflash);
     let qwen36_la_fused = use_signal(saved.qwen36_la_fused);
     let qwen36_gdr_fused = use_signal(saved.qwen36_gdr_fused);
-    let qwen36_prefill_chunk = use_signal(saved.qwen36_prefill_chunk);
     let qwen36_layer_sync = use_signal(saved.qwen36_layer_sync.clone());
     let qwen36_nvfp4_mma = use_signal(saved.qwen36_nvfp4_mma);
     let qwen36_nvfp4_gemv = use_signal(saved.qwen36_nvfp4_gemv);
@@ -447,7 +446,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     synaptix::facade::llm::set_dflash_enabled(saved.muse_dflash);
     synaptix::facade::llm::set_la_prep_fused_disabled(!saved.qwen36_la_fused);
     synaptix::facade::llm::set_gdr_fused_disabled(!saved.qwen36_gdr_fused);
-    synaptix::facade::llm::set_prefill_chunk_size(saved.qwen36_prefill_chunk);
     synaptix::facade::llm::set_layer_sync_mode(parse_layer_sync_mode(&saved.qwen36_layer_sync));
 
     let ctx = AppCtx {
@@ -484,7 +482,6 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         muse_dflash,
         qwen36_la_fused,
         qwen36_gdr_fused,
-        qwen36_prefill_chunk,
         qwen36_layer_sync,
         qwen36_nvfp4_mma,
         qwen36_nvfp4_gemv,
@@ -587,7 +584,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     let muse_dflash = ctx.muse_dflash;
     let qwen36_la_fused = ctx.qwen36_la_fused;
     let qwen36_gdr_fused = ctx.qwen36_gdr_fused;
-    let qwen36_prefill_chunk = ctx.qwen36_prefill_chunk;
     let qwen36_layer_sync = ctx.qwen36_layer_sync;
     let qwen36_nvfp4_mma = ctx.qwen36_nvfp4_mma;
     let qwen36_nvfp4_gemv = ctx.qwen36_nvfp4_gemv;
@@ -731,7 +727,6 @@ fn install_config_autosave(ctx: &AppCtx) {
             muse_dflash: muse_dflash.get(),
             qwen36_la_fused: qwen36_la_fused.get(),
             qwen36_gdr_fused: qwen36_gdr_fused.get(),
-            qwen36_prefill_chunk: qwen36_prefill_chunk.get(),
             qwen36_layer_sync: qwen36_layer_sync.get(),
             qwen36_nvfp4_mma: qwen36_nvfp4_mma.get(),
             qwen36_nvfp4_gemv: qwen36_nvfp4_gemv.get(),
@@ -796,7 +791,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     // Prefill chunk: применяется к следующему `prefill_chunked` (тот читает
     // `runtime_flags::prefill_chunk_size()` на каждом запуске).
     create_effect(move || {
-        synaptix::facade::llm::set_prefill_chunk_size(qwen36_prefill_chunk.get());
     });
     // Layer-sync: применяется к следующему `Qwen36Model::forward` (тот читает
     // `runtime_flags::layer_sync_should_apply(T)` на каждом запуске).

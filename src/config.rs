@@ -732,8 +732,6 @@ pub struct AppConfig {
     /// 24 GB GPU при ~1.5k ток/с). Движок принудительно округляет к кратному
     /// 64 — границы чанков на некратных позициях ломают состояние GDN-скана.
     /// Применяется через [`synaptix::facade::llm::set_prefill_chunk_size`].
-    #[serde(default = "default_qwen36_prefill_chunk")]
-    pub qwen36_prefill_chunk: usize,
     /// Layer-sync режим (`"auto"` / `"on"` / `"off"`). Управляет
     /// `cudaStreamSynchronize` после каждого decoder-слоя в forward'е Qwen3.6.
     /// На prefill chunk=1024 без sync pool growth от intermediate тензоров
@@ -766,7 +764,6 @@ fn default_true() -> bool { true }
 // 256: единственный размер, безопасный на 24 ГБ (single-shot/1024 упирается в
 // VRAM поверх ~18 ГБ весов 27B) при prefill ~1.5-1.6k ток/с; движок сам
 // округляет к кратному 64 (границы GDN-скана).
-fn default_qwen36_prefill_chunk() -> usize { 256 }
 
 fn default_qwen36_attn_mode() -> String { "fa4".into() }
 
@@ -1204,7 +1201,6 @@ impl Default for AppConfig {
             qwen36_la_fused: true,
             qwen36_gdr_fused: true,
             syn_chat_prefix_kv: true,
-            qwen36_prefill_chunk: default_qwen36_prefill_chunk(),
             qwen36_layer_sync: default_qwen36_layer_sync(),
             qwen36_nvfp4_mma: false,
             qwen36_nvfp4_gemv: false,

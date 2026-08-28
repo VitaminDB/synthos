@@ -244,6 +244,12 @@ impl SynModelRegistry {
         crate::syn_chat::attach::media_cache::clear();
         let held = self.current.get_untracked();
         let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);
+        // Кэши на карте (у Qwen4Exp — резидентные эксперты, гигабайты) отдаём
+        // явно: `Drop` модели может задержаться, пока жива хоть одна ссылка,
+        // а видеопамять нужна следующей модели сразу.
+        if let Some(model) = held.as_ref() {
+            model.model.release_device_caches();
+        }
         drop(held);
         self.current.set_always(None);
         self.error.set(None);

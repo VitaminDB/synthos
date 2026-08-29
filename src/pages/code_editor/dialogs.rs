@@ -25,7 +25,7 @@ use crate::icons::{
 
 use super::drafts;
 use super::fs_actions;
-use super::state::{CodeEditorCtx, CodeSession};
+use super::state::{self, CodeEditorCtx, CodeSession};
 use super::text_diff::{self, DiffKind};
 
 /// Тип открытого диалога. Хранится в `CodeEditorCtx::pending_dialog`.
@@ -44,6 +44,10 @@ pub enum DialogKind {
     ExternalConflict { path: PathBuf },
     /// История версий файла (Local History): список снимков + восстановление.
     History { path: PathBuf },
+    /// В терминале выполняется команда, а таб закрывают: дроп PTY убьёт
+    /// процесс, поэтому спрашиваем. Для простаивающего таба диалога нет —
+    /// закрытие мгновенное.
+    CloseBusyTerminal { tab_id: u32, title: String },
 }
 
 /// Корневой view диалогов. Монтируется в `code_editor::view()` поверх Stack'а.
@@ -135,6 +139,9 @@ pub fn view() -> impl Widget {
                     Box::new(external_conflict_card(session, path))
                 }
                 DialogKind::History { path } => Box::new(history_card(session, path)),
+                DialogKind::CloseBusyTerminal { tab_id, title } => {
+                    Box::new(close_terminal_card(session, tab_id, title))
+                }
             };
             vec![card]
         }))
@@ -249,6 +256,41 @@ fn delete_confirm_card(session: CodeSession, path: PathBuf) -> impl Widget {
                                 .class("code-editor-dialog-btn-secondary"),
                             Button::new(tr!("app.delete"))
                                 .leading_icon(MI_DELETE)
+                                .on_click(confirm)
+                                .class("code-editor-dialog-btn-danger"),
+                        ],
+                ]
+        ]
+    }
+}
+
+/// Подтверждение закрытия занятого терминала. Закрытие таба дропает
+/// `TerminalSession`, а с ним и PTY — запущенная команда умрёт, поэтому
+/// действие необратимое и оформлено как «опасное».
+fn close_terminal_card(session: CodeSession, tab_id: u32, title: String) -> impl Widget {
+    let confirm = move || {
+        state::close_terminal(session, tab_id);
+        use_context::<CodeEditorCtx>().close_dialog();
+    };
+    let cancel = || use_context::<CodeEditorCtx>().close_dialog();
+
+    mgui! {
+        DecoratedBox::new().class("code-editor-dialog-card code-editor-dialog-danger") => [
+            Column::new()
+                .gap(14.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    Text::new(tr!("code.dialog.close_terminal.title")).class("code-editor-dialog-title"),
+                    Text::new(tr!("code.dialog.close_terminal.hint", name = title))
+                        .class("code-editor-dialog-hint"),
+                    Row::new()
+                        .gap(10.0)
+                        .main_axis_alignment(MainAxisAlignment::End) => [
+                            Button::new(tr!("app.cancel"))
+                                .leading_icon(MI_CLOSE)
+                                .on_click(cancel)
+                                .class("code-editor-dialog-btn-secondary"),
+                            Button::new(tr!("code.dialog.close_terminal.confirm"))
+                                .leading_icon(MI_CLOSE)
                                 .on_click(confirm)
                                 .class("code-editor-dialog-btn-danger"),
                         ],

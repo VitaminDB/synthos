@@ -25,6 +25,7 @@ use crate::context::AppCtx;
 use crate::icons::*;
 use crate::pages::settings::terminal::panel::terminal_font_panel;
 
+use super::dialogs::DialogKind;
 use super::state::{
     add_terminal, close_terminal, paste_to_active_terminal, set_active_terminal, shell_quote_posix,
     CodeEditorCtx, CodeSession, TerminalTab,
@@ -116,9 +117,22 @@ fn tab_chip(session: CodeSession, tab: TerminalTab, is_active: bool) -> impl Wid
             )]
         }))
         .class("term-tab-title");
+    // Закрытие таба дропает PTY и убивает то, что в нём запущено, поэтому
+    // у занятого терминала сначала спрашиваем. Занятость — foreground-группа
+    // tty, отличная от shell'а (`TerminalSession::is_busy`), а не «менялся ли
+    // вывод»: TUI вроде vim или Claude Code простаивают молча, но терять их
+    // по клику мимо нельзя.
+    let term = tab.session.clone();
     let close_btn = ToolButton::new(MI_CLOSE)
         .on_click(move || {
-            close_terminal(session, id);
+            if term.is_busy() {
+                use_context::<CodeEditorCtx>().open_dialog(DialogKind::CloseBusyTerminal {
+                    tab_id: id,
+                    title: title_signal.get_untracked(),
+                });
+            } else {
+                close_terminal(session, id);
+            }
         })
         .class("term-tab-close");
     let inner = DecoratedBox::new()

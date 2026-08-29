@@ -37,6 +37,7 @@ use synaptix::facade::llm::{
 };
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
+use crate::agent::tools::catalog::KEY_SUBAGENT;
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
@@ -204,6 +205,80 @@ fn ensure_kv_slot<'a>(
         }
     }
     slot.as_mut().map(|s| &mut s.session)
+}
+
+/// Отправляет посчитанный контекст диалога в host-RAM на время вложенной
+/// генерации и возвращает VRAM драйверу. `true` — кэш припаркован, и его
+/// надо забрать обратно [`unpark_kv_session`].
+///
+/// Альтернатива — сбросить кэш совсем, но тогда следующий ход платит полным
+/// префиллом всей истории (на 10k токенов это ~10 с против ~40 мс перевоза
+/// 250 МБ через PCIe).
+fn park_kv_session(
+    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
+    model: &LoadedSynModel,
+) -> bool {
+    let Some(slot) = kv_slot.as_mut() else {
+        return false;
+    };
+    if slot.session.device_bytes() == 0 {
+        return false;
+    }
+    let t = Instant::now();
+    match slot.session.park_to_host() {
+        Ok(bytes) => {
+            let (freed, descs) =
+                crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+            log::info!(
+                "[syn_chat] префикс-KV: {} MB освобождены (кэш уехал в RAM) за {:?}; \
+                 трим вернул {freed} MB ({descs} TMA-деск.), VRAM доступно {} MB",
+                bytes / (1024 * 1024),
+                t.elapsed(),
+                crate::syn_chat::model_registry::vram_available_mb()
+            );
+            true
+        }
+        Err(e) => {
+            // Не вышло — работаем как раньше: сбрасываем кэш, вложенный
+            // прогон получит место, а следующий ход префиллит заново.
+            log::warn!("[syn_chat] префикс-KV: выгрузка в RAM не удалась ({e}) — сбрасываем кэш");
+            **kv_slot = None;
+            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+            false
+        }
+    }
+}
+
+/// Возвращает припаркованный кэш в VRAM. Не вышло (места не нашлось) —
+/// выбрасываем сессию: полный префилл всегда возможен, половина кэша на
+/// устройстве — нет.
+fn unpark_kv_session(
+    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
+    model: &LoadedSynModel,
+) {
+    let Some(slot) = kv_slot.as_mut() else {
+        return;
+    };
+    if !slot.session.is_parked() {
+        return;
+    }
+    let t = Instant::now();
+    match slot.session.unpark_to(*model.model.device()) {
+        Ok(bytes) => log::info!(
+            "[syn_chat] префикс-KV: {} MB вернулись в VRAM за {:?}, доступно {} MB",
+            bytes / (1024 * 1024),
+            t.elapsed(),
+            crate::syn_chat::model_registry::vram_available_mb()
+        ),
+        Err(e) => {
+            log::warn!(
+                "[syn_chat] префикс-KV: кэш не вернулся в VRAM ({e}) — сбрасываем, \
+                 следующий ход префиллит историю заново"
+            );
+            **kv_slot = None;
+            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+        }
+    }
 }
 
 /// Запас VRAM, который планировщик ринга НЕ отдаёт под KV, пока кэши ядер не
@@ -621,6 +696,10 @@ pub fn continue_last() {
 fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     let app_ctx = use_context::<AppCtx>();
 
+    // Карточки субагентов прошлого хода к новому вопросу отношения не
+    // имеют — панель «Детали» начинает с чистого листа.
+    crate::syn_chat::telemetry::reset();
+
     // 2. Snapshot params + история + tool-схемы (всё на main thread!).
     let params = ctx.params.get_untracked();
     let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
@@ -977,6 +1056,10 @@ async fn run_agent_loop(
     } = settings;
     let model_cap = model.model.config().max_seq_len;
     let mut total_gen_tokens: u32 = 0;
+    // Чистое время декода по всем ходам — без префилла и без пауз на
+    // исполнение инструментов. Итоговый tps в панели считается по нему,
+    // иначе финальное число не сходится с тем, что бежало вживую.
+    let mut total_decode_s: f64 = 0.0;
     let t_overall = Instant::now();
 
     // Вложения кодируются один раз на весь agent-loop: тексты сообщений с
@@ -1057,6 +1140,9 @@ async fn run_agent_loop(
         // ── План KV-ринга и запуск с ретраем по OOM.
         let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
         let mut oom_attempt = 0usize;
+        // Пишется удавшейся попыткой хода; ретраи по OOM до присваивания не
+        // доходят, поэтому ни инициализатор, ни `mut` не нужны.
+        let turn_decode_s: f64;
         let turn_result = loop {
             let session_held_mb = kv_slot
                 .as_ref()
@@ -1163,6 +1249,9 @@ async fn run_agent_loop(
             let mut ttft_ms: Option<u32> = None;
 
             let t_turn = Instant::now();
+            // Копия, а не захват `total_gen_tokens`: он дописывается уже
+            // после хода, а замыкание живёт только внутри стрима.
+            let gen_before = total_gen_tokens;
             let abort_for_cb = abort.clone();
             let ctx_for_cb = ctx.clone();
             let on_token = |id: u32, delta: &str| {
@@ -1192,7 +1281,7 @@ async fn run_agent_loop(
                         &mut buf_body,
                         &mut buf_think,
                         &mut buf_tool,
-                        Some(tokens_this_turn),
+                        Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
                     );
                 }
 
@@ -1244,7 +1333,13 @@ async fn run_agent_loop(
             };
 
             // Финальный flush — гарантированно сбрасываем хвост буферов.
-            flush_streaming(&ctx, &mut buf_body, &mut buf_think, &mut buf_tool, Some(tokens_this_turn));
+            flush_streaming(
+                &ctx,
+                &mut buf_body,
+                &mut buf_think,
+                &mut buf_tool,
+                Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
+            );
 
             let channel_mode = parser.is_channel();
 
@@ -1326,6 +1421,7 @@ async fn run_agent_loop(
 
             KERNEL_CACHES_WARM.store(true, Ordering::Relaxed);
             let dt = t_turn.elapsed();
+            turn_decode_s = (dt.as_secs_f64() - ttft_ms.unwrap_or(0) as f64 / 1000.0).max(0.0);
             let tok_per_s = if dt.as_secs_f64() > 0.0 {
                 tokens_this_turn as f64 / dt.as_secs_f64()
             } else {
@@ -1378,6 +1474,7 @@ async fn run_agent_loop(
             turn_result;
 
         total_gen_tokens += tokens_this_turn;
+        total_decode_s += turn_decode_s;
 
         // Если abort за стримом — выходим.
         if abort.load(Ordering::Relaxed) != abort_snapshot {
@@ -1593,12 +1690,30 @@ async fn run_agent_loop(
                 continue;
             }
 
+            // ── Субагент крутит свой agent-loop на той же модели и просит
+            // под него собственный KV-ринг. Пока кэш префикс-KV этого хода
+            // жив, его гигабайты остаются в VRAM, и субагенту не хватает
+            // места уже на активациях MoE — в ленту вместо ответа приходит
+            // «alloc_zeros(...): OOM». Отправляем кэш в RAM на время вызова
+            // и забираем обратно: перевоз через PCIe — десятки мс, полный
+            // префилл истории — секунды.
+            let parked = tool_name(chat_call) == KEY_SUBAGENT
+                && park_kv_session(&mut kv_slot, &model);
+
             // Исполнение с возможностью прерывания на длинных tool'ах
             // (web fetch может висеть 30+ сек).
             let outcome = tokio::select! {
                 o = tools::execute(chat_call) => o,
-                _ = wait_abort(&abort, abort_snapshot) => return Ok(()),
+                _ = wait_abort(&abort, abort_snapshot) => {
+                    if parked {
+                        unpark_kv_session(&mut kv_slot, &model);
+                    }
+                    return Ok(());
+                }
             };
+            if parked {
+                unpark_kv_session(&mut kv_slot, &model);
+            }
 
             push_tool_result(&ctx, chat_call, outcome.content.clone(), outcome.error);
             // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
@@ -1739,11 +1854,15 @@ async fn run_agent_loop(
 
     // Финальная статистика.
     let dt_total = t_overall.elapsed();
-    let final_tps = if dt_total.as_secs_f64() > 0.0 {
-        (total_gen_tokens as f64 / dt_total.as_secs_f64()) as f32
+    let final_tps = if total_decode_s > 0.0 {
+        (total_gen_tokens as f64 / total_decode_s) as f32
     } else {
         0.0
     };
+    log::info!(
+        "[syn_chat] генерация завершена: {total_gen_tokens} ток за {dt_total:?} \
+         ({total_decode_s:.1} с чистого декода, {final_tps:.1} tok/s)"
+    );
     let final_gen = total_gen_tokens;
     let ctx_final = ctx.clone();
     run_on_main_thread(move || {
@@ -1814,18 +1933,43 @@ pub(crate) fn generate_summary(
     Ok(clean.trim().to_string())
 }
 
+/// Считает живые счётчики хода: сумма токенов по всей генерации и скорость
+/// декода за вычетом префилла (иначе долгий первый токен занижает tps в
+/// разы).
+fn live_gen(gen_before: u32, tokens_this_turn: u32, ttft_ms: Option<u32>, t_turn: Instant) -> LiveGen {
+    let decode_s = t_turn.elapsed().as_secs_f64() - ttft_ms.unwrap_or(0) as f64 / 1000.0;
+    let tps = if decode_s > 0.0 {
+        (tokens_this_turn as f64 / decode_s) as f32
+    } else {
+        0.0
+    };
+    LiveGen {
+        gen_tokens: gen_before + tokens_this_turn,
+        tps,
+    }
+}
+
+/// Живые счётчики генерации для таба «Детали»: сколько токенов выдано за
+/// всю генерацию (не за один ход) и текущая скорость декода. Без них
+/// панель до конца хода стоит на числах прошлого — на длинном ответе это
+/// выглядит как зависший чат.
+#[derive(Clone, Copy)]
+struct LiveGen {
+    gen_tokens: u32,
+    tps: f32,
+}
+
 /// Сбрасывает накопленные body/think/tool буферы в реактивные сигналы UI.
-/// Передавать `tokens_emitted = None` если статистику обновлять не надо
-/// (например, на abort-сбросе).
+/// Передавать `live = None` если статистику обновлять не надо (например,
+/// на abort-сбросе).
 fn flush_streaming(
     ctx: &SynChatCtx,
     buf_body: &mut String,
     buf_think: &mut String,
     buf_tool: &mut String,
-    tokens_emitted: Option<u32>,
+    live: Option<LiveGen>,
 ) {
-    if buf_body.is_empty() && buf_think.is_empty() && buf_tool.is_empty() && tokens_emitted.is_none()
-    {
+    if buf_body.is_empty() && buf_think.is_empty() && buf_tool.is_empty() && live.is_none() {
         return;
     }
     let b = std::mem::take(buf_body);
@@ -1842,8 +1986,9 @@ fn flush_streaming(
         if !tc.is_empty() {
             ctx.streaming_tool.update(|s| s.push_str(&tc));
         }
-        if let Some(n) = tokens_emitted {
-            ctx.last_gen_tokens.set_always(n);
+        if let Some(live) = live {
+            ctx.last_gen_tokens.set_always(live.gen_tokens);
+            ctx.last_decode_tps.set_always(live.tps);
         }
     });
 }

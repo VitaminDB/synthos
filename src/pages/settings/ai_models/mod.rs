@@ -135,6 +135,9 @@ fn models_card() -> Box<dyn Widget> {
     let dir_sig = ctx.models_dir;
     let profiles = ctx.model_profiles;
 
+    // Строки уходят одной колонкой, а не списком виджетов: `Reactive` кладёт
+    // всех своих детей в одну точку — несколько моделей нарисовались бы
+    // друг поверх друга.
     let rows = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let dir = crate::config::resolve_models_dir(&dir_sig.get());
         let found = scan_llm_models(&dir);
@@ -147,7 +150,12 @@ fn models_card() -> Box<dyn Widget> {
             )];
         }
         let profs = profiles.get();
-        found.iter().map(|m| model_block(m, &profs)).collect()
+        vec![Box::new(
+            Column::new()
+                .gap(0.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(found.iter().map(|m| model_block(m, &profs))),
+        ) as Box<dyn Widget>]
     });
 
     section_card(tr!("settings.ai_models.section.models"), vec![Box::new(rows)])

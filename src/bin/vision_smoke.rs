@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use synaptix::facade::llm::{
-    load_llm_with_policy, GenerationOptions, LlmGeneration, Message, QuantPolicy,
+    load_llm_with_policy, GenerationOptions, LlmGeneration, Message,
 };
 use synaptix_core::device::Device;
 
@@ -77,8 +77,11 @@ fn main() -> Result<(), String> {
     // 2. Загрузка модели.
     let t0 = Instant::now();
     let device = Device::Cuda(0);
-    let (model, tokenizer) = load_llm_with_policy(&model_path, QuantPolicy::balance(), &device)
-        .map_err(|e| format!("load: {e}"))?;
+    // Тот же режим, что у чата по умолчанию: «оптимальный» профиль бандла, а
+    // не общий `balance` — иначе смоук гоняет не тот путь, что приложение.
+    let policy = synaptix::facade::llm::optimal_profile(&model_path).policy;
+    let (model, tokenizer) =
+        load_llm_with_policy(&model_path, policy, &device).map_err(|e| format!("load: {e}"))?;
     println!(
         "модель загружена за {:?}; мультимодальная: {}",
         t0.elapsed(),

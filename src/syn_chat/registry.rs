@@ -12,6 +12,7 @@ use crate::agent::time::{unix_nanos, unix_secs};
 use super::params::SamplingParams;
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};
+use super::{session, telemetry};
 
 /// Контент-зависимый отпечаток чата для пропуска идемпотентного автосейва.
 pub fn fingerprint(title: &str, messages: &[ChatMsg]) -> u64 {
@@ -77,6 +78,7 @@ pub fn create_new() -> String {
     storage::save(&stored);
     ctx.chats.update(|list| list.insert(0, stored.to_meta()));
     ctx.loading.set(true);
+    leave_current_chat();
     ctx.active_chat_id.set(Some(id.clone()));
     ctx.messages.set(Vec::new());
     ctx.input.set(String::new());
@@ -88,6 +90,19 @@ pub fn create_new() -> String {
         .set(state_fingerprint(&stored.title, &[], &ctx.params.get_untracked()));
     ctx.loading.set(false);
     id
+}
+
+/// Общее для `select` и `create_new`: отпустить всё, что принадлежало
+/// покидаемому чату.
+///
+/// Кэш префикс-KV живёт в единственном глобальном слоте и ключуется id
+/// чата — уходя, чат его всё равно теряет. Освобождаем сразу, а не ждём
+/// первой генерации в новом чате: иначе гигабайты VRAM висят под контекст,
+/// к которому уже никто не обратится (а если вернуться назад — кэш всё
+/// равно пересоберётся полным префиллом, лениво он не восстанавливается).
+fn leave_current_chat() {
+    session::drop_kv_session();
+    telemetry::reset();
 }
 
 pub fn select(id: &str) {
@@ -106,6 +121,11 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
         return;
     };
     ctx.loading.set(true);
+    // Повторный выбор уже открытого чата (клик по активной плитке) кэш не
+    // роняет — пересобирать его полным префиллом было бы за что.
+    if ctx.active_chat_id.get_untracked().as_deref() != Some(stored.id.as_str()) {
+        leave_current_chat();
+    }
     ctx.active_chat_id.set(Some(stored.id.clone()));
     let title = stored.title.clone();
     let messages = stored.messages;

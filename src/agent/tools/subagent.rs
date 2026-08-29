@@ -28,6 +28,7 @@
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
@@ -41,6 +42,7 @@ use crate::syn_chat::session::{
     RingPlan, MAX_OOM_RETRIES, MIN_ANSWER_TOKENS, RING_ANSWER_TOKENS,
 };
 use crate::syn_chat::state::{SynChatCtx, ThinkParser};
+use crate::syn_chat::telemetry::{self, RunKind, RunState};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 
 use super::catalog::{KEY_AUTOSKILL, KEY_SUBAGENT};
@@ -61,6 +63,26 @@ tokio::task_local! {
     /// `thread_local!` тут не подходит: tokio-задачи мигрируют между
     /// потоками через `await`, и TLS не сохраняется.
     static SUBAGENT_DEPTH: u32;
+    /// id карточки телеметрии текущего цикла. Вложенный вызов берёт его
+    /// как `parent`, и панель «Детали» рисует дерево, а не плоский список.
+    static SUBAGENT_RUN: u64;
+}
+
+/// Как часто живые метрики цикла уезжают в UI. Каждый токен дергал бы
+/// redraw; 200 мс — предел, на котором цифры ещё выглядят «бегущими».
+const TELEMETRY_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Задача субагента в заголовке карточки: длинный prompt в панель не
+/// влезает, а первой строки хватает, чтобы понять, кто сейчас работает.
+const LABEL_CHARS: usize = 120;
+
+fn short_label(task: &str) -> String {
+    let one_line = task.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= LABEL_CHARS {
+        return one_line;
+    }
+    let head: String = one_line.chars().take(LABEL_CHARS).collect();
+    format!("{head}…")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,12 +264,36 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         "start"
     );
 
+    // Карточка в панели «Детали». Родитель — цикл, из которого нас позвали:
+    // для вызова из основного чата это `ROOT_RUN`, для вложенного (если
+    // лимит глубины когда-нибудь поднимут) — id внешнего субагента.
+    let parent = SUBAGENT_RUN.try_with(|v| *v).unwrap_or(telemetry::ROOT_RUN);
+    let run_id = telemetry::begin(
+        parent,
+        depth + 1,
+        RunKind::Subagent,
+        short_label(&args.task),
+        snap.max_turns as u32,
+    );
+    let abort = snap.abort.clone();
+    let abort_baseline = snap.abort_baseline;
+
     let result = SUBAGENT_DEPTH
-        .scope(depth + 1, run_subagent_loop(snap, args, id.clone()))
+        .scope(
+            depth + 1,
+            SUBAGENT_RUN.scope(run_id, run_subagent_loop(snap, args, id.clone(), run_id)),
+        )
         .await;
 
+    // Прерывание пользователем цикл возвращает как Ok(текст), поэтому
+    // состояние карточки решаем по abort-счётчику, а не по Result.
+    let aborted = abort.load(Ordering::Relaxed) != abort_baseline;
     match &result {
         Ok(text) => {
+            telemetry::finish(
+                run_id,
+                if aborted { RunState::Aborted } else { RunState::Done },
+            );
             tracing::info!(
                 target: "subagent",
                 id = %id,
@@ -256,6 +302,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             );
         }
         Err(e) => {
+            telemetry::finish(run_id, RunState::Failed);
             tracing::warn!(target: "subagent", id = %id, error = %e, "end err");
         }
     }
@@ -278,6 +325,7 @@ async fn run_subagent_loop(
     snap: SubagentSnapshot,
     args: SubagentArgs,
     id: String,
+    run_id: u64,
 ) -> Result<String, ToolError> {
     let tools_list = select_tools(&snap.active_tools, args.tools.as_deref());
     let tool_schemas: Vec<serde_json::Value> = tools_list
@@ -311,11 +359,20 @@ async fn run_subagent_loop(
     params.temperature = SUBAGENT_TEMPERATURE;
     params.enable_thinking = false;
 
+    // Карточка панели показывает сумму токенов по всему циклу, а не по
+    // одному turn'у — как и у основного чата.
+    let mut gen_total: u32 = 0;
+
     for turn in 0..snap.max_turns {
         if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
             tracing::info!(target: "subagent", id = %id, turn, "aborted by user");
             return Ok("Subagent was interrupted by the user.".to_string());
         }
+        let turn_no = turn as u32 + 1;
+        telemetry::patch(run_id, move |r| {
+            r.turn = turn_no;
+            r.tool = None;
+        });
 
         tracing::debug!(
             target: "subagent",
@@ -335,8 +392,10 @@ async fn run_subagent_loop(
             snap.abort_baseline,
             &id,
             turn,
+            (run_id, gen_total),
         )
-        .map_err(|e| ToolError::BadArgs(format!("LLM error: {e:#}")))?;
+        .map_err(|e| ToolError::Runtime(format!("subagent LLM error: {e:#}")))?;
+        gen_total += out.gen_tokens;
 
         if out.calls.is_empty() {
             let text = strip_thinking(&out.raw_text);
@@ -384,6 +443,11 @@ async fn run_subagent_loop(
                 },
             };
 
+            // Пока тул работает, генерации нет — без этой пометки карточка
+            // замирает на прежних числах и выглядит как повисшая.
+            let running_tool = raw_call.name.clone();
+            telemetry::patch(run_id, move |r| r.tool = Some(running_tool));
+
             // Auto-allow: пропускаем approval-диалог. Пользователь подтвердил
             // сам вызов subagent в основном цикле, дальше всё идёт без UI.
             // Box::pin — `executor::execute` через KEY_SUBAGENT возвращается
@@ -395,6 +459,10 @@ async fn run_subagent_loop(
                     return Ok("Subagent was interrupted by the user.".to_string());
                 }
             };
+            telemetry::patch(run_id, |r| {
+                r.tool = None;
+                r.tool_calls += 1;
+            });
             history.push(Message::tool(outcome.content));
         }
     }
@@ -407,7 +475,7 @@ async fn run_subagent_loop(
     );
 
     // Финальный turn — без tools. Модель обязана ответить текстом.
-    force_final_summary_turn(&snap, &mut history, &id).await
+    force_final_summary_turn(&snap, &mut history, &id, (run_id, gen_total)).await
 }
 
 /// Результат одного нативного turn'а субагента.
@@ -416,6 +484,8 @@ struct SubagentTurn {
     raw_text: String,
     /// Распознанные tool-вызовы этого turn'а.
     calls: Vec<RawToolCall>,
+    /// Сколько токенов модель выдала за этот turn.
+    gen_tokens: u32,
 }
 
 /// Один turn нативной генерации субагента: prompt → generate_streaming →
@@ -431,6 +501,8 @@ fn generate_subagent_turn(
     abort_snapshot: u64,
     id: &str,
     turn: usize,
+    // (id карточки в панели «Детали», токены, накопленные прошлыми turn'ами)
+    run: (u64, u32),
 ) -> anyhow::Result<SubagentTurn> {
     let prompt = model.tokenizer.apply_chat_template_ex_tools(
         history,
@@ -471,6 +543,25 @@ fn generate_subagent_turn(
             "KV-ринг"
         );
 
+        // Размер ринга и потолок контекста в панель — сразу, до генерации:
+        // это уже готовые числа, а ждать первого токена можно долго.
+        let (run_id, gen_before) = run;
+        let plan_stats = (
+            plan.prompt_tokens as u32,
+            plan.ring_tokens as u32,
+            plan.ring_bytes(),
+            plan.by_mem.min(plan.cap) as u32,
+        );
+        telemetry::patch(run_id, move |r| {
+            r.stats.prompt_tokens = plan_stats.0;
+            r.stats.ring_tokens = plan_stats.1;
+            r.stats.ring_bytes = plan_stats.2;
+            r.stats.ctx_budget = plan_stats.3;
+            // Префикс-KV в субагенте не используется — весь промпт
+            // префиллится заново каждый turn.
+            r.stats.reused_tokens = 0;
+        });
+
         let mut runner = LlmGeneration::new(&model.model, opts);
         crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
         if !tool_schemas.is_empty() {
@@ -480,14 +571,28 @@ fn generate_subagent_turn(
         let mut tool_parser = ToolCallParser::new();
         let mut raw_text = String::new();
         let mut tokens_this_turn = 0usize;
+        let mut ttft_ms: Option<u32> = None;
+        let t_turn = Instant::now();
+        let mut last_push = Instant::now();
         let abort_cb = abort.clone();
         let stream_res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
             if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
                 return false;
             }
             tokens_this_turn += 1;
+            if ttft_ms.is_none() {
+                // Честный префилл — время до первого токена, как в основном
+                // цикле (замер до старта показывал бы планирование ринга).
+                ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
+            }
             raw_text.push_str(delta);
             let _ = tool_parser.feed(delta);
+
+            let now = Instant::now();
+            if now.duration_since(last_push) >= TELEMETRY_INTERVAL {
+                last_push = now;
+                push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
+            }
             // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
             // не дожидаясь, пока модель уйдёт писать прозу после блока.
             if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
@@ -495,10 +600,12 @@ fn generate_subagent_turn(
             }
             true
         });
+        // Возврат VRAM после хода — так же, как в основном цикле: одного
+        // трима пула мало, сегменты держат мёртвые записи кэша
+        // TMA-дескрипторов, и за ход субагента так утекал больше гигабайта
+        // (на длинной цепочке ходов это заканчивалось OOM на активациях).
         drop(runner);
-        if let synaptix_core::device::Device::Cuda(ordinal) = model.model.device() {
-            let _ = synaptix::facade::llm::cuda_trim_pool(*ordinal as i32);
-        }
+        crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
 
         if let Err(e) = stream_res {
             // Тот же ретрай, что в основном цикле: ринг вдвое короче и заново.
@@ -530,9 +637,44 @@ fn generate_subagent_turn(
             gen_tokens = tokens_this_turn,
             "turn done"
         );
+        push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
+        let vram_free = crate::syn_chat::model_registry::vram_available_mb() as u32;
+        telemetry::patch(run_id, move |r| r.stats.vram_free_mb = vram_free);
         let (calls, _tail) = tool_parser.finish();
-        return Ok(SubagentTurn { raw_text, calls });
+        return Ok(SubagentTurn {
+            raw_text,
+            calls,
+            gen_tokens: tokens_this_turn as u32,
+        });
     }
+}
+
+/// Сбрасывает в карточку панели счётчик токенов и скорость декода. Зовётся
+/// throttled'но из стрима (см. [`TELEMETRY_INTERVAL`]) и один раз в конце
+/// turn'а.
+fn push_live_stats(
+    run_id: u64,
+    gen_before: u32,
+    tokens_this_turn: usize,
+    ttft_ms: Option<u32>,
+    t_turn: Instant,
+) {
+    // Скорость считаем по чистому декоду — за вычетом префилла, иначе
+    // длинный первый токен занижает tps в разы.
+    let elapsed = t_turn.elapsed().as_secs_f64();
+    let decode_s = elapsed - ttft_ms.unwrap_or(0) as f64 / 1000.0;
+    let tps = if decode_s > 0.0 {
+        (tokens_this_turn as f64 / decode_s) as f32
+    } else {
+        0.0
+    };
+    let gen = gen_before + tokens_this_turn as u32;
+    let prefill = ttft_ms.unwrap_or(0);
+    telemetry::patch(run_id, move |r| {
+        r.stats.gen_tokens = gen;
+        r.stats.decode_tps = tps;
+        r.stats.prefill_ms = prefill;
+    });
 }
 
 /// Вырезает `<think>…</think>` из финального текста — родителю уходит только
@@ -560,6 +702,7 @@ async fn force_final_summary_turn(
     snap: &SubagentSnapshot,
     history: &mut Vec<Message>,
     id: &str,
+    run: (u64, u32),
 ) -> Result<String, ToolError> {
     if snap.abort.load(Ordering::Relaxed) != snap.abort_baseline {
         return Ok("Subagent was interrupted by the user.".to_string());
@@ -585,8 +728,9 @@ async fn force_final_summary_turn(
         snap.abort_baseline,
         id,
         snap.max_turns,
+        run,
     )
-    .map_err(|e| ToolError::BadArgs(format!("LLM error (final summary): {e:#}")))?;
+    .map_err(|e| ToolError::Runtime(format!("subagent LLM error (final summary): {e:#}")))?;
 
     let summary = strip_thinking(&out.raw_text);
     if summary.is_empty() {

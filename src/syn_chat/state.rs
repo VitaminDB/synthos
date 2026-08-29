@@ -19,6 +19,7 @@ pub use crate::agent::state::{
 pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::telemetry::AgentRun;
 
 /// Контекст Syn-чата. Клонируется дёшево (Arc на abort/input_tok_gen + Copy-сигналы).
 #[derive(Clone)]
@@ -138,6 +139,15 @@ pub struct SynChatCtx {
     pub last_vram_free_mb: RwSignal<u32>,
     /// Сколько токенов промпта взято из префикс-KV (не считалось заново).
     pub last_reused_tokens: RwSignal<u32>,
+
+    /// Живые (и только что завершённые) вложенные агент-циклы — субагенты.
+    /// Пишется из worker-потоков через `syn_chat::telemetry`, читается
+    /// карточками таба «Детали». Не persist'ится.
+    pub agent_runs: RwSignal<Vec<AgentRun>>,
+    /// Раскрытие карточек «Деталей». Ключ — id цикла
+    /// (`telemetry::ROOT_RUN` — карточка основного чата). Значения нет —
+    /// карточка сама решает дефолт: живая раскрыта, завершённая свёрнута.
+    pub details_open: RwSignal<HashMap<u64, bool>>,
 }
 
 impl SynChatCtx {
@@ -189,6 +199,8 @@ impl SynChatCtx {
             ctx_budget_tokens: use_signal(0),
             last_vram_free_mb: use_signal(0),
             last_reused_tokens: use_signal(0),
+            agent_runs: use_signal(Vec::new()),
+            details_open: use_signal(HashMap::new()),
         }
     }
 

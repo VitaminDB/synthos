@@ -1,6 +1,6 @@
 //! Правая панель Syn-чата: TabBar с двумя табами — «Параметры» (модель +
 //! sampling + контекст + thinking, первая по умолчанию) и «Детали»
-//! (статистика последней генерации). TabBar ([`header`]) живёт в строке
+//! (метрики основного цикла и живых субагентов). TabBar ([`header`]) живёт в строке
 //! заголовков каркаса, тело ([`body`]) — под ним. Инструменты и скилы — в
 //! левой панели (`left_panel`).
 
@@ -10,11 +10,13 @@ use std::sync::atomic::Ordering;
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
+use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::{Slider, SpinBox, TextField, Toggle};
 
 use crate::context::{SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS};
 use crate::icons::*;
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::telemetry::{AgentRun, RunKind, RunState, RunStats, ROOT_RUN};
 use crate::syn_chat::{SynChatCtx, SynModelRegistry};
 
 pub fn header() -> impl Widget {
@@ -470,52 +472,373 @@ fn reset_button() -> impl Widget {
 }
 
 // ─────────────────────── ТАБ «ДЕТАЛИ» ───────────────────────
+//
+// Панель — дашборд из карточек: сверху основной цикл чата, под ним
+// карточки живых субагентов (с отступом по глубине вложенности), внизу
+// размер чата. Все карточки сворачиваются: цепочка из нескольких
+// субагентов иначе не помещается в панель.
 
 fn details_tab() -> impl Widget {
     ScrollView::new().vertical().child(mgui! {
         Column::new()
-            .gap(16.0)
+            .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                stats_card_reactive(),
+                main_card_reactive(),
+                subagent_cards_reactive(),
                 chat_size_card_reactive(),
             ]
     })
 }
 
-fn stats_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+/// Данные одной карточки цикла. Основной чат и субагенты рисуются одним
+/// [`run_card`] — иначе их метрики разъезжаются при первой же правке.
+struct CardView {
+    /// Ключ раскрытия в `SynChatCtx.details_open`.
+    id: u64,
+    icon: &'static str,
+    title: String,
+    /// Вторая строка заголовка: модель у основного чата, задача у субагента.
+    subtitle: String,
+    /// Строка под заголовком: ход, текущий инструмент, число вызовов.
+    status: Option<String>,
+    /// Плашка справа от заголовка: состояние цикла.
+    badge: Option<(String, &'static str)>,
+    /// Цикл работает прямо сейчас — иконка пульсирует, карточка подсвечена.
+    live: bool,
+    /// Глубина вложенности: 0 — основной чат, 1 — его субагент, дальше —
+    /// рекурсия. Даёт отступ карточки.
+    depth: u32,
+    stats: RunStats,
+    /// Ходов сделано — отдельной плиткой.
+    turns: u32,
+    /// Раскрыта ли карточка, пока пользователь не щёлкнул по ней сам.
+    default_open: bool,
+}
+
+fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
-        let prompt_t = ctx.last_prompt_tokens.get();
-        let gen_t = ctx.last_gen_tokens.get();
-        let prefill_ms = ctx.last_prefill_ms.get();
-        let tps = ctx.last_decode_tps.get();
-        let turns = ctx.last_turns.get();
-        let ring_tokens = ctx.last_ring_tokens.get();
-        let ring_mb = ctx.kv_cache_bytes.get() / (1024 * 1024);
-        let ctx_budget = ctx.ctx_budget_tokens.get();
-        let vram_free = ctx.last_vram_free_mb.get();
-        let reused = ctx.last_reused_tokens.get();
-
-        DecoratedBox::new().class("details-card").child(mgui! {
-            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.details.last_gen.title")),
-                // prompt_tokens — промпт ПОСЛЕДНЕГО хода agent-loop'а: после
-                // tool-вызовов он в разы больше первого, и именно он определяет
-                // размер KV-ринга.
-                metric_row("prompt_tokens", prompt_t.to_string()),
-                // Сколько из промпта взято из кэша прошлого хода (префикс-KV):
-                // столько токенов не пришлось префиллить заново.
-                metric_row(tr!("chat.right.details.from_cache"), reused.to_string()),
-                metric_row("gen_tokens", gen_t.to_string()),
-                metric_row("prefill_ms", prefill_ms.to_string()),
-                metric_row("decode_tps", format!("{tps:.1}")),
-                metric_row(tr!("chat.right.details.agent_turns"), turns.to_string()),
-                metric_row(tr!("chat.right.details.kv_ring"), tr!("chat.right.details.kv_ring.value", tokens = ring_tokens, mb = ring_mb)),
-                metric_row(tr!("chat.right.details.vram_context"), tr!("chat.right.details.vram_context.value", tokens = ctx_budget)),
-                metric_row(tr!("chat.right.details.vram_free"), format!("{vram_free} MB")),
-            ]
+        let live = ctx.pending.get();
+        let stats = RunStats {
+            prompt_tokens: ctx.last_prompt_tokens.get(),
+            reused_tokens: ctx.last_reused_tokens.get(),
+            gen_tokens: ctx.last_gen_tokens.get(),
+            prefill_ms: ctx.last_prefill_ms.get(),
+            decode_tps: ctx.last_decode_tps.get(),
+            ring_tokens: ctx.last_ring_tokens.get(),
+            ring_bytes: ctx.kv_cache_bytes.get(),
+            ctx_budget: ctx.ctx_budget_tokens.get(),
+            vram_free_mb: ctx.last_vram_free_mb.get(),
+        };
+        // Подпись — имя бандла: числа карточки принадлежат именно ему, а в
+        // табе «Детали» модель больше нигде не видна.
+        let model = use_context::<SynModelRegistry>()
+            .current
+            .get()
+            .and_then(|m| m.path.file_name().map(|s| s.to_string_lossy().to_string()))
+            .unwrap_or_else(|| tr!("chat.model.not_loaded"));
+        run_card(CardView {
+            id: ROOT_RUN,
+            icon: MI_CHAT,
+            title: tr!("chat.right.details.main.title"),
+            subtitle: model,
+            status: live.then(|| tr!("chat.right.details.status.generating")),
+            badge: live.then(|| {
+                (
+                    tr!("chat.right.details.state.running"),
+                    "details-badge live",
+                )
+            }),
+            live,
+            depth: 0,
+            stats,
+            turns: ctx.last_turns.get(),
+            default_open: true,
         })
     }
+}
+
+/// Карточки вложенных циклов. Порядок — тот, в котором их запускали, а
+/// отступ берётся из `depth`: рекурсивный вызов видно как лесенку.
+fn subagent_cards_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+    || {
+        let ctx = use_context::<SynChatCtx>();
+        let runs = ctx.agent_runs.get();
+        let cards: Vec<Box<dyn Widget>> = runs
+            .iter()
+            .map(|r| Box::new(run_card(card_of(r))) as Box<dyn Widget>)
+            .collect();
+        DecoratedBox::new().class("details-runs").child(
+            Column::new()
+                .gap(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(cards),
+        )
+    }
+}
+
+fn card_of(run: &AgentRun) -> CardView {
+    let title = match run.kind {
+        RunKind::Subagent if run.depth > 1 => {
+            tr!("chat.right.details.subagent.nested", depth = run.depth)
+        }
+        RunKind::Subagent => tr!("chat.right.details.subagent.title"),
+    };
+
+    // Живой цикл рассказывает, где он сейчас; завершённый — сколько всего
+    // сделал. И то и другое короче, чем «карточка молчит».
+    let status = if run.state.is_running() {
+        let mut s = if run.max_turns > 0 {
+            tr!(
+                "chat.right.details.status.turn_of",
+                turn = run.turn.max(1),
+                max = run.max_turns
+            )
+        } else {
+            tr!("chat.right.details.status.turn", turn = run.turn.max(1))
+        };
+        if let Some(tool) = run.tool.as_deref() {
+            s.push_str(" · ");
+            s.push_str(&tr!("chat.right.details.status.tool", tool = tool));
+        }
+        Some(s)
+    } else {
+        Some(tr!(
+            "chat.right.details.status.summary",
+            turns = run.turn,
+            calls = run.tool_calls
+        ))
+    };
+
+    let badge = Some(match run.state {
+        RunState::Running => (
+            tr!("chat.right.details.state.running"),
+            "details-badge live",
+        ),
+        RunState::Done => (tr!("chat.right.details.state.done"), "details-badge ok"),
+        RunState::Failed => (tr!("chat.right.details.state.failed"), "details-badge err"),
+        RunState::Aborted => (
+            tr!("chat.right.details.state.aborted"),
+            "details-badge warn",
+        ),
+    });
+
+    CardView {
+        id: run.id,
+        icon: MI_BOLT,
+        title,
+        subtitle: run.label.clone(),
+        status,
+        badge,
+        live: run.state.is_running(),
+        depth: run.depth,
+        stats: run.stats,
+        turns: run.turn,
+        // Работающий цикл раскрыт — ради него панель и открывали;
+        // завершённый сворачивается, чтобы не оттеснять живые.
+        default_open: run.state.is_running(),
+    }
+}
+
+/// Общий рендер карточки: кликабельный заголовок + свёрнутое тело
+/// (строка состояния, полоса заполнения ринга, сетка метрик 2×5).
+fn run_card(v: CardView) -> StyledWidget<DecoratedBox> {
+    let ctx = use_context::<SynChatCtx>();
+    let id = v.id;
+    let open = ctx
+        .details_open
+        .get()
+        .get(&id)
+        .copied()
+        .unwrap_or(v.default_open);
+    let default_open = v.default_open;
+
+    let icon_class = if v.live {
+        "details-run-icon details-live-dot"
+    } else {
+        "details-run-icon"
+    };
+    let mut head: Vec<Box<dyn Widget>> = vec![
+        Box::new(Icon::new(v.icon).class(icon_class)),
+        Box::new(DecoratedBox::new().class("grow").child(mgui! {
+            Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                Text::new(v.title).class("details-run-title"),
+                Text::new(v.subtitle).max_lines(2).class("details-run-sub"),
+            ]
+        })),
+    ];
+    if let Some((text, class)) = v.badge {
+        head.push(Box::new(
+            DecoratedBox::new()
+                .class(class)
+                .child(Text::new(text).class("details-badge-text")),
+        ));
+    }
+    head.push(Box::new(
+        Icon::new(if open { MI_EXPAND_LESS } else { MI_EXPAND_MORE })
+            .class("details-run-chevron"),
+    ));
+
+    let header = GestureDetector::new()
+        .on_click(move || {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.details_open.update(|m| {
+                let cur = m.get(&id).copied().unwrap_or(default_open);
+                m.insert(id, !cur);
+            });
+        })
+        .child(
+            Row::new()
+                .gap(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .children(head),
+        );
+
+    let mut children: Vec<Box<dyn Widget>> = vec![Box::new(header)];
+    if open {
+        if let Some(status) = v.status {
+            children.push(Box::new(
+                DecoratedBox::new()
+                    .class("details-status")
+                    .child(Text::new(status).max_lines(2).class("details-status-text")),
+            ));
+        }
+        children.push(Box::new(ring_usage(&v.stats)));
+        children.push(Box::new(
+            Grid::new(2)
+                .gap(6.0)
+                .children(stat_tiles(&v.stats, v.turns)),
+        ));
+    }
+
+    // Отступ по глубине: субагент сдвинут относительно основного чата,
+    // его собственный вложенный вызов — ещё правее. Рекурсию видно как
+    // лесенку, без отдельного дерева-виджета.
+    let class = match (v.depth, v.live) {
+        (0, false) => "details-card",
+        (0, true) => "details-card details-card-live",
+        (1, false) => "details-card details-nest-1",
+        (1, true) => "details-card details-card-live details-nest-1",
+        (2, false) => "details-card details-nest-2",
+        (2, true) => "details-card details-card-live details-nest-2",
+        (_, false) => "details-card details-nest-3",
+        (_, true) => "details-card details-card-live details-nest-3",
+    };
+    DecoratedBox::new()
+        .class(class)
+        .child(
+            Column::new()
+                .gap(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(children),
+        )
+}
+
+/// Полоса «сколько ринга занял промпт». Именно она предсказывает и обрезку
+/// контекста, и OOM: цифры промпта и ринга рядом в сетке, но соотношение
+/// глазами не считается.
+fn ring_usage(s: &RunStats) -> impl Widget {
+    let pct = if s.ring_tokens > 0 {
+        (s.prompt_tokens as f32 / s.ring_tokens as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let caption = mgui! {
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                Text::new(tr!("chat.right.details.ring_usage")).class("details-bar-label"),
+                Text::new(format!("{}%", (pct * 100.0).round() as u32)).class("details-bar-value"),
+            ]
+    };
+    DecoratedBox::new().class("details-bar").child(mgui! {
+        Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            caption,
+            ProgressBar::with_value(pct).class("details-ctx-bar"),
+        ]
+    })
+}
+
+/// Десять плиток «значение + подпись» — тот же набор чисел, что панель
+/// показывала строками, но вдвое плотнее и читается по вертикали.
+fn stat_tiles(s: &RunStats, turns: u32) -> Vec<Box<dyn Widget>> {
+    let (prefill_value, prefill_label) = if s.prefill_ms >= 1000 {
+        (
+            format!("{:.1}", s.prefill_ms as f32 / 1000.0),
+            tr!("chat.right.details.tile.prefill_s"),
+        )
+    } else {
+        (
+            s.prefill_ms.to_string(),
+            tr!("chat.right.details.tile.prefill_ms"),
+        )
+    };
+    let rows: Vec<(String, String, bool)> = vec![
+        (
+            format!("{:.1}", s.decode_tps),
+            tr!("chat.right.details.tile.tps"),
+            true,
+        ),
+        (prefill_value, prefill_label, false),
+        (
+            group(s.prompt_tokens as u64),
+            tr!("chat.right.details.tile.prompt"),
+            false,
+        ),
+        (
+            group(s.reused_tokens as u64),
+            tr!("chat.right.details.tile.cached"),
+            false,
+        ),
+        (
+            group(s.gen_tokens as u64),
+            tr!("chat.right.details.tile.answer"),
+            false,
+        ),
+        (
+            turns.to_string(),
+            tr!("chat.right.details.tile.turns"),
+            false,
+        ),
+        (
+            group(s.ring_tokens as u64),
+            tr!("chat.right.details.tile.ring_tokens"),
+            false,
+        ),
+        (
+            group(s.ring_bytes / (1024 * 1024)),
+            tr!("chat.right.details.tile.ring_mb"),
+            false,
+        ),
+        (
+            group(s.ctx_budget as u64),
+            tr!("chat.right.details.tile.ctx_budget"),
+            false,
+        ),
+        (
+            group(s.vram_free_mb as u64),
+            tr!("chat.right.details.tile.vram_free"),
+            false,
+        ),
+    ];
+    rows.into_iter()
+        .map(|(value, label, accent)| stat_tile(value, label, accent))
+        .collect()
+}
+
+fn stat_tile(value: String, label: String, accent: bool) -> Box<dyn Widget> {
+    let value_class = if accent {
+        "details-tile-value details-tile-accent"
+    } else {
+        "details-tile-value"
+    };
+    Box::new(DecoratedBox::new().class("details-tile").child(mgui! {
+        Column::new().gap(1.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            Text::new(value).class(value_class),
+            Text::new(label).max_lines(2).class("details-tile-label"),
+        ]
+    }))
 }
 
 fn chat_size_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
@@ -523,27 +846,46 @@ fn chat_size_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send +
         let ctx = use_context::<SynChatCtx>();
         let msgs = ctx.messages.get();
         let n = msgs.len();
-        let chars: usize = msgs.iter().map(|m| m.body.chars().count() + m.thinking.chars().count()).sum();
+        let chars: usize = msgs
+            .iter()
+            .map(|m| m.body.chars().count() + m.thinking.chars().count())
+            .sum();
+        let tiles: Vec<Box<dyn Widget>> = vec![
+            stat_tile(
+                group(n as u64),
+                tr!("chat.right.details.tile.messages"),
+                false,
+            ),
+            stat_tile(
+                group(chars as u64),
+                tr!("chat.right.details.tile.characters"),
+                false,
+            ),
+        ];
         DecoratedBox::new().class("details-card").child(mgui! {
-            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.details.chat_size.title")),
-                metric_row("messages", n.to_string()),
-                metric_row("characters", chars.to_string()),
+            Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Icon::new(MI_ARTICLE).class("details-run-icon"),
+                    Text::new(tr!("chat.right.details.chat_size.title")).class("details-run-title"),
+                ],
+                Grid::new(2).gap(6.0).children(tiles),
             ]
         })
     }
 }
 
-fn metric_row(label: impl Into<String>, value: String) -> impl Widget {
-    DecoratedBox::new().class("details-metric-row").child(mgui! {
-        Row::new()
-            .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                Text::new(label.into()).class("details-metric-label"),
-                Text::new(value).class("details-metric-value"),
-            ]
-    })
+/// Разряды через неразрывный пробел: «353 098» читается с одного взгляда,
+/// «353098» — нет.
+fn group(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push('\u{00A0}');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 // ─────────────────────── Общие хелперы ───────────────────────

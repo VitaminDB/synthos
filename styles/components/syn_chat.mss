@@ -212,12 +212,6 @@
   border: 1px solid var(--border-soft);
 }
 
-/* ── Details — метрики ── */
-
-.details-metric-row {
-  padding: 4px 0;
-}
-
 /* ── Chat-header кнопки очистки / удаления ── */
 
 .chat-header-action {

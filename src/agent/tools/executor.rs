@@ -40,6 +40,11 @@ pub enum ToolError {
     MissingField(&'static str),
     #[error("Failed to spawn process: {0}")]
     Spawn(String),
+    /// Инструмент запустился, но упал по ходу дела (у субагента — ошибка
+    /// генерации). Текст уходит модели как есть: «Invalid arguments JSON»
+    /// поверх OOM'а уводил её чинить аргументы вместо задачи.
+    #[error("{0}")]
+    Runtime(String),
 }
 
 /// Структурированный результат исполнения.

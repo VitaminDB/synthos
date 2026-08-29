@@ -1,183 +1,159 @@
-/* Details tab (правый сайдбар) — дашборд метрик llama + системы.
+/* Таб «Детали» правой панели Syn-чата — карточки агент-циклов.
  *
- * Картина: прокручиваемый столбец из carded-секций. Каждая карточка
- * содержит иконку + заголовок + тело. Тело варьируется:
- *  - большие числа (producer per-second),
- *  - мини-графики LineChart (history),
- *  - ProgressBar-полоски per-core.
+ * Картина: прокручиваемый столбец карточек. Первая — основной цикл чата,
+ * дальше живые (и только что завершённые) субагенты со сдвигом по глубине
+ * вложенности, последняя — размер чата. Каждая карточка складывается из
+ * кликабельного заголовка, строки состояния, полосы заполнения KV-ринга и
+ * сетки плиток «значение + подпись» 2×N.
  *
  * Все значения — через переменные темы (никаких магических цветов).
  */
 
-.details-title-box {
-    /* Обёртка для заголовка — Text не имеет собственного padding, поэтому
-     * отступ задаём на DecoratedBox.class("details-title-box"). */
-    padding-left: 4px;
-    padding-right: 4px;
-    padding-bottom: 4px;
-}
-.details-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-}
+/* ── Карточка ─────────────────────────────────────────────────────────────── */
 
 .details-card {
-    padding: 14px;
+    padding: 12px;
     background-color: var(--bg-panel);
-    border-radius: var(--radius-panel);
+    border-radius: 14px;
     border-width: 1px;
     border-color: var(--border-soft);
     transition: background-color var(--duration-fast) var(--ease-standard),
                 border-color var(--duration-fast) var(--ease-standard);
 }
 .details-card:hover {
-    background-color: var(--surface-hover);
     border-color: var(--border);
 }
 
-.details-card-icon {
+/* Работающий цикл: рамка акцентом — карточку видно, не вчитываясь. */
+.details-card-live {
+    border-color: var(--primary);
+    background-color: var(--surface-selected);
+}
+
+/* Отступ по глубине вложенности: субагент сдвинут относительно основного
+ * чата, его собственный вложенный вызов — ещё правее. */
+.details-nest-1 { margin-left: 10px; }
+.details-nest-2 { margin-left: 20px; }
+.details-nest-3 { margin-left: 30px; }
+
+/* ── Заголовок карточки ───────────────────────────────────────────────────── */
+
+.details-run-icon {
     icon-size: 18px;
     color: var(--primary);
 }
-.details-card-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-    letter-spacing: 0.5px;
-}
-
-/* ── Большие числовые метрики (prompt / predicted tokens/sec) ──────────────── */
-.details-big-metric {
-    padding-right: 16px;
-}
-.details-metric-big {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--text);
-}
-.details-metric-unit {
-    font-size: 11px;
-    color: var(--text-muted);
-    padding-top: 2px;
-}
-
-/* ── Лейбл/значение в строковых метриках ──────────────────────────────────── */
-.details-metric-label {
-    font-size: 12px;
-    color: var(--text-muted);
-}
-.details-metric-value {
+.details-run-title {
     font-size: 13px;
-    color: var(--text);
-    font-weight: 500;
-}
-.details-metric-icon {
-    icon-size: 14px;
-    color: var(--text-muted);
-}
-
-/* ── Подзаголовок (например «Ядра CPU») ────────────────────────────────────── */
-.details-subheader {
-    font-size: 11px;
     font-weight: 600;
+    color: var(--text);
+}
+.details-run-sub {
+    font-size: 11px;
     color: var(--text-muted);
-    letter-spacing: 0.4px;
-    padding-top: 4px;
+}
+.details-run-chevron {
+    icon-size: 18px;
+    color: var(--text-subtle);
 }
 
-/* ── Мини-графики ──────────────────────────────────────────────────────────── */
-.details-mini-chart {
-    height: 120px;
-    margin-top: 4px;
-    color: var(--text-muted);
-    grid-color: var(--border-soft);
-    axis-color: var(--border-soft);
-    axis-font-size: 8px;
-    point-size: 2px;
-}
-.details-mini-chart-empty {
-    height: 120px;
+/* ── Плашка состояния ─────────────────────────────────────────────────────── */
+
+.details-badge {
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
     background-color: var(--bg-search);
-    border-radius: 8px;
     border-width: 1px;
     border-color: var(--border-soft);
 }
-
-/* График GPU/VRAM внутри объединённой карточки «Система» — чуть выше
- * mini-chart, чтобы линии и значения читались. Маркеры точек ужаты,
- * чтобы плотный history-ряд не превращался в гирлянду. */
-.details-system-chart {
-    height: 110px;
-    margin-top: 4px;
-    color: var(--text-muted);
-    grid-color: var(--border-soft);
-    axis-color: var(--border-soft);
-    axis-font-size: 8px;
-    point-size: 2px;
-}
-
-/* ── Гейджи (CPU/RAM/GPU/VRAM dial) ────────────────────────────────────────── */
-.details-dial {
-    padding: 4px 0px;
-}
-.details-dial-ring {
-    /* CircularProgress читает width/height из MSS как диаметр. */
-    width: 56px;
-    height: 56px;
-    color: var(--primary);
-    transition: color var(--duration-med) var(--ease-standard);
-}
-.details-dial-label {
-    font-size: 11px;
+.details-badge-text {
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-muted);
-    letter-spacing: 0.3px;
-    padding-top: 4px;
 }
-.details-dial-caption {
+.details-badge.live {
+    background-color: var(--primary-soft);
+    border-color: var(--primary);
+}
+.details-badge.live .details-badge-text { color: var(--primary); }
+.details-badge.ok .details-badge-text   { color: var(--presence-online); }
+.details-badge.err {
+    border-color: var(--error);
+}
+.details-badge.err .details-badge-text  { color: var(--error); }
+.details-badge.warn {
+    border-color: var(--warning);
+}
+.details-badge.warn .details-badge-text { color: var(--warning); }
+
+/* ── Строка состояния (ход, текущий инструмент, счёт вызовов) ─────────────── */
+
+.details-status {
+    padding: 6px 8px;
+    border-radius: 8px;
+    background-color: var(--bg-search);
+}
+.details-status-text {
     font-size: 11px;
-    color: var(--text);
-    font-weight: 500;
+    color: var(--text-muted);
 }
 
-/* ── Прогресс-бар контекста n_ctx ──────────────────────────────────────────── */
+/* ── Полоса заполнения KV-ринга ───────────────────────────────────────────── */
+
+.details-bar {
+    padding-top: 2px;
+}
+.details-bar-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.details-bar-value {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+}
 .details-ctx-bar {
-    height: 8px;
-    border-radius: 4px;
+    height: 6px;
+    border-radius: 3px;
     accent-color: var(--primary);
     background-color: var(--border-soft);
     transition: accent-color var(--duration-med) var(--ease-standard);
 }
 
-/* ── BarChart «Ядра CPU» ───────────────────────────────────────────────────── */
-.details-cpu-cores {
-    /* Плотный компактный ряд столбиков: мелкий шрифт подписей и %-делений,
-     * без лишних осей. BarChart берёт axis-font-size/grid-color как MSS-свойства. */
-    height: 120px;
-    axis-font-size: 8px;
-    color: var(--text-muted);
-    grid-color: var(--border-soft);
-}
+/* ── Плитки метрик ────────────────────────────────────────────────────────── */
 
-/* ── GPU: плашка «недоступно» ──────────────────────────────────────────────── */
-.details-gpu-unavailable {
-    padding: 10px 12px;
+.details-tile {
+    padding: 7px 9px;
+    border-radius: 10px;
     background-color: var(--bg-search);
-    border-radius: 8px;
     border-width: 1px;
+    border-color: transparent;
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+.details-tile:hover {
     border-color: var(--border-soft);
 }
-.details-gpu-warn-icon {
-    icon-size: 18px;
+.details-tile-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+.details-tile-label {
+    font-size: 10px;
+    color: var(--text-subtle);
+}
+/* Скорость декода — главное число карточки, поэтому акцентом. Правило
+ * стоит после `.details-tile-value`: у обоих классов одна специфичность,
+ * побеждает последнее. */
+.details-tile-accent {
     color: var(--primary);
 }
 
-/* ── Анимация «живого» индикатора (когда pending=true — используется где нужно) ── */
+/* ── Анимация «живого» индикатора (иконка работающего цикла) ──────────────── */
+
 @keyframes details-pulse {
-    0%   { opacity: 0.55; }
+    0%   { opacity: 0.45; }
     50%  { opacity: 1.0;  }
-    100% { opacity: 0.55; }
+    100% { opacity: 0.45; }
 }
 .details-live-dot {
     animation: details-pulse 1.6s var(--ease-standard) infinite;

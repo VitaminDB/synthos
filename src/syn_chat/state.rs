@@ -148,6 +148,10 @@ pub struct SynChatCtx {
     /// (`telemetry::ROOT_RUN` — карточка основного чата). Значения нет —
     /// карточка сама решает дефолт: живая раскрыта, завершённая свёрнута.
     pub details_open: RwSignal<HashMap<u64, bool>>,
+    /// Раскрыта ли карточка «Sampling» в табе «Параметры». Свёрнута по
+    /// умолчанию: девять слайдеров занимали панель целиком и выдавливали
+    /// системный prompt за нижний край, а трогают их редко.
+    pub sampling_open: RwSignal<bool>,
 }
 
 impl SynChatCtx {
@@ -201,6 +205,7 @@ impl SynChatCtx {
             last_reused_tokens: use_signal(0),
             agent_runs: use_signal(Vec::new()),
             details_open: use_signal(HashMap::new()),
+            sampling_open: use_signal(false),
         }
     }
 

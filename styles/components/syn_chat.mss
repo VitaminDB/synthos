@@ -28,24 +28,32 @@
 }
 
 .right-panel-section-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
+/* Шеврон сворачиваемой секции — тот же вид, что у карточек «Деталей». */
+.right-section-chevron {
+  icon-size: 18px;
+  color: var(--text-subtle);
+}
+
 /* ── Карточка модели + sampling + контекст + system ── */
 
+/* Панель узкая и высокая: карточки идут стопкой, поэтому лишний padding
+ * здесь стоит дорого — системный prompt внизу выдавливало за край. */
 .sampling-card {
-  padding: 12px;
+  padding: 10px;
   border-radius: 10px;
   background-color: var(--bg-search);
   border: 1px solid var(--border-soft);
 }
 
 .sampling-row {
-  padding: 4px 0;
+  padding: 1px 0;
 }
 
 .sampling-label {

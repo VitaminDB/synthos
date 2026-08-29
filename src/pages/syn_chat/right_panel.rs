@@ -47,7 +47,7 @@ pub fn body() -> impl Widget {
 fn params_tab() -> impl Widget {
     ScrollView::new().vertical().child(mgui! {
         Column::new()
-            .gap(16.0)
+            .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 model_card(),
                 sampling_card_reactive(),
@@ -250,14 +250,43 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
 
 // ── Карточка «Sampling» ──────────────────────────────────────────────
 
+/// Кликабельная шапка сворачиваемой секции: заголовок + шеврон, как у
+/// карточек таба «Детали».
+fn collapsible_title(
+    text: impl Into<String>,
+    open: bool,
+    toggle: impl Fn() + Send + Sync + 'static,
+) -> impl Widget {
+    GestureDetector::new().on_click(toggle).child(mgui! {
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                section_title(text.into()),
+                Icon::new(if open { MI_EXPAND_LESS } else { MI_EXPAND_MORE })
+                    .class("right-section-chevron"),
+            ]
+    })
+}
+
 fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
+        let open = ctx.sampling_open.get();
+        let head = collapsible_title(tr!("chat.right.sampling.title"), open, move || {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.sampling_open.set(!ctx.sampling_open.get_untracked());
+        });
+        if !open {
+            return DecoratedBox::new()
+                .class("sampling-card")
+                .child(Stack::new().children(vec![Box::new(head) as Box<dyn Widget>]));
+        }
         let p = ctx.params.get();
 
         DecoratedBox::new().class("sampling-card").child(mgui! {
-            Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.sampling.title")),
+            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                head,
                 slider_row("Temperature", p.temperature, 0.0, 2.0, 0.05, 2, |v, q| q.temperature = v),
                 slider_row("top_p", p.top_p, 0.0, 1.0, 0.05, 2, |v, q| q.top_p = v),
                 slider_row("top_k", p.top_k as f32, 0.0, 200.0, 1.0, 0, |v, q| q.top_k = v.round() as u32),
@@ -385,7 +414,7 @@ fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let ctx = use_context::<SynChatCtx>();
         let p = ctx.params.get();
         DecoratedBox::new().class("sampling-card").child(mgui! {
-            Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 section_title(tr!("chat.right.context.title")),
                 slider_row(
                     "max_new_tokens",

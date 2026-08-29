@@ -44,6 +44,49 @@
     font-size: 12px;
 }
 
+/* Пилюли рядом с названием: стадия релиза и номер сборки (`pkgrel`).
+ * Мельче и приглушённее самого заголовка — это служебная метка, а не
+ * часть имени приложения. */
+/* Высота задана явно: с ней `Center` внутри имеет что центрировать, и
+ * подпись стоит ровно по середине пилюли независимо от того, есть ли у
+ * глифов выносные элементы. */
+.titlebar-badge {
+    height: 16px;
+    padding: 0 7px;
+    border-radius: var(--radius-pill);
+    border-width: 1px;
+}
+
+.titlebar-badge-text {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+
+.titlebar-badge-stage {
+    background-color: var(--primary-soft);
+    border-color: var(--primary);
+}
+
+.titlebar-badge-stage .titlebar-badge-text {
+    color: var(--primary);
+}
+
+/* Номер сборки — моноширинный и без разрядки: это число, а не слово. */
+.titlebar-badge-build {
+    background-color: var(--bg-search);
+    border-color: var(--border-soft);
+}
+
+.titlebar-badge-build .titlebar-badge-text {
+    color: var(--text-subtle);
+    font-family: monospace;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
 .window-control {
     width: 44px;
     height: 32px;

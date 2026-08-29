@@ -1,6 +1,8 @@
 //! Custom title bar for the frameless window.
 //!
-//! Left: app name + version (`Synthos v<CARGO_PKG_VERSION>`).
+//! Left: app name + version (`Synthos v<CARGO_PKG_VERSION>`), пилюля стадии
+//! («beta») и номер сборки — `pkgrel` из `packaging/PKGBUILD`, который
+//! пробрасывает `build.rs`. По нему сразу видно, какая сборка запущена.
 //! Right: window controls — either the built-in Windows-style trio or, when
 //! «системные кнопки окна» is on, the buttons of the desktop's decoration
 //! theme (on KDE with an Aurorae theme they are drawn from its own SVGs, so
@@ -31,8 +33,33 @@ pub fn view() -> impl Widget {
     )
 }
 
+/// Номер сборки: пусто, если собирали вне репозитория (см. `build.rs`).
+const PKGREL: &str = env!("SYNTHOS_PKGREL");
+
 fn title_text() -> impl Widget {
-    Text::new(tr!("titlebar.title", version = env!("CARGO_PKG_VERSION"))).class("titlebar-title")
+    let mut row = Row::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            Text::new(tr!("titlebar.title", version = env!("CARGO_PKG_VERSION")))
+                .class("titlebar-title"),
+        )
+        .child(badge(tr!("titlebar.stage.beta"), "titlebar-badge-stage"));
+    if !PKGREL.is_empty() {
+        row = row.child(badge(format!("#{PKGREL}"), "titlebar-badge-build"));
+    }
+    row
+}
+
+/// Пилюля титлбара: подложка со скруглением и мелкий текст внутри.
+///
+/// `Center` обязателен — padding'а мало: он резервирует место, но не
+/// выравнивает текст, и в пилюле фиксированной высоты подпись оказывается
+/// не по центру. Тот же приём, что у `panel_header::icon_bubble`.
+fn badge(text: impl Into<String>, class: &'static str) -> impl Widget {
+    DecoratedBox::new().class(format!("titlebar-badge {class}")).child(
+        Center::new().child(Text::new(text.into()).max_lines(1).class("titlebar-badge-text")),
+    )
 }
 
 /// Встроенные кнопки — одинаковы на всех платформах.

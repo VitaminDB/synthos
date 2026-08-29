@@ -53,6 +53,39 @@ pub fn row_frame(
     )
 }
 
+/// Строка настроек без простыни текста: пояснение прячется в подсказку на
+/// иконке. Длинные описания в каждой строке превращали страницу в стену
+/// текста, из которой не выцепить сам контрол.
+pub fn row_tip(
+    icon: &'static str,
+    title: impl Into<String>,
+    tip: impl Into<String>,
+    control: Box<dyn Widget>,
+) -> Box<dyn Widget> {
+    use syngui::widgets::feedback::tooltip::Tooltip;
+    let head = Row::new()
+        .gap(16.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            DecoratedBox::new()
+                .class("settings-row-icon-wrap")
+                .child(Center::new().child(Icon::new(icon).class("settings-row-icon"))),
+        )
+        .child(Text::new(title).class("settings-row-title"));
+
+    let inner = Row::new()
+        .gap(16.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(DecoratedBox::new().class("grow").child(Tooltip::new(head, tip)))
+        .children(vec![control]);
+
+    Box::new(
+        DecoratedBox::new()
+            .class("settings-row")
+            .child(Padding::symmetric(24.0, 14.0).child(inner)),
+    )
+}
+
 /// Карточка с заголовком и стопкой строк-настроек.
 pub fn section_card(title: impl Into<String>, rows: Vec<Box<dyn Widget>>) -> Box<dyn Widget> {
     let card = DecoratedBox::new().class("settings-card").child(

@@ -118,7 +118,8 @@ fn load_model(path: PathBuf) {
     if reg.loading.get_untracked() {
         return;
     }
-    let policy = app.syn_chat_quant.get_untracked().to_policy();
+    let policy =
+        crate::config::resolve_model_profile(&app.model_profiles.get_untracked(), &path).policy;
     reg.load(path, policy);
     navigate("syn_chat");
 }

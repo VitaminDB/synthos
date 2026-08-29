@@ -123,32 +123,26 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             }
         });
 
-        // Quant-бейдж: подпись с текущей политикой квантования. Формат:
-        //   "Balance · NVFP4 / FP8 KV / F16 lm_head"
-        // Показывается только когда модель загружена (иначе политика
-        // ещё может измениться).
-        let quant_badge = if current.is_some() {
-            let q = use_context::<crate::context::AppCtx>().syn_chat_quant.get();
-            let preset_label = match q.preset.as_str() {
-                "quality" => tr!("chat.right.model.preset.quality"),
-                "balance" => tr!("chat.right.model.preset.balance"),
-                "vram_saver" => tr!("chat.right.model.preset.vram_saver"),
-                _ => tr!("chat.right.model.preset.custom"),
-            };
-            let kv_label = if q.kv_dtype == "fp8e4m3" {
-                "FP8 KV".to_string()
-            } else {
-                format!("{} KV", q.kv_dtype.to_uppercase())
-            };
-            Some(format!(
-                "{} · {} / {} / {} lm_head",
-                preset_label,
-                q.weights_storage.to_uppercase(),
-                kv_label,
-                q.lm_head_storage.to_uppercase()
-            ))
-        } else {
-            None
+        // Бейдж режима: что за настройки сейчас у загруженной модели.
+        //   "Оптимальный · NVFP4 / MXFP8 KV"
+        let quant_badge = match current.as_ref() {
+            Some(model) => {
+                let app = use_context::<crate::context::AppCtx>();
+                let profiles = app.model_profiles.get();
+                let profile = crate::config::model_profile_of(&profiles, &model.path);
+                let resolved = profile.resolve(&model.path);
+                let mode = if profile.is_custom() {
+                    tr!("settings.ai_models.mode.custom")
+                } else {
+                    tr!("settings.ai_models.mode.optimal")
+                };
+                Some(format!(
+                    "{mode} · {} / {} KV",
+                    crate::config::dtype_name(resolved.policy.weights_storage).to_uppercase(),
+                    resolved.policy.kv_dtype.name().to_uppercase(),
+                ))
+            }
+            None => None,
         };
 
         DecoratedBox::new()
@@ -564,7 +558,9 @@ fn section_title(text: impl Into<String>) -> impl Widget {
 fn load_from_any_thread(path: PathBuf) {
     syngui::async_runtime::run_on_main_thread(move || {
         let app_ctx = use_context::<crate::context::AppCtx>();
-        let policy = app_ctx.syn_chat_quant.get_untracked().to_policy();
+        let policy =
+            crate::config::resolve_model_profile(&app_ctx.model_profiles.get_untracked(), &path)
+                .policy;
         use_context::<SynModelRegistry>().load(path, policy);
     });
 }

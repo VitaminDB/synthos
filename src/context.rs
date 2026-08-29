@@ -14,7 +14,7 @@ use syngui::widgets::navigation::router::Router;
 
 use crate::agent::audio::AudioCtx;
 use crate::agent::tools::PendingApproval;
-use crate::config::{AudioModelConfig, SynChatQuantConfig};
+use crate::config::{AudioModelConfig, ModelProfileConfig};
 use crate::metrics::MetricsState;
 
 pub const ROUTES: &[&str] = &[
@@ -390,64 +390,24 @@ pub struct AppCtx {
     /// Default duration = 15s (per TASK.md). Используется как:
     /// `ctx.notifications.info("...")`, `.success(...)`, `.warning(...)`, `.error(...)`.
     pub notifications: syngui::widgets::feedback::NotificationCtx,
-    /// Политика квантования Qwen3.6 для Syn-чата (preset + per-component
-    /// dtypes). Сохраняется в `AppConfig.syn_chat_quant`. Применяется при
-    /// `SynModelRegistry::load(path)`: `cfg.to_policy()` → `load_qwen36`.
-    /// Изменения требуют ручного reload модели через Settings → AI Models.
-    pub syn_chat_quant: RwSignal<SynChatQuantConfig>,
+    /// Как настроена каждая модель: ключ — путь к бандлу, значение —
+    /// режим `optimal`/`custom` с переопределениями. Сохраняется в
+    /// `AppConfig.model_profiles`; применяется при загрузке модели
+    /// (`ModelProfileConfig::resolve`) и там же уходит в рантайм движка.
+    pub model_profiles: RwSignal<std::collections::BTreeMap<String, ModelProfileConfig>>,
     /// Потолок vision-токенов на одну картинку-вложение в чате.
     /// `0` — снять ограничение и довериться конфигу модели (у Muse Glimmer
     /// это 4096 токенов на картинку). Сохраняется в
     /// `AppConfig.syn_chat_max_image_tokens`, применяется к следующей
     /// отправке — перезагрузка модели не нужна.
     pub syn_chat_max_image_tokens: RwSignal<usize>,
-    /// Режим CUDA attention для `full_attention` слоёв Qwen3.6:
-    /// - `"off"` — reference softmax (без CUDA flash);
-    /// - `"fa2"` — FA-2 + Split-K без WMMA Tensor Cores;
-    /// - `"fa4"` — FA-2 + Split-K + WMMA (auto, default).
-    ///
-    /// Сохраняется в `AppConfig.qwen36_attn_mode`. Изменения применяются
-    /// без reload модели: эффект-handler в `lib.rs` маппит строку в
-    /// [`synaptix::facade::llm::FlashAttnMode`] и вызывает
-    /// [`synaptix::facade::llm::set_flash_attn_mode`].
-    pub qwen36_attn_mode: RwSignal<String>,
-    /// Phase D CUDA-graph decode для Qwen3.6. Когда ON — `generate(...)` и
-    /// `generate_streaming(...)` идут через `generate_with_graph` /
-    /// `generate_streaming_with_graph`: capture одного decode step + replay.
-    /// На short context ×1.45, на 23K ×1.16. Требует device, созданный через
-    /// `CudaDevice::new_with_stream` (см. `syn_chat::model_registry`).
-    ///
-    /// Сохраняется в `AppConfig.qwen36_graph_decode`. Изменения применяются
-    /// без reload модели через [`synaptix::facade::llm::set_graph_decode_enabled`]
-    /// в effect-handler'е `lib.rs`.
-    pub qwen36_graph_decode: RwSignal<bool>,
-    pub qwen36_mtp: RwSignal<bool>,
-    pub muse_dflash: RwSignal<bool>,
-    /// Phase B-1 fused `linear_attn` prep kernel (5 → 1 launch).
-    /// Bit-exact; default = `true`. Сохраняется в `AppConfig.qwen36_la_fused`,
-    /// применяется через [`synaptix::facade::llm::set_la_prep_fused_disabled`].
-    pub qwen36_la_fused: RwSignal<bool>,
-    /// Phase B-2 fused `gated_delta_rule` + `RmsNormGated` kernel.
-    /// Bit-exact; default = `true`. Сохраняется в `AppConfig.qwen36_gdr_fused`,
-    /// применяется через [`synaptix::facade::llm::set_gdr_fused_disabled`].
-    pub qwen36_gdr_fused: RwSignal<bool>,
-    /// Layer-sync режим (`"auto"` / `"on"` / `"off"`). Управляет
-    /// `cudaStreamSynchronize` после каждого decoder-слоя в forward'е
-    /// Qwen3.6. Auto = sync только когда T > 1 (prefill) — нулевая цена на
-    /// decode, +4 GB free на длинном prefill. Сохраняется в
-    /// `AppConfig.qwen36_layer_sync`, применяется через
-    /// [`synaptix::facade::llm::set_layer_sync_mode`].
-    pub qwen36_layer_sync: RwSignal<String>,
-    pub qwen36_nvfp4_mma: RwSignal<bool>,
-    pub qwen36_nvfp4_gemv: RwSignal<bool>,
-    /// Путь к ACE-Step «общему» bundle'у (xl-base или xl-turbo). Используется
-    /// нодами TextEncoder/LyricEncoder/TimbreEncoder/Sampler/ArLm для загрузки
-    /// TextProjector / LyricEncoder / TimbreEncoder / DiT / NullCondEmb /
     /// Каталог моделей всех пайплайнов (.syn/LoRA/HF-каталоги). Сохраняется
     /// в `AppConfig.models_dir`; читают агентский `pipelines list` и
     /// настройки. Резолв `~` — `config::resolve_models_dir`.
     pub models_dir: RwSignal<String>,
-    /// FSQ / Detokenizer. Сохраняется в `AppConfig.acestep_xl_bundle_path`.
+    /// Путь к ACE-Step «общему» bandle'у (xl-base или xl-turbo): DiT,
+    /// проектор, энкодеры, FSQ и детокенизатор. Сохраняется в
+    /// `AppConfig.acestep_xl_bundle_path`.
     pub acestep_xl_bundle_path: RwSignal<Option<String>>,
     /// Путь к ACE-Step VAE bundle'у (`acestep_vae.syn`). Используется нодами
     /// VaeEncode/VaeDecode. Сохраняется в `AppConfig.acestep_vae_bundle_path`.

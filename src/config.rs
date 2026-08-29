@@ -610,11 +610,6 @@ pub struct AppConfig {
     pub hf_skip_unwanted_formats: bool,
     #[serde(default = "default_hf_gguf_support")]
     pub hf_gguf_support: bool,
-    #[serde(default = "default_qwen36_mtp")]
-    pub qwen36_mtp: bool,
-    /// DFlash — блочная спекуляция Muse Glimmer на драфтере-ассистенте.
-    #[serde(default = "default_muse_dflash")]
-    pub muse_dflash: bool,
     /// Токен доступа HuggingFace (`hf_...`). Нужен для gated/private моделей
     /// (FLUX.1-dev, Llama и др.) и снимает rate-limit анонимных запросов.
     /// Создаётся на https://huggingface.co/settings/tokens (роль `read`).
@@ -686,40 +681,14 @@ pub struct AppConfig {
     /// ограничение и отдать решение конфигу модели.
     #[serde(default = "default_syn_chat_max_image_tokens")]
     pub syn_chat_max_image_tokens: usize,
-    /// Политика квантования модели Syn-чата (Qwen3.6). Конвертируется в
-    /// [`synaptix::facade::llm::QuantPolicy`] через [`SynChatQuantConfig::to_policy`].
+    /// Как настроена каждая модель: ключ — путь к бандлу. Режим `optimal`
+    /// значит «как решит движок»: он знает, какие пути у какой архитектуры
+    /// выверены замерами. `custom` кладёт поверх ручные правки — заполненные
+    /// поля перебивают выверенное, пустые остаются как в `optimal`.
+    ///
     /// Редактируется на странице Settings → AI Models.
     #[serde(default)]
-    pub syn_chat_quant: SynChatQuantConfig,
-    /// Режим CUDA attention для `full_attention` слоёв Qwen3.6:
-    /// - `"off"` — reference softmax (baseline, без CUDA flash);
-    /// - `"fa2"` — FA-2 + Split-K, БЕЗ WMMA Tensor Cores (скалярный mma);
-    /// - `"fa4"` — FA-2 + Split-K + WMMA в auto-режиме (наибыстрейший путь).
-    ///
-    /// Конвертируется в [`synaptix::facade::llm::FlashAttnMode`] и применяется через
-    /// [`synaptix::facade::llm::set_flash_attn_mode`]. Переключается в Settings →
-    /// AI Models → Inference (runtime). Default = `"fa4"`.
-    #[serde(default = "default_qwen36_attn_mode")]
-    pub qwen36_attn_mode: String,
-    /// Phase D — CUDA-graph decode для Qwen3.6. Capture'ит один decode step
-    /// через `generate_with_graph` / `generate_streaming_with_graph` и
-    /// replay'ит его на каждом следующем token'е — ×1.16 на 23K context,
-    /// ×1.45 на short. Применяется через
-    /// [`synaptix::facade::llm::set_graph_decode_enabled`]. Default = `false` пока что
-    /// (новая фича, прогоняем production-soak).
-    #[serde(default)]
-    pub qwen36_graph_decode: bool,
-    /// Phase B-1 — fused `linear_attn` prep kernel (sigmoid + softplus +
-    /// 3 × repeat_interleave_cast в один launch). Default = `true`
-    /// (bit-exact с старым путём, проверено `forward_raw_linear_attn_smoke`).
-    /// Применяется через [`synaptix::facade::llm::set_la_prep_fused_disabled`].
-    #[serde(default = "default_true")]
-    pub qwen36_la_fused: bool,
-    /// Phase B-2 — fused `gated_delta_rule` + `RmsNormGated` kernel. SSM-выход
-    /// в shared memory вместо global, RMS-фаза в том же block. Default =
-    /// `true`. Применяется через [`synaptix::facade::llm::set_gdr_fused_disabled`].
-    #[serde(default = "default_true")]
-    pub qwen36_gdr_fused: bool,
+    pub model_profiles: std::collections::BTreeMap<String, ModelProfileConfig>,
     /// Префикс-KV: держать посчитанный контекст диалога между ходами, чтобы
     /// ход дописывал в KV только новый хвост промпта, а не считал историю
     /// заново. Стоит VRAM (кэш живёт между ходами, ёмкость кратна 16384
@@ -728,25 +697,6 @@ pub struct AppConfig {
     /// Default = `true`.
     #[serde(default = "default_true")]
     pub syn_chat_prefix_kv: bool,
-    /// Размер chunk'а для prefill. Default = 256 (лимит пика VRAM активаций на
-    /// 24 GB GPU при ~1.5k ток/с). Движок принудительно округляет к кратному
-    /// 64 — границы чанков на некратных позициях ломают состояние GDN-скана.
-    /// Применяется через [`synaptix::facade::llm::set_prefill_chunk_size`].
-    /// Layer-sync режим (`"auto"` / `"on"` / `"off"`). Управляет
-    /// `cudaStreamSynchronize` после каждого decoder-слоя в forward'е Qwen3.6.
-    /// На prefill chunk=1024 без sync pool growth от intermediate тензоров
-    /// = +2-6 GB peak VRAM. Auto = sync только когда `T > 1` (prefill chunks)
-    /// — даёт всю экономию памяти без потери decode speed. On = всегда sync
-    /// (-5% decode, +4 GB free). Off = никогда (max speed, риск OOM на long
-    /// prompts). Конвертируется в [`synaptix::facade::llm::LayerSyncMode`] через
-    /// `FromStr`. Default = `"auto"`.
-    #[serde(default = "default_qwen36_layer_sync")]
-    pub qwen36_layer_sync: String,
-    /// Phase E.2 — native FP4 mma GEMV kernel (`nvfp4_mma_gemv_f16`) на
-    #[serde(default)]
-    pub qwen36_nvfp4_mma: bool,
-    #[serde(default)]
-    pub qwen36_nvfp4_gemv: bool,
     /// ACE-Step «общий» bundle с DiT + проектором + lyric_encoder +
     /// timbre_encoder + null_condition_emb + FSQ + Detokenizer (один из
     /// `acestep_v15_xl_base.syn` / `acestep_v15_xl_turbo.syn`). Используется
@@ -765,133 +715,146 @@ fn default_true() -> bool { true }
 // VRAM поверх ~18 ГБ весов 27B) при prefill ~1.5-1.6k ток/с; движок сам
 // округляет к кратному 64 (границы GDN-скана).
 
-fn default_qwen36_attn_mode() -> String { "fa4".into() }
-
-fn default_qwen36_layer_sync() -> String { "auto".into() }
-
 // ─────────────────────────────────────────────────────────────────────────────
-// SynChatQuantConfig — политика квантования Qwen3.6 для Syn-чата
+// ModelProfileConfig — как настроена одна модель
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Политика квантования модели Syn-чата. Хранит каждый dtype как строку
-/// (`"f16"`, `"bf16"`, `"nvfp4"`, `"fp8e4m3"`, ...) — стабильное представление
-/// для config.json, не зависящее от Rust-enum. Конвертация в типизированную
-/// [`synaptix::facade::llm::QuantPolicy`] — через [`Self::to_policy`].
+/// Настройки одной модели. `mode` — `"optimal"` или `"custom"`.
 ///
-/// `preset` — имя пресета (`"quality"` / `"balance"` / `"vram_saver"` /
-/// `"custom"`). При ручном изменении любого dtype-поля UI переключает на
-/// `"custom"`; пресеты заполняют все поля из [`synaptix::facade::llm::QuantPolicy`]
-/// helper-методов.
+/// В режиме `optimal` переопределения не читаются вовсе: настройки целиком
+/// берутся у движка, который знает, какие пути у какой архитектуры выверены
+/// замерами. В `custom` заполненные поля перебивают выверенное, пустые
+/// остаются как в `optimal` — поэтому «поправить одно» не тянет за собой
+/// остальное.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct SynChatQuantConfig {
-    pub preset: String,
-    /// Формат хранения весов attn/MLP linear-слоёв.
-    /// Допустимо: `"f32"`, `"bf16"`, `"f16"`, `"q8_0"`, `"q4_0"`, `"fp8e4m3"`, `"nvfp4"`.
-    pub weights_storage: String,
-    /// Dtype активаций между слоями. Допустимо: `"f32"`, `"bf16"`, `"f16"`.
-    pub compute: String,
-    /// KV-cache dtype. Допустимо: `"auto"`, `"f16"`, `"bf16"`, `"f32"`, `"fp8e4m3"`.
-    pub kv_dtype: String,
-    /// Формат хранения `lm_head` (выходная проекция в vocab).
-    /// `"nvfp4"` экономит ~1.9 GB VRAM, но требует chunked-launch kernel
-    /// (vocab>32768) — реализация в Фазе 3. FP8 E4M3 — native cuBLASLt FP8
-    /// GEMM, экономит ~1.2 GB при vocab=248K и accuracy ≈ F16.
-    pub lm_head_storage: String,
-    /// Формат хранения `embed_tokens`. Допустимо: `"f32"`/`"bf16"`/`"f16"`/
-    /// `"fp8e4m3"`/`"nvfp4"`. FP8 E4M3 — packed bytes + per-tensor scale +
-    /// custom gather kernel, экономит ~1.2 GB и accuracy ≈ F16. NVFP4 (Phase F)
-    /// экономит ~1.8 GB через FP4 nibbles + tile-major scales, но заметная
-    /// просадка качества — только для VRAM-Saver. Load-time setting,
-    /// требует перезагрузки модели.
-    pub embed_storage: String,
-    /// Tied embeddings (`lm_head` шарит веса с `embed_tokens`). Допустимо:
-    /// `"auto"` (читает `tie_word_embeddings` из JSON), `"on"` (force tied —
-    /// меняет числовой выход на untied checkpoint), `"off"` (force separate).
-    pub tied_embeddings: String,
-    /// Dtype SSM-recurrence state в Gated DeltaNet (linear-attention слои).
-    /// `"f32"` — default (соответствует HF `mamba_ssm_dtype`).
-    pub ssm_state_dtype: String,
-    /// Dtype conv1d-state в Gated DeltaNet.
-    pub conv_state_dtype: String,
+pub struct ModelProfileConfig {
+    pub mode: String,
+    pub weights_storage: Option<String>,
+    pub compute: Option<String>,
+    pub kv_dtype: Option<String>,
+    pub lm_head_storage: Option<String>,
+    pub embed_storage: Option<String>,
+    pub graph_decode: Option<bool>,
+    pub speculation: Option<bool>,
+    pub layer_sync: Option<String>,
 }
 
-impl Default for SynChatQuantConfig {
+impl Default for ModelProfileConfig {
     fn default() -> Self {
-        // По умолчанию — preset Balance: NVFP4 backbone + FP8 E4M3 lm_head/embed
-        // (≈ F16 accuracy, ~2.4 GB экономии = 65K контекста на 24 GB GPU).
-        // NVFP4 lm_head/embed доступен через preset `vram_saver` (~1.8 GB
-        // дополнительной экономии ценой заметной просадки качества).
         Self {
-            preset: "balance".into(),
-            weights_storage: "nvfp4".into(),
-            compute: "f16".into(),
-            kv_dtype: "f16".into(),
-            lm_head_storage: "fp8e4m3".into(),
-            embed_storage: "fp8e4m3".into(),
-            tied_embeddings: "auto".into(),
-            ssm_state_dtype: "f32".into(),
-            conv_state_dtype: "f16".into(),
+            mode: "optimal".into(),
+            weights_storage: None,
+            compute: None,
+            kv_dtype: None,
+            lm_head_storage: None,
+            embed_storage: None,
+            graph_decode: None,
+            speculation: None,
+            layer_sync: None,
         }
     }
 }
 
-impl SynChatQuantConfig {
-    /// Заполнить из встроенного пресета. Известные имена: `"quality"`,
-    /// `"balance"`, `"vram_saver"`. Неизвестные имена — возвращает Custom-копию
-    /// (preset_name выставляется как passed).
-    pub fn from_preset(name: &str) -> Self {
-        use synaptix::facade::llm::QuantPolicy;
-        let policy = match name {
-            "quality" => QuantPolicy::quality(),
-            "balance" => QuantPolicy::balance(),
-            "vram_saver" => QuantPolicy::vram_saver(),
-            _ => QuantPolicy::balance(),
+/// Настройки модели после разрешения: что движок посчитал выверенным, с
+/// наложенными правками пользователя.
+#[derive(Debug, Clone)]
+pub struct ResolvedProfile {
+    pub policy: synaptix::facade::llm::QuantPolicy,
+    pub graph_decode: bool,
+    pub speculation: bool,
+    pub layer_sync: synaptix::facade::llm::LayerSyncMode,
+}
+
+impl ResolvedProfile {
+    /// Применить рантайм-часть профиля. Квант-политика так не применяется —
+    /// она нужна при загрузке весов.
+    pub fn apply_runtime(&self) {
+        use synaptix::facade::llm as f;
+        f::set_graph_decode_enabled(self.graph_decode);
+        f::set_mtp_enabled(self.speculation);
+        f::set_dflash_enabled(self.speculation);
+        f::set_layer_sync_mode(self.layer_sync);
+    }
+}
+
+impl ModelProfileConfig {
+    pub fn is_custom(&self) -> bool {
+        self.mode == "custom"
+    }
+
+    /// Выверенные движком настройки под этот бандл плюс ручные правки, если
+    /// режим `custom`.
+    pub fn resolve(&self, path: &std::path::Path) -> ResolvedProfile {
+        use synaptix::facade::llm::{KvDtypePolicy, LayerSyncMode};
+        let opt = synaptix::facade::llm::optimal_profile(path);
+        let mut out = ResolvedProfile {
+            policy: opt.policy,
+            graph_decode: opt.graph_decode,
+            speculation: opt.speculation,
+            layer_sync: opt.layer_sync,
         };
-        let mut cfg = Self::from_policy(&policy);
-        if name != cfg.preset {
-            cfg.preset = name.into();
+        if !self.is_custom() {
+            return out;
         }
-        cfg
+        if let Some(v) = &self.weights_storage {
+            out.policy.weights_storage = parse_storage_dtype(v, out.policy.weights_storage);
+        }
+        if let Some(v) = &self.compute {
+            out.policy.compute = parse_compute_dtype(v, out.policy.compute);
+        }
+        if let Some(v) = &self.kv_dtype {
+            if let Some(kv) = KvDtypePolicy::from_name(v) {
+                out.policy.kv_dtype = kv;
+            }
+        }
+        if let Some(v) = &self.lm_head_storage {
+            out.policy.lm_head_storage = parse_storage_dtype(v, out.policy.lm_head_storage);
+        }
+        if let Some(v) = &self.embed_storage {
+            out.policy.embed_storage = parse_storage_dtype(v, out.policy.embed_storage);
+        }
+        if let Some(v) = self.graph_decode {
+            out.graph_decode = v;
+        }
+        if let Some(v) = self.speculation {
+            out.speculation = v;
+        }
+        if let Some(v) = &self.layer_sync {
+            if let Ok(m) = v.parse::<LayerSyncMode>() {
+                out.layer_sync = m;
+            }
+        }
+        out.policy.preset_name = "custom".into();
+        out
     }
 
-    /// Сконвертировать в типизированную `Qwen36QuantPolicy`. Неизвестные
-    /// строковые значения dtype → fallback на default из преcета `balance`.
-    pub fn to_policy(&self) -> synaptix::facade::llm::QuantPolicy {
-        use synaptix::facade::llm::{KvDtypePolicy, QuantPolicy, TiedEmbeddingsMode};
-
-        let fallback = QuantPolicy::balance();
-        QuantPolicy {
-            weights_storage: parse_storage_dtype(&self.weights_storage, fallback.weights_storage),
-            compute: parse_compute_dtype(&self.compute, fallback.compute),
-            kv_dtype: KvDtypePolicy::from_name(&self.kv_dtype).unwrap_or(fallback.kv_dtype),
-            lm_head_storage: parse_storage_dtype(&self.lm_head_storage, fallback.lm_head_storage),
-            embed_storage: parse_storage_dtype(&self.embed_storage, fallback.embed_storage),
-            tied_embeddings: TiedEmbeddingsMode::from_name(&self.tied_embeddings)
-                .unwrap_or(fallback.tied_embeddings),
-            ssm_state_dtype: KvDtypePolicy::from_name(&self.ssm_state_dtype)
-                .unwrap_or(fallback.ssm_state_dtype),
-            conv_state_dtype: KvDtypePolicy::from_name(&self.conv_state_dtype)
-                .unwrap_or(fallback.conv_state_dtype),
-            preset_name: self.preset.clone(),
-        }
+    /// Значение поля для UI: своё, если задано, иначе выверенное движком.
+    pub fn effective_storage(&self, path: &std::path::Path) -> ResolvedProfile {
+        self.resolve(path)
     }
+}
 
-    /// Обратная конвертация типизированной policy → строковая конфигурация
-    /// для UI/persist.
-    pub fn from_policy(policy: &synaptix::facade::llm::QuantPolicy) -> Self {
-        Self {
-            preset: policy.preset_name.clone(),
-            weights_storage: dtype_name(policy.weights_storage).into(),
-            compute: dtype_name(policy.compute).into(),
-            kv_dtype: policy.kv_dtype.name().into(),
-            lm_head_storage: dtype_name(policy.lm_head_storage).into(),
-            embed_storage: dtype_name(policy.embed_storage).into(),
-            tied_embeddings: policy.tied_embeddings.name().into(),
-            ssm_state_dtype: policy.ssm_state_dtype.name().into(),
-            conv_state_dtype: policy.conv_state_dtype.name().into(),
-        }
-    }
+/// Профиль модели по её пути: своя запись или `optimal` по умолчанию.
+pub fn model_profile_of(
+    profiles: &std::collections::BTreeMap<String, ModelProfileConfig>,
+    path: &std::path::Path,
+) -> ModelProfileConfig {
+    profiles
+        .get(&path.display().to_string())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Разрешённый профиль модели: выверенное движком плюс ручные правки. Сразу
+/// применяет рантайм-часть — дальше остаётся отдать `policy` загрузчику.
+pub fn resolve_model_profile(
+    profiles: &std::collections::BTreeMap<String, ModelProfileConfig>,
+    path: &std::path::Path,
+) -> ResolvedProfile {
+    let resolved = model_profile_of(profiles, path).resolve(path);
+    resolved.apply_runtime();
+    resolved
 }
 
 /// Парсер строки storage-dtype → `synaptix_core::dtype::DType`. Quantized
@@ -917,7 +880,7 @@ fn parse_compute_dtype(s: &str, fallback: synaptix_core::dtype::DType) -> synapt
 }
 
 /// `synaptix_core::dtype::DType` → стабильная строка для config.json/UI.
-fn dtype_name(dt: synaptix_core::dtype::DType) -> &'static str {
+pub fn dtype_name(dt: synaptix_core::dtype::DType) -> &'static str {
     use synaptix_core::dtype::DType;
     match dt {
         DType::F32 => "f32",
@@ -1178,8 +1141,6 @@ impl Default for AppConfig {
             hf_speed_limit_mbps: default_hf_speed_limit_mbps(),
             hf_skip_unwanted_formats: default_hf_skip_unwanted_formats(),
             hf_gguf_support: default_hf_gguf_support(),
-            qwen36_mtp: default_qwen36_mtp(),
-            muse_dflash: default_muse_dflash(),
             hf_token: String::new(),
             syn_chat_defaults: SamplingParams::default(),
             last_syn_model: None,
@@ -1195,15 +1156,8 @@ impl Default for AppConfig {
             rail_order: Vec::new(),
             syn_chat_system_prompt: String::new(),
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
-            syn_chat_quant: SynChatQuantConfig::default(),
-            qwen36_attn_mode: default_qwen36_attn_mode(),
-            qwen36_graph_decode: false,
-            qwen36_la_fused: true,
-            qwen36_gdr_fused: true,
-            syn_chat_prefix_kv: true,
-            qwen36_layer_sync: default_qwen36_layer_sync(),
-            qwen36_nvfp4_mma: false,
-            qwen36_nvfp4_gemv: false,
+            model_profiles: std::collections::BTreeMap::new(),
+            syn_chat_prefix_kv: default_true(),
             acestep_xl_bundle_path: None,
             acestep_vae_bundle_path: None,
             models_dir: default_models_dir(),
@@ -1216,8 +1170,6 @@ fn default_hf_segments_per_file() -> u32 { 4 }
 fn default_hf_speed_limit_mbps() -> u32 { 0 }
 fn default_hf_skip_unwanted_formats() -> bool { true }
 fn default_hf_gguf_support() -> bool { false }
-fn default_qwen36_mtp() -> bool { true }
-fn default_muse_dflash() -> bool { true }
 
 /// Дефолт потолка vision-токенов на картинку — см. `syn_chat_max_image_tokens`.
 pub fn default_syn_chat_max_image_tokens() -> usize {

@@ -416,17 +416,8 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let terminal_font_size = use_signal(saved.terminal_font_size);
     let code_editor_font_family = use_signal(saved.code_editor_font_family.clone());
     let code_editor_font_size = use_signal(saved.code_editor_font_size);
-    let syn_chat_quant = use_signal(saved.syn_chat_quant.clone());
+    let model_profiles = use_signal(saved.model_profiles.clone());
     let syn_chat_max_image_tokens = use_signal(saved.syn_chat_max_image_tokens);
-    let qwen36_attn_mode = use_signal(saved.qwen36_attn_mode.clone());
-    let qwen36_graph_decode = use_signal(saved.qwen36_graph_decode);
-    let qwen36_mtp = use_signal(saved.qwen36_mtp);
-    let muse_dflash = use_signal(saved.muse_dflash);
-    let qwen36_la_fused = use_signal(saved.qwen36_la_fused);
-    let qwen36_gdr_fused = use_signal(saved.qwen36_gdr_fused);
-    let qwen36_layer_sync = use_signal(saved.qwen36_layer_sync.clone());
-    let qwen36_nvfp4_mma = use_signal(saved.qwen36_nvfp4_mma);
-    let qwen36_nvfp4_gemv = use_signal(saved.qwen36_nvfp4_gemv);
     let acestep_xl_bundle_path = use_signal(saved.acestep_xl_bundle_path.clone());
     let acestep_vae_bundle_path = use_signal(saved.acestep_vae_bundle_path.clone());
     let models_dir = use_signal(saved.models_dir.clone());
@@ -438,15 +429,9 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let settings_left_split_ratio = use_signal(saved.settings_left_split_ratio);
     let settings_right_split_ratio = use_signal(saved.settings_right_split_ratio);
 
-    // Применить режим к глобальному runtime-state llm-qwen36 при старте.
-    // Сигнал-driven sync с runtime — ниже в `create_effect` после `ctx`.
-    synaptix::facade::llm::set_flash_attn_mode(parse_attn_mode(&saved.qwen36_attn_mode));
-    synaptix::facade::llm::set_graph_decode_enabled(saved.qwen36_graph_decode);
-    synaptix::facade::llm::set_mtp_enabled(saved.qwen36_mtp);
-    synaptix::facade::llm::set_dflash_enabled(saved.muse_dflash);
-    synaptix::facade::llm::set_la_prep_fused_disabled(!saved.qwen36_la_fused);
-    synaptix::facade::llm::set_gdr_fused_disabled(!saved.qwen36_gdr_fused);
-    synaptix::facade::llm::set_layer_sync_mode(parse_layer_sync_mode(&saved.qwen36_layer_sync));
+    // Рантайм-часть профиля выставляется не здесь, а при загрузке модели:
+    // выверенные пути у каждой архитектуры свои, и глобальные тумблеры
+    // ровно этим и мешали (`ModelProfileConfig::resolve`).
 
     let ctx = AppCtx {
         theme_key,
@@ -474,17 +459,8 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         code_editor_font_size,
         kb,
         notifications,
-        syn_chat_quant,
+        model_profiles,
         syn_chat_max_image_tokens,
-        qwen36_attn_mode,
-        qwen36_graph_decode,
-        qwen36_mtp,
-        muse_dflash,
-        qwen36_la_fused,
-        qwen36_gdr_fused,
-        qwen36_layer_sync,
-        qwen36_nvfp4_mma,
-        qwen36_nvfp4_gemv,
         models_dir,
         acestep_xl_bundle_path,
         acestep_vae_bundle_path,
@@ -576,17 +552,8 @@ fn install_config_autosave(ctx: &AppCtx) {
     let code_editor_font_family = ctx.code_editor_font_family;
     let code_editor_font_size = ctx.code_editor_font_size;
     let kb_auto_augment = ctx.kb.auto_augment;
-    let syn_chat_quant = ctx.syn_chat_quant;
+    let model_profiles = ctx.model_profiles;
     let syn_chat_max_image_tokens = ctx.syn_chat_max_image_tokens;
-    let qwen36_attn_mode = ctx.qwen36_attn_mode;
-    let qwen36_graph_decode = ctx.qwen36_graph_decode;
-    let qwen36_mtp = ctx.qwen36_mtp;
-    let muse_dflash = ctx.muse_dflash;
-    let qwen36_la_fused = ctx.qwen36_la_fused;
-    let qwen36_gdr_fused = ctx.qwen36_gdr_fused;
-    let qwen36_layer_sync = ctx.qwen36_layer_sync;
-    let qwen36_nvfp4_mma = ctx.qwen36_nvfp4_mma;
-    let qwen36_nvfp4_gemv = ctx.qwen36_nvfp4_gemv;
     let acestep_xl_bundle_path = ctx.acestep_xl_bundle_path;
     let acestep_vae_bundle_path = ctx.acestep_vae_bundle_path;
     let models_dir_sig = ctx.models_dir;
@@ -719,17 +686,8 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_gguf_support: hf.gguf_support.get(),
 
             hf_token: hf.token.get(),
-            syn_chat_quant: syn_chat_quant.get(),
+            model_profiles: model_profiles.get(),
             syn_chat_max_image_tokens: syn_chat_max_image_tokens.get(),
-            qwen36_attn_mode: qwen36_attn_mode.get(),
-            qwen36_graph_decode: qwen36_graph_decode.get(),
-            qwen36_mtp: qwen36_mtp.get(),
-            muse_dflash: muse_dflash.get(),
-            qwen36_la_fused: qwen36_la_fused.get(),
-            qwen36_gdr_fused: qwen36_gdr_fused.get(),
-            qwen36_layer_sync: qwen36_layer_sync.get(),
-            qwen36_nvfp4_mma: qwen36_nvfp4_mma.get(),
-            qwen36_nvfp4_gemv: qwen36_nvfp4_gemv.get(),
             acestep_xl_bundle_path: acestep_xl_bundle_path.get(),
             acestep_vae_bundle_path: acestep_vae_bundle_path.get(),
             models_dir: models_dir_sig.get(),
@@ -756,48 +714,6 @@ fn install_config_autosave(ctx: &AppCtx) {
         cfg.save();
     });
 
-    // Sync UI dropdown → глобальный runtime-флаг llm-qwen36. Применяется
-    // мгновенно к следующему `GatedAttention::forward`, без reload модели
-    // и без пересоздания KV-кэша.
-    create_effect(move || {
-        let mode_str = qwen36_attn_mode.get();
-        synaptix::facade::llm::set_flash_attn_mode(parse_attn_mode(&mode_str));
-    });
-    // Phase D toggle: применяется к следующему `generate(...)` /
-    // `generate_streaming(...)` без reload. Требует device, созданный через
-    // `CudaDevice::new_with_stream` (см. `syn_chat::model_registry`).
-    create_effect(move || {
-        let on = qwen36_graph_decode.get();
-        synaptix::facade::llm::set_graph_decode_enabled(on);
-    });
-    create_effect(move || {
-        let on = qwen36_mtp.get();
-        synaptix::facade::llm::set_mtp_enabled(on);
-    });
-    // DFlash-драфтер Muse Glimmer: флаг читается и при загрузке модели
-    // (подключать ли драфтер), и на каждом ответе (использовать ли его).
-    create_effect(move || {
-        let on = muse_dflash.get();
-        synaptix::facade::llm::set_dflash_enabled(on);
-    });
-    // Phase B-1/B-2 fused kernels — runtime toggle для linear_attn слоёв
-    // (применяется в `forward_raw_linear_attn_step`). Без reload.
-    create_effect(move || {
-        synaptix::facade::llm::set_la_prep_fused_disabled(!qwen36_la_fused.get());
-    });
-    create_effect(move || {
-        synaptix::facade::llm::set_gdr_fused_disabled(!qwen36_gdr_fused.get());
-    });
-    // Prefill chunk: применяется к следующему `prefill_chunked` (тот читает
-    // `runtime_flags::prefill_chunk_size()` на каждом запуске).
-    create_effect(move || {
-    });
-    // Layer-sync: применяется к следующему `Qwen36Model::forward` (тот читает
-    // `runtime_flags::layer_sync_should_apply(T)` на каждом запуске).
-    create_effect(move || {
-        let mode_str = qwen36_layer_sync.get();
-        synaptix::facade::llm::set_layer_sync_mode(parse_layer_sync_mode(&mode_str));
-    });
     // Sync HF-токен (Settings → HuggingFace) → api-слой (Authorization: Bearer).
     // Применяется к следующему HF-запросу без перезапуска. Стартовая установка —
     // в `HuggingFaceCtx::new`; этот эффект ловит правки поля в Settings.
@@ -963,15 +879,9 @@ fn install_workspace_autosave() {
 /// Маппинг строки из `AppConfig.qwen36_attn_mode` в [`synaptix::facade::llm::FlashAttnMode`].
 /// Невалидные/legacy-значения (включая старые bool `"true"`/`"false"`) трактуются
 /// как `Fa4` — наибыстрейший путь.
-fn parse_attn_mode(s: &str) -> synaptix::facade::llm::FlashAttnMode {
-    s.parse().unwrap_or(synaptix::facade::llm::FlashAttnMode::Fa4)
-}
 
 /// Парсит строковый layer-sync режим из конфига (`"auto"`/`"on"`/`"off"`).
 /// Невалидные значения → `Auto` (безопасный default).
-fn parse_layer_sync_mode(s: &str) -> synaptix::facade::llm::LayerSyncMode {
-    s.parse().unwrap_or(synaptix::facade::llm::LayerSyncMode::Auto)
-}
 
 fn workspace_fingerprint(s: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;

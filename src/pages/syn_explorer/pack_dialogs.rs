@@ -167,7 +167,7 @@ fn plan_summary(plan: &PackPlan, wizard: PackWizard) -> impl Widget {
     let id = wizard.id.get_untracked();
     let title = if id.is_empty() { plan.meta.id.clone() } else { id };
     let subtitle = summary_line(plan);
-    let source = plan.root.display().to_string();
+    let source = crate::paths::pretty(&plan.root);
 
     let out_row = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         vec![Box::new(out_path_row(wizard))]
@@ -180,7 +180,7 @@ fn plan_summary(plan: &PackPlan, wizard: PackWizard) -> impl Widget {
         .child(move || Text::new(subtitle.clone()).class("syn-pack-summary-line"))
         .child(move || {
             Text::new(tr!("explorer.pack.source", path = source.clone()))
-                .max_lines(1)
+                .elide(Elide::Middle)
                 .class("syn-dialog-path")
         });
 
@@ -263,7 +263,7 @@ fn summary_line(plan: &PackPlan) -> String {
 fn out_path_row(wizard: PackWizard) -> impl Widget {
     let out = wizard.out_path.get();
     let label = match &out {
-        Some(p) => p.display().to_string(),
+        Some(p) => crate::paths::pretty(p),
         None => tr!("explorer.dialog.new_package.not_selected"),
     };
     let space = out
@@ -284,7 +284,7 @@ fn out_path_row(wizard: PackWizard) -> impl Widget {
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Start)
                     .class("grow") => [
-                        Text::new(label).max_lines(1).class("syn-dialog-path"),
+                        Text::new(label).elide(Elide::Middle).class("syn-dialog-path"),
                         Text::new(space).class("syn-pack-space"),
                     ],
             ]

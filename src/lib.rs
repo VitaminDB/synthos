@@ -25,6 +25,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod models;
 pub mod pages;
+pub mod paths;
 pub mod rail;
 pub mod search;
 pub mod skills;

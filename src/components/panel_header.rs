@@ -18,6 +18,8 @@
 //!
 //! Классы: `.panel-header*` в `styles/components/panel_header.mss`.
 
+use std::path::Path;
+
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
@@ -146,9 +148,15 @@ pub fn identity(
     title: impl Widget + 'static,
     subtitle: impl Widget + 'static,
 ) -> Box<dyn Widget> {
+    // `.panel-header-identity-info` — это `flex-grow: 1`. Без него Row меряет
+    // колонку с `max_width = INFINITY` (см. `measure_row`: не-flex дети
+    // получают бесконечную ширину), Text считает, что места сколько угодно,
+    // и `max_lines(1)`/`elide` не срабатывают — длинный текст просто
+    // вылезает за границу панели.
     let info = Column::new()
         .gap(1.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
+        .class("panel-header-identity-info")
         .child(title)
         .child(subtitle);
     Box::new(mgui! {
@@ -169,6 +177,26 @@ pub fn identity_text(icon: &'static str, title: String, subtitle: String) -> Box
         Text::new(title).max_lines(1).class("panel-header-title"),
         Text::new(subtitle).max_lines(1).class("panel-header-subtitle"),
     )
+}
+
+/// Идентичность, у которой подзаголовок — путь: он сжимается по середине
+/// ([`Elide::Middle`]), а полный путь показывается в tooltip.
+pub fn identity_path(icon: &'static str, title: String, path: &Path) -> Box<dyn Widget> {
+    let full = path.display().to_string();
+    let inner = identity(
+        icon_bubble(icon),
+        Text::new(title).max_lines(1).class("panel-header-title"),
+        subtitle_path(path),
+    );
+    Box::new(Tooltip::new(Stack::new().children(vec![inner]), full))
+}
+
+/// Подзаголовок-путь: `$HOME` заменяется на `~`, середина схлопывается по
+/// сегментам (`~/…/2027/synthos`), когда панель узкая.
+pub fn subtitle_path(path: &Path) -> impl Widget {
+    Text::new(crate::paths::pretty(path))
+        .elide(Elide::Middle)
+        .class("panel-header-subtitle")
 }
 
 /// Круглая подложка с иконкой — визуальный аналог аватара чата.

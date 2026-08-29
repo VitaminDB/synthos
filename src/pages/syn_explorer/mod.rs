@@ -105,7 +105,7 @@ fn identity_reactive() -> Stack {
     let ctx = use_context::<SynExplorerCtx>();
     let active = ctx.active_bundle.get();
     let load_state = ctx.load_state.get();
-    let (title, subtitle) = match active {
+    let identity = match active {
         Some(b) => {
             let path = b.path.get();
             let dirty = b.dirty.get();
@@ -113,17 +113,21 @@ fn identity_reactive() -> Stack {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.display().to_string());
-            let sub = toolbar::status_text(load_state, dirty)
-                .unwrap_or_else(|| path.display().to_string());
-            (name, sub)
+            // Пока идёт загрузка, в подзаголовке статус; в покое — путь к
+            // пакету, который сжимается по середине.
+            match toolbar::status_text(load_state, dirty) {
+                Some(status) => panel_header::identity_text(MI_INVENTORY_2, name, status),
+                None => panel_header::identity_path(MI_INVENTORY_2, name, &path),
+            }
         }
-        None => (
+        None => panel_header::identity_text(
+            MI_INVENTORY_2,
             tr!("nav.syn_explorer"),
             toolbar::status_text(load_state, false)
                 .unwrap_or_else(|| tr!("explorer.header.no_bundle")),
         ),
     };
-    expand(panel_header::identity_text(MI_INVENTORY_2, title, subtitle))
+    expand(identity)
 }
 
 /// Центр страницы — Reactive, который рисует табы/контент когда пакет открыт,

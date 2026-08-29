@@ -50,10 +50,7 @@ pub fn header_identity() -> impl Widget {
                     .as_ref()
                     .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                     .unwrap_or_else(|| tr!("code.editor.no_file_selected"));
-                let dir = active
-                    .as_ref()
-                    .and_then(|p| p.parent().map(|d| d.display().to_string()))
-                    .unwrap_or_default();
+                let dir = active.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
                 let dirty = active
                     .as_ref()
                     .map(|p| is_dirty(&contents, &disk, p))
@@ -81,10 +78,16 @@ pub fn header_identity() -> impl Widget {
                         DecoratedBox::new().class(dirty_class),
                     ]
                 };
+                // Каталог файла сжимаем по середине — в узком центре
+                // хвост пути важнее начала.
+                let subtitle: Box<dyn Widget> = match dir {
+                    Some(d) => Box::new(panel_header::subtitle_path(&d)),
+                    None => Box::new(panel_header::subtitle_text("")),
+                };
                 panel_header::identity(
                     Icon::new(header_icon).class(header_icon_class),
                     title,
-                    Text::new(dir).max_lines(1).class("panel-header-subtitle"),
+                    Stack::new().children(vec![subtitle]),
                 )
             }
         };

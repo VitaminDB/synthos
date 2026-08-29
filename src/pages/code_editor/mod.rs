@@ -139,14 +139,17 @@ fn left_header(session: state::CodeSession) -> impl Widget {
     let identity = DecoratedBox::new().class("grow").child(move || {
         let code = use_context::<CodeEditorCtx>();
         let _ = code.session_gen.get();
-        let (icon, title, subtitle) = match session.root_folder.get() {
-            Some(path) => (
-                MI_FOLDER,
-                path.file_name()
+        // Путь к корню — подзаголовок с сжатием середины: в узкой панели
+        // `/home/master/Projects/2027/synthos` превращается в
+        // `~/…/2027/synthos`, полный путь остаётся в tooltip.
+        let identity = match session.root_folder.get() {
+            Some(path) => {
+                let title = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.display().to_string()),
-                path.display().to_string(),
-            ),
+                    .unwrap_or_else(|| path.display().to_string());
+                panel_header::identity_path(MI_FOLDER, title, &path)
+            }
             None => {
                 let idx = code
                     .sessions
@@ -154,14 +157,14 @@ fn left_header(session: state::CodeSession) -> impl Widget {
                     .iter()
                     .position(|x| x.id == session.id)
                     .unwrap_or(0);
-                (
+                panel_header::identity_text(
                     MI_DESCRIPTION,
                     tr!("nav.session.unnamed", n = idx + 1),
                     tr!("code.header.no_folder"),
                 )
             }
         };
-        expand(panel_header::identity_text(icon, title, subtitle))
+        expand(identity)
     });
     mgui! {
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [

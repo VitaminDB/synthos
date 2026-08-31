@@ -43,7 +43,10 @@ fn panel_body() -> impl Widget {
                 .gap(10.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                    Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Row::new()
+                        .gap(8.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .class("input-toolbar-left") => [
                         attach_button(),
                         pending_hint_reactive(),
                     ],
@@ -242,8 +245,11 @@ fn pending_hint_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             (String::new(), "input-hint")
         };
 
+        // max_lines — жёсткий потолок высоты подсказки: длинный текст
+        // ошибки переносится (ширину даёт `flex-grow` левой группы) и
+        // обрезается многоточием, а не растит панель на пол-экрана.
         DecoratedBox::new()
-            .child(Text::new(txt).class("input-hint-text"))
+            .child(Text::new(txt).max_lines(3).class("input-hint-text"))
             .class(class)
     }
 }

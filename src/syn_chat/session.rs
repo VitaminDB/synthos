@@ -154,23 +154,41 @@ pub fn drop_kv_session() {
     }
 }
 
+/// Подходит ли уже живущая сессия под этот ход.
+///
+/// Сравнивать надо с тем, что ходу НУЖНО (`need_ctx` — промпт, ответ и
+/// хвост), а не с тем, сколько мы хотели бы выделить: `want_ctx` растёт
+/// вслед за свободной VRAM, и пока условие смотрело на него, кэш выбрасывался
+/// от того, что памяти стало БОЛЬШЕ. В журнале это выглядело так: сессия на
+/// 27056 токенов, промпт 9112, ринг 20480 — всё влезало, но бюджет подрос,
+/// `want_ctx` подскочил до 32768, кэш пересоздали и ход заплатил 11.9 с
+/// полного префилла на ровном месте.
+fn kv_slot_fits(slot: &KvSlot, model_path: &std::path::Path, chat: &Option<String>, need_ctx: usize) -> bool {
+    slot.model == model_path && &slot.chat == chat && slot.session.ctx_tokens() >= need_ctx
+}
+
 /// Взять сессию под этот чат/модель, создав или пересоздав при необходимости.
 /// `None` — префикс-KV недоступен (архитектура или нехватка VRAM), вызывающий
 /// работает как раньше.
+///
+/// `need_ctx` — минимум под этот ход, `want_ctx` — ёмкость, которую берём при
+/// пересоздании (с запасом, см. [`SESSION_CTX_STEP`]).
 fn ensure_kv_slot<'a>(
     slot: &'a mut Option<KvSlot>,
     model: &LoadedSynModel,
     chat: &Option<String>,
+    need_ctx: usize,
     want_ctx: usize,
     max_new: usize,
 ) -> Option<&'a mut LlmKvSession> {
-    let fits = slot.as_ref().is_some_and(|s| {
-        s.model == model.path && &s.chat == chat && s.session.ctx_tokens() >= want_ctx
-    });
+    let fits = slot
+        .as_ref()
+        .is_some_and(|s| kv_slot_fits(s, &model.path, chat, need_ctx));
     if !fits {
         if let Some(old) = slot.take() {
             log::info!(
-                "[syn_chat] префикс-KV: пересоздаём кэш (было {} ток, нужно ≥{want_ctx})",
+                "[syn_chat] префикс-KV: пересоздаём кэш (было {} ток, ходу нужно \
+                 ≥{need_ctx}, берём {want_ctx})",
                 old.session.ctx_tokens()
             );
             drop(old);
@@ -324,6 +342,10 @@ const RING_GRANULARITY: usize = 4096;
 pub(crate) const MAX_OOM_RETRIES: usize = 3;
 /// Бюджет ответа, ниже которого ретраить уже нечем.
 pub(crate) const MIN_ANSWER_TOKENS: usize = 512;
+/// Сколько просим у отдаваемых кэшей на первом OOM-ретрае. Меньше
+/// полугигабайта просить бессмысленно: и пул, и арена экспертов возвращают
+/// драйверу целыми блоками.
+const RECLAIM_ON_OOM_MB: usize = 1024;
 
 /// Расчёт KV-ринга на один ход: сколько токенов сажаем в кэш и сколько из них
 /// остаётся под ответ.
@@ -363,19 +385,38 @@ impl RingPlan {
         session_held_mb: usize,
     ) -> Self {
         let cap = model_cap.saturating_sub(1);
-        let kv_per_token = model.model.kv_bytes_per_token();
         // Кэш префикс-KV держит VRAM прямо сейчас, но при пересоздании
         // освобождается ДО новой аллокации — иначе бюджет занижался бы ровно на
         // размер уже живущего кэша и контекст перестал бы расти.
         let vram_available_mb =
             crate::syn_chat::model_registry::vram_available_mb() + session_held_mb;
-        let by_mem = if kv_per_token > 0 {
+        Self::compute(
+            prompt_tokens,
+            answer_tokens,
+            model_cap,
+            model.model.kv_bytes_per_token(),
             // Sliding-слои на ring-KV держат окно постоянного размера — оно не
-            // входит в ставку «на токен», но VRAM занимает; вычитаем до
-            // деления, иначе бюджет завышен ровно на сумму окон.
-            let fixed = model.model.kv_fixed_bytes(cap);
+            // входит в ставку «на токен», но VRAM занимает.
+            model.model.kv_fixed_bytes(cap),
+            vram_available_mb,
+        )
+    }
+
+    /// Арифметика плана — без модели, чтобы её можно было проверить тестом.
+    pub(crate) fn compute(
+        prompt_tokens: usize,
+        answer_tokens: usize,
+        model_cap: usize,
+        kv_per_token: usize,
+        kv_fixed_bytes: usize,
+        vram_available_mb: usize,
+    ) -> Self {
+        let cap = model_cap.saturating_sub(1);
+        let by_mem = if kv_per_token > 0 {
+            // Постоянные ring-окна вычитаем до деления, иначе бюджет завышен
+            // ровно на их сумму.
             let budget = (vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024)
-                .saturating_sub(fixed);
+                .saturating_sub(kv_fixed_bytes);
             budget / kv_per_token
         } else {
             cap
@@ -1313,6 +1354,7 @@ async fn run_agent_loop(
                         &mut kv_slot,
                         &model,
                         &chat_id,
+                        plan.ring_tokens,
                         plan.session_ctx,
                         plan.max_new,
                     )
@@ -1369,6 +1411,36 @@ async fn run_agent_loop(
                     && (has_session || answer_budget > MIN_ANSWER_TOKENS);
                 if retryable {
                     oom_attempt += 1;
+                    // Первым делом двигаем кэш экспертов: он перечитывается из
+                    // бандла за миллисекунды, а посчитанный префикс-KV стоит
+                    // секунд десять полного префилла. Пока порядок был
+                    // обратный, ход платил самым дорогим, что у него было.
+                    // Только на первой попытке: кэш экспертов готов отдавать
+                    // сколько угодно раз подряд, и без этого условия все
+                    // ретраи ушли бы в него, так и не дойдя до более крупных
+                    // резервов.
+                    let gave_mb = if oom_attempt == 1 {
+                        synaptix::facade::llm::cuda_reclaim_mb(0, RECLAIM_ON_OOM_MB)
+                    } else {
+                        0
+                    };
+                    if gave_mb > 0 {
+                        log::warn!(
+                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{}: \
+                             отдаваемые кэши вернули {gave_mb} MB, кэш префикс-KV цел",
+                            plan.ring_tokens,
+                            plan.ring_mb(),
+                            oom_attempt,
+                            MAX_OOM_RETRIES,
+                        );
+                        let ctx_clear = ctx.clone();
+                        run_on_main_thread(move || {
+                            ctx_clear.streaming_body.set(String::new());
+                            ctx_clear.streaming_thinking.set(String::new());
+                            ctx_clear.streaming_tool.set(String::new());
+                        });
+                        continue;
+                    }
                     if has_session {
                         // Главный резерв: кэш префикс-KV держит гигабайты в
                         // пуле активаций, и пока он жив, forward'у может не
@@ -2526,6 +2598,53 @@ mod tests {
                 arguments: Some(args.to_string()),
             },
         }
+    }
+
+    /// План хода для qwen3.8-flash-next: 13440 Б/ток KV, окно 262144 и
+    /// ≈1.7 ГБ постоянных ring-окон sliding-слоёв. С этими числами `compute`
+    /// повторяет журнал разобранной сессии токен в токен.
+    fn plan(prompt: usize, answer: usize, vram_mb: usize) -> RingPlan {
+        RingPlan::compute(prompt, answer, 262_144, 13_440, 1_761_830_912, vram_mb)
+    }
+
+    #[test]
+    fn ring_does_not_grow_with_a_bigger_budget() {
+        // Ход требует столько же независимо от того, сколько VRAM свободно:
+        // промпт и бюджет ответа те же.
+        let tight = plan(9_045, 11_307, 5_099);
+        let roomy = plan(9_045, 11_307, 20_000);
+        assert_eq!(tight.ring_tokens, roomy.ring_tokens);
+    }
+
+    #[test]
+    fn session_from_a_tight_budget_survives_a_bigger_one() {
+        // Разобранный случай из журнала: сессию выдали при скудном бюджете
+        // (by_mem 27056), на следующем ходу памяти стало больше и `session_ctx`
+        // подскочил до 32768. Пересоздавать кэш из-за этого нельзя — ход
+        // заплатил бы полным префиллом, хотя старой ёмкости хватало.
+        let tight = plan(9_045, 11_307, 5_099);
+        assert_eq!(tight.session_ctx, 27_056, "ожидали ёмкость из журнала");
+        let roomy = plan(9_112, 11_240, 24_000);
+        assert!(
+            tight.session_ctx >= roomy.ring_tokens,
+            "сессия на {} ток не покрывает ход на {} ток",
+            tight.session_ctx,
+            roomy.ring_tokens
+        );
+        assert!(
+            roomy.session_ctx > tight.session_ctx,
+            "тест бессмыслен: при большем бюджете ёмкость обязана расти ({} → {})",
+            tight.session_ctx,
+            roomy.session_ctx
+        );
+    }
+
+    #[test]
+    fn session_is_recreated_when_the_turn_outgrows_it() {
+        // А вот когда ходу действительно не хватает — пересоздание законно.
+        let small = plan(8_481, 384, 1_067);
+        let bigger = plan(8_889, 384, 4_459);
+        assert!(small.session_ctx < bigger.ring_tokens);
     }
 
     #[test]

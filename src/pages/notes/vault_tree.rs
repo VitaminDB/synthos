@@ -40,6 +40,12 @@ pub fn header() -> impl Widget {
             }),
         )
         .child(
+            panel_header::action_button(MI_ACCOUNT_TREE, tr!("notes.tree.new_canvas"), move || {
+                ctx.create_canvas(&tr!("notes.untitled_canvas"));
+                rail::navigate("notes");
+            }),
+        )
+        .child(
             panel_header::action_button(MI_AUTORENEW, tr!("notes.tree.rescan"), move || {
                 ctx.rescan();
             }),

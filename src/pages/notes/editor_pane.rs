@@ -72,6 +72,9 @@ pub fn body() -> impl Widget {
                         .child(DecoratedBox::new().class("grow").child(base)),
                 )]
             }
+            NotePayload::Canvas(handle) => {
+                vec![Box::new(super::canvas::pane::view(handle.clone()))]
+            }
             NotePayload::Raw => vec![Box::new(coming_soon(note.kind))],
         }
     })

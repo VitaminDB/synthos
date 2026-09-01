@@ -246,3 +246,25 @@ document-editor {
     font-size: 11px;
     color: var(--text-muted);
 }
+
+/* ── Канвасы ──────────────────────────────────────────────────── */
+.notes-canvas-viewport {
+    background-color: var(--bg-chat);
+}
+.notes-canvas-toolbar {
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border-soft);
+    border-radius: 10px;
+    padding: 4px;
+}
+.notes-canvas-card {
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 10px;
+}
+.notes-canvas-card.selected {
+    border-color: var(--primary);
+    border-width: 2px;
+}

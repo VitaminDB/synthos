@@ -16,6 +16,8 @@ use crate::config::{now_millis, AppConfig, NotesOpenState};
 
 use super::base::model::BaseDoc;
 use super::base::BaseHandle;
+use super::canvas::model::CanvasDoc;
+use super::canvas::CanvasHandle;
 use super::index::VaultIndex;
 use super::storage::{self, VaultEntry, VaultEntryKind};
 
@@ -37,6 +39,8 @@ pub enum NotePayload {
     },
     /// База данных (`*.base.json`).
     Base(BaseHandle),
+    /// Канвас (`*.canvas.json`).
+    Canvas(CanvasHandle),
     /// Файл известного типа, для которого редактора ещё нет (канвас до T8)
     /// либо не распарсившийся — держим сырым, чтобы не затереть данные.
     Raw,
@@ -71,11 +75,19 @@ impl OpenNote {
         }
     }
 
+    pub fn canvas_handle(&self) -> Option<&CanvasHandle> {
+        match &self.payload {
+            NotePayload::Canvas(h) => Some(h),
+            _ => None,
+        }
+    }
+
     /// Текущая ревизия правок содержимого.
     pub fn revision(&self) -> u64 {
         match &self.payload {
             NotePayload::Page { handle, .. } => handle.revision().get_untracked(),
             NotePayload::Base(h) => h.revision.get_untracked(),
+            NotePayload::Canvas(h) => h.revision.get_untracked(),
             NotePayload::Raw => 0,
         }
     }
@@ -85,6 +97,7 @@ impl OpenNote {
         match &self.payload {
             NotePayload::Page { handle, .. } => Some(handle.serialize()),
             NotePayload::Base(h) => Some(h.serialize()),
+            NotePayload::Canvas(h) => Some(h.serialize()),
             NotePayload::Raw => None,
         }
     }
@@ -225,6 +238,19 @@ impl NotesCtx {
         }
     }
 
+    /// Создать канвас в корне vault'а и открыть его.
+    pub fn create_canvas(&self, base_title: &str) {
+        let root = self.vault_path.get_untracked();
+        let content = CanvasDoc::template().serialize();
+        match storage::create_file(&root, base_title, ".canvas.json", &content) {
+            Ok(rel) => {
+                self.rescan();
+                self.open_path(&rel);
+            }
+            Err(e) => log::warn!("notes: не удалось создать канвас: {e}"),
+        }
+    }
+
     /// Создать базу данных в корне vault'а и открыть её.
     pub fn create_base(&self, base_title: &str) {
         let root = self.vault_path.get_untracked();
@@ -310,6 +336,13 @@ impl NotesCtx {
                         }
                         Err(e) => log::warn!("notes: перечитка {rel} не удалась: {e}"),
                     },
+                    NotePayload::Canvas(h) => match CanvasDoc::parse(&content) {
+                        Ok(doc) => {
+                            h.replace(doc);
+                            rev_after = h.revision.get_untracked();
+                        }
+                        Err(e) => log::warn!("notes: перечитка {rel} не удалась: {e}"),
+                    },
                     NotePayload::Raw => {}
                 }
             }
@@ -352,7 +385,13 @@ fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNo
                 NotePayload::Raw
             }
         },
-        NoteKind::Canvas => NotePayload::Raw,
+        NoteKind::Canvas => match CanvasDoc::parse(&source) {
+            Ok(doc) => NotePayload::Canvas(CanvasHandle::new(doc)),
+            Err(e) => {
+                log::warn!("notes: {rel} не распарсился как канвас: {e}");
+                NotePayload::Raw
+            }
+        },
     };
     Some(OpenNote {
         path: rel.to_string(),

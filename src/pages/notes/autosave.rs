@@ -19,6 +19,7 @@ use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
 use super::base::BaseHandle;
+use super::canvas::CanvasHandle;
 use super::state::{NotePayload, NotesCtx};
 use super::storage;
 
@@ -28,6 +29,7 @@ use super::storage;
 enum SaveSource {
     Doc(DocumentEditorHandle),
     Base(BaseHandle),
+    Canvas(CanvasHandle),
 }
 
 impl SaveSource {
@@ -35,6 +37,7 @@ impl SaveSource {
         match self {
             SaveSource::Doc(h) => h.serialize(),
             SaveSource::Base(h) => h.serialize(),
+            SaveSource::Canvas(h) => h.serialize(),
         }
     }
 }
@@ -160,6 +163,7 @@ pub fn force_save(ctx: &NotesCtx, path: &str) {
     let source = match &note.payload {
         NotePayload::Page { handle, .. } => SaveSource::Doc(handle.clone()),
         NotePayload::Base(h) => SaveSource::Base(h.clone()),
+        NotePayload::Canvas(h) => SaveSource::Canvas(h.clone()),
         NotePayload::Raw => return,
     };
     let root = ctx.vault_path.get_untracked();
@@ -188,6 +192,9 @@ pub fn install_notes_autosave() {
                     (handle.revision().get(), SaveSource::Doc(handle.clone()))
                 }
                 NotePayload::Base(h) => (h.revision.get(), SaveSource::Base(h.clone())),
+                NotePayload::Canvas(h) => {
+                    (h.revision.get(), SaveSource::Canvas(h.clone()))
+                }
                 NotePayload::Raw => continue,
             };
             if rev <= saved_rev(&n.path) {

@@ -22,6 +22,7 @@ use crate::icons::*;
 
 pub mod autosave;
 pub mod base;
+pub mod canvas;
 pub mod editor_pane;
 pub mod fs_watcher;
 pub mod index;

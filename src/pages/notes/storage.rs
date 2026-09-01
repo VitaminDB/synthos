@@ -85,10 +85,17 @@ pub fn title_of(rel: &str) -> String {
 }
 
 fn strip_suffix_ci<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
-    if name.len() >= suffix.len()
-        && name[name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
-    {
-        Some(&name[..name.len() - suffix.len()])
+    if name.len() < suffix.len() {
+        return None;
+    }
+    let idx = name.len() - suffix.len();
+    // Не-ASCII имя («Новая заметка.md»): байтовый индекс может попасть
+    // внутрь многобайтового символа — такой хвост суффиксом быть не может.
+    if !name.is_char_boundary(idx) {
+        return None;
+    }
+    if name[idx..].eq_ignore_ascii_case(suffix) {
+        Some(&name[..idx])
     } else {
         None
     }

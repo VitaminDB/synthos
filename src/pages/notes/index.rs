@@ -130,10 +130,14 @@ impl VaultIndex {
 
 fn strip_known_ext(rel: &str) -> &str {
     for suffix in [".base.json", ".canvas.json", ".md"] {
-        if rel.len() >= suffix.len()
-            && rel[rel.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
-        {
-            return &rel[..rel.len() - suffix.len()];
+        if rel.len() < suffix.len() {
+            continue;
+        }
+        let idx = rel.len() - suffix.len();
+        // Не-ASCII имя: байтовый индекс может попасть внутрь многобайтового
+        // символа — такой хвост суффиксом быть не может.
+        if rel.is_char_boundary(idx) && rel[idx..].eq_ignore_ascii_case(suffix) {
+            return &rel[..idx];
         }
     }
     rel
@@ -177,5 +181,14 @@ mod tests {
     fn lexer_finds_links_and_skips_code() {
         let md = "текст [[Раз]] и ![[Два|врезка]]\n```\n[[не ссылка]]\n```\n[[Три]]";
         assert_eq!(lex_links(md), vec!["Раз", "Два", "Три"]);
+    }
+
+    #[test]
+    fn strip_known_ext_cyrillic_no_panic() {
+        // Байтовый индекс len-10 (".base.json") попадает внутрь кириллицы —
+        // раньше здесь была паника "not a char boundary".
+        assert_eq!(strip_known_ext("Новая заметка.md"), "Новая заметка");
+        assert_eq!(strip_known_ext("Заметки.canvas.json"), "Заметки");
+        assert_eq!(strip_known_ext("Без расширения"), "Без расширения");
     }
 }

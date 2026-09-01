@@ -27,6 +27,8 @@ pub enum NoteKind {
     Page,
     Base,
     Canvas,
+    /// Спец-плитка «Граф связей» (path = ":graph", файла нет).
+    Graph,
 }
 
 /// Содержимое открытой плитки по типу файла.
@@ -258,6 +260,11 @@ impl NotesCtx {
         }
     }
 
+    /// Открыть спец-плитку графа связей.
+    pub fn open_graph(&self) {
+        self.open_path(GRAPH_PATH);
+    }
+
     /// Создать канвас в корне vault'а и открыть его.
     pub fn create_canvas(&self, base_title: &str) {
         let root = self.vault_path.get_untracked();
@@ -382,9 +389,22 @@ impl NotesCtx {
     }
 }
 
+/// Путь спец-плитки графа.
+pub const GRAPH_PATH: &str = ":graph";
+
 /// Загрузка файла в OpenNote. Базы/канвасы пока открываются как плитки
 /// с заглушкой (редакторы приходят этапами T5–T8).
 fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNote> {
+    if rel == GRAPH_PATH {
+        return Some(OpenNote {
+            path: GRAPH_PATH.to_string(),
+            kind: NoteKind::Graph,
+            title: tr!("notes.graph.title"),
+            opened_at: if opened_at == 0 { now_millis() } else { opened_at },
+            payload: NotePayload::Raw,
+            conflict: use_signal(false),
+        });
+    }
     let kind = match storage::kind_of(rel)? {
         VaultEntryKind::Page => NoteKind::Page,
         VaultEntryKind::Base => NoteKind::Base,
@@ -412,6 +432,8 @@ fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNo
                 NotePayload::Raw
             }
         },
+        // Спец-плитка графа обработана выше (GRAPH_PATH).
+        NoteKind::Graph => NotePayload::Raw,
     };
     Some(OpenNote {
         path: rel.to_string(),

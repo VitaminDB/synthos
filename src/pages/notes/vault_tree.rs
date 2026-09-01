@@ -46,6 +46,12 @@ pub fn header() -> impl Widget {
             }),
         )
         .child(
+            panel_header::action_button(MI_HUB, tr!("notes.graph.title"), move || {
+                ctx.open_graph();
+                rail::navigate("notes");
+            }),
+        )
+        .child(
             panel_header::action_button(MI_AUTORENEW, tr!("notes.tree.rescan"), move || {
                 ctx.rescan();
             }),

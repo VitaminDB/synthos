@@ -217,7 +217,7 @@ fn workspaces_segment() -> impl Widget {
                     Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
                 }
                 RailEntry::Note(n) => {
-                    Box::new(note_tile(n.title.clone(), active, entry.clone()))
+                    Box::new(note_tile(n.title.clone(), n.kind, active, entry.clone()))
                 }
                 RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
             };
@@ -377,8 +377,20 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
     tile_with_label(Tooltip::new(body, shown.clone()), shown, is_selected, entry)
 }
 
-/// Плитка открытой страницы заметок: иконка-лист в скруглённой рамке.
-fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
+/// Плитка открытой страницы заметок: иконка по типу в скруглённой рамке.
+fn note_tile(
+    title: String,
+    kind: crate::pages::notes::NoteKind,
+    is_selected: bool,
+    entry: RailEntry,
+) -> impl Widget {
+    use crate::pages::notes::NoteKind;
+    let icon = match kind {
+        NoteKind::Page => MI_EDIT_NOTE,
+        NoteKind::Base => MI_GRID_ON,
+        NoteKind::Canvas => MI_ACCOUNT_TREE,
+        NoteKind::Graph => MI_HUB,
+    };
     let ring_class = if is_selected {
         "nav-rail-item nav-rail-note-tile selected"
     } else {
@@ -386,7 +398,7 @@ fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget 
     };
     let body = DecoratedBox::new()
         .class(ring_class)
-        .child(Center::new().child(Icon::new(MI_EDIT_NOTE).class("nav-rail-note-icon")));
+        .child(Center::new().child(Icon::new(icon).class("nav-rail-note-icon")));
     tile_with_label(Tooltip::new(body, title.clone()), title, is_selected, entry)
 }
 

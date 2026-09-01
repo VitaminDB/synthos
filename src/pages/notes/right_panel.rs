@@ -49,13 +49,22 @@ fn links_tab(ctx: NotesCtx) -> impl Widget {
         let index = ctx.index.get();
         let backlinks = index.backlinks_of(&active);
         let outgoing = index.outgoing_of(&active);
-        if backlinks.is_empty() && outgoing.is_empty() {
-            return vec![Box::new(placeholder(MI_HUB, tr!("notes.right.links.none")))];
-        }
         let mut col = Column::new()
             .gap(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .class("notes-links-list");
+        // Мини-граф окрестности страницы.
+        col = col.child(
+            DecoratedBox::new().class("notes-mini-graph").child(
+                super::graph::mini(ctx, active.clone()),
+            ),
+        );
+        if backlinks.is_empty() && outgoing.is_empty() {
+            col = col.child(
+                Text::new(tr!("notes.right.links.none")).class("notes-empty-hint"),
+            );
+            return vec![Box::new(ScrollView::new().vertical().child(col))];
+        }
         if !backlinks.is_empty() {
             col = col.child(
                 Text::new(tr!("notes.links.backlinks")).class("notes-links-section"),

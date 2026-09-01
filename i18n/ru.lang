@@ -1581,3 +1581,4 @@ notes.canvas.empty = "Пустой канвас: добавьте карточк
 notes.embed.too_deep = "Вложенность врезок ограничена двумя уровнями."
 notes.embed.cycle = "Циклическая врезка"
 notes.embed.open = "Открыть страницей"
+notes.graph.title = "Граф"

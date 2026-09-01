@@ -284,3 +284,15 @@ document-editor {
     border-color: var(--border-soft);
     background-color: var(--bg-panel);
 }
+
+/* ── Граф связей ──────────────────────────────────────────────── */
+.notes-graph-viewport {
+    background-color: var(--bg-chat);
+}
+.notes-mini-graph {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-panel);
+    margin: 0px 0px 6px 0px;
+}

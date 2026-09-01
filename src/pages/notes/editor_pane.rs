@@ -20,6 +20,9 @@ pub fn body() -> impl Widget {
         let Some(note) = ctx.active_note() else {
             return vec![Box::new(empty_state())];
         };
+        if note.kind == NoteKind::Graph {
+            return vec![Box::new(super::graph::page(ctx))];
+        }
         match &note.payload {
             NotePayload::Page { source, handle } => {
                 let note_path = note.path.clone();

@@ -260,6 +260,76 @@ impl NotesCtx {
         }
     }
 
+    /// Дописать markdown в конец активной страницы (палитра «Вставка»).
+    pub fn append_to_active(&self, md: &str) {
+        let Some(note) = self.active_note() else { return };
+        let Some(handle) = note.page_handle() else { return };
+        handle.append_markdown(md);
+        self.media_epoch.set(self.media_epoch.get_untracked() + 1);
+    }
+
+    /// Переименовать файл (title без расширения). Плитка, активная
+    /// страница, порядок рейла и индекс обновляются на месте.
+    pub fn rename(&self, rel: &str, new_title: &str) {
+        let new_title = new_title.trim();
+        if new_title.is_empty() || new_title.contains('/') {
+            return;
+        }
+        let root = self.vault_path.get_untracked();
+        let ext = match storage::kind_of(rel) {
+            Some(VaultEntryKind::Base) => ".base.json",
+            Some(VaultEntryKind::Canvas) => ".canvas.json",
+            Some(VaultEntryKind::Page) => ".md",
+            _ => return,
+        };
+        let dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let new_rel = if dir.is_empty() {
+            format!("{new_title}{ext}")
+        } else {
+            format!("{dir}/{new_title}{ext}")
+        };
+        if new_rel == rel {
+            return;
+        }
+        let from = storage::abs_path(&root, rel);
+        let to = storage::abs_path(&root, &new_rel);
+        if to.exists() {
+            log::warn!("notes: {new_rel} уже существует");
+            return;
+        }
+        // Дописать хвост автосейва по старому пути до переноса.
+        super::autosave::flush_now(rel);
+        if let Err(e) = std::fs::rename(&from, &to) {
+            log::warn!("notes: rename не удался: {e}");
+            return;
+        }
+        let saved = super::autosave::saved_rev(rel);
+        super::autosave::forget(rel);
+        super::autosave::mark_saved(&new_rel, saved);
+        // Плитки и активная.
+        let retitle = |v: &mut Vec<OpenNote>| {
+            if let Some(n) = v.iter_mut().find(|n| n.path == rel) {
+                n.path = new_rel.clone();
+                n.title = storage::title_of(&new_rel);
+            }
+        };
+        self.open.update(retitle);
+        self.embedded.update(retitle);
+        if self.active.get_untracked().as_deref() == Some(rel) {
+            self.active.set(Some(new_rel.clone()));
+        }
+        // Ключ плитки в ручном порядке рейла.
+        let app = use_context::<crate::context::AppCtx>();
+        app.rail_order.update(|order| {
+            for k in order.iter_mut() {
+                if *k == format!("note:{rel}") {
+                    *k = format!("note:{new_rel}");
+                }
+            }
+        });
+        self.rescan();
+    }
+
     /// Открыть спец-плитку графа связей.
     pub fn open_graph(&self) {
         self.open_path(GRAPH_PATH);

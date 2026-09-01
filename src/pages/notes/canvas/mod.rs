@@ -35,6 +35,8 @@ pub struct CanvasHandle {
     /// Тянущееся ребро: (карточка-источник, курсор в world-координатах).
     pub pending_wire: RwSignal<Option<(String, Point)>>,
     runtime: Arc<Mutex<RuntimeMaps>>,
+    /// Колбэк выделения карточки (хост переключает вкладку «Свойства»).
+    on_select: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
 }
 
 #[derive(Default)]
@@ -58,6 +60,7 @@ impl CanvasHandle {
             editing: use_signal(None),
             pending_wire: use_signal(None),
             runtime: Arc::new(Mutex::new(RuntimeMaps::default())),
+            on_select: Arc::new(Mutex::new(None)),
         };
         // Камера → документ (автосейв подхватит по ревизии).
         let h = handle.clone();
@@ -73,6 +76,28 @@ impl CanvasHandle {
             }
         });
         handle
+    }
+
+    pub fn set_on_select(&self, f: impl Fn() + Send + Sync + 'static) {
+        *self.on_select.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(f));
+    }
+
+    pub fn notify_select(&self) {
+        let cb = self.on_select.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(cb) = cb {
+            cb();
+        }
+    }
+
+    /// Цвет-акцент карточки.
+    pub fn set_node_color(&self, id: &str, color: &str) {
+        {
+            let mut doc = self.lock();
+            if let Some(n) = doc.nodes.iter_mut().find(|n| n.id == id) {
+                n.color = color.to_string();
+            }
+        }
+        self.bump_structural();
     }
 
     pub fn lock(&self) -> MutexGuard<'_, CanvasDoc> {

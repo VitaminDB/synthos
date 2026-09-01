@@ -77,6 +77,10 @@ pub fn body() -> impl Widget {
                 )]
             }
             NotePayload::Canvas(handle) => {
+                // Выделение карточки переключает правую панель на «Свойства».
+                handle.set_on_select(move || {
+                    ctx.right_tab.set(super::right_panel::TAB_PROPS);
+                });
                 vec![Box::new(super::canvas::pane::view(handle.clone()))]
             }
             NotePayload::Raw => vec![Box::new(coming_soon(note.kind))],

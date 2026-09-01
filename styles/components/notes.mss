@@ -296,3 +296,28 @@ document-editor {
     background-color: var(--bg-panel);
     margin: 0px 0px 6px 0px;
 }
+
+/* ── Свойства ─────────────────────────────────────────────────── */
+.notes-props {
+    padding: 10px;
+}
+.notes-props-name {
+    font-size: 13px;
+}
+.notes-props-path {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.notes-props-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: var(--border-strong);
+}
+.notes-props-swatch.empty {
+    background-color: var(--surface-hover);
+}
+.notes-props-delete {
+    font-size: 12px;
+}

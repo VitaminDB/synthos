@@ -96,6 +96,7 @@ fn build_card(handle: CanvasHandle, node_id: String) -> Box<dyn Widget> {
                     } else {
                         h_click.selected.set(Some(id_click.clone()));
                         h_click.selected_edge.set(None);
+                        h_click.notify_select();
                     }
                 }).child(chrome))),
             },

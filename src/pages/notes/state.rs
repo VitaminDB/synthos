@@ -37,6 +37,8 @@ pub struct OpenNote {
     pub source: Arc<String>,
     /// Общая модель редактора: сериализация + сигнал ревизии.
     pub handle: DocumentEditorHandle,
+    /// Файл изменён снаружи при несохранённых правках — показать баннер.
+    pub conflict: RwSignal<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -115,6 +117,9 @@ impl NotesCtx {
 
     /// Закрыть плитку (файл остаётся). Активной становится соседняя.
     pub fn close(&self, rel: &str) {
+        // Хвост дебаунса — на диск, историю сохранённых ревизий — забыть.
+        super::autosave::flush_now(rel);
+        super::autosave::forget(rel);
         let mut next_active: Option<String> = None;
         self.open.update(|v| {
             if let Some(idx) = v.iter().position(|n| n.path == rel) {
@@ -167,9 +172,55 @@ impl NotesCtx {
             .map(|n| n.path.clone())
             .collect();
         for p in doomed {
+            super::autosave::forget(&p);
             self.close(&p);
         }
         self.rescan();
+    }
+
+    /// Внешнее изменение файла открытой страницы (из watcher'а).
+    pub fn apply_external_change(&self, rel: &str, new_content: String) {
+        let Some(note) = self.open.get_untracked().into_iter().find(|n| n.path == rel) else {
+            return;
+        };
+        let rev = note.handle.revision().get_untracked();
+        let unsaved = rev > super::autosave::saved_rev(rel);
+        if unsaved {
+            // Локальные правки против внешних — решает пользователь.
+            note.conflict.set(true);
+            return;
+        }
+        // Семантический no-op (наша же сериализация доехала с опозданием)
+        // не перегружаем — иначе прыгала бы каретка.
+        if note.handle.serialize() == new_content {
+            super::autosave::mark_saved(rel, rev);
+            return;
+        }
+        self.reload_note(rel, new_content);
+    }
+
+    /// Перечитать страницу с диска, отбросив локальные правки
+    /// (кнопка «Перечитать» в конфликте / тихая перезагрузка).
+    pub fn reload_from_disk(&self, rel: &str) {
+        let root = self.vault_path.get_untracked();
+        match storage::load(&root, rel) {
+            Ok(content) => self.reload_note(rel, content),
+            Err(e) => log::warn!("notes: не удалось перечитать {rel}: {e}"),
+        }
+    }
+
+    fn reload_note(&self, rel: &str, content: String) {
+        let mut rev_after = 0u64;
+        self.open.update(|v| {
+            if let Some(n) = v.iter_mut().find(|n| n.path == rel) {
+                n.source = Arc::new(content.clone());
+                n.conflict.set(false);
+                rev_after = n.handle.revision().get_untracked();
+            }
+        });
+        // Reparse модели по fingerprint не бампает ревизию — текущее
+        // состояние считается сохранённым.
+        super::autosave::mark_saved(rel, rev_after);
     }
 
     /// Снимок для автосейва конфига.
@@ -202,5 +253,6 @@ fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNo
         opened_at: if opened_at == 0 { now_millis() } else { opened_at },
         source: Arc::new(source),
         handle,
+        conflict: use_signal(false),
     })
 }

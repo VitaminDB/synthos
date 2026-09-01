@@ -20,7 +20,9 @@ use crate::components::panel_header::{self, CenterSpec};
 use crate::context::AppCtx;
 use crate::icons::*;
 
+pub mod autosave;
 pub mod editor_pane;
+pub mod fs_watcher;
 pub mod right_panel;
 pub mod state;
 pub mod storage;

@@ -11,7 +11,8 @@ use syngui::widgets::input::document_editor::DocumentEditor;
 
 use crate::icons::*;
 
-use super::state::{NoteKind, NotesCtx};
+use super::autosave;
+use super::state::{NoteKind, NotesCtx, OpenNote};
 
 pub fn body() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
@@ -25,15 +26,58 @@ pub fn body() -> impl Widget {
                     .markdown((*note.source).clone())
                     .handle(&note.handle)
                     .class("notes-editor");
+                let banner_note = note.clone();
                 vec![Box::new(
-                    Page::new()
-                        .child(editor)
-                        .class("notes-editor-page"),
+                    Column::new()
+                        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+                            if banner_note.conflict.get() {
+                                vec![Box::new(conflict_banner(banner_note.clone()))]
+                            } else {
+                                Vec::new()
+                            }
+                        }))
+                        .child(
+                            DecoratedBox::new().class("grow").child(
+                                Page::new().child(editor).class("notes-editor-page"),
+                            ),
+                        ),
                 )]
             }
             NoteKind::Base | NoteKind::Canvas => vec![Box::new(coming_soon(note.kind))],
         }
     })
+}
+
+/// Жёлтая полоса «файл изменён снаружи»: перечитать или перезаписать.
+fn conflict_banner(note: OpenNote) -> impl Widget {
+    let ctx = use_context::<NotesCtx>();
+    let path_reload = note.path.clone();
+    let path_overwrite = note.path.clone();
+    DecoratedBox::new().class("notes-conflict-banner").child(
+        Row::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(Icon::new(MI_SYNC_PROBLEM).class("notes-conflict-icon"))
+            .child(
+                DecoratedBox::new().class("grow").child(
+                    Text::new(tr!("notes.conflict.text")).class("notes-conflict-text"),
+                ),
+            )
+            .child(
+                Button::new(tr!("notes.conflict.reload"))
+                    .on_click(move || ctx.reload_from_disk(&path_reload))
+                    .class("notes-conflict-btn"),
+            )
+            .child(
+                Button::new(tr!("notes.conflict.overwrite"))
+                    .on_click(move || {
+                        autosave::force_save(&ctx, &path_overwrite);
+                        note.conflict.set(false);
+                    })
+                    .class("notes-conflict-btn primary"),
+            ),
+    )
 }
 
 fn empty_state() -> impl Widget {

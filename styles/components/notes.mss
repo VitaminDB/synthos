@@ -133,3 +133,24 @@ document-editor {
     font-size: 20px;
     color: var(--text);
 }
+
+/* ── Конфликт внешнего изменения ──────────────────────────────── */
+.notes-conflict-banner {
+    background-color: var(--warning-soft);
+    border-width: 1px;
+    border-color: var(--warning);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 8px 12px 0px 12px;
+}
+.notes-conflict-icon {
+    font-size: 18px;
+    color: var(--warning);
+}
+.notes-conflict-text {
+    font-size: 13px;
+    color: var(--text);
+}
+.notes-conflict-btn {
+    font-size: 12px;
+}

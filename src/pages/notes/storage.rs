@@ -166,13 +166,17 @@ pub fn load(root: &Path, rel: &str) -> io::Result<String> {
 /// Атомарная запись: tmp-файл рядом + rename, чтобы watcher и внешние
 /// читатели не видели полузаписанных файлов.
 pub fn save_atomic(root: &Path, rel: &str, content: &str) -> io::Result<()> {
-    let path = abs_path(root, rel);
+    save_atomic_abs(&abs_path(root, rel), content)
+}
+
+/// То же по абсолютному пути (используется автосейвом из фонового потока).
+pub fn save_atomic_abs(path: &Path, content: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("tmp~");
     fs::write(&tmp, content)?;
-    fs::rename(&tmp, &path)
+    fs::rename(&tmp, path)
 }
 
 /// Новая страница с уникальным именем в корне vault'а.

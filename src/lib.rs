@@ -123,6 +123,8 @@ pub fn run_desktop() {
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
+            pages::notes::autosave::install_notes_autosave();
+            pages::notes::fs_watcher::install_notes_watcher();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.
@@ -193,6 +195,8 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             install_workspace_autosave();
+            pages::notes::autosave::install_notes_autosave();
+            pages::notes::fs_watcher::install_notes_watcher();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.

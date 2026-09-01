@@ -76,7 +76,7 @@ fn body(handle: BaseHandle) -> impl Widget {
             .unwrap_or(ViewKind::Table);
         let content: Box<dyn Widget> = match kind {
             ViewKind::Table => Box::new(table::view(handle.clone())),
-            ViewKind::Kanban => Box::new(soon(MI_VIEW_SIDEBAR, tr!("notes.base.soon.kanban"))),
+            ViewKind::Kanban => Box::new(super::kanban::view(handle.clone())),
             ViewKind::Gantt => Box::new(soon(MI_HORIZONTAL_RULE, tr!("notes.base.soon.gantt"))),
         };
         vec![content]

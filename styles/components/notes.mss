@@ -203,3 +203,46 @@ document-editor {
 .notes-base-row-delete {
     font-size: 13px;
 }
+
+/* ── Канбан ───────────────────────────────────────────────────── */
+.notes-kanban {
+    padding: 10px 12px;
+}
+.notes-kanban-lane {
+    width: 260px;
+    border-radius: 10px;
+    background-color: var(--surface-hover);
+    padding: 8px;
+}
+.notes-kanban-lane-header {
+    padding: 2px 4px 6px 4px;
+}
+.notes-kanban-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 5px;
+}
+.notes-kanban-lane-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+.notes-kanban-lane-count {
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+.notes-kanban-card {
+    border-radius: 8px;
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 8px 10px;
+}
+.notes-kanban-card-title {
+    font-size: 13px;
+    color: var(--text);
+}
+.notes-kanban-card-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}

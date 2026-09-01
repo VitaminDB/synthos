@@ -25,6 +25,7 @@ pub fn body() -> impl Widget {
                 let editor = DocumentEditor::new()
                     .markdown((*note.source).clone())
                     .handle(&note.handle)
+                    .links(super::links::provider(ctx))
                     .class("notes-editor");
                 let banner_note = note.clone();
                 vec![Box::new(

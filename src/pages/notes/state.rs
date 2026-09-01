@@ -14,6 +14,7 @@ use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
 use crate::config::{now_millis, AppConfig, NotesOpenState};
 
+use super::index::VaultIndex;
 use super::storage::{self, VaultEntry, VaultEntryKind};
 
 /// Тип открытой плитки заметок.
@@ -54,6 +55,8 @@ pub struct NotesCtx {
     pub active: RwSignal<Option<String>>,
     /// Активная вкладка правой панели: 0 — Вставка, 1 — Свойства, 2 — Связи.
     pub right_tab: RwSignal<usize>,
+    /// Индекс wiki-связей vault'а (обновляется при сохранениях и скане).
+    pub index: RwSignal<Arc<VaultIndex>>,
 }
 
 impl NotesCtx {
@@ -75,6 +78,7 @@ impl NotesCtx {
             .filter(|p| open.iter().any(|n| &n.path == p))
             .or_else(|| open.last().map(|n| n.path.clone()));
 
+        let index = VaultIndex::build(&root);
         Self {
             vault_path: use_signal(root),
             tree: use_signal(tree),
@@ -82,13 +86,28 @@ impl NotesCtx {
             open: use_signal(open),
             active: use_signal(active),
             right_tab: use_signal(0),
+            index: use_signal(Arc::new(index)),
         }
+    }
+
+    /// Полная переиндексация связей (структурные изменения vault'а).
+    pub fn reindex_all(&self) {
+        let root = self.vault_path.get_untracked();
+        self.index.set(Arc::new(VaultIndex::build(&root)));
+    }
+
+    /// Инкрементальная переиндексация одной страницы (после сохранения).
+    pub fn reindex_page(&self, rel: &str, content: &str) {
+        let mut idx = (*self.index.get_untracked()).clone();
+        idx.update_page(rel, content);
+        self.index.set(Arc::new(idx));
     }
 
     /// Перечитать дерево с диска.
     pub fn rescan(&self) {
         let root = self.vault_path.get_untracked();
         self.tree.set(storage::scan(&root));
+        self.reindex_all();
     }
 
     /// Открыть страницу (или активировать уже открытую) и перейти в режим.

@@ -98,9 +98,30 @@ fn write_now(path: &str, save: &PendingSave) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(path.to_string(), save.rev);
+            // Индекс связей — на main-потоке (сигналы thread-local).
+            let rel = path.to_string();
+            if let Some(ctx) = reindex_ctx() {
+                syngui::async_runtime::run_on_main_thread(move || {
+                    ctx.reindex_page(&rel, &content);
+                });
+            }
         }
         Err(e) => log::warn!("notes: не удалось сохранить {path}: {e}"),
     }
+}
+
+/// NotesCtx для переиндексации после записи (Copy, Send).
+fn reindex_slot() -> &'static Mutex<Option<NotesCtx>> {
+    static C: OnceLock<Mutex<Option<NotesCtx>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn set_reindex_ctx(ctx: NotesCtx) {
+    *reindex_slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(ctx);
+}
+
+fn reindex_ctx() -> Option<NotesCtx> {
+    *reindex_slot().lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Немедленно сбросить страницу на диск, если по ней есть очередь
@@ -132,6 +153,7 @@ pub fn force_save(ctx: &NotesCtx, path: &str) {
 /// Эффект подписки + фоновый поток-писатель. Зовётся один раз из lib.rs.
 pub fn install_notes_autosave() {
     let ctx = use_context::<NotesCtx>();
+    set_reindex_ctx(ctx);
 
     create_effect(move || {
         let open = ctx.open.get();

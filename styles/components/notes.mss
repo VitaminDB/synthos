@@ -154,3 +154,14 @@ document-editor {
 .notes-conflict-btn {
     font-size: 12px;
 }
+
+/* ── Вкладка «Связи» ──────────────────────────────────────────── */
+.notes-links-list {
+    padding: 8px;
+}
+.notes-links-section {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-subtle);
+    padding: 8px 4px 2px 4px;
+}

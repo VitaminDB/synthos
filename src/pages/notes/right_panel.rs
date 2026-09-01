@@ -10,6 +10,7 @@ use syngui::widgets::navigation::{Tab, TabBar};
 use crate::icons::*;
 
 use super::state::NotesCtx;
+use super::storage;
 
 pub const TAB_INSERT: usize = 0;
 pub const TAB_PROPS: usize = 1;
@@ -33,10 +34,63 @@ pub fn body() -> impl Widget {
         let content: Box<dyn Widget> = match tab {
             TAB_INSERT => Box::new(insert_tab()),
             TAB_PROPS => Box::new(placeholder(MI_TUNE, tr!("notes.right.props.empty"))),
-            _ => Box::new(placeholder(MI_HUB, tr!("notes.right.links.empty"))),
+            _ => Box::new(links_tab(ctx)),
         };
         vec![content]
     })
+}
+
+/// Вкладка «Связи»: обратные и исходящие ссылки активной страницы.
+fn links_tab(ctx: NotesCtx) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(active) = ctx.active.get() else {
+            return vec![Box::new(placeholder(MI_HUB, tr!("notes.right.links.empty")))];
+        };
+        let index = ctx.index.get();
+        let backlinks = index.backlinks_of(&active);
+        let outgoing = index.outgoing_of(&active);
+        if backlinks.is_empty() && outgoing.is_empty() {
+            return vec![Box::new(placeholder(MI_HUB, tr!("notes.right.links.none")))];
+        }
+        let mut col = Column::new()
+            .gap(4.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-links-list");
+        if !backlinks.is_empty() {
+            col = col.child(
+                Text::new(tr!("notes.links.backlinks")).class("notes-links-section"),
+            );
+            for rel in backlinks {
+                col = col.child(Stack::new().children(vec![link_row(ctx, rel)]));
+            }
+        }
+        if !outgoing.is_empty() {
+            col = col.child(
+                Text::new(tr!("notes.links.outgoing")).class("notes-links-section"),
+            );
+            for rel in outgoing {
+                col = col.child(Stack::new().children(vec![link_row(ctx, rel)]));
+            }
+        }
+        vec![Box::new(ScrollView::new().vertical().child(col))]
+    })
+}
+
+fn link_row(ctx: NotesCtx, rel: String) -> Box<dyn Widget> {
+    let title = storage::title_of(&rel);
+    let row = DecoratedBox::new().class("notes-insert-row").child(
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(Icon::new(MI_DESCRIPTION).class("notes-insert-icon"))
+            .child(Text::new(title).max_lines(1).class("notes-insert-label")),
+    );
+    Box::new(
+        syngui::widgets::GestureDetector::new()
+            .cursor(syngui::input::CursorIcon::Pointer)
+            .on_click(move || ctx.open_path(&rel))
+            .child(row),
+    )
 }
 
 /// Палитра блоков: пока справочная (что умеет «/»); перетаскивание в

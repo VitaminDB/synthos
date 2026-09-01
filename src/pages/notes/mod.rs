@@ -23,6 +23,8 @@ use crate::icons::*;
 pub mod autosave;
 pub mod editor_pane;
 pub mod fs_watcher;
+pub mod index;
+pub mod links;
 pub mod right_panel;
 pub mod state;
 pub mod storage;

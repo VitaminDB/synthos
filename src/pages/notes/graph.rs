@@ -59,7 +59,6 @@ struct SimNode {
     rel: String,
     title: String,
     pos: Point,
-    vel: Point,
     degree: usize,
     is_center: bool,
 }
@@ -186,7 +185,6 @@ impl GraphElement {
                 SimNode {
                     title: storage::title_of(rel),
                     pos: old.get(rel).copied().unwrap_or(default),
-                    vel: Point::zero(),
                     degree: 0,
                     is_center: self.center.as_deref() == Some(rel.as_str()),
                     rel: rel.clone(),

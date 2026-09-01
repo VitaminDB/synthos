@@ -20,14 +20,16 @@ pub enum SearchKind {
     Skill,
     Tool,
     Template,
+    Note,
 }
 
 impl SearchKind {
-    pub const ALL: [SearchKind; 8] = [
+    pub const ALL: [SearchKind; 9] = [
         SearchKind::Chat,
         SearchKind::Message,
         SearchKind::Page,
         SearchKind::Command,
+        SearchKind::Note,
         SearchKind::Model,
         SearchKind::Skill,
         SearchKind::Tool,
@@ -44,6 +46,7 @@ impl SearchKind {
             SearchKind::Skill => "search.group.skills",
             SearchKind::Tool => "search.group.tools",
             SearchKind::Template => "search.group.templates",
+            SearchKind::Note => "search.group.notes",
         }
     }
 
@@ -61,6 +64,7 @@ impl SearchKind {
             SearchKind::Chat => "search-icon-box search-icon-box-chat",
             SearchKind::Message => "search-icon-box search-icon-box-message",
             SearchKind::Page => "search-icon-box search-icon-box-page",
+            SearchKind::Note => "search-icon-box search-icon-box-page",
             SearchKind::Command => "search-icon-box search-icon-box-command",
             SearchKind::Model => "search-icon-box search-icon-box-model",
             SearchKind::Skill => "search-icon-box search-icon-box-skill",
@@ -75,6 +79,7 @@ impl SearchKind {
             SearchKind::Chat => "search-row-icon search-row-icon-chat",
             SearchKind::Message => "search-row-icon search-row-icon-message",
             SearchKind::Page => "search-row-icon search-row-icon-page",
+            SearchKind::Note => "search-row-icon search-row-icon-page",
             SearchKind::Command => "search-row-icon search-row-icon-command",
             SearchKind::Model => "search-row-icon search-row-icon-model",
             SearchKind::Skill => "search-row-icon search-row-icon-skill",
@@ -110,6 +115,8 @@ pub enum SearchCommand {
 pub enum SearchAction {
     /// Маршрут верхнего уровня (`context::ROUTES`).
     Page(&'static str),
+    /// Открыть страницу заметок по vault-относительному пути.
+    Note(String),
     /// Подраздел настроек (`context::SETTINGS_ROUTES`).
     Settings(&'static str),
     /// Открыть чат по id.

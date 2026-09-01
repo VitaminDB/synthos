@@ -31,6 +31,10 @@ pub fn run(search: &SearchCtx, item: &SearchItem, secondary: bool) {
     tracing::debug!(title = %item.title, ?action, "поиск: переход");
     match action {
         SearchAction::Page(route) => navigate(route),
+        SearchAction::Note(rel) => {
+            use_context::<crate::pages::notes::NotesCtx>().open_path(&rel);
+            navigate("notes");
+        }
         SearchAction::Settings(section) => open_settings(section),
         SearchAction::Chat(id) => open_chat(&id, None),
         SearchAction::Message { chat_id, index } => open_chat(&chat_id, Some(index)),

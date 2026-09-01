@@ -86,6 +86,7 @@ pub struct TemplateEntry {
 const PAGES: &[(&str, &str, &str)] = &[
     ("syn_chat", "nav.syn_chat", MI_CHAT),
     ("nodes", "nav.nodes", MI_HUB),
+    ("notes", "notes.title", MI_EDIT_NOTE),
     ("code", "search.page.code", MI_CODE),
     ("syn_explorer", "nav.syn_explorer", MI_INVENTORY_2),
     ("huggingface", "nav.huggingface", MI_CLOUD_DOWNLOAD),
@@ -108,6 +109,7 @@ const SETTINGS: &[(&str, &str)] = &[
 fn page_keywords(route: &str) -> &'static [&'static str] {
     match route {
         "syn_chat" => &["чат", "чаты", "переписка", "диалог", "сообщения", "chat", "messages"],
+        "notes" => &["заметки", "заметка", "vault", "wiki", "страницы", "notes", "markdown"],
         "nodes" => &[
             "ноды",
             "нодовый редактор",
@@ -453,7 +455,33 @@ pub fn build_items(scan: &ScanData) -> Vec<SearchItem> {
     push_skills(&mut items);
     push_tools(&mut items);
     push_templates(&mut items, scan);
+    push_notes(&mut items);
     items
+}
+
+/// Страницы vault'а заметок: заголовок + путь, действие — открыть плиткой.
+fn push_notes(items: &mut Vec<SearchItem>) {
+    let notes = use_context::<crate::pages::notes::NotesCtx>();
+    for entry in notes.tree.get() {
+        if entry.kind == crate::pages::notes::storage::VaultEntryKind::Dir {
+            continue;
+        }
+        let icon = match entry.kind {
+            crate::pages::notes::storage::VaultEntryKind::Base => MI_GRID_ON,
+            crate::pages::notes::storage::VaultEntryKind::Canvas => MI_ACCOUNT_TREE,
+            _ => MI_EDIT_NOTE,
+        };
+        items.push(
+            SearchItem::new(
+                format!("note:{}", entry.rel),
+                SearchKind::Note,
+                entry.name.clone(),
+                SearchAction::Note(entry.rel.clone()),
+            )
+            .subtitle(entry.rel.clone())
+            .icon(icon),
+        );
+    }
 }
 
 fn push_pages(items: &mut Vec<SearchItem>) {

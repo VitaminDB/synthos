@@ -24,19 +24,7 @@ pub fn view(handle: CanvasHandle) -> impl Widget {
         .pan_button(MouseButton::Middle)
         .pan_filter(move |world| {
             const INFLATE: f32 = 10.0;
-            let doc = filter_handle.lock();
-            !doc.nodes.iter().any(|n| {
-                let Some((pos, size)) = ({
-                    let p = filter_handle.node_rect(&n.id);
-                    p
-                }) else {
-                    return false;
-                };
-                world.x >= pos.x - INFLATE
-                    && world.x <= pos.x + size.width + INFLATE
-                    && world.y >= pos.y - INFLATE
-                    && world.y <= pos.y + size.height + INFLATE
-            })
+            !filter_handle.hit_node_inflated(world, INFLATE)
         })
         .on_background_click(move |world, _screen| {
             // Клик по ребру выделяет его; по пустому — снимает выделение.

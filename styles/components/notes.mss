@@ -1,11 +1,12 @@
 /* Режим «Заметки»: дерево vault, редактор, правая панель, плитка рейла. */
 
 /* Разделители трёхпанельного каркаса. */
+/* Единый стиль с `.syn-chat-h-split` / `.code-editor-h-split`:
+ * 1px-линия в цвет границ, accent при drag'е. */
 .notes-h-split {
-    background-color: transparent;
-}
-.notes-h-split:hover {
-    background-color: var(--primary-soft);
+    border-color: var(--border-soft);
+    accent-color: var(--primary);
+    divider-thickness: 1px;
 }
 
 /* ── Дерево vault ─────────────────────────────────────────────── */
@@ -85,6 +86,9 @@ document-editor {
     --doc-menu-bg: var(--bg-panel);
     --doc-menu-border: var(--border);
     --doc-menu-sel-bg: var(--surface-hover);
+    /* Слева нужно место под ручку ⋮⋮ (16px + зазор 6px), иначе её
+     * прижимает к краю панели и она налезает на текст. */
+    --doc-padding: 28px;
 }
 
 /* ── Правая панель ────────────────────────────────────────────── */

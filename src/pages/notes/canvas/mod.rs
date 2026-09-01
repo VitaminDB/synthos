@@ -306,6 +306,26 @@ impl CanvasHandle {
         None
     }
 
+    /// Есть ли карточка в `inflate`-окрестности точки — для `pan_filter`.
+    /// Один захват замков: вызывать `node_rect` из-под `lock()` нельзя
+    /// (мьютекс не реентерабельный, повторный захват — дедлок).
+    pub fn hit_node_inflated(&self, world: Point, inflate: f32) -> bool {
+        let doc = self.lock();
+        let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+        doc.nodes.iter().any(|n| {
+            let pos = rt.pos.get(&n.id).map(|s| s.get_untracked()).unwrap_or(Point::new(n.x, n.y));
+            let size = rt
+                .size
+                .get(&n.id)
+                .map(|s| s.get_untracked())
+                .unwrap_or(Size::new(n.w, n.h));
+            world.x >= pos.x - inflate
+                && world.x <= pos.x + size.width + inflate
+                && world.y >= pos.y - inflate
+                && world.y <= pos.y + size.height + inflate
+        })
+    }
+
     /// Геометрия карточки (для проводов).
     pub fn node_rect(&self, id: &str) -> Option<(Point, Size)> {
         let doc = self.lock();

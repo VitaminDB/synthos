@@ -183,7 +183,8 @@ pub fn install_notes_autosave() {
     set_reindex_ctx(ctx);
 
     create_effect(move || {
-        let open = ctx.open.get();
+        let mut open = ctx.open.get();
+        open.extend(ctx.embedded.get());
         let root = ctx.vault_path.get();
         for n in open.iter() {
             // `.get()` — подписка эффекта на каждую правку страницы.

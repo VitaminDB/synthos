@@ -28,6 +28,7 @@ pub fn body() -> impl Widget {
                     .handle(handle)
                     .links(super::links::provider(ctx))
                     .media(super::media::resolver(ctx))
+                    .embeds(super::embeds::factory(ctx))
                     .model_epoch(ctx.media_epoch.get())
                     .on_drop_file(move |file, token| {
                         super::media::ingest_dropped_file(

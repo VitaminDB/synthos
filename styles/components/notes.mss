@@ -268,3 +268,19 @@ document-editor {
     border-color: var(--primary);
     border-width: 2px;
 }
+
+/* ── Врезки ![[…]] ────────────────────────────────────────────── */
+.notes-embed-header {
+    padding: 2px 4px;
+}
+.notes-embed-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.notes-embed-frame {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-panel);
+}

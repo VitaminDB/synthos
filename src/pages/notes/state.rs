@@ -120,6 +120,9 @@ pub struct NotesCtx {
     pub index: RwSignal<Arc<VaultIndex>>,
     /// Тик перестройки блоков после patch_media (ingest вложений).
     pub media_epoch: RwSignal<u64>,
+    /// Скрытый пул содержимого врезок (базы/канвасы, не открытые плиткой):
+    /// автосейв подписан и на него.
+    pub embedded: RwSignal<Vec<OpenNote>>,
 }
 
 impl NotesCtx {
@@ -151,7 +154,23 @@ impl NotesCtx {
             right_tab: use_signal(0),
             index: use_signal(Arc::new(index)),
             media_epoch: use_signal(0),
+            embedded: use_signal(Vec::new()),
         }
+    }
+
+    /// Живое содержимое страницы: открытая плитка → пул врезок → загрузка
+    /// в пул. Используется фабрикой врезок для редактируемых баз/канвасов.
+    pub fn live_note(&self, rel: &str) -> Option<OpenNote> {
+        if let Some(n) = self.open.get_untracked().into_iter().find(|n| n.path == rel) {
+            return Some(n);
+        }
+        if let Some(n) = self.embedded.get_untracked().into_iter().find(|n| n.path == rel) {
+            return Some(n);
+        }
+        let root = self.vault_path.get_untracked();
+        let note = load_note(&root, rel, now_millis())?;
+        self.embedded.update(|v| v.push(note.clone()));
+        Some(note)
     }
 
     /// Полная переиндексация связей (структурные изменения vault'а).
@@ -203,6 +222,7 @@ impl NotesCtx {
         // Хвост дебаунса — на диск, историю сохранённых ревизий — забыть.
         super::autosave::flush_now(rel);
         super::autosave::forget(rel);
+        self.embedded.update(|v| v.retain(|n| n.path != rel));
         let mut next_active: Option<String> = None;
         self.open.update(|v| {
             if let Some(idx) = v.iter().position(|n| n.path == rel) {

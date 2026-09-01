@@ -24,6 +24,7 @@ pub mod autosave;
 pub mod base;
 pub mod canvas;
 pub mod editor_pane;
+pub mod embeds;
 pub mod fs_watcher;
 pub mod index;
 pub mod links;

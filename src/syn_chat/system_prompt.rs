@@ -32,6 +32,12 @@ pub struct PromptEnv {
     pub max_turns: usize,
     /// Пользовательский промпт из настроек. Пустой — просто не добавляется.
     pub user_prompt: String,
+    /// Язык интерфейса — на нём же модель должна отвечать. Родное название
+    /// («Русский», «Deutsch»): английское «reply in the user's language»
+    /// модели трактуют по языку промпта, а он у нас английский, и
+    /// `qwen3.8-flash-next` устойчиво отвечал по-английски на русские
+    /// вопросы. Название языка прямым текстом снимает двусмысленность.
+    pub language: String,
 }
 
 impl PromptEnv {
@@ -47,8 +53,20 @@ impl PromptEnv {
             tools,
             max_turns,
             user_prompt,
+            language: ui_language_name(),
         }
     }
+}
+
+/// Родное название текущего языка интерфейса («Русский», «English»).
+/// Неизвестный тег отдаём как есть — модель поймёт и BCP-47.
+fn ui_language_name() -> String {
+    let lang = syngui::i18n::language();
+    syngui::i18n::languages()
+        .into_iter()
+        .find(|l| l.tag == lang)
+        .map(|l| l.name)
+        .unwrap_or_else(|| lang.tag().to_string())
 }
 
 /// Собрать итоговый system-промпт.
@@ -56,8 +74,17 @@ pub fn build(env: &PromptEnv) -> String {
     let mut s = String::with_capacity(1024);
     s.push_str(
         "You are Syn, a local AI agent in the Synthos app. You run on the \
-         user's machine and reply in the user's language.\n\n",
+         user's machine.\n\n",
     );
+
+    s.push_str(&format!(
+        "Language: answer in {lang} — this includes your reasoning, your \
+         explanations and the one-line announcements before tool calls. \
+         These instructions are in English; your replies are not. Switch \
+         only if the user writes to you in another language: then match the \
+         language of their message.\n\n",
+        lang = env.language
+    ));
 
     s.push_str("Environment:\n");
     s.push_str(&format!("- today: {}\n", env.date));
@@ -99,7 +126,11 @@ pub fn build(env: &PromptEnv) -> String {
              as a quoted string with escaped JSON inside, and never glue \
              several arguments into one string. Long values are where \
              brackets go wrong: check that every one you opened is closed, \
-             in the right order, before you send the call.\n",
+             in the right order, before you send the call.\n\
+             8. Announced an action — perform it in this same turn. A text \
+             reply ends the turn: \"I'll look at the project now\" without \
+             an actual call means nothing happened and the user is left \
+             waiting. Either call the tool, or don't announce it.\n",
         );
         // Правила пайплайнов — только когда инструмент активен: текст
         // зависит лишь от набора инструментов (как и строка со списком),
@@ -182,7 +213,25 @@ mod tests {
             tools: vec!["bash".to_string(), "web".to_string()],
             max_turns: 32,
             user_prompt: String::new(),
+            language: "Русский".to_string(),
         }
+    }
+
+    /// Язык ответа назван прямым текстом: «reply in the user's language»
+    /// на английском промпте модель читала как «отвечай по-английски».
+    #[test]
+    fn build_names_answer_language_explicitly() {
+        let s = build(&env());
+        assert!(s.contains("answer in Русский"), "{s}");
+    }
+
+    /// Объявил действие — сделай его в этом же ходе. Ровно на этом ход
+    /// заканчивался текстом «I'll start by exploring the project» без
+    /// единого вызова.
+    #[test]
+    fn build_forbids_announcing_without_doing() {
+        let s = build(&env());
+        assert!(s.contains("Announced an action — perform it in this same turn"), "{s}");
     }
 
     #[test]

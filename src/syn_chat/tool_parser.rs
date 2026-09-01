@@ -266,15 +266,111 @@ fn parse_tool_call_json_qwen(body: &str) -> Option<RawToolCall> {
     Some(RawToolCall { name, arguments_json })
 }
 
-/// Парсер для Anthropic-стиля. Принимает варианты:
-/// - `<function=NAME>...</function>`
-/// - `<functionfunction=NAME>...` (модель удвоила `function`-токен)
-/// - тот же tag без закрывающего `</function>` (обрезанный поток).
+/// Парсер для Anthropic-стиля. Синтаксис у него два поколения, и модели
+/// пишут оба:
 ///
-/// Внутри ожидает `<parameter=KEY>VAL</parameter>` пары. VAL пробуем сначала
-/// распарсить как JSON (для чисел/массивов/объектов), иначе кладём как строку.
+/// 1. **Атрибутный** — `<invoke name="NAME"><parameter name="KEY">VAL</parameter></invoke>`,
+///    опционально завёрнутый в `<function_calls>`. Именно его выдаёт
+///    `qwen3.8-flash-next`: до поддержки здесь такой вызов целиком уходил в
+///    мусор («тело не разбирается — отбрасываем»), ход заканчивался без
+///    действия, и агент только объявлял намерение.
+/// 2. **Tag-in-name** — `<function=NAME><parameter=KEY>VAL</parameter></function>`,
+///    включая глюк токенайзера `<functionfunction=NAME>` с удвоенным
+///    `function`.
+///
+/// В обоих закрывающий тег может отсутствовать: поток обрывается на EOS.
+/// VAL пробуем сначала распарсить как JSON (для чисел/массивов/объектов),
+/// иначе кладём как строку.
 fn parse_tool_call_xml_anthropic(body: &str) -> Option<RawToolCall> {
     let body = body.trim();
+    parse_xml_invoke_style(body).or_else(|| parse_xml_function_eq_style(body))
+}
+
+/// `<invoke name="NAME">` + `<parameter name="KEY">VAL</parameter>`.
+fn parse_xml_invoke_style(body: &str) -> Option<RawToolCall> {
+    let start = body.find("<invoke")?;
+    let after_tag = &body[start + "<invoke".len()..];
+    let tag_end = after_tag.find('>')?;
+    let name = xml_attr(&after_tag[..tag_end], "name")?;
+    if name.is_empty() {
+        return None;
+    }
+    let args = parse_xml_params_attr(&after_tag[tag_end + 1..]);
+    let arguments_json = serde_json::to_string(&serde_json::Value::Object(args)).ok()?;
+    Some(RawToolCall { name, arguments_json })
+}
+
+/// Значение атрибута из содержимого открывающего тега. Принимает `key="val"`,
+/// `key='val'` и `key=val` без кавычек.
+fn xml_attr(attrs: &str, key: &str) -> Option<String> {
+    let pos = attrs.find(key)?;
+    let rest = attrs[pos + key.len()..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'');
+    match quote {
+        Some(q) => {
+            let rest = &rest[q.len_utf8()..];
+            let end = rest.find(q)?;
+            Some(rest[..end].trim().to_string())
+        }
+        None => {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            Some(rest[..end].trim().to_string())
+        }
+    }
+}
+
+/// Пары `<parameter name="KEY">VAL</parameter>` подряд.
+fn parse_xml_params_attr(mut cursor: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut args = serde_json::Map::new();
+    while let Some(p_start) = cursor.find("<parameter") {
+        let after_p = &cursor[p_start + "<parameter".len()..];
+        let Some(tag_end) = after_p.find('>') else { break };
+        let Some(key) = xml_attr(&after_p[..tag_end], "name") else { break };
+        let value_start = tag_end + 1;
+        let (raw_val, next) = match after_p[value_start..].find("</parameter>") {
+            Some(rel) => (
+                &after_p[value_start..value_start + rel],
+                &after_p[value_start + rel + "</parameter>".len()..],
+            ),
+            // Поток оборвался внутри значения: берём хвост до закрытия
+            // вызова — лучше вызвать с целым аргументом, чем потерять ход.
+            None => (cut_at_invoke_close(&after_p[value_start..]), ""),
+        };
+        if !key.is_empty() {
+            args.insert(key, xml_param_value(raw_val));
+        }
+        if next.is_empty() {
+            break;
+        }
+        cursor = next;
+    }
+    args
+}
+
+/// Хвост значения до `</invoke>` / `</function_calls>` — на случай, когда
+/// `</parameter>` модель не дописала.
+fn cut_at_invoke_close(v: &str) -> &str {
+    let end = v
+        .find("</invoke")
+        .or_else(|| v.find("</function_calls"))
+        .unwrap_or(v.len());
+    &v[..end]
+}
+
+/// Значение параметра: сначала как JSON (числа, массивы, объекты), иначе
+/// строкой. Перевод строки сразу за `>` и перед закрывающим тегом — это
+/// вёрстка XML, а не часть аргумента; внутренние отступы (важные, например,
+/// для содержимого файла) не трогаем.
+fn xml_param_value(raw: &str) -> serde_json::Value {
+    let v = raw.strip_prefix('\n').unwrap_or(raw);
+    let v = v.strip_suffix('\n').unwrap_or(v);
+    serde_json::from_str::<serde_json::Value>(v.trim())
+        .unwrap_or_else(|_| serde_json::Value::String(v.to_string()))
+}
+
+/// `<function=NAME>` + `<parameter=KEY>VAL</parameter>`.
+fn parse_xml_function_eq_style(body: &str) -> Option<RawToolCall> {
     let mut rest = body.strip_prefix('<')?;
     // Snap any number of leading `function` tokens — нужно для случая
     // `<functionfunction=NAME>` (см. doc-comment).
@@ -303,10 +399,8 @@ fn parse_tool_call_xml_anthropic(body: &str) -> Option<RawToolCall> {
         let value_start = key_end + 1;
         let Some(value_end_rel) = after_p[value_start..].find("</parameter>") else { break };
         let raw_val = &after_p[value_start..value_start + value_end_rel];
-        let v = serde_json::from_str::<serde_json::Value>(raw_val.trim())
-            .unwrap_or_else(|_| serde_json::Value::String(raw_val.to_string()));
         if !key.is_empty() {
-            args.insert(key, v);
+            args.insert(key, xml_param_value(raw_val));
         }
         cursor = &after_p[value_start + value_end_rel + "</parameter>".len()..];
     }
@@ -519,6 +613,81 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "foo");
         assert!(calls[0].arguments_json.contains("\"x\":\"y\""));
+    }
+
+    /// Ровно то тело, на котором 01.09 ход уходил впустую: модель пишет
+    /// атрибутный Anthropic-синтаксис и обрывает поток, не дописав
+    /// `</tool_call>`.
+    #[test]
+    fn anthropic_invoke_style_unclosed_stream() {
+        let mut p = ToolCallParser::new();
+        let chunk = "<tool_call>\n<invoke name=\"bash\">\n\
+            <parameter name=\"command\">cd /home/master/Projects/2027/quitsmoke \
+            && find src styles -type f | sort</parameter>\n\
+            </invoke>";
+        let _ = p.feed(chunk);
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1, "вызов не должен теряться");
+        assert_eq!(calls[0].name, "bash");
+        assert!(calls[0].arguments_json.contains("find src styles -type f"));
+    }
+
+    #[test]
+    fn anthropic_invoke_style_with_function_calls_wrapper() {
+        let mut p = ToolCallParser::new();
+        let chunk = "<tool_call><function_calls>\
+            <invoke name=\"subagent\">\
+            <parameter name=\"task\">Do X</parameter>\
+            <parameter name=\"depth\">2</parameter>\
+            </invoke></function_calls></tool_call>";
+        let _ = p.feed(chunk);
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "subagent");
+        assert!(calls[0].arguments_json.contains("\"task\":\"Do X\""));
+        assert!(calls[0].arguments_json.contains("\"depth\":2"));
+    }
+
+    /// Значение на своей строке: перевод строки от вёрстки в аргумент не течёт.
+    #[test]
+    fn anthropic_invoke_style_multiline_value_keeps_inner_layout() {
+        let mut p = ToolCallParser::new();
+        let chunk = "<tool_call><invoke name=\"bash\">\
+            <parameter name=\"command\">\nls -la\n  nested\n</parameter>\
+            </invoke></tool_call>";
+        let _ = p.feed(chunk);
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].arguments_json.contains("\"command\":\"ls -la\\n  nested\""),
+            "было: {}",
+            calls[0].arguments_json
+        );
+    }
+
+    /// Оборвался прямо в значении, без `</parameter>` и `</invoke>`.
+    #[test]
+    fn anthropic_invoke_style_truncated_inside_value() {
+        let mut p = ToolCallParser::new();
+        let _ = p.feed("<tool_call><invoke name=\"bash\">\
+            <parameter name=\"command\">ls -la");
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+        assert!(calls[0].arguments_json.contains("\"command\":\"ls -la\""));
+    }
+
+    #[test]
+    fn anthropic_invoke_style_single_quoted_name() {
+        let mut p = ToolCallParser::new();
+        let chunk = "<tool_call><invoke name='web'>\
+            <parameter name='url'>https://example.com</parameter>\
+            </invoke></tool_call>";
+        let _ = p.feed(chunk);
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web");
+        assert!(calls[0].arguments_json.contains("https://example.com"));
     }
 
     #[test]

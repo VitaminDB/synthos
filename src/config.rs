@@ -653,6 +653,20 @@ pub struct AppConfig {
     pub settings_left_split_ratio: f32,
     #[serde(default = "default_settings_right_split_ratio")]
     pub settings_right_split_ratio: f32,
+    /// Разделители страницы «Заметки»: дерево vault ↔ редактор ↔ панель.
+    #[serde(default = "default_notes_left_split_ratio")]
+    pub notes_left_split_ratio: f32,
+    #[serde(default = "default_notes_right_split_ratio")]
+    pub notes_right_split_ratio: f32,
+    /// Папка хранилища заметок. Пусто — дефолт `~/Documents/SynthOS Notes`
+    /// (см. `pages::notes::storage::resolve_vault_path`).
+    #[serde(default)]
+    pub notes_vault_path: String,
+    /// Открытые плитки заметок (vault-относительные пути) и активная.
+    #[serde(default)]
+    pub notes_open: Vec<NotesOpenState>,
+    #[serde(default)]
+    pub notes_active: Option<String>,
     /// Видимость левой/правой панели по страницам — тогглы в общей шапке.
     #[serde(default)]
     pub panels: PanelsConfig,
@@ -1152,6 +1166,11 @@ impl Default for AppConfig {
             settings_left_split_ratio: default_settings_left_split_ratio(),
             settings_right_split_ratio: default_settings_right_split_ratio(),
             panels: PanelsConfig::default(),
+            notes_left_split_ratio: default_notes_left_split_ratio(),
+            notes_right_split_ratio: default_notes_right_split_ratio(),
+            notes_vault_path: String::new(),
+            notes_open: Vec::new(),
+            notes_active: None,
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
             syn_chat_system_prompt: String::new(),
@@ -1191,6 +1210,24 @@ pub fn default_hf_left_split_ratio() -> f32 {
     0.26
 }
 
+pub fn default_notes_left_split_ratio() -> f32 {
+    0.22
+}
+
+pub fn default_notes_right_split_ratio() -> f32 {
+    0.78
+}
+
+/// Открытая плитка заметок для восстановления после рестарта.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NotesOpenState {
+    /// Vault-относительный путь файла (с расширением).
+    pub path: String,
+    /// Unix-миллисекунды открытия — порядок плитки в рейле.
+    #[serde(default)]
+    pub opened_at: u64,
+}
+
 /// HuggingFace: панель файлов справа ~30% ширины.
 pub fn default_hf_right_split_ratio() -> f32 {
     0.70
@@ -1221,6 +1258,10 @@ pub struct PanelsConfig {
     #[serde(default = "default_true")]
     pub code_right: bool,
     #[serde(default = "default_true")]
+    pub notes_left: bool,
+    #[serde(default = "default_true")]
+    pub notes_right: bool,
+    #[serde(default = "default_true")]
     pub syn_explorer_left: bool,
     #[serde(default = "default_true")]
     pub syn_explorer_right: bool,
@@ -1241,6 +1282,8 @@ impl Default for PanelsConfig {
             syn_chat_right: true,
             code_left: true,
             code_right: true,
+            notes_left: true,
+            notes_right: true,
             syn_explorer_left: true,
             syn_explorer_right: true,
             huggingface_left: true,

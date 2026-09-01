@@ -78,6 +78,8 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "ffmpeg",
     "terminal",
     "code-editor-all",
+    # WYSIWYG-редактор блочных документов — режим «Заметки».
+    "document-editor",
     "i18n",
 ] }
 

@@ -106,6 +106,7 @@ pub fn run_desktop() {
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
+            provide_context(pages::notes::NotesCtx::new_or_restore(&AppConfig::load()));
             provide_context(syn_chat::SynModelRegistry::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
@@ -175,6 +176,7 @@ fn android_main(app: syngui::app::AndroidApp) {
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
+            provide_context(pages::notes::NotesCtx::new_or_restore(&AppConfig::load()));
             provide_context(syn_chat::SynModelRegistry::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
@@ -429,6 +431,8 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
     let hf_right_split_ratio = use_signal(saved.hf_right_split_ratio);
     let settings_left_split_ratio = use_signal(saved.settings_left_split_ratio);
     let settings_right_split_ratio = use_signal(saved.settings_right_split_ratio);
+    let notes_left_split_ratio = use_signal(saved.notes_left_split_ratio);
+    let notes_right_split_ratio = use_signal(saved.notes_right_split_ratio);
 
     // Рантайм-часть профиля выставляется не здесь, а при загрузке модели:
     // выверенные пути у каждой архитектуры свои, и глобальные тумблеры
@@ -472,6 +476,8 @@ fn build_context() -> (RwSignal<String>, AppCtx) {
         hf_right_split_ratio,
         settings_left_split_ratio,
         settings_right_split_ratio,
+        notes_left_split_ratio,
+        notes_right_split_ratio,
     };
 
     // Реактивные MSS-переменные шрифтов поверх палитры темы:
@@ -565,6 +571,9 @@ fn install_config_autosave(ctx: &AppCtx) {
     let hf_right_split = ctx.hf_right_split_ratio;
     let settings_left_split = ctx.settings_left_split_ratio;
     let settings_right_split = ctx.settings_right_split_ratio;
+    let notes_left_split = ctx.notes_left_split_ratio;
+    let notes_right_split = ctx.notes_right_split_ratio;
+    let notes_ctx = use_context::<pages::notes::NotesCtx>();
     let code = use_context::<pages::code_editor::state::CodeEditorCtx>();
     let syn = use_context::<pages::syn_explorer::state::SynExplorerCtx>();
     let hf = use_context::<pages::huggingface::HuggingFaceCtx>();
@@ -573,6 +582,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
 
     create_effect(move || {
+        let (notes_open_state, notes_active_state) = notes_ctx.open_state();
         let sessions = code.sessions.get();
         let active_id = code.active_id.get();
         let sessions_cfg: Vec<config::CodeSessionConfig> = sessions
@@ -701,6 +711,12 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_right_split_ratio: hf_right_split.get(),
             settings_left_split_ratio: settings_left_split.get(),
             settings_right_split_ratio: settings_right_split.get(),
+            notes_left_split_ratio: notes_left_split.get(),
+            notes_right_split_ratio: notes_right_split.get(),
+            // Открытые плитки заметок и активная: `.get()` внутри
+            // `open_state` подписывают effect на open/close/переключение.
+            notes_open: notes_open_state,
+            notes_active: notes_active_state,
             panels: panels.to_config(),
             rail_separators: rail_separators.get(),
             rail_order: rail_order.get(),
@@ -939,6 +955,7 @@ fn build_app() -> impl Widget {
         .route("syn_chat", || Box::new(pages::syn_chat::view()))
         .route("code", || Box::new(pages::code_editor::view()))
         .route("nodes", || Box::new(pages::node_editor::view()))
+        .route("notes", || Box::new(pages::notes::view()))
         .route("syn_explorer", || Box::new(pages::syn_explorer::view()))
         .route("huggingface", || Box::new(pages::huggingface::view()))
         .route("settings", || Box::new(pages::settings::view()));

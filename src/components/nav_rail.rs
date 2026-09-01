@@ -216,6 +216,9 @@ fn workspaces_segment() -> impl Widget {
                 RailEntry::Chat(m) => {
                     Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
                 }
+                RailEntry::Note(n) => {
+                    Box::new(note_tile(n.title.clone(), active, entry.clone()))
+                }
                 RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
             };
             col = col.child(Stack::new().children(vec![tile]));
@@ -374,6 +377,19 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
     tile_with_label(Tooltip::new(body, shown.clone()), shown, is_selected, entry)
 }
 
+/// Плитка открытой страницы заметок: иконка-лист в скруглённой рамке.
+fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
+    let ring_class = if is_selected {
+        "nav-rail-item nav-rail-note-tile selected"
+    } else {
+        "nav-rail-item nav-rail-note-tile"
+    };
+    let body = DecoratedBox::new()
+        .class(ring_class)
+        .child(Center::new().child(Icon::new(MI_EDIT_NOTE).class("nav-rail-note-icon")));
+    tile_with_label(Tooltip::new(body, title.clone()), title, is_selected, entry)
+}
+
 /// Разделитель: тонкая линия в широкой невидимой зоне — чтобы по ней можно
 /// было попасть правой кнопкой (удалить) и ухватить для перетаскивания.
 fn separator_tile(ts: u64, entry: RailEntry) -> impl Widget {
@@ -420,6 +436,7 @@ fn add_button() -> impl Widget {
             MenuItem::new("code", tr!("nav.add.code")).icon(MI_CODE),
             MenuItem::new("nodes", tr!("nav.add.nodes")).icon(MI_HUB),
             MenuItem::new("chat", tr!("nav.add.chat")).icon(MI_CHAT),
+            MenuItem::new("note", tr!("nav.add.note")).icon(MI_EDIT_NOTE),
             MenuItem::separator(),
             MenuItem::new("separator", tr!("nav.add.separator")).icon(MI_HORIZONTAL_RULE),
         ])
@@ -429,6 +446,7 @@ fn add_button() -> impl Widget {
             "code" => rail::new_code_session(),
             "nodes" => rail::new_graph(),
             "chat" => rail::new_chat(),
+            "note" => rail::new_note(),
             "separator" => rail::add_separator(),
             _ => {}
         });

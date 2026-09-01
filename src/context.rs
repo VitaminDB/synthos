@@ -22,6 +22,7 @@ pub const ROUTES: &[&str] = &[
     "music",
     "code",
     "nodes",
+    "notes",
     "syn_explorer",
     "huggingface",
     "settings",
@@ -199,6 +200,7 @@ pub const SYN_RIGHT_PANEL_DETAILS: usize = 1;
 pub struct PanelsCtx {
     pub syn_chat: (RwSignal<bool>, RwSignal<bool>),
     pub code: (RwSignal<bool>, RwSignal<bool>),
+    pub notes: (RwSignal<bool>, RwSignal<bool>),
     pub syn_explorer: (RwSignal<bool>, RwSignal<bool>),
     pub huggingface: (RwSignal<bool>, RwSignal<bool>),
     pub settings: (RwSignal<bool>, RwSignal<bool>),
@@ -209,6 +211,7 @@ impl PanelsCtx {
         Self {
             syn_chat: (use_signal(cfg.syn_chat_left), use_signal(cfg.syn_chat_right)),
             code: (use_signal(cfg.code_left), use_signal(cfg.code_right)),
+            notes: (use_signal(cfg.notes_left), use_signal(cfg.notes_right)),
             syn_explorer: (
                 use_signal(cfg.syn_explorer_left),
                 use_signal(cfg.syn_explorer_right),
@@ -228,6 +231,8 @@ impl PanelsCtx {
             syn_chat_right: self.syn_chat.1.get(),
             code_left: self.code.0.get(),
             code_right: self.code.1.get(),
+            notes_left: self.notes.0.get(),
+            notes_right: self.notes.1.get(),
             syn_explorer_left: self.syn_explorer.0.get(),
             syn_explorer_right: self.syn_explorer.1.get(),
             huggingface_left: self.huggingface.0.get(),
@@ -426,4 +431,7 @@ pub struct AppCtx {
     pub hf_right_split_ratio: RwSignal<f32>,
     pub settings_left_split_ratio: RwSignal<f32>,
     pub settings_right_split_ratio: RwSignal<f32>,
+    /// Разделители страницы «Заметки» (persist в `AppConfig.notes_*`).
+    pub notes_left_split_ratio: RwSignal<f32>,
+    pub notes_right_split_ratio: RwSignal<f32>,
 }

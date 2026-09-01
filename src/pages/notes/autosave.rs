@@ -18,12 +18,30 @@ use std::time::{Duration, Instant};
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
-use super::state::NotesCtx;
+use super::base::BaseHandle;
+use super::state::{NotePayload, NotesCtx};
 use super::storage;
+
+/// Источник содержимого для записи (сериализация без сигналов —
+/// безопасна в фоновом потоке).
+#[derive(Clone)]
+enum SaveSource {
+    Doc(DocumentEditorHandle),
+    Base(BaseHandle),
+}
+
+impl SaveSource {
+    fn serialize(&self) -> String {
+        match self {
+            SaveSource::Doc(h) => h.serialize(),
+            SaveSource::Base(h) => h.serialize(),
+        }
+    }
+}
 
 /// Ждущая записи страница.
 struct PendingSave {
-    handle: DocumentEditorHandle,
+    source: SaveSource,
     abs: PathBuf,
     rev: u64,
     queued: Instant,
@@ -90,7 +108,7 @@ pub fn forget(path: &str) {
 }
 
 fn write_now(path: &str, save: &PendingSave) {
-    let content = save.handle.serialize();
+    let content = save.source.serialize();
     mark_recent_save(save.abs.clone());
     match storage::save_atomic_abs(&save.abs, &content) {
         Ok(()) => {
@@ -139,11 +157,16 @@ pub fn force_save(ctx: &NotesCtx, path: &str) {
     let Some(note) = ctx.open.get_untracked().into_iter().find(|n| n.path == path) else {
         return;
     };
+    let source = match &note.payload {
+        NotePayload::Page { handle, .. } => SaveSource::Doc(handle.clone()),
+        NotePayload::Base(h) => SaveSource::Base(h.clone()),
+        NotePayload::Raw => return,
+    };
     let root = ctx.vault_path.get_untracked();
     let save = PendingSave {
         abs: storage::abs_path(&root, path),
-        rev: note.handle.revision().get_untracked(),
-        handle: note.handle,
+        rev: note.revision(),
+        source,
         queued: Instant::now(),
     };
     pending().lock().unwrap_or_else(|e| e.into_inner()).remove(path);
@@ -160,7 +183,13 @@ pub fn install_notes_autosave() {
         let root = ctx.vault_path.get();
         for n in open.iter() {
             // `.get()` — подписка эффекта на каждую правку страницы.
-            let rev = n.handle.revision().get();
+            let (rev, source) = match &n.payload {
+                NotePayload::Page { handle, .. } => {
+                    (handle.revision().get(), SaveSource::Doc(handle.clone()))
+                }
+                NotePayload::Base(h) => (h.revision.get(), SaveSource::Base(h.clone())),
+                NotePayload::Raw => continue,
+            };
             if rev <= saved_rev(&n.path) {
                 continue;
             }
@@ -168,7 +197,7 @@ pub fn install_notes_autosave() {
             map.insert(
                 n.path.clone(),
                 PendingSave {
-                    handle: n.handle.clone(),
+                    source,
                     abs: storage::abs_path(&root, &n.path),
                     rev,
                     queued: Instant::now(),

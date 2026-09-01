@@ -34,6 +34,12 @@ pub fn header() -> impl Widget {
             }),
         )
         .child(
+            panel_header::action_button(MI_GRID_ON, tr!("notes.tree.new_base"), move || {
+                ctx.create_base(&tr!("notes.untitled_base"));
+                rail::navigate("notes");
+            }),
+        )
+        .child(
             panel_header::action_button(MI_AUTORENEW, tr!("notes.tree.rescan"), move || {
                 ctx.rescan();
             }),

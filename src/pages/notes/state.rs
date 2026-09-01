@@ -14,6 +14,8 @@ use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
 use crate::config::{now_millis, AppConfig, NotesOpenState};
 
+use super::base::model::BaseDoc;
+use super::base::BaseHandle;
 use super::index::VaultIndex;
 use super::storage::{self, VaultEntry, VaultEntryKind};
 
@@ -25,6 +27,21 @@ pub enum NoteKind {
     Canvas,
 }
 
+/// Содержимое открытой плитки по типу файла.
+#[derive(Clone)]
+pub enum NotePayload {
+    /// Текстовая страница: markdown-исходник + модель редактора.
+    Page {
+        source: Arc<String>,
+        handle: DocumentEditorHandle,
+    },
+    /// База данных (`*.base.json`).
+    Base(BaseHandle),
+    /// Файл известного типа, для которого редактора ещё нет (канвас до T8)
+    /// либо не распарсившийся — держим сырым, чтобы не затереть данные.
+    Raw,
+}
+
 /// Открытая страница (плитка рейла).
 #[derive(Clone)]
 pub struct OpenNote {
@@ -34,12 +51,43 @@ pub struct OpenNote {
     pub title: String,
     /// Unix-миллисекунды открытия — порядок в рейле.
     pub opened_at: u64,
-    /// Исходник файла на момент открытия/последней перезагрузки.
-    pub source: Arc<String>,
-    /// Общая модель редактора: сериализация + сигнал ревизии.
-    pub handle: DocumentEditorHandle,
+    pub payload: NotePayload,
     /// Файл изменён снаружи при несохранённых правках — показать баннер.
     pub conflict: RwSignal<bool>,
+}
+
+impl OpenNote {
+    pub fn page_handle(&self) -> Option<&DocumentEditorHandle> {
+        match &self.payload {
+            NotePayload::Page { handle, .. } => Some(handle),
+            _ => None,
+        }
+    }
+
+    pub fn base_handle(&self) -> Option<&BaseHandle> {
+        match &self.payload {
+            NotePayload::Base(h) => Some(h),
+            _ => None,
+        }
+    }
+
+    /// Текущая ревизия правок содержимого.
+    pub fn revision(&self) -> u64 {
+        match &self.payload {
+            NotePayload::Page { handle, .. } => handle.revision().get_untracked(),
+            NotePayload::Base(h) => h.revision.get_untracked(),
+            NotePayload::Raw => 0,
+        }
+    }
+
+    /// Сериализация содержимого для записи на диск.
+    pub fn serialize(&self) -> Option<String> {
+        match &self.payload {
+            NotePayload::Page { handle, .. } => Some(handle.serialize()),
+            NotePayload::Base(h) => Some(h.serialize()),
+            NotePayload::Raw => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +225,19 @@ impl NotesCtx {
         }
     }
 
+    /// Создать базу данных в корне vault'а и открыть её.
+    pub fn create_base(&self, base_title: &str) {
+        let root = self.vault_path.get_untracked();
+        let content = BaseDoc::template().serialize();
+        match storage::create_file(&root, base_title, ".base.json", &content) {
+            Ok(rel) => {
+                self.rescan();
+                self.open_path(&rel);
+            }
+            Err(e) => log::warn!("notes: не удалось создать базу: {e}"),
+        }
+    }
+
     /// Удалить файл/папку с диска, закрыв связанные плитки.
     pub fn delete_entry(&self, rel: &str) {
         let root = self.vault_path.get_untracked();
@@ -205,7 +266,7 @@ impl NotesCtx {
         let Some(note) = self.open.get_untracked().into_iter().find(|n| n.path == rel) else {
             return;
         };
-        let rev = note.handle.revision().get_untracked();
+        let rev = note.revision();
         let unsaved = rev > super::autosave::saved_rev(rel);
         if unsaved {
             // Локальные правки против внешних — решает пользователь.
@@ -214,7 +275,7 @@ impl NotesCtx {
         }
         // Семантический no-op (наша же сериализация доехала с опозданием)
         // не перегружаем — иначе прыгала бы каретка.
-        if note.handle.serialize() == new_content {
+        if note.serialize().as_deref() == Some(new_content.as_str()) {
             super::autosave::mark_saved(rel, rev);
             return;
         }
@@ -235,13 +296,24 @@ impl NotesCtx {
         let mut rev_after = 0u64;
         self.open.update(|v| {
             if let Some(n) = v.iter_mut().find(|n| n.path == rel) {
-                n.source = Arc::new(content.clone());
                 n.conflict.set(false);
-                rev_after = n.handle.revision().get_untracked();
+                match &mut n.payload {
+                    NotePayload::Page { source, handle } => {
+                        // Reparse по fingerprint нового исходника.
+                        *source = Arc::new(content.clone());
+                        rev_after = handle.revision().get_untracked();
+                    }
+                    NotePayload::Base(h) => match BaseDoc::parse(&content) {
+                        Ok(doc) => {
+                            h.replace(doc);
+                            rev_after = h.revision.get_untracked();
+                        }
+                        Err(e) => log::warn!("notes: перечитка {rel} не удалась: {e}"),
+                    },
+                    NotePayload::Raw => {}
+                }
             }
         });
-        // Reparse модели по fingerprint не бампает ревизию — текущее
-        // состояние считается сохранённым.
         super::autosave::mark_saved(rel, rev_after);
     }
 
@@ -267,14 +339,27 @@ fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNo
         VaultEntryKind::Dir => return None,
     };
     let source = storage::load(root, rel).ok()?;
-    let handle = DocumentEditorHandle::new();
+    let payload = match kind {
+        NoteKind::Page => NotePayload::Page {
+            source: Arc::new(source),
+            handle: DocumentEditorHandle::new(),
+        },
+        NoteKind::Base => match BaseDoc::parse(&source) {
+            Ok(doc) => NotePayload::Base(BaseHandle::new(doc)),
+            Err(e) => {
+                // Битый JSON держим сырым — не затираем данные автосейвом.
+                log::warn!("notes: {rel} не распарсился как база: {e}");
+                NotePayload::Raw
+            }
+        },
+        NoteKind::Canvas => NotePayload::Raw,
+    };
     Some(OpenNote {
         path: rel.to_string(),
         kind,
         title: storage::title_of(rel),
         opened_at: if opened_at == 0 { now_millis() } else { opened_at },
-        source: Arc::new(source),
-        handle,
+        payload,
         conflict: use_signal(false),
     })
 }

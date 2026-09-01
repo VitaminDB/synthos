@@ -88,7 +88,7 @@ pub fn ingest_dropped_file(ctx: NotesCtx, note_path: String, file: PathBuf, toke
         .get_untracked()
         .into_iter()
         .find(|n| n.path == note_path)
-        .map(|n| n.handle);
+        .and_then(|n| n.page_handle().cloned());
     let Some(handle) = handle else { return };
     std::thread::spawn(move || match blobs::store_file(&file) {
         Ok((sha, _size, ext)) => {

@@ -165,3 +165,41 @@ document-editor {
     color: var(--text-subtle);
     padding: 8px 4px 2px 4px;
 }
+
+/* ── Базы данных ──────────────────────────────────────────────── */
+.notes-base-switcher {
+    padding: 8px 12px 4px 12px;
+}
+.notes-base-tab {
+    border-radius: 6px;
+    padding: 4px 10px;
+    transition: background-color 120ms ease-out;
+}
+.notes-base-tab:hover {
+    background-color: var(--surface-hover);
+}
+.notes-base-tab.selected {
+    background-color: var(--surface-selected);
+}
+.notes-base-tab-icon {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+.notes-base-tab-label {
+    font-size: 12px;
+    color: var(--text);
+}
+.notes-base-table {
+    margin: 4px 12px;
+}
+.notes-base-add-row {
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin: 0px 12px 10px 12px;
+}
+.notes-base-add-row:hover {
+    background-color: var(--surface-hover);
+}
+.notes-base-row-delete {
+    font-size: 13px;
+}

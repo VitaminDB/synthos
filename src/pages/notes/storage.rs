@@ -182,18 +182,28 @@ pub fn save_atomic_abs(path: &Path, content: &str) -> io::Result<()> {
 /// Новая страница с уникальным именем в корне vault'а.
 /// Возвращает vault-относительный путь.
 pub fn create_page(root: &Path, base_title: &str) -> io::Result<String> {
+    create_file(root, base_title, ".md", "")
+}
+
+/// Новый файл с уникальным именем `<title>[ N]<ext>` и содержимым.
+pub fn create_file(
+    root: &Path,
+    base_title: &str,
+    ext: &str,
+    content: &str,
+) -> io::Result<String> {
     ensure_vault(root);
     for i in 0..1000 {
         let name = if i == 0 {
-            format!("{base_title}.md")
+            format!("{base_title}{ext}")
         } else {
-            format!("{base_title} {}.md", i + 1)
+            format!("{base_title} {}{ext}", i + 1)
         };
         let path = root.join(&name);
         if path.exists() {
             continue;
         }
-        fs::write(&path, "")?;
+        fs::write(&path, content)?;
         return Ok(name);
     }
     Err(io::Error::new(io::ErrorKind::AlreadyExists, "не нашлось свободного имени"))

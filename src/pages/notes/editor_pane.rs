@@ -12,7 +12,7 @@ use syngui::widgets::input::document_editor::DocumentEditor;
 use crate::icons::*;
 
 use super::autosave;
-use super::state::{NoteKind, NotesCtx, OpenNote};
+use super::state::{NoteKind, NotePayload, NotesCtx, OpenNote};
 
 pub fn body() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
@@ -20,12 +20,12 @@ pub fn body() -> impl Widget {
         let Some(note) = ctx.active_note() else {
             return vec![Box::new(empty_state())];
         };
-        match note.kind {
-            NoteKind::Page => {
+        match &note.payload {
+            NotePayload::Page { source, handle } => {
                 let note_path = note.path.clone();
                 let editor = DocumentEditor::new()
-                    .markdown((*note.source).clone())
-                    .handle(&note.handle)
+                    .markdown((**source).clone())
+                    .handle(handle)
                     .links(super::links::provider(ctx))
                     .media(super::media::resolver(ctx))
                     .model_epoch(ctx.media_epoch.get())
@@ -56,7 +56,23 @@ pub fn body() -> impl Widget {
                         ),
                 )]
             }
-            NoteKind::Base | NoteKind::Canvas => vec![Box::new(coming_soon(note.kind))],
+            NotePayload::Base(handle) => {
+                let banner_note = note.clone();
+                let base = super::base::pane::view(handle.clone());
+                vec![Box::new(
+                    Column::new()
+                        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+                            if banner_note.conflict.get() {
+                                vec![Box::new(conflict_banner(banner_note.clone()))]
+                            } else {
+                                Vec::new()
+                            }
+                        }))
+                        .child(DecoratedBox::new().class("grow").child(base)),
+                )]
+            }
+            NotePayload::Raw => vec![Box::new(coming_soon(note.kind))],
         }
     })
 }

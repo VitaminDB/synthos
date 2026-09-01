@@ -21,6 +21,7 @@ use crate::context::AppCtx;
 use crate::icons::*;
 
 pub mod autosave;
+pub mod base;
 pub mod editor_pane;
 pub mod fs_watcher;
 pub mod index;
@@ -31,7 +32,7 @@ pub mod state;
 pub mod storage;
 pub mod vault_tree;
 
-pub use state::{NoteKind, NotesCtx, OpenNote};
+pub use state::{NoteKind, NotePayload, NotesCtx, OpenNote};
 
 pub fn view() -> impl Widget {
     let app = use_context::<AppCtx>();

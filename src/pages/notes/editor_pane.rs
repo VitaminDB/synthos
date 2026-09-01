@@ -22,10 +22,21 @@ pub fn body() -> impl Widget {
         };
         match note.kind {
             NoteKind::Page => {
+                let note_path = note.path.clone();
                 let editor = DocumentEditor::new()
                     .markdown((*note.source).clone())
                     .handle(&note.handle)
                     .links(super::links::provider(ctx))
+                    .media(super::media::resolver(ctx))
+                    .model_epoch(ctx.media_epoch.get())
+                    .on_drop_file(move |file, token| {
+                        super::media::ingest_dropped_file(
+                            ctx,
+                            note_path.clone(),
+                            file,
+                            token,
+                        );
+                    })
                     .class("notes-editor");
                 let banner_note = note.clone();
                 vec![Box::new(

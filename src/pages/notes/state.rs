@@ -57,6 +57,8 @@ pub struct NotesCtx {
     pub right_tab: RwSignal<usize>,
     /// Индекс wiki-связей vault'а (обновляется при сохранениях и скане).
     pub index: RwSignal<Arc<VaultIndex>>,
+    /// Тик перестройки блоков после patch_media (ingest вложений).
+    pub media_epoch: RwSignal<u64>,
 }
 
 impl NotesCtx {
@@ -87,6 +89,7 @@ impl NotesCtx {
             active: use_signal(active),
             right_tab: use_signal(0),
             index: use_signal(Arc::new(index)),
+            media_epoch: use_signal(0),
         }
     }
 

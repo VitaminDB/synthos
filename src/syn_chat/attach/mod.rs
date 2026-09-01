@@ -131,6 +131,8 @@ pub fn gc_after_delete() {
                 }
             }
         }
+        // Заметки ссылаются на тот же CAS схемой `blob:<sha>` в markdown.
+        crate::pages::notes::media::collect_blob_refs(&mut referenced);
         blobs::gc_unreferenced(&referenced);
     });
 }

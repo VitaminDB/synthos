@@ -25,6 +25,7 @@ pub mod editor_pane;
 pub mod fs_watcher;
 pub mod index;
 pub mod links;
+pub mod media;
 pub mod right_panel;
 pub mod state;
 pub mod storage;

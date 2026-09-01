@@ -1572,3 +1572,4 @@ notes.base.soon.gantt = "Ганнт-представление появится 
 notes.base.kanban.none = "Без статуса"
 notes.base.kanban.no_select = "Для канбана нужна select-колонка группировки."
 notes.base.kanban.untitled = "Без названия"
+notes.base.gantt.empty = "Нет строк с датами: заполните начало и срок в таблице."

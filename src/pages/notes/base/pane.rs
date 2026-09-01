@@ -77,18 +77,8 @@ fn body(handle: BaseHandle) -> impl Widget {
         let content: Box<dyn Widget> = match kind {
             ViewKind::Table => Box::new(table::view(handle.clone())),
             ViewKind::Kanban => Box::new(super::kanban::view(handle.clone())),
-            ViewKind::Gantt => Box::new(soon(MI_HORIZONTAL_RULE, tr!("notes.base.soon.gantt"))),
+            ViewKind::Gantt => Box::new(super::gantt::view(handle.clone())),
         };
         vec![content]
     })
-}
-
-fn soon(icon: &'static str, text: String) -> impl Widget {
-    Center::new().child(
-        Column::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .child(Icon::new(icon).class("notes-empty-icon"))
-            .child(Text::new(text).class("notes-empty-hint")),
-    )
 }

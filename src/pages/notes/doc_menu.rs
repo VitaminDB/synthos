@@ -7,13 +7,13 @@
 //! очередью [`DocOp`] через ручку страницы (`NotesCtx::doc_op`): правка
 //! проходит через историю undo и ставит каретку в новый блок.
 //!
-//! Два раздела вставки живут отдельными подменю, иначе список не влезал бы
-//! на экран: «Примитивы» (прямоугольник … двойная стрелка — блоки
-//! `![[shape:<вид>]]`, настраиваются в панели свойств; там же канбан-доска
-//! и диаграмма Ганта — объекты проекта `![[kanban:<id>]]` /
-//! `![[gantt:<id>]]`, см. [`super::kanban`], [`super::gantt`]) и медиа
+//! Примитивы (прямоугольник … двойная стрелка — блоки `![[shape:<вид>]]`,
+//! настраиваются в панели свойств) живут своим подменю, иначе список не
+//! влезал бы на экран; канбан-доска и диаграмма Ганта — объекты проекта
+//! `![[kanban:<id>]]` / `![[gantt:<id>]]` (см. [`super::kanban`],
+//! [`super::gantt`]) — стоят в меню вставки прямо над ним; медиа
 //! («Картинка…», «SVG-файл…», «SVG из буфера», «Файл…» — вложения бандла,
-//! см. [`super::media`]).
+//! см. [`super::media`]) — ниже.
 
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{DocOp, ShapeKind, SlashAction, SlashItem};
@@ -72,16 +72,12 @@ fn shape_items(prefix: &str) -> Vec<MenuItem> {
         .collect()
 }
 
-/// Подменю «Примитивы» для вставки: фигуры, затем доска и диаграмма.
-fn insert_primitive_items() -> Vec<MenuItem> {
-    let mut items = shape_items("ins_shape_");
-    items.push(MenuItem::separator());
-    items.extend(
-        OBJECTS
-            .iter()
-            .map(|(id, icon, key)| MenuItem::new(format!("ins_object_{id}"), syngui::i18n::tr(key)).icon(*icon)),
-    );
-    items
+/// Пункты вставки доски и диаграммы.
+fn object_items() -> Vec<MenuItem> {
+    OBJECTS
+        .iter()
+        .map(|(id, icon, key)| MenuItem::new(format!("ins_object_{id}"), syngui::i18n::tr(key)).icon(*icon))
+        .collect()
 }
 
 fn shape_of(id: &str) -> Option<ShapeKind> {
@@ -174,12 +170,15 @@ fn items() -> Vec<MenuItem> {
     insert.push(MenuItem::new("ins_table", tr!("notes.block.table")).icon(MI_GRID_ON));
     insert.push(MenuItem::new("ins_divider", tr!("notes.block.divider")).icon(MI_HORIZONTAL_RULE));
     insert.push(MenuItem::separator());
-    // Примитивы и медиа — своими разделами: их много, плоским списком
-    // меню растянулось бы на весь экран.
+    // Доска и диаграмма — объекты, не примитивы: свои пункты над подменю.
+    insert.extend(object_items());
+    insert.push(MenuItem::separator());
+    // Примитивы — своим разделом: их много, плоским списком меню
+    // растянулось бы на весь экран.
     insert.push(
         MenuItem::new("ins_shapes", tr!("notes.menu.shapes"))
             .icon(MI_CATEGORY)
-            .children(insert_primitive_items()),
+            .children(shape_items("ins_shape_")),
     );
     insert.push(MenuItem::new("ins_image", tr!("notes.menu.image")).icon(MI_IMAGE_ICON));
     insert.push(MenuItem::new("ins_svg", tr!("notes.menu.svg")).icon(MI_BRUSH));

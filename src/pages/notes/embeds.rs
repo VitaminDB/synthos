@@ -40,19 +40,11 @@ impl EmbedFactory for NotesEmbedFactory {
         let height = ectx.height.unwrap_or(DEFAULT_OBJECT_H);
         if let Some(id) = target.strip_prefix("kanban:") {
             let LiveObject::Kanban { handle, .. } = ctx.object("kanban", id.trim())? else { return None };
-            return Some(framed(
-                object_header(MI_VIEW_KANBAN, tr!("notes.embed.kanban")),
-                Box::new(super::kanban::view::view(handle)),
-                height,
-            ));
+            return Some(sized(Box::new(super::kanban::view::view(handle)), height));
         }
         if let Some(id) = target.strip_prefix("gantt:") {
             let LiveObject::Gantt { handle, .. } = ctx.object("gantt", id.trim())? else { return None };
-            return Some(framed(
-                object_header(MI_VIEW_TIMELINE, tr!("notes.embed.gantt")),
-                Box::new(super::gantt::view::view(handle)),
-                height,
-            ));
+            return Some(sized(Box::new(super::gantt::view::view(handle)), height));
         }
         let id = ctx.index.get_untracked().resolve(target)?;
         if ectx.depth >= MAX_DEPTH {
@@ -111,28 +103,13 @@ fn page_header(ctx: NotesCtx, id: String, title: String) -> impl Widget {
         )
 }
 
-fn object_header(icon: &'static str, title: String) -> impl Widget {
-    Row::new()
-        .gap(6.0)
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .class("notes-embed-header")
-        .child(Icon::new(icon).class("notes-embed-icon"))
-        .child(Text::new(title).max_lines(1).class("notes-embed-title"))
-}
-
-/// Доска/диаграмма во врезке живут в фиксированной высоте блока.
-fn framed(header: impl Widget + 'static, body: Box<dyn Widget>, height: f32) -> Box<dyn Widget> {
+/// Доска/диаграмма живут в высоте своего блока — без рамки и шапки: у
+/// них своё оформление, а выбранный блок и так виден в панели свойств.
+fn sized(body: Box<dyn Widget>, height: f32) -> Box<dyn Widget> {
     Box::new(
-        Column::new()
-            .gap(4.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(header)
-            .child(
-                DecoratedBox::new()
-                    .style("height", syngui::mss::StyleValue::px(height.max(80.0)))
-                    .class("notes-embed-frame")
-                    .child(crate::components::workspace_frame::expand(body)),
-            ),
+        DecoratedBox::new()
+            .style("height", syngui::mss::StyleValue::px(height.max(80.0)))
+            .child(crate::components::workspace_frame::expand(body)),
     )
 }
 

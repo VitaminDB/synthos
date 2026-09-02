@@ -474,12 +474,6 @@ document-editor {
     font-weight: 600;
     color: var(--text-muted);
 }
-.notes-embed-frame {
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: var(--border-soft);
-    background-color: var(--bg-panel);
-}
 
 /* ── Граф связей ──────────────────────────────────────────────── */
 .notes-graph-viewport {

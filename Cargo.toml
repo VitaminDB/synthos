@@ -72,6 +72,8 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "markdown-syntax",
     "image",
     "image-network",
+    # Цветные эмодзи — иконки страниц заметок.
+    "color-emoji",
     "svg",
     "clipboard",
     "audio",

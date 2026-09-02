@@ -658,15 +658,21 @@ pub struct AppConfig {
     pub notes_left_split_ratio: f32,
     #[serde(default = "default_notes_right_split_ratio")]
     pub notes_right_split_ratio: f32,
-    /// Папка хранилища заметок. Пусто — дефолт `~/Documents/SynthOS Notes`
-    /// (см. `pages::notes::storage::resolve_vault_path`).
+    /// Папка vault'а первой волны — источник разовой миграции в проект.
     #[serde(default)]
     pub notes_vault_path: String,
-    /// Открытые плитки заметок (vault-относительные пути) и активная.
+    /// Файл проекта заметок (`.syn`). Пусто — дефолт
+    /// `~/Documents/SynthOS Notes.syn` (см. `pages::notes::project`).
     #[serde(default)]
-    pub notes_open: Vec<NotesOpenState>,
+    pub notes_project_path: String,
+    /// Активная страница (id), раскрытые узлы дерева и плитка рейла
+    /// (штамп открытия; None — плитка закрыта).
     #[serde(default)]
     pub notes_active: Option<String>,
+    #[serde(default)]
+    pub notes_expanded: Vec<String>,
+    #[serde(default)]
+    pub notes_tile_opened_at: Option<u64>,
     /// Видимость левой/правой панели по страницам — тогглы в общей шапке.
     #[serde(default)]
     pub panels: PanelsConfig,
@@ -1169,8 +1175,10 @@ impl Default for AppConfig {
             notes_left_split_ratio: default_notes_left_split_ratio(),
             notes_right_split_ratio: default_notes_right_split_ratio(),
             notes_vault_path: String::new(),
-            notes_open: Vec::new(),
+            notes_project_path: String::new(),
             notes_active: None,
+            notes_expanded: Vec::new(),
+            notes_tile_opened_at: None,
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
             syn_chat_system_prompt: String::new(),
@@ -1216,16 +1224,6 @@ pub fn default_notes_left_split_ratio() -> f32 {
 
 pub fn default_notes_right_split_ratio() -> f32 {
     0.78
-}
-
-/// Открытая плитка заметок для восстановления после рестарта.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct NotesOpenState {
-    /// Vault-относительный путь файла (с расширением).
-    pub path: String,
-    /// Unix-миллисекунды открытия — порядок плитки в рейле.
-    #[serde(default)]
-    pub opened_at: u64,
 }
 
 /// HuggingFace: панель файлов справа ~30% ширины.

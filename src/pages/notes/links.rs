@@ -1,18 +1,16 @@
-//! Реализация точек инъекции DocumentEditor поверх vault'а.
+//! Точки инъекции DocumentEditor: wiki-ссылки поверх дерева проекта.
 //!
-//! Провайдер читает индекс из сигнала `NotesCtx.index` (вызовы приходят
-//! с main-потока: пейнт и события редактора), открытие wiki-ссылки
-//! открывает/создаёт страницу, url — системный браузер.
+//! Провайдер читает индекс из сигнала `NotesCtx.index` (вызовы приходят с
+//! main-потока: пейнт и события редактора). Открытие wiki-ссылки
+//! активирует страницу, битой — создаёт страницу с таким названием в корне;
+//! url — системный браузер.
 
 use std::sync::Arc;
 
-use syngui::widgets::input::document_editor::{
-    DocLinkProvider, LinkCandidate,
-};
-use syngui::widgets::input::document_editor::LinkTarget;
+use syngui::widgets::input::document_editor::{DocLinkProvider, LinkCandidate, LinkTarget};
 
+use super::index::is_object_target;
 use super::state::NotesCtx;
-use super::storage;
 
 pub struct NotesLinkProvider {
     pub ctx: NotesCtx,
@@ -29,12 +27,12 @@ impl DocLinkProvider for NotesLinkProvider {
             .get_untracked()
             .complete(prefix)
             .into_iter()
-            .map(|(title, _rel)| LinkCandidate { label: title.clone(), target: title })
+            .map(|(title, _id)| LinkCandidate { label: title.clone(), target: title })
             .collect()
     }
 
     fn link_exists(&self, target: &str) -> bool {
-        self.ctx.index.get_untracked().resolve(target).is_some()
+        is_object_target(target) || self.ctx.index.get_untracked().resolve(target).is_some()
     }
 
     fn open_link(&self, target: &LinkTarget) {
@@ -42,20 +40,13 @@ impl DocLinkProvider for NotesLinkProvider {
             LinkTarget::Wiki { target } => {
                 let resolved = self.ctx.index.get_untracked().resolve(target);
                 match resolved {
-                    Some(rel) => self.ctx.open_path(&rel),
+                    Some(id) => self.ctx.activate(&id),
                     None => {
-                        // Битая ссылка: создаём страницу с этим именем.
-                        let root = self.ctx.vault_path.get_untracked();
-                        match storage::create_page(&root, target.trim()) {
-                            Ok(rel) => {
-                                self.ctx.rescan();
-                                self.ctx.reindex_all();
-                                self.ctx.open_path(&rel);
-                            }
-                            Err(e) => log::warn!("notes: не удалось создать {target}: {e}"),
-                        }
+                        // Битая ссылка: создаём страницу с этим названием.
+                        self.ctx.create_page(None, target.trim());
                     }
                 }
+                crate::rail::navigate("notes");
             }
             LinkTarget::Url(url) => {
                 if let Err(e) = syngui::open_url(url) {

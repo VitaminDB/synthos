@@ -1,516 +1,575 @@
 //! Реактивное состояние режима «Заметки».
 //!
-//! Модель «список документов + активный» (как SynChatCtx): дерево vault'а —
-//! снимок скана диска, открытые страницы — плитки рейла (`RailEntry::Note`),
-//! у каждой — своя [`DocumentEditorHandle`] (общая модель редактора и сигнал
-//! ревизии; на нём в T2 повиснет автосейв).
+//! Проект — один `.syn`-файл ([`project`]); дерево страниц живёт в памяти
+//! (`tree`) и пишется автосейвом по `tree_rev`. Страницы и объекты
+//! (базы/канвасы) загружаются лениво и держатся в пулах `pages`/`objects`
+//! — у каждого своя ручка с сигналом ревизии, на который подписан автосейв.
+//! Активная страница одна; плитка рейла одна на проект.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use syngui::core::{Point, Rect};
 use syngui::prelude::*;
-use syngui::widgets::input::document_editor::DocumentEditorHandle;
+use syngui::widgets::input::document_editor::{DocOp, DocumentEditorHandle};
 
-use crate::config::{now_millis, AppConfig, NotesOpenState};
+use crate::config::{now_millis, AppConfig};
 
+use super::autosave;
 use super::base::model::BaseDoc;
 use super::base::BaseHandle;
 use super::canvas::model::CanvasDoc;
 use super::canvas::CanvasHandle;
 use super::index::VaultIndex;
-use super::storage::{self, VaultEntry, VaultEntryKind};
+use super::project::{self, PageNode, ProjectTree};
 
-/// Тип открытой плитки заметок.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoteKind {
-    Page,
-    Base,
-    Canvas,
-    /// Спец-плитка «Граф связей» (path = ":graph", файла нет).
-    Graph,
-}
-
-/// Содержимое открытой плитки по типу файла.
+/// Загруженная страница: исходник для виджета (fingerprint стабилен между
+/// перестройками) + ручка редактора (модель, ревизия, очередь операций).
 #[derive(Clone)]
-pub enum NotePayload {
-    /// Текстовая страница: markdown-исходник + модель редактора.
-    Page {
-        source: Arc<String>,
-        handle: DocumentEditorHandle,
-    },
-    /// База данных (`*.base.json`).
-    Base(BaseHandle),
-    /// Канвас (`*.canvas.json`).
-    Canvas(CanvasHandle),
-    /// Файл известного типа, для которого редактора ещё нет (канвас до T8)
-    /// либо не распарсившийся — держим сырым, чтобы не затереть данные.
-    Raw,
+pub struct LivePage {
+    pub id: String,
+    pub source: Arc<String>,
+    pub handle: DocumentEditorHandle,
 }
 
-/// Открытая страница (плитка рейла).
+impl LivePage {
+    /// Текущий markdown: модель, если её правили, иначе исходник.
+    pub fn markdown(&self) -> String {
+        if self.handle.revision().get_untracked() > 0 {
+            self.handle.serialize()
+        } else {
+            (*self.source).clone()
+        }
+    }
+}
+
+/// Загруженный объект-врезка.
 #[derive(Clone)]
-pub struct OpenNote {
-    /// Vault-относительный путь с расширением — стабильный ключ.
-    pub path: String,
-    pub kind: NoteKind,
-    pub title: String,
-    /// Unix-миллисекунды открытия — порядок в рейле.
-    pub opened_at: u64,
-    pub payload: NotePayload,
-    /// Файл изменён снаружи при несохранённых правках — показать баннер.
-    pub conflict: RwSignal<bool>,
+pub enum LiveObject {
+    Base { id: String, handle: BaseHandle },
+    Canvas { id: String, handle: CanvasHandle },
 }
 
-impl OpenNote {
-    pub fn page_handle(&self) -> Option<&DocumentEditorHandle> {
-        match &self.payload {
-            NotePayload::Page { handle, .. } => Some(handle),
-            _ => None,
+impl LiveObject {
+    pub fn id(&self) -> &str {
+        match self {
+            LiveObject::Base { id, .. } | LiveObject::Canvas { id, .. } => id,
         }
     }
 
-    pub fn base_handle(&self) -> Option<&BaseHandle> {
-        match &self.payload {
-            NotePayload::Base(h) => Some(h),
-            _ => None,
+    pub fn kind(&self) -> &'static str {
+        match self {
+            LiveObject::Base { .. } => "base",
+            LiveObject::Canvas { .. } => "canvas",
         }
     }
 
-    pub fn canvas_handle(&self) -> Option<&CanvasHandle> {
-        match &self.payload {
-            NotePayload::Canvas(h) => Some(h),
-            _ => None,
-        }
-    }
-
-    /// Текущая ревизия правок содержимого.
-    pub fn revision(&self) -> u64 {
-        match &self.payload {
-            NotePayload::Page { handle, .. } => handle.revision().get_untracked(),
-            NotePayload::Base(h) => h.revision.get_untracked(),
-            NotePayload::Canvas(h) => h.revision.get_untracked(),
-            NotePayload::Raw => 0,
-        }
-    }
-
-    /// Сериализация содержимого для записи на диск.
-    pub fn serialize(&self) -> Option<String> {
-        match &self.payload {
-            NotePayload::Page { handle, .. } => Some(handle.serialize()),
-            NotePayload::Base(h) => Some(h.serialize()),
-            NotePayload::Canvas(h) => Some(h.serialize()),
-            NotePayload::Raw => None,
-        }
+    pub fn bundle_path(&self) -> String {
+        project::object_path(self.kind(), self.id())
     }
 }
+
+/// Вкладки правой панели.
+pub const TAB_PROPS: usize = 0;
+pub const TAB_LINKS: usize = 1;
 
 #[derive(Clone, Copy)]
 pub struct NotesCtx {
-    /// Абсолютный путь vault'а.
-    pub vault_path: RwSignal<PathBuf>,
-    /// Плоское дерево vault'а (DFS с глубинами).
-    pub tree: RwSignal<Vec<VaultEntry>>,
-    /// Свёрнутые папки (vault-относительные пути).
-    pub collapsed: RwSignal<HashSet<String>>,
-    pub open: RwSignal<Vec<OpenNote>>,
-    /// Путь активной плитки.
+    pub project_path: RwSignal<PathBuf>,
+    /// Имя проекта — подпись плитки рейла (имя файла без расширения).
+    pub project_title: RwSignal<String>,
+    pub tree: RwSignal<Arc<ProjectTree>>,
+    /// Ревизия дерева — подписка автосейва.
+    pub tree_rev: RwSignal<u64>,
+    /// Раскрытые узлы дерева.
+    pub expanded: RwSignal<HashSet<String>>,
+    /// Активная страница (id).
     pub active: RwSignal<Option<String>>,
-    /// Активная вкладка правой панели: 0 — Вставка, 1 — Свойства, 2 — Связи.
+    /// Показать граф связей вместо страницы.
+    pub show_graph: RwSignal<bool>,
+    pub pages: RwSignal<Vec<LivePage>>,
+    pub objects: RwSignal<Vec<LiveObject>>,
     pub right_tab: RwSignal<usize>,
-    /// Индекс wiki-связей vault'а (обновляется при сохранениях и скане).
     pub index: RwSignal<Arc<VaultIndex>>,
-    /// Тик перестройки блоков после patch_media (ingest вложений).
-    pub media_epoch: RwSignal<u64>,
-    /// Скрытый пул содержимого врезок (базы/канвасы, не открытые плиткой):
-    /// автосейв подписан и на него.
-    pub embedded: RwSignal<Vec<OpenNote>>,
+    /// Тик перестройки блоков редактора после внешних правок модели
+    /// (очередь DocOp, patch_media).
+    pub doc_epoch: RwSignal<u64>,
+    /// Плитка проекта на рейле: штамп открытия (None — закрыта).
+    pub tile_opened_at: RwSignal<Option<u64>>,
+    /// Строка дерева в режиме переименования.
+    pub renaming: RwSignal<Option<String>>,
+    /// Панель выбора иконки: страница-цель, якорь, открыта ли.
+    pub icon_picker_page: RwSignal<Option<String>>,
+    pub icon_picker_anchor: RwSignal<Rect>,
+    pub icon_picker_open: RwSignal<bool>,
+    /// Контекстное меню документа.
+    pub doc_menu_open: RwSignal<bool>,
+    pub doc_menu_pos: RwSignal<Point>,
 }
 
 impl NotesCtx {
-    /// Начальное состояние: скан vault'а + восстановление открытых плиток.
+    /// Открыть (или создать, мигрировав старую папку) проект и восстановить
+    /// активную страницу, раскрытые узлы и плитку.
     pub fn new_or_restore(cfg: &AppConfig) -> Self {
-        let root = storage::resolve_vault_path(&cfg.notes_vault_path);
-        storage::ensure_vault(&root);
-        let tree = storage::scan(&root);
-
-        let mut open: Vec<OpenNote> = Vec::new();
-        for st in &cfg.notes_open {
-            if let Some(note) = load_note(&root, &st.path, st.opened_at) {
-                open.push(note);
+        let path = project::resolve_project_path(&cfg.notes_project_path);
+        if !path.exists() {
+            let legacy = project::legacy_vault_path(&cfg.notes_vault_path);
+            let migrated = project::migrate_folder(&legacy);
+            let (tree, files) = migrated.unwrap_or_else(|| (ProjectTree::new(), Vec::new()));
+            match project::create(&path, &tree, files) {
+                Ok(()) => log::info!(
+                    "notes: создан проект {} ({} страниц)",
+                    path.display(),
+                    tree.all().len()
+                ),
+                Err(e) => log::error!("notes: не удалось создать проект {}: {e}", path.display()),
             }
+        } else {
+            project::compact_if_needed(&path);
         }
+        autosave::set_project_path(path.clone());
+        let tree = project::read_tree(&path);
+        let index = VaultIndex::build(&tree, |id| project::read_text(&path, &project::page_path(id)));
+
         let active = cfg
             .notes_active
             .clone()
-            .filter(|p| open.iter().any(|n| &n.path == p))
-            .or_else(|| open.last().map(|n| n.path.clone()));
-
-        let index = VaultIndex::build(&root);
+            .filter(|id| tree.find(id).is_some())
+            .or_else(|| tree.first_id());
+        let mut expanded: HashSet<String> = cfg
+            .notes_expanded
+            .iter()
+            .filter(|id| tree.find(id).is_some())
+            .cloned()
+            .collect();
+        if let Some(id) = &active {
+            for (pid, _) in tree.path_of(id) {
+                if pid != *id {
+                    expanded.insert(pid);
+                }
+            }
+        }
+        autosave::mark_saved(project::TREE_PATH, 0);
         Self {
-            vault_path: use_signal(root),
-            tree: use_signal(tree),
-            collapsed: use_signal(HashSet::new()),
-            open: use_signal(open),
+            project_title: use_signal(project::project_title(&path)),
+            project_path: use_signal(path),
+            tree: use_signal(Arc::new(tree)),
+            tree_rev: use_signal(0),
+            expanded: use_signal(expanded),
             active: use_signal(active),
-            right_tab: use_signal(0),
+            show_graph: use_signal(false),
+            pages: use_signal(Vec::new()),
+            objects: use_signal(Vec::new()),
+            right_tab: use_signal(TAB_PROPS),
             index: use_signal(Arc::new(index)),
-            media_epoch: use_signal(0),
-            embedded: use_signal(Vec::new()),
+            doc_epoch: use_signal(0),
+            tile_opened_at: use_signal(cfg.notes_tile_opened_at),
+            renaming: use_signal(None),
+            icon_picker_page: use_signal(None),
+            icon_picker_anchor: use_signal(Rect::zero()),
+            icon_picker_open: use_signal(false),
+            doc_menu_open: use_signal(false),
+            doc_menu_pos: use_signal(Point::zero()),
         }
     }
 
-    /// Живое содержимое страницы: открытая плитка → пул врезок → загрузка
-    /// в пул. Используется фабрикой врезок для редактируемых баз/канвасов.
-    pub fn live_note(&self, rel: &str) -> Option<OpenNote> {
-        if let Some(n) = self.open.get_untracked().into_iter().find(|n| n.path == rel) {
-            return Some(n);
-        }
-        if let Some(n) = self.embedded.get_untracked().into_iter().find(|n| n.path == rel) {
-            return Some(n);
-        }
-        let root = self.vault_path.get_untracked();
-        let note = load_note(&root, rel, now_millis())?;
-        self.embedded.update(|v| v.push(note.clone()));
-        Some(note)
+    // ─── Дерево ───────────────────────────────────────────────────────────
+
+    fn edit_tree(&self, f: impl FnOnce(&mut ProjectTree)) {
+        let mut t = (*self.tree.get_untracked()).clone();
+        f(&mut t);
+        self.tree.set(Arc::new(t));
+        self.tree_rev.set(self.tree_rev.get_untracked() + 1);
+        self.reindex_titles();
     }
 
-    /// Полная переиндексация связей (структурные изменения vault'а).
-    pub fn reindex_all(&self) {
-        let root = self.vault_path.get_untracked();
-        self.index.set(Arc::new(VaultIndex::build(&root)));
+    pub fn title_of(&self, id: &str) -> String {
+        self.tree.get_untracked().title_of(id).unwrap_or_default()
     }
 
-    /// Инкрементальная переиндексация одной страницы (после сохранения).
-    pub fn reindex_page(&self, rel: &str, content: &str) {
+    pub fn toggle_expanded(&self, id: &str) {
+        self.expanded.update(|set| {
+            if !set.remove(id) {
+                set.insert(id.to_string());
+            }
+        });
+    }
+
+    fn expand_ancestors(&self, id: &str) {
+        let path = self.tree.get_untracked().path_of(id);
+        self.expanded.update(|set| {
+            for (pid, _) in path {
+                if pid != id {
+                    set.insert(pid);
+                }
+            }
+        });
+    }
+
+    /// Уникальное среди соседей имя: «Название», «Название 2», …
+    fn unique_title(&self, parent: Option<&str>, base: &str) -> String {
+        let tree = self.tree.get_untracked();
+        let siblings: Vec<String> = match parent {
+            None => tree.roots.iter().map(|n| n.title.clone()).collect(),
+            Some(pid) => tree
+                .find(pid)
+                .map(|n| n.children.iter().map(|c| c.title.clone()).collect())
+                .unwrap_or_default(),
+        };
+        if !siblings.iter().any(|t| t == base) {
+            return base.to_string();
+        }
+        (2..1000)
+            .map(|i| format!("{base} {i}"))
+            .find(|t| !siblings.contains(t))
+            .unwrap_or_else(|| base.to_string())
+    }
+
+    /// Новая пустая страница у родителя (`None` — в корень); становится
+    /// активной. Возвращает id.
+    pub fn create_page(&self, parent: Option<&str>, base_title: &str) -> String {
+        let title = self.unique_title(parent, base_title);
+        let node = PageNode::new(title);
+        let id = node.id.clone();
+        self.edit_tree(|t| {
+            t.insert(parent, None, node);
+        });
+        autosave::queue_bytes(&project::page_path(&id), Vec::new());
+        if let Some(pid) = parent {
+            self.expanded.update(|set| {
+                set.insert(pid.to_string());
+            });
+        }
+        self.activate(&id);
+        id
+    }
+
+    pub fn rename_page(&self, id: &str, title: &str) {
+        let title = title.trim();
+        if title.is_empty() || self.title_of(id) == title {
+            return;
+        }
+        let title = title.to_string();
+        self.edit_tree(|t| {
+            if let Some(n) = t.find_mut(id) {
+                n.title = title;
+            }
+        });
+    }
+
+    pub fn set_icon(&self, id: &str, icon: Option<String>) {
+        self.edit_tree(|t| {
+            if let Some(n) = t.find_mut(id) {
+                n.icon = icon.filter(|s| !s.is_empty());
+            }
+        });
+    }
+
+    /// Удалить страницу с поддеревом: файлы страниц и их объектов уходят
+    /// из бандла ближайшим коммитом.
+    pub fn delete_page(&self, id: &str) {
+        let tree = self.tree.get_untracked();
+        let doomed = tree.subtree_ids(id);
+        if doomed.is_empty() {
+            return;
+        }
+        let parent = tree.parent_of(id);
+        let next = {
+            let idx = tree.index_in_parent(id).unwrap_or(0);
+            let siblings: Vec<String> = match &parent {
+                None => tree.roots.iter().map(|n| n.id.clone()).collect(),
+                Some(pid) => tree
+                    .find(pid)
+                    .map(|n| n.children.iter().map(|c| c.id.clone()).collect())
+                    .unwrap_or_default(),
+            };
+            siblings
+                .get(idx + 1)
+                .or_else(|| idx.checked_sub(1).and_then(|i| siblings.get(i)))
+                .cloned()
+                .or(parent.clone())
+                .or_else(|| tree.roots.iter().map(|n| n.id.clone()).find(|i| !doomed.contains(i)))
+        };
+        drop(tree);
+        for pid in &doomed {
+            let md = self.page_markdown(pid);
+            for (kind, oid) in object_refs(&md) {
+                let path = project::object_path(&kind, &oid);
+                autosave::queue_remove(&path);
+                self.objects.update(|v| v.retain(|o| o.id() != oid));
+            }
+            let path = project::page_path(pid);
+            autosave::queue_remove(&path);
+            self.pages.update(|v| v.retain(|p| p.id != *pid));
+            self.expanded.update(|set| {
+                set.remove(pid);
+            });
+        }
+        self.edit_tree(|t| {
+            t.remove(id);
+        });
+        if self
+            .active
+            .get_untracked()
+            .as_deref()
+            .map(|a| doomed.iter().any(|d| d == a))
+            .unwrap_or(false)
+        {
+            match next {
+                Some(n) => self.activate(&n),
+                None => self.active.set(None),
+            }
+        }
+    }
+
+    /// Копия страницы с поддеревом рядом с оригиналом: содержимое и объекты
+    /// клонируются с новыми id.
+    pub fn duplicate_page(&self, id: &str) {
+        let tree = self.tree.get_untracked();
+        let Some(node) = tree.find(id).cloned() else { return };
+        let parent = tree.parent_of(id);
+        let idx = tree.index_in_parent(id).unwrap_or(0);
+        drop(tree);
+        let mut map: Vec<(String, String)> = Vec::new();
+        let mut copy = project::clone_subtree(&node, &mut map);
+        copy.title = self.unique_title(parent.as_deref(), &format!("{} (копия)", node.title));
+        for (old, new) in &map {
+            let mut md = self.page_markdown(old);
+            for (kind, oid) in object_refs(&md) {
+                let new_oid = project::new_id();
+                let src_path = project::object_path(&kind, &oid);
+                let content = self
+                    .objects
+                    .get_untracked()
+                    .iter()
+                    .find(|o| o.id() == oid)
+                    .map(|o| match o {
+                        LiveObject::Base { handle, .. } => handle.serialize(),
+                        LiveObject::Canvas { handle, .. } => handle.serialize(),
+                    })
+                    .or_else(|| project::read_text(&self.project_path.get_untracked(), &src_path));
+                if let Some(content) = content {
+                    autosave::queue_bytes(&project::object_path(&kind, &new_oid), content.into_bytes());
+                    md = md.replace(&format!("{kind}:{oid}"), &format!("{kind}:{new_oid}"));
+                }
+            }
+            autosave::queue_bytes(&project::page_path(new), md.into_bytes());
+        }
+        let new_id = copy.id.clone();
+        self.edit_tree(|t| {
+            t.insert(parent.as_deref(), Some(idx + 1), copy);
+        });
+        self.activate(&new_id);
+    }
+
+    /// Перенос узла: к новому родителю (`None` — корень) на позицию
+    /// `index` (`None` — в конец). В собственное поддерево — запрещено.
+    pub fn move_page(&self, id: &str, new_parent: Option<&str>, index: Option<usize>) -> bool {
+        let tree = self.tree.get_untracked();
+        if let Some(np) = new_parent {
+            if tree.is_ancestor_or_self(id, np) {
+                return false;
+            }
+        }
+        drop(tree);
+        let mut ok = false;
+        self.edit_tree(|t| {
+            let Some(node) = t.remove(id) else { return };
+            ok = t.insert(new_parent, index, node);
+        });
+        if ok {
+            if let Some(np) = new_parent {
+                self.expanded.update(|set| {
+                    set.insert(np.to_string());
+                });
+            }
+        }
+        ok
+    }
+
+    // ─── Страницы ─────────────────────────────────────────────────────────
+
+    /// Загруженная страница (ленивая загрузка из бандла).
+    pub fn page(&self, id: &str) -> Option<LivePage> {
+        if let Some(p) = self.pages.get_untracked().iter().find(|p| p.id == id) {
+            return Some(p.clone());
+        }
+        self.tree.get_untracked().find(id)?;
+        let path = self.project_path.get_untracked();
+        let source = project::read_text(&path, &project::page_path(id)).unwrap_or_default();
+        let page = LivePage { id: id.to_string(), source: Arc::new(source), handle: DocumentEditorHandle::new() };
+        autosave::mark_saved(&project::page_path(id), 0);
+        self.pages.update(|v| v.push(page.clone()));
+        Some(page)
+    }
+
+    /// Текущий markdown страницы (для врезок, индексации, копий).
+    pub fn page_markdown(&self, id: &str) -> String {
+        if let Some(p) = self.pages.get_untracked().iter().find(|p| p.id == id) {
+            return p.markdown();
+        }
+        project::read_text(&self.project_path.get_untracked(), &project::page_path(id))
+            .unwrap_or_default()
+    }
+
+    /// Сделать страницу активной (и загрузить). Исходник предыдущей
+    /// страницы синхронизируется с моделью — иначе возврат к ней перепарсил
+    /// бы устаревший текст.
+    pub fn activate(&self, id: &str) {
+        if let Some(prev) = self.active.get_untracked() {
+            if prev != id {
+                self.sync_source(&prev);
+            }
+        }
+        if self.page(id).is_none() {
+            return;
+        }
+        self.show_graph.set(false);
+        self.expand_ancestors(id);
+        self.active.set(Some(id.to_string()));
+    }
+
+    fn sync_source(&self, id: &str) {
+        self.pages.update(|v| {
+            if let Some(p) = v.iter_mut().find(|p| p.id == id) {
+                if p.handle.revision().get_untracked() > 0 {
+                    let md = p.handle.serialize();
+                    if *p.source != md {
+                        p.source = Arc::new(md);
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn active_page(&self) -> Option<LivePage> {
+        let id = self.active.get()?;
+        self.pages.get().into_iter().find(|p| p.id == id)
+    }
+
+    /// Операция над документом активной страницы (контекстное меню).
+    pub fn doc_op(&self, op: DocOp) {
+        let Some(page) = self.active_page() else { return };
+        page.handle.queue_op(op);
+        self.doc_epoch.set(self.doc_epoch.get_untracked() + 1);
+    }
+
+    pub fn bump_doc_epoch(&self) {
+        self.doc_epoch.set(self.doc_epoch.get_untracked() + 1);
+    }
+
+    // ─── Объекты (базы/канвасы) ───────────────────────────────────────────
+
+    /// Живой объект по виду и id: из пула либо из бандла.
+    pub fn object(&self, kind: &str, id: &str) -> Option<LiveObject> {
+        if let Some(o) = self.objects.get_untracked().iter().find(|o| o.id() == id) {
+            return Some(o.clone());
+        }
+        let path = project::object_path(kind, id);
+        let content = project::read_text(&self.project_path.get_untracked(), &path)?;
+        let obj = match kind {
+            "base" => LiveObject::Base { id: id.to_string(), handle: BaseHandle::new(BaseDoc::parse(&content).ok()?) },
+            "canvas" => LiveObject::Canvas {
+                id: id.to_string(),
+                handle: CanvasHandle::new(CanvasDoc::parse(&content).ok()?),
+            },
+            _ => return None,
+        };
+        autosave::mark_saved(&path, 0);
+        self.objects.update(|v| v.push(obj.clone()));
+        Some(obj)
+    }
+
+    /// Новый объект из шаблона; сразу пишется в бандл. Возвращает id.
+    pub fn create_object(&self, kind: &str) -> Option<String> {
+        let id = project::new_id();
+        let (obj, content) = match kind {
+            "base" => {
+                let doc = BaseDoc::template();
+                let content = doc.serialize();
+                (LiveObject::Base { id: id.clone(), handle: BaseHandle::new(doc) }, content)
+            }
+            "canvas" => {
+                let doc = CanvasDoc::template();
+                let content = doc.serialize();
+                (LiveObject::Canvas { id: id.clone(), handle: CanvasHandle::new(doc) }, content)
+            }
+            _ => return None,
+        };
+        let path = project::object_path(kind, &id);
+        autosave::mark_saved(&path, 0);
+        autosave::queue_bytes(&path, content.into_bytes());
+        self.objects.update(|v| v.push(obj));
+        Some(id)
+    }
+
+    // ─── Индекс ───────────────────────────────────────────────────────────
+
+    pub fn reindex_titles(&self) {
         let mut idx = (*self.index.get_untracked()).clone();
-        idx.update_page(rel, content);
+        idx.set_titles(&self.tree.get_untracked());
         self.index.set(Arc::new(idx));
     }
 
-    /// Перечитать дерево с диска.
-    pub fn rescan(&self) {
-        let root = self.vault_path.get_untracked();
-        self.tree.set(storage::scan(&root));
-        self.reindex_all();
+    pub fn reindex_page(&self, id: &str, content: &str) {
+        let mut idx = (*self.index.get_untracked()).clone();
+        idx.update_page(id, content);
+        self.index.set(Arc::new(idx));
     }
 
-    /// Открыть страницу (или активировать уже открытую) и перейти в режим.
-    pub fn open_path(&self, rel: &str) {
-        let already = self
-            .open
-            .get_untracked()
-            .iter()
-            .any(|n| n.path == rel);
-        if !already {
-            let root = self.vault_path.get_untracked();
-            let Some(note) = load_note(&root, rel, now_millis()) else {
-                log::warn!("notes: не удалось открыть {rel}");
-                return;
-            };
-            self.open.update(|v| v.push(note));
-        }
-        self.active.set(Some(rel.to_string()));
-    }
+    // ─── Плитка и персист ─────────────────────────────────────────────────
 
-    pub fn activate(&self, rel: &str) {
-        if self.open.get_untracked().iter().any(|n| n.path == rel) {
-            self.active.set(Some(rel.to_string()));
+    pub fn open_tile(&self) {
+        if self.tile_opened_at.get_untracked().is_none() {
+            self.tile_opened_at.set(Some(now_millis()));
         }
     }
 
-    /// Закрыть плитку (файл остаётся). Активной становится соседняя.
-    pub fn close(&self, rel: &str) {
-        // Хвост дебаунса — на диск, историю сохранённых ревизий — забыть.
-        super::autosave::flush_now(rel);
-        super::autosave::forget(rel);
-        self.embedded.update(|v| v.retain(|n| n.path != rel));
-        let mut next_active: Option<String> = None;
-        self.open.update(|v| {
-            if let Some(idx) = v.iter().position(|n| n.path == rel) {
-                v.remove(idx);
-                next_active = v
-                    .get(idx.saturating_sub(1))
-                    .or_else(|| v.last())
-                    .map(|n| n.path.clone());
-            } else {
-                next_active = v.last().map(|n| n.path.clone());
-            }
-        });
-        if self.active.get_untracked().as_deref() == Some(rel) {
-            self.active.set(next_active);
-        }
+    pub fn close_tile(&self) {
+        autosave::flush_all();
+        self.tile_opened_at.set(None);
     }
 
-    /// Активная открытая заметка.
-    pub fn active_note(&self) -> Option<OpenNote> {
-        let active = self.active.get()?;
-        self.open.get().into_iter().find(|n| n.path == active)
-    }
-
-    /// Создать страницу в корне vault'а и открыть её.
-    pub fn create_page(&self, base_title: &str) {
-        let root = self.vault_path.get_untracked();
-        match storage::create_page(&root, base_title) {
-            Ok(rel) => {
-                self.rescan();
-                self.open_path(&rel);
-            }
-            Err(e) => log::warn!("notes: не удалось создать страницу: {e}"),
-        }
-    }
-
-    /// Дописать markdown в конец активной страницы (палитра «Вставка»).
-    pub fn append_to_active(&self, md: &str) {
-        let Some(note) = self.active_note() else { return };
-        let Some(handle) = note.page_handle() else { return };
-        handle.append_markdown(md);
-        self.media_epoch.set(self.media_epoch.get_untracked() + 1);
-    }
-
-    /// Переименовать файл (title без расширения). Плитка, активная
-    /// страница, порядок рейла и индекс обновляются на месте.
-    pub fn rename(&self, rel: &str, new_title: &str) {
-        let new_title = new_title.trim();
-        if new_title.is_empty() || new_title.contains('/') {
-            return;
-        }
-        let root = self.vault_path.get_untracked();
-        let ext = match storage::kind_of(rel) {
-            Some(VaultEntryKind::Base) => ".base.json",
-            Some(VaultEntryKind::Canvas) => ".canvas.json",
-            Some(VaultEntryKind::Page) => ".md",
-            _ => return,
-        };
-        let dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        let new_rel = if dir.is_empty() {
-            format!("{new_title}{ext}")
-        } else {
-            format!("{dir}/{new_title}{ext}")
-        };
-        if new_rel == rel {
-            return;
-        }
-        let from = storage::abs_path(&root, rel);
-        let to = storage::abs_path(&root, &new_rel);
-        if to.exists() {
-            log::warn!("notes: {new_rel} уже существует");
-            return;
-        }
-        // Дописать хвост автосейва по старому пути до переноса.
-        super::autosave::flush_now(rel);
-        if let Err(e) = std::fs::rename(&from, &to) {
-            log::warn!("notes: rename не удался: {e}");
-            return;
-        }
-        let saved = super::autosave::saved_rev(rel);
-        super::autosave::forget(rel);
-        super::autosave::mark_saved(&new_rel, saved);
-        // Плитки и активная.
-        let retitle = |v: &mut Vec<OpenNote>| {
-            if let Some(n) = v.iter_mut().find(|n| n.path == rel) {
-                n.path = new_rel.clone();
-                n.title = storage::title_of(&new_rel);
-            }
-        };
-        self.open.update(retitle);
-        self.embedded.update(retitle);
-        if self.active.get_untracked().as_deref() == Some(rel) {
-            self.active.set(Some(new_rel.clone()));
-        }
-        // Ключ плитки в ручном порядке рейла.
-        let app = use_context::<crate::context::AppCtx>();
-        app.rail_order.update(|order| {
-            for k in order.iter_mut() {
-                if *k == format!("note:{rel}") {
-                    *k = format!("note:{new_rel}");
-                }
-            }
-        });
-        self.rescan();
-    }
-
-    /// Открыть спец-плитку графа связей.
-    pub fn open_graph(&self) {
-        self.open_path(GRAPH_PATH);
-    }
-
-    /// Создать канвас в корне vault'а и открыть его.
-    pub fn create_canvas(&self, base_title: &str) {
-        let root = self.vault_path.get_untracked();
-        let content = CanvasDoc::template().serialize();
-        match storage::create_file(&root, base_title, ".canvas.json", &content) {
-            Ok(rel) => {
-                self.rescan();
-                self.open_path(&rel);
-            }
-            Err(e) => log::warn!("notes: не удалось создать канвас: {e}"),
-        }
-    }
-
-    /// Создать базу данных в корне vault'а и открыть её.
-    pub fn create_base(&self, base_title: &str) {
-        let root = self.vault_path.get_untracked();
-        let content = BaseDoc::template().serialize();
-        match storage::create_file(&root, base_title, ".base.json", &content) {
-            Ok(rel) => {
-                self.rescan();
-                self.open_path(&rel);
-            }
-            Err(e) => log::warn!("notes: не удалось создать базу: {e}"),
-        }
-    }
-
-    /// Удалить файл/папку с диска, закрыв связанные плитки.
-    pub fn delete_entry(&self, rel: &str) {
-        let root = self.vault_path.get_untracked();
-        if let Err(e) = storage::delete(&root, rel) {
-            log::warn!("notes: не удалось удалить {rel}: {e}");
-            return;
-        }
-        // Закрываем плитки удалённого файла и всего поддерева папки.
-        let prefix = format!("{rel}/");
-        let doomed: Vec<String> = self
-            .open
-            .get_untracked()
-            .iter()
-            .filter(|n| n.path == rel || n.path.starts_with(&prefix))
-            .map(|n| n.path.clone())
-            .collect();
-        for p in doomed {
-            super::autosave::forget(&p);
-            self.close(&p);
-        }
-        self.rescan();
-    }
-
-    /// Внешнее изменение файла открытой страницы (из watcher'а).
-    pub fn apply_external_change(&self, rel: &str, new_content: String) {
-        let Some(note) = self.open.get_untracked().into_iter().find(|n| n.path == rel) else {
-            return;
-        };
-        let rev = note.revision();
-        let unsaved = rev > super::autosave::saved_rev(rel);
-        if unsaved {
-            // Локальные правки против внешних — решает пользователь.
-            note.conflict.set(true);
-            return;
-        }
-        // Семантический no-op (наша же сериализация доехала с опозданием)
-        // не перегружаем — иначе прыгала бы каретка.
-        if note.serialize().as_deref() == Some(new_content.as_str()) {
-            super::autosave::mark_saved(rel, rev);
-            return;
-        }
-        self.reload_note(rel, new_content);
-    }
-
-    /// Перечитать страницу с диска, отбросив локальные правки
-    /// (кнопка «Перечитать» в конфликте / тихая перезагрузка).
-    pub fn reload_from_disk(&self, rel: &str) {
-        let root = self.vault_path.get_untracked();
-        match storage::load(&root, rel) {
-            Ok(content) => self.reload_note(rel, content),
-            Err(e) => log::warn!("notes: не удалось перечитать {rel}: {e}"),
-        }
-    }
-
-    fn reload_note(&self, rel: &str, content: String) {
-        let mut rev_after = 0u64;
-        self.open.update(|v| {
-            if let Some(n) = v.iter_mut().find(|n| n.path == rel) {
-                n.conflict.set(false);
-                match &mut n.payload {
-                    NotePayload::Page { source, handle } => {
-                        // Reparse по fingerprint нового исходника.
-                        *source = Arc::new(content.clone());
-                        rev_after = handle.revision().get_untracked();
-                    }
-                    NotePayload::Base(h) => match BaseDoc::parse(&content) {
-                        Ok(doc) => {
-                            h.replace(doc);
-                            rev_after = h.revision.get_untracked();
-                        }
-                        Err(e) => log::warn!("notes: перечитка {rel} не удалась: {e}"),
-                    },
-                    NotePayload::Canvas(h) => match CanvasDoc::parse(&content) {
-                        Ok(doc) => {
-                            h.replace(doc);
-                            rev_after = h.revision.get_untracked();
-                        }
-                        Err(e) => log::warn!("notes: перечитка {rel} не удалась: {e}"),
-                    },
-                    NotePayload::Raw => {}
-                }
-            }
-        });
-        super::autosave::mark_saved(rel, rev_after);
-    }
-
-    /// Снимок для автосейва конфига.
-    pub fn open_state(&self) -> (Vec<NotesOpenState>, Option<String>) {
-        let open = self
-            .open
-            .get()
-            .iter()
-            .map(|n| NotesOpenState { path: n.path.clone(), opened_at: n.opened_at })
-            .collect();
-        (open, self.active.get())
+    /// Снимок для конфига: активная страница, раскрытые узлы, плитка.
+    pub fn persist(&self) -> (Option<String>, Vec<String>, Option<u64>) {
+        let mut expanded: Vec<String> = self.expanded.get().into_iter().collect();
+        expanded.sort();
+        (self.active.get(), expanded, self.tile_opened_at.get())
     }
 }
 
-/// Путь спец-плитки графа.
-pub const GRAPH_PATH: &str = ":graph";
-
-/// Загрузка файла в OpenNote. Базы/канвасы пока открываются как плитки
-/// с заглушкой (редакторы приходят этапами T5–T8).
-fn load_note(root: &std::path::Path, rel: &str, opened_at: u64) -> Option<OpenNote> {
-    if rel == GRAPH_PATH {
-        return Some(OpenNote {
-            path: GRAPH_PATH.to_string(),
-            kind: NoteKind::Graph,
-            title: tr!("notes.graph.title"),
-            opened_at: if opened_at == 0 { now_millis() } else { opened_at },
-            payload: NotePayload::Raw,
-            conflict: use_signal(false),
-        });
+/// `(kind, id)` всех врезок объектов в markdown: `![[base:<id>]]`.
+pub fn object_refs(md: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = md;
+    while let Some(pos) = rest.find("[[") {
+        let after = &rest[pos + 2..];
+        let Some(end) = after.find("]]") else { break };
+        let inner = after[..end].trim();
+        if let Some((kind, id)) = inner.split_once(':') {
+            if (kind == "base" || kind == "canvas") && !id.is_empty() {
+                let pair = (kind.to_string(), id.trim().to_string());
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+        }
+        rest = &after[end + 2..];
     }
-    let kind = match storage::kind_of(rel)? {
-        VaultEntryKind::Page => NoteKind::Page,
-        VaultEntryKind::Base => NoteKind::Base,
-        VaultEntryKind::Canvas => NoteKind::Canvas,
-        VaultEntryKind::Dir => return None,
-    };
-    let source = storage::load(root, rel).ok()?;
-    let payload = match kind {
-        NoteKind::Page => NotePayload::Page {
-            source: Arc::new(source),
-            handle: DocumentEditorHandle::new(),
-        },
-        NoteKind::Base => match BaseDoc::parse(&source) {
-            Ok(doc) => NotePayload::Base(BaseHandle::new(doc)),
-            Err(e) => {
-                // Битый JSON держим сырым — не затираем данные автосейвом.
-                log::warn!("notes: {rel} не распарсился как база: {e}");
-                NotePayload::Raw
-            }
-        },
-        NoteKind::Canvas => match CanvasDoc::parse(&source) {
-            Ok(doc) => NotePayload::Canvas(CanvasHandle::new(doc)),
-            Err(e) => {
-                log::warn!("notes: {rel} не распарсился как канвас: {e}");
-                NotePayload::Raw
-            }
-        },
-        // Спец-плитка графа обработана выше (GRAPH_PATH).
-        NoteKind::Graph => NotePayload::Raw,
-    };
-    Some(OpenNote {
-        path: rel.to_string(),
-        kind,
-        title: storage::title_of(rel),
-        opened_at: if opened_at == 0 { now_millis() } else { opened_at },
-        payload,
-        conflict: use_signal(false),
-    })
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_refs_parse() {
+        let md = "a ![[base:abc]] b [[Страница]] ![[canvas:xy]] ![[base:abc]]";
+        assert_eq!(
+            object_refs(md),
+            vec![("base".to_string(), "abc".to_string()), ("canvas".to_string(), "xy".to_string())]
+        );
+    }
 }

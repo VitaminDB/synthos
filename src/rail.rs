@@ -21,7 +21,7 @@ use crate::agent::state::ChatMeta;
 use crate::context::AppCtx;
 use crate::pages::code_editor::state::{CodeEditorCtx, CodeSession};
 use crate::pages::node_editor::tabs::{EditorWorkspace, OpenTab};
-use crate::pages::notes::{NotesCtx, OpenNote};
+use crate::pages::notes::NotesCtx;
 use crate::syn_chat::{registry, SynChatCtx};
 
 /// Одна плитка рейла.
@@ -30,8 +30,8 @@ pub enum RailEntry {
     Code(CodeSession),
     Graph(OpenTab),
     Chat(ChatMeta),
-    /// Открытая страница «Заметок» (vault-относительный путь — ключ).
-    Note(OpenNote),
+    /// Проект «Заметок» — одна плитка на проект; число — штамп открытия.
+    Notes(u64),
     /// Тонкая линия между плитками; число — штамп создания (он же ключ
     /// для удаления).
     Separator(u64),
@@ -46,7 +46,7 @@ impl RailEntry {
             RailEntry::Code(s) => format!("code:{}", s.created_at),
             RailEntry::Graph(t) => format!("graph:{}", t.id.0),
             RailEntry::Chat(m) => format!("chat:{}", m.id),
-            RailEntry::Note(n) => format!("note:{}", n.path),
+            RailEntry::Notes(_) => "notes".to_string(),
             RailEntry::Separator(ts) => format!("sep:{ts}"),
         }
     }
@@ -58,7 +58,7 @@ impl RailEntry {
             RailEntry::Graph(t) => t.created_at.get_untracked(),
             // Чаты хранят секунды.
             RailEntry::Chat(m) => m.created_at.saturating_mul(1000),
-            RailEntry::Note(n) => n.opened_at,
+            RailEntry::Notes(ts) => *ts,
             RailEntry::Separator(ts) => *ts,
         }
     }
@@ -70,7 +70,7 @@ impl RailEntry {
             RailEntry::Code(s) => (1, format!("{:020}", s.id)),
             RailEntry::Graph(t) => (2, format!("{:020}", t.id.0)),
             RailEntry::Chat(m) => (3, m.id.clone()),
-            RailEntry::Note(n) => (4, n.path.clone()),
+            RailEntry::Notes(_) => (4, String::new()),
         }
     }
 }
@@ -107,8 +107,10 @@ pub fn entries() -> Vec<RailEntry> {
         }
         out.push(RailEntry::Chat(m));
     }
-    for n in notes.open.get() {
-        out.push(RailEntry::Note(n));
+    if let Some(ts) = notes.tile_opened_at.get() {
+        // Подпись плитки — имя проекта; `.get()` перерисует при смене.
+        let _ = notes.project_title.get();
+        out.push(RailEntry::Notes(ts));
     }
     for ts in app.rail_separators.get() {
         out.push(RailEntry::Separator(ts));
@@ -188,10 +190,7 @@ pub fn open(entry: &RailEntry) {
             }
             navigate("syn_chat");
         }
-        RailEntry::Note(n) => {
-            use_context::<NotesCtx>().activate(&n.path);
-            navigate("notes");
-        }
+        RailEntry::Notes(_) => navigate("notes"),
         RailEntry::Separator(_) => {}
     }
 }
@@ -207,8 +206,14 @@ pub fn request_close(entry: &RailEntry) {
         RailEntry::Chat(m) => {
             use_context::<SynChatCtx>().pending_archive.set(Some(m.clone()));
         }
-        // Файл остаётся на диске — плитка просто закрывается.
-        RailEntry::Note(n) => use_context::<NotesCtx>().close(&n.path),
+        // Проект остаётся на диске (хвост автосейва дописывается) — плитка
+        // просто закрывается; с самой страницы уходим.
+        RailEntry::Notes(_) => {
+            use_context::<NotesCtx>().close_tile();
+            if use_context::<AppCtx>().current_route.get_untracked() == "notes" {
+                navigate("syn_chat");
+            }
+        }
         RailEntry::Separator(ts) => remove_separator(*ts),
     }
 }
@@ -229,10 +234,7 @@ pub fn is_active(entry: &RailEntry) -> bool {
                 && use_context::<SynChatCtx>().active_chat_id.get().as_deref()
                     == Some(m.id.as_str())
         }
-        RailEntry::Note(n) => {
-            route == "notes"
-                && use_context::<NotesCtx>().active.get().as_deref() == Some(n.path.as_str())
-        }
+        RailEntry::Notes(_) => route == "notes",
         RailEntry::Separator(_) => false,
     }
 }
@@ -258,9 +260,14 @@ pub fn new_chat() {
     navigate("syn_chat");
 }
 
-/// Новая страница заметок: создать в корне vault'а, открыть, показать режим.
+/// Заметки из меню «+»: показать плитку проекта и режим; в пустом
+/// проекте сразу создаётся первая страница.
 pub fn new_note() {
-    use_context::<NotesCtx>().create_page(&tr!("notes.untitled"));
+    let notes = use_context::<NotesCtx>();
+    notes.open_tile();
+    if notes.tree.get_untracked().is_empty() {
+        notes.create_page(None, &tr!("notes.untitled"));
+    }
     navigate("notes");
 }
 

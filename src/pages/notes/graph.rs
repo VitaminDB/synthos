@@ -22,7 +22,6 @@ use syngui::widget::{DirtyFlags, Element, ElementId, ElementTree};
 use syngui::containers::PanZoomViewport;
 
 use super::state::NotesCtx;
-use super::storage;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum GraphMode {
@@ -183,7 +182,7 @@ impl GraphElement {
                 let angle = i as f32 / n as f32 * std::f32::consts::TAU;
                 let default = Point::new(cx + r * angle.cos(), cy + r * angle.sin());
                 SimNode {
-                    title: storage::title_of(rel),
+                    title: index.title_of(rel),
                     pos: old.get(rel).copied().unwrap_or(default),
                     degree: 0,
                     is_center: self.center.as_deref() == Some(rel.as_str()),
@@ -422,7 +421,7 @@ impl Element for GraphElement {
                 if let Some((i, _, moved)) = self.drag.take() {
                     if !moved {
                         let rel = self.nodes[i].rel.clone();
-                        self.ctx.open_path(&rel);
+                        self.ctx.activate(&rel);
                         crate::rail::navigate("notes");
                     }
                     return EventResult::Handled;

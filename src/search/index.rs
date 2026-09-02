@@ -459,26 +459,32 @@ pub fn build_items(scan: &ScanData) -> Vec<SearchItem> {
     items
 }
 
-/// Страницы vault'а заметок: заголовок + путь, действие — открыть плиткой.
+/// Страницы проекта заметок: название + путь в дереве, действие —
+/// активировать страницу.
 fn push_notes(items: &mut Vec<SearchItem>) {
     let notes = use_context::<crate::pages::notes::NotesCtx>();
-    for entry in notes.tree.get() {
-        if entry.kind == crate::pages::notes::storage::VaultEntryKind::Dir {
-            continue;
-        }
-        let icon = match entry.kind {
-            crate::pages::notes::storage::VaultEntryKind::Base => MI_GRID_ON,
-            crate::pages::notes::storage::VaultEntryKind::Canvas => MI_ACCOUNT_TREE,
+    let tree = notes.tree.get();
+    for node in tree.all() {
+        let path = tree
+            .path_of(&node.id)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let icon = match node.icon.as_deref() {
+            Some(i) if crate::pages::notes::icon_picker::is_material_glyph(i) => {
+                Box::leak(i.to_string().into_boxed_str()) as &'static str
+            }
             _ => MI_EDIT_NOTE,
         };
         items.push(
             SearchItem::new(
-                format!("note:{}", entry.rel),
+                format!("note:{}", node.id),
                 SearchKind::Note,
-                entry.name.clone(),
-                SearchAction::Note(entry.rel.clone()),
+                node.title.clone(),
+                SearchAction::Note(node.id.clone()),
             )
-            .subtitle(entry.rel.clone())
+            .subtitle(path)
             .icon(icon),
         );
     }

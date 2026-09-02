@@ -1,56 +1,58 @@
-//! Индекс wiki-связей vault'а.
+//! Индекс wiki-связей проекта.
 //!
-//! Лёгкий лексер по сырому тексту `.md` собирает `[[цели]]` (и `![[врезки]]`
-//! — они тоже связи), минуя fenced-код. Цель резолвится по имени страницы
-//! (без расширения, без регистра) либо по vault-относительному пути
-//! (`Папка/Имя`). Полный скан дешёвый (килобайты текста), инкрементальное
-//! обновление одной страницы — на каждое сохранение.
+//! Лёгкий лексер по сырому markdown собирает `[[цели]]` (и `![[врезки]]`
+//! — они тоже связи), минуя fenced-код. Цель — название страницы (без
+//! регистра); ссылки на объекты (`base:<id>`, `canvas:<id>`) не считаются
+//! связями между страницами. Ключ всюду — id страницы из дерева проекта.
 
 use std::collections::HashMap;
-use std::path::Path;
 
-use super::storage;
+use super::project::ProjectTree;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VaultIndex {
-    /// title в нижнем регистре → rel-путь `.md`.
+    /// id → название.
+    titles: HashMap<String, String>,
+    /// название в нижнем регистре → id (первая страница с таким именем).
     by_title: HashMap<String, String>,
-    /// rel-путь без расширения в нижнем регистре → rel-путь.
-    by_path: HashMap<String, String>,
-    /// rel → сырые цели исходящих ссылок.
+    /// id → сырые цели исходящих ссылок.
     outgoing: HashMap<String, Vec<String>>,
-    /// rel → страницы, ссылающиеся на неё.
+    /// id → страницы, ссылающиеся на неё.
     backlinks: HashMap<String, Vec<String>>,
 }
 
 impl VaultIndex {
-    /// Полный скан vault'а.
-    pub fn build(root: &Path) -> Self {
+    /// Полный скан: названия из дерева, ссылки из содержимого страниц.
+    pub fn build(tree: &ProjectTree, content_of: impl Fn(&str) -> Option<String>) -> Self {
         let mut idx = Self::default();
-        for entry in storage::scan(root) {
-            if entry.kind != storage::VaultEntryKind::Dir {
-                idx.register_page(&entry.rel);
-            }
-            if entry.kind == storage::VaultEntryKind::Page {
-                if let Ok(content) = storage::load(root, &entry.rel) {
-                    idx.outgoing.insert(entry.rel.clone(), lex_links(&content));
-                }
+        idx.set_titles(tree);
+        for node in tree.all() {
+            if let Some(content) = content_of(&node.id) {
+                idx.outgoing.insert(node.id.clone(), lex_links(&content));
             }
         }
         idx.rebuild_backlinks();
         idx
     }
 
-    fn register_page(&mut self, rel: &str) {
-        self.by_title.insert(storage::title_of(rel).to_lowercase(), rel.to_string());
-        let no_ext = strip_known_ext(rel).to_lowercase();
-        self.by_path.insert(no_ext, rel.to_string());
+    /// Пересобрать названия после правки дерева (переименование, удаление,
+    /// создание); ссылки удалённых страниц выбрасываются.
+    pub fn set_titles(&mut self, tree: &ProjectTree) {
+        self.titles.clear();
+        self.by_title.clear();
+        for node in tree.all() {
+            self.titles.insert(node.id.clone(), node.title.clone());
+            self.by_title
+                .entry(node.title.trim().to_lowercase())
+                .or_insert_with(|| node.id.clone());
+        }
+        self.outgoing.retain(|id, _| self.titles.contains_key(id));
+        self.rebuild_backlinks();
     }
 
     /// Обновление одной страницы после сохранения.
-    pub fn update_page(&mut self, rel: &str, content: &str) {
-        self.register_page(rel);
-        self.outgoing.insert(rel.to_string(), lex_links(content));
+    pub fn update_page(&mut self, id: &str, content: &str) {
+        self.outgoing.insert(id.to_string(), lex_links(content));
         self.rebuild_backlinks();
     }
 
@@ -68,6 +70,9 @@ impl VaultIndex {
             })
             .collect();
         for (to, from) in pairs {
+            if to == from {
+                continue;
+            }
             let list = self.backlinks.entry(to).or_default();
             if !list.contains(&from) {
                 list.push(from);
@@ -78,26 +83,29 @@ impl VaultIndex {
         }
     }
 
-    /// Цель ссылки → rel-путь существующей страницы.
+    /// Цель ссылки → id существующей страницы. Принимает и `id:<id>`.
     pub fn resolve(&self, target: &str) -> Option<String> {
-        let key = target.trim().to_lowercase();
-        self.by_title
-            .get(&key)
-            .or_else(|| self.by_path.get(&key))
-            .cloned()
+        let t = target.trim();
+        if let Some(id) = t.strip_prefix("id:") {
+            return self.titles.contains_key(id).then(|| id.to_string());
+        }
+        self.by_title.get(&t.to_lowercase()).cloned()
     }
 
-    /// Кандидаты автокомплита по префиксу/подстроке.
+    pub fn title_of(&self, id: &str) -> String {
+        self.titles.get(id).cloned().unwrap_or_else(|| id.to_string())
+    }
+
+    /// Кандидаты автокомплита: (название, id).
     pub fn complete(&self, prefix: &str) -> Vec<(String, String)> {
         let q = prefix.trim().to_lowercase();
         let mut out: Vec<(String, String)> = self
-            .by_title
+            .titles
             .iter()
-            .filter(|(title, _)| q.is_empty() || title.contains(&q))
-            .map(|(_, rel)| (storage::title_of(rel), rel.clone()))
+            .filter(|(_, title)| q.is_empty() || title.to_lowercase().contains(&q))
+            .map(|(id, title)| (title.clone(), id.clone()))
             .collect();
         out.sort_by(|a, b| {
-            // Совпадение с начала — выше.
             let a_starts = a.0.to_lowercase().starts_with(&q);
             let b_starts = b.0.to_lowercase().starts_with(&q);
             b_starts.cmp(&a_starts).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
@@ -107,43 +115,31 @@ impl VaultIndex {
     }
 
     /// Кто ссылается на страницу.
-    pub fn backlinks_of(&self, rel: &str) -> Vec<String> {
-        self.backlinks.get(rel).cloned().unwrap_or_default()
+    pub fn backlinks_of(&self, id: &str) -> Vec<String> {
+        self.backlinks.get(id).cloned().unwrap_or_default()
     }
 
-    /// Исходящие цели страницы (разрезолвленные).
-    pub fn outgoing_of(&self, rel: &str) -> Vec<String> {
-        self.outgoing
-            .get(rel)
+    /// Исходящие цели страницы (разрезолвленные, без дублей).
+    pub fn outgoing_of(&self, id: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .outgoing
+            .get(id)
             .map(|targets| targets.iter().filter_map(|t| self.resolve(t)).collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        out.dedup();
+        out
     }
 
-    /// Все страницы с исходящими связями — для графа (T10).
+    /// Все страницы — для графа.
     pub fn pages(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.by_title.values().cloned().collect();
+        let mut v: Vec<String> = self.titles.keys().cloned().collect();
         v.sort();
-        v.dedup();
         v
     }
 }
 
-fn strip_known_ext(rel: &str) -> &str {
-    for suffix in [".base.json", ".canvas.json", ".md"] {
-        if rel.len() < suffix.len() {
-            continue;
-        }
-        let idx = rel.len() - suffix.len();
-        // Не-ASCII имя: байтовый индекс может попасть внутрь многобайтового
-        // символа — такой хвост суффиксом быть не может.
-        if rel.is_char_boundary(idx) && rel[idx..].eq_ignore_ascii_case(suffix) {
-            return &rel[..idx];
-        }
-    }
-    rel
-}
-
-/// Сырые цели `[[...]]` в md-тексте; fenced-код пропускается.
+/// Сырые цели `[[...]]` в md-тексте; fenced-код и объекты
+/// (`base:`/`canvas:`) пропускаются.
 pub fn lex_links(content: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_fence = false;
@@ -163,7 +159,7 @@ pub fn lex_links(content: &str) -> Vec<String> {
             let inner = &after[..close];
             if !inner.is_empty() && !inner.contains('[') && !inner.contains(']') {
                 let target = inner.split('|').next().unwrap_or(inner).trim();
-                if !target.is_empty() {
+                if !target.is_empty() && !is_object_target(target) {
                     out.push(target.to_string());
                 }
             }
@@ -173,22 +169,38 @@ pub fn lex_links(content: &str) -> Vec<String> {
     out
 }
 
+/// `base:<id>` / `canvas:<id>` — врезка объекта, не страница.
+pub fn is_object_target(target: &str) -> bool {
+    target.starts_with("base:") || target.starts_with("canvas:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pages::notes::project::PageNode;
 
     #[test]
-    fn lexer_finds_links_and_skips_code() {
-        let md = "текст [[Раз]] и ![[Два|врезка]]\n```\n[[не ссылка]]\n```\n[[Три]]";
+    fn lexer_finds_links_and_skips_code_and_objects() {
+        let md = "текст [[Раз]] и ![[Два|врезка]] ![[base:abc]]\n```\n[[не ссылка]]\n```\n[[Три]]";
         assert_eq!(lex_links(md), vec!["Раз", "Два", "Три"]);
     }
 
     #[test]
-    fn strip_known_ext_cyrillic_no_panic() {
-        // Байтовый индекс len-10 (".base.json") попадает внутрь кириллицы —
-        // раньше здесь была паника "not a char boundary".
-        assert_eq!(strip_known_ext("Новая заметка.md"), "Новая заметка");
-        assert_eq!(strip_known_ext("Заметки.canvas.json"), "Заметки");
-        assert_eq!(strip_known_ext("Без расширения"), "Без расширения");
+    fn index_resolves_and_backlinks() {
+        let mut a = PageNode::new("Альфа");
+        a.id = "a".into();
+        let mut b = PageNode::new("Бета");
+        b.id = "b".into();
+        let tree = ProjectTree { version: 1, roots: vec![a, b] };
+        let idx = VaultIndex::build(&tree, |id| match id {
+            "a" => Some("см. [[бета]]".to_string()),
+            _ => Some(String::new()),
+        });
+        assert_eq!(idx.resolve("Бета").as_deref(), Some("b"));
+        assert_eq!(idx.resolve("id:a").as_deref(), Some("a"));
+        assert_eq!(idx.backlinks_of("b"), vec!["a"]);
+        assert_eq!(idx.outgoing_of("a"), vec!["b"]);
+        assert_eq!(idx.title_of("a"), "Альфа");
+        assert_eq!(idx.complete("бе")[0].1, "b");
     }
 }

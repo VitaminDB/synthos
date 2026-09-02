@@ -9,13 +9,16 @@
     divider-thickness: 1px;
 }
 
-/* ── Дерево vault ─────────────────────────────────────────────── */
+/* ── Дерево «Содержимое» ──────────────────────────────────────── */
 .notes-tree {
     padding: 6px;
 }
+/* Высота строки фиксирована: от неё считаются зоны дропа
+ * «перед / внутрь / после» (contents.rs::ROW_H). */
 .notes-tree-row {
+    height: 28px;
     border-radius: 6px;
-    padding: 4px 6px;
+    padding: 0px 6px 0px 2px;
     transition: background-color 120ms ease-out;
 }
 .notes-tree-row:hover {
@@ -24,13 +27,46 @@
 .notes-tree-row.selected {
     background-color: var(--surface-selected);
 }
+.notes-tree-chevron-box {
+    width: 16px;
+    height: 20px;
+}
+.notes-tree-chevron {
+    icon-size: 16px;
+    color: var(--text-subtle);
+}
+.notes-tree-icon-box {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+}
+.notes-tree-icon-box:hover {
+    background-color: var(--surface-selected);
+}
 .notes-tree-icon {
-    font-size: 16px;
+    icon-size: 16px;
+    font-size: 14px;
     color: var(--text-muted);
+}
+.notes-tree-icon.emoji {
+    font-size: 14px;
+    color: var(--text);
 }
 .notes-tree-name {
     font-size: 13px;
     color: var(--text);
+}
+.notes-tree-rename {
+    height: 24px;
+    font-size: 13px;
+    padding: 0 6px;
+    border-radius: 6px;
+    border-width: 1.5px;
+    border-color: var(--primary);
+    background-color: var(--bg-search);
+}
+.notes-tree-tail {
+    height: 40px;
 }
 .notes-tree-empty {
     padding: 16px 10px;
@@ -38,6 +74,15 @@
 .notes-tree-empty-text {
     font-size: 12px;
     color: var(--text-muted);
+}
+
+/* Иконка страницы в шапке центра — кликабельна. */
+.notes-header-icon-bubble:hover {
+    background-color: var(--surface-selected);
+}
+.notes-header-icon.emoji {
+    font-size: 16px;
+    color: var(--text);
 }
 
 /* ── Центр: редактор ──────────────────────────────────────────── */
@@ -92,29 +137,97 @@ document-editor {
 }
 
 /* ── Правая панель ────────────────────────────────────────────── */
-.notes-insert-list {
-    padding: 8px;
-}
-.notes-insert-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    padding: 2px 4px 8px 4px;
-}
-.notes-insert-row {
+.notes-link-row {
     border-radius: 6px;
     padding: 6px 8px;
     transition: background-color 120ms ease-out;
 }
-.notes-insert-row:hover {
+.notes-link-row:hover {
     background-color: var(--surface-hover);
 }
-.notes-insert-icon {
+.notes-link-icon {
+    icon-size: 16px;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+.notes-link-icon.emoji {
+    color: var(--text);
+}
+.notes-link-label {
+    font-size: 13px;
+    color: var(--text);
+}
+.notes-props-icon-box {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    background-color: var(--surface-hover);
+}
+.notes-props-icon-box:hover {
+    background-color: var(--surface-selected);
+}
+.notes-props-icon {
+    icon-size: 18px;
     font-size: 16px;
     color: var(--text-muted);
 }
-.notes-insert-label {
-    font-size: 13px;
+.notes-props-icon.emoji {
     color: var(--text);
+}
+
+/* ── Панель выбора иконки ─────────────────────────────────────── */
+.notes-icon-picker {
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 12px;
+    padding: 8px;
+}
+.notes-icon-picker-header {
+    padding: 0 0 6px 0;
+}
+.notes-icon-tab {
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+.notes-icon-tab:hover {
+    background-color: var(--surface-hover);
+}
+.notes-icon-tab.selected {
+    background-color: var(--surface-selected);
+}
+.notes-icon-tab-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+.notes-icon-grid {
+    padding: 2px;
+}
+.notes-icon-section {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 6px 2px 2px 2px;
+}
+.notes-icon-cell {
+    width: 34px;
+    height: 32px;
+    border-radius: 6px;
+}
+.notes-icon-cell:hover {
+    background-color: var(--surface-hover);
+}
+.notes-icon-glyph {
+    icon-size: 20px;
+    font-size: 18px;
+    color: var(--text);
+}
+
+/* Врезки: шапка и рамка. */
+.notes-embed-icon {
+    icon-size: 16px;
+    color: var(--text-muted);
 }
 
 /* ── Плитка рейла ─────────────────────────────────────────────── */

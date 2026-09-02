@@ -124,7 +124,6 @@ pub fn run_desktop() {
             install_syn_chat_autosave();
             install_workspace_autosave();
             pages::notes::autosave::install_notes_autosave();
-            pages::notes::fs_watcher::install_notes_watcher();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.
@@ -196,7 +195,6 @@ fn android_main(app: syngui::app::AndroidApp) {
             install_syn_chat_autosave();
             install_workspace_autosave();
             pages::notes::autosave::install_notes_autosave();
-            pages::notes::fs_watcher::install_notes_watcher();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.
@@ -586,7 +584,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
 
     create_effect(move || {
-        let (notes_open_state, notes_active_state) = notes_ctx.open_state();
+        let (notes_active_state, notes_expanded_state, notes_tile_state) = notes_ctx.persist();
         let sessions = code.sessions.get();
         let active_id = code.active_id.get();
         let sessions_cfg: Vec<config::CodeSessionConfig> = sessions
@@ -717,10 +715,11 @@ fn install_config_autosave(ctx: &AppCtx) {
             settings_right_split_ratio: settings_right_split.get(),
             notes_left_split_ratio: notes_left_split.get(),
             notes_right_split_ratio: notes_right_split.get(),
-            // Открытые плитки заметок и активная: `.get()` внутри
-            // `open_state` подписывают effect на open/close/переключение.
-            notes_open: notes_open_state,
+            // Активная страница, раскрытые узлы и плитка заметок: `.get()`
+            // внутри `persist` подписывают effect на их смену.
             notes_active: notes_active_state,
+            notes_expanded: notes_expanded_state,
+            notes_tile_opened_at: notes_tile_state,
             panels: panels.to_config(),
             rail_separators: rail_separators.get(),
             rail_order: rail_order.get(),

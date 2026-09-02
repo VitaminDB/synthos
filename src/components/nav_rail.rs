@@ -216,8 +216,9 @@ fn workspaces_segment() -> impl Widget {
                 RailEntry::Chat(m) => {
                     Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
                 }
-                RailEntry::Note(n) => {
-                    Box::new(note_tile(n.title.clone(), n.kind, active, entry.clone()))
+                RailEntry::Notes(_) => {
+                    let title = use_context::<crate::pages::notes::NotesCtx>().project_title.get();
+                    Box::new(note_tile(title, active, entry.clone()))
                 }
                 RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
             };
@@ -377,20 +378,10 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
     tile_with_label(Tooltip::new(body, shown.clone()), shown, is_selected, entry)
 }
 
-/// Плитка открытой страницы заметок: иконка по типу в скруглённой рамке.
-fn note_tile(
-    title: String,
-    kind: crate::pages::notes::NoteKind,
-    is_selected: bool,
-    entry: RailEntry,
-) -> impl Widget {
-    use crate::pages::notes::NoteKind;
-    let icon = match kind {
-        NoteKind::Page => MI_EDIT_NOTE,
-        NoteKind::Base => MI_GRID_ON,
-        NoteKind::Canvas => MI_ACCOUNT_TREE,
-        NoteKind::Graph => MI_HUB,
-    };
+/// Плитка проекта заметок: иконка режима в скруглённой рамке, подпись —
+/// имя файла проекта.
+fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
+    let icon = MI_EDIT_NOTE;
     let ring_class = if is_selected {
         "nav-rail-item nav-rail-note-tile selected"
     } else {

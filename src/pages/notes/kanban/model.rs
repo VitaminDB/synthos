@@ -1,8 +1,9 @@
 //! Формат канбан-доски: `notes/objects/<id>.kanban.json`.
 //!
-//! Доска самодостаточна: колонки (название + цвет) и карточки с заголовком.
-//! Порядок карточек в колонке — порядок в `cards`; никакой «базы» под
-//! доской нет, всё правится прямо на ней.
+//! Доска самодостаточна: колонки (название, цвет, своя ширина), карточки
+//! (заголовок + markdown-содержимое) и настройки внешнего вида. Порядок карточек в
+//! колонке — порядок в `cards`; никакой «базы» под доской нет, всё
+//! правится прямо на ней и в панели свойств.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,8 @@ pub struct KanbanDoc {
     pub columns: Vec<KanbanColumn>,
     #[serde(default)]
     pub cards: Vec<KanbanCard>,
+    #[serde(default)]
+    pub style: KanbanStyle,
 }
 
 fn default_version() -> u32 {
@@ -27,6 +30,9 @@ pub struct KanbanColumn {
     /// `#rrggbb`; пусто — без цветной метки.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color: String,
+    /// Своя ширина; без неё — общая из [`KanbanStyle::column_width`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,6 +42,55 @@ pub struct KanbanCard {
     pub column: String,
     #[serde(default)]
     pub title: String,
+    /// Markdown-содержимое (многострочное).
+    #[serde(default)]
+    pub md: String,
+}
+
+impl KanbanCard {
+    pub fn is_empty(&self) -> bool {
+        self.title.trim().is_empty() && self.md.trim().is_empty()
+    }
+}
+
+/// Внешний вид доски (панель «Свойства» ▸ «Внешний вид»).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KanbanStyle {
+    /// Ширина колонки по умолчанию.
+    #[serde(default = "default_column_width")]
+    pub column_width: f32,
+    /// Фон колонки, `#rrggbb`; пусто — тема.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lane_bg: String,
+    /// Фон карточки, `#rrggbb`; пусто — тема.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub card_bg: String,
+    /// Счётчик карточек в шапке колонки.
+    #[serde(default = "default_true")]
+    pub show_counts: bool,
+}
+
+pub const DEFAULT_COLUMN_WIDTH: f32 = 260.0;
+pub const MIN_COLUMN_WIDTH: f32 = 140.0;
+pub const MAX_COLUMN_WIDTH: f32 = 800.0;
+
+fn default_column_width() -> f32 {
+    DEFAULT_COLUMN_WIDTH
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for KanbanStyle {
+    fn default() -> Self {
+        Self {
+            column_width: DEFAULT_COLUMN_WIDTH,
+            lane_bg: String::new(),
+            card_bg: String::new(),
+            show_counts: true,
+        }
+    }
 }
 
 /// Палитра цветных меток (колонки доски, задачи диаграммы): клик по
@@ -69,9 +124,11 @@ impl KanbanDoc {
                     id: item_id("c"),
                     name: name.to_string(),
                     color: color.to_string(),
+                    width: None,
                 })
                 .collect(),
             cards: Vec::new(),
+            style: KanbanStyle::default(),
         }
     }
 
@@ -86,6 +143,14 @@ impl KanbanDoc {
     /// Карточки колонки в порядке доски.
     pub fn cards_of(&self, column: &str) -> Vec<&KanbanCard> {
         self.cards.iter().filter(|c| c.column == column).collect()
+    }
+
+    /// Ширина колонки: своя либо общая.
+    pub fn column_width(&self, column: &KanbanColumn) -> f32 {
+        column
+            .width
+            .unwrap_or(self.style.column_width)
+            .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
     }
 
     /// Перенос карточки в колонку `column` перед карточкой `before`
@@ -124,6 +189,7 @@ mod tests {
                 id: format!("k{i}"),
                 column: d.columns[col].id.clone(),
                 title: format!("Задача {i}"),
+                md: String::new(),
             });
         }
         d
@@ -131,11 +197,26 @@ mod tests {
 
     #[test]
     fn template_roundtrip() {
-        let d = doc();
-        let back = KanbanDoc::parse(&d.serialize()).unwrap();
+        let mut d = doc();
+        d.columns[1].width = Some(320.0);
+        d.style.card_bg = "#243149".into();
+        let json = d.serialize();
+        let back = KanbanDoc::parse(&json).unwrap();
         assert_eq!(d, back);
         assert_eq!(back.columns.len(), 3);
         assert_eq!(back.cards_of(&back.columns[0].id).len(), 2);
+        assert_eq!(back.column_width(&back.columns[0]), DEFAULT_COLUMN_WIDTH);
+        assert_eq!(back.column_width(&back.columns[1]), 320.0);
+    }
+
+    #[test]
+    fn first_wave_card_still_reads() {
+        let json = r#"{"columns":[{"id":"c","name":"A"}],"cards":[{"id":"k","column":"c","title":"старое"}]}"#;
+        let d = KanbanDoc::parse(json).unwrap();
+        assert_eq!(d.cards[0].title, "старое");
+        assert!(d.cards[0].md.is_empty());
+        assert!(!d.cards[0].is_empty());
+        assert_eq!(d.style, KanbanStyle::default());
     }
 
     #[test]

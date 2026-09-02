@@ -21,8 +21,10 @@ use crate::icons::*;
 use super::icon_picker;
 use super::blocks;
 use super::doc_menu;
+use super::kanban::model::{MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
+use super::kanban::KanbanHandle;
 use super::project::{PageGrid, PageLayout};
-use super::state::{NotesCtx, TAB_LINKS, TAB_PROPS};
+use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
 pub fn header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
@@ -205,6 +207,12 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     if props.shape.is_some_and(|s| !s.is_line()) || props.kind == "media" || sized_object {
         col = col.child(size_props(&attrs, set));
     }
+    // Доска: колонки и внешний вид живут здесь, а не на самой доске.
+    if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("kanban:")) {
+        if let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", oid.trim()) {
+            col = col.child(kanban_props(handle));
+        }
+    }
 
     // Таблица: строки и колонки — иначе её вообще нельзя дорастить.
     if let Some((rows, cols)) = props.table {
@@ -378,15 +386,133 @@ fn size_props(
         ))
 }
 
+/// Колонки доски (название, цвет, ширина, удаление, добавление) и её
+/// внешний вид. Перестраивается по `structure_rev` доски.
+fn kanban_props(handle: KanbanHandle) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = handle.structure_rev.get();
+        let doc = handle.lock().clone();
+        let mut col = Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-props")
+            .child(Text::new(tr!("notes.props.kanban.columns")).class("notes-links-section"));
+        for column in &doc.columns {
+            let h_color = handle.clone();
+            let id_color = column.id.clone();
+            let h_name = handle.clone();
+            let id_name = column.id.clone();
+            let h_w = handle.clone();
+            let id_w = column.id.clone();
+            let h_del = handle.clone();
+            let id_del = column.id.clone();
+            let mut dot = DecoratedBox::new().class("notes-props-swatch");
+            if column.color.is_empty() {
+                dot = dot.class("notes-props-swatch empty");
+            } else {
+                dot = dot.style("background-color", syngui::core::Color::from_hex(&column.color));
+            }
+            col = col.child(
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .class("notes-props-row")
+                    .child(
+                        GestureDetector::new()
+                            .cursor(syngui::input::CursorIcon::Pointer)
+                            .on_click(move || h_color.cycle_column_color(&id_color))
+                            .child(dot),
+                    )
+                    .child(
+                        DecoratedBox::new().class("grow").child(
+                            TextField::new()
+                                .text(column.name.clone())
+                                .submit_on_focus_lost(true)
+                                .on_submit(move |v: &str| h_name.rename_column(&id_name, v))
+                                .class("notes-props-name"),
+                        ),
+                    )
+                    .child(
+                        SpinBox::new()
+                            .range(MIN_COLUMN_WIDTH as f64, MAX_COLUMN_WIDTH as f64)
+                            .step(10.0)
+                            .width(84.0)
+                            .value(doc.column_width(column) as f64)
+                            .on_change(move |v| h_w.set_column_width(&id_w, Some(v as f32)))
+                            .class("notes-props-field"),
+                    )
+                    .child(
+                        ToolButton::new(MI_CLOSE)
+                            .tooltip(tr!("notes.kanban.delete_column"))
+                            .on_click(move || h_del.delete_column(&id_del)),
+                    ),
+            );
+        }
+        let h_add = handle.clone();
+        col = col.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || {
+                    h_add.add_column(&tr!("notes.kanban.new_column"));
+                })
+                .child(
+                    DecoratedBox::new().class("notes-kanban-tail").child(
+                        Row::new()
+                            .gap(6.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Center)
+                            .child(Icon::new(MI_ADD).class("notes-insert-icon"))
+                            .child(Text::new(tr!("notes.kanban.add_column")).class("notes-insert-label")),
+                    ),
+                ),
+        );
+
+        // Внешний вид: общая ширина колонок, фоны, счётчики.
+        let style = doc.style.clone();
+        let h_cw = handle.clone();
+        let h_lane = handle.clone();
+        let h_card = handle.clone();
+        let h_counts = handle.clone();
+        col = col
+            .child(Text::new(tr!("notes.props.kanban.style")).class("notes-links-section"))
+            .child(field_row(
+                tr!("notes.props.kanban.column_width"),
+                SpinBox::new()
+                    .range(MIN_COLUMN_WIDTH as f64, MAX_COLUMN_WIDTH as f64)
+                    .step(10.0)
+                    .width(96.0)
+                    .value(style.column_width as f64)
+                    .on_change(move |v| h_cw.set_style(|s| s.column_width = v as f32))
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.kanban.lane_bg"),
+                swatches(BG_PRESETS, Some(style.lane_bg.as_str()), move |v| {
+                    h_lane.set_style(|s| s.lane_bg = v.unwrap_or_default())
+                }),
+            ))
+            .child(field_row(
+                tr!("notes.props.kanban.card_bg"),
+                swatches(BG_PRESETS, Some(style.card_bg.as_str()), move |v| {
+                    h_card.set_style(|s| s.card_bg = v.unwrap_or_default())
+                }),
+            ))
+            .child(switch_row(tr!("notes.props.kanban.counts"), style.show_counts, move |on| {
+                h_counts.set_style(|s| s.show_counts = on)
+            }));
+        vec![Box::new(col)]
+    })
+}
+
 /// Ряд цветовых кружков; первый — «как в теме» (свойство снимается).
 fn swatches(
     presets: &'static [&'static str],
     current: Option<&str>,
-    on_pick: impl Fn(Option<String>) + Send + Sync + Copy + 'static,
+    on_pick: impl Fn(Option<String>) + Send + Sync + Clone + 'static,
 ) -> impl Widget {
     let current = current.unwrap_or("").to_string();
     let mut row = Row::new().gap(5.0).cross_axis_alignment(CrossAxisAlignment::Center);
     for preset in presets {
+        let on_pick = on_pick.clone();
         let value = preset.to_string();
         let selected = current == value;
         let mut dot = DecoratedBox::new().class(if selected {

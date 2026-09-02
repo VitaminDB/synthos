@@ -356,19 +356,9 @@ document-editor {
     padding: 10px 12px;
 }
 .notes-kanban-lane {
-    width: 260px;
-    border-radius: 10px;
+    border-radius: 12px;
     background-color: var(--surface-hover);
     padding: 8px;
-}
-.notes-kanban-lane.ghost {
-    background-color: transparent;
-    border-width: 1px;
-    border-color: var(--border-soft);
-    padding: 12px;
-}
-.notes-kanban-lane.ghost:hover {
-    background-color: var(--surface-hover);
 }
 .notes-kanban-lane-header {
     padding: 2px 4px 6px 4px;
@@ -397,30 +387,57 @@ document-editor {
 .notes-kanban-lane-btn {
     font-size: 14px;
 }
+/* Кромка колонки: узкая, подсвечивается под курсором. */
+.notes-kanban-resize {
+    width: 6px;
+    border-radius: 3px;
+}
+.notes-kanban-resize:hover {
+    background-color: var(--border-strong);
+}
+/* Карточка: цветная полоса колонки слева, заголовок, markdown-контент. */
 .notes-kanban-card {
-    border-radius: 8px;
+    border-radius: 10px;
     background-color: var(--bg-panel);
     border-width: 1px;
     border-color: var(--border-soft);
-    padding: 8px 10px;
+    padding: 10px 12px 10px 8px;
 }
 .notes-kanban-card:hover {
     border-color: var(--border-strong);
 }
 .notes-kanban-card.editing {
     border-color: var(--primary);
-    padding: 4px 6px;
 }
-.notes-kanban-card-input {
+.notes-kanban-card-accent {
+    width: 3px;
+    border-radius: 2px;
+}
+.notes-kanban-card-title {
     font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+.notes-kanban-card-body {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.notes-kanban-card-title-input {
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text);
     background-color: transparent;
     border-width: 0px;
     padding: 2px 4px;
 }
-.notes-kanban-card-title {
-    font-size: 13px;
-    color: var(--text);
+.notes-kanban-card-editor {
+    --doc-padding: 4px;
+    --doc-text-size: 12px;
+    border-radius: 6px;
+    background-color: var(--surface-hover);
+}
+.notes-kanban-card-toolbar {
+    padding: 2px 0px 0px 0px;
 }
 .notes-kanban-tail {
     border-radius: 6px;

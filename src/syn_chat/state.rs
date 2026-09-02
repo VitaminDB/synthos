@@ -112,6 +112,11 @@ pub struct SynChatCtx {
     /// `None` — ничего не редактируется. Эфемерно, сбрасывается при смене
     /// чата и при старте генерации.
     pub editing_msg: RwSignal<Option<usize>>,
+    /// Название активного чата в шапке переведено в режим правки (клик по
+    /// нему). Обязан быть сигналом, а не локальным флагом: смена режима
+    /// должна пересобрать реактивный блок заголовка. Сбрасывается при
+    /// переключении чата.
+    pub renaming_chat: RwSignal<bool>,
     /// Открыт диалог подтверждения очистки ленты
     /// (`pages::syn_chat::clear_dialog`). Кнопка в шапке только взводит
     /// сигнал; `session::clear_chat` зовётся из диалога.
@@ -193,6 +198,7 @@ impl SynChatCtx {
             right_panel_tab: use_signal(0),
             highlight_msg: use_signal(None),
             editing_msg: use_signal(None),
+            renaming_chat: use_signal(false),
             pending_clear: use_signal(false),
             left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),

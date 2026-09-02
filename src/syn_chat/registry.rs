@@ -103,6 +103,9 @@ pub fn create_new() -> String {
 fn leave_current_chat() {
     session::drop_kv_session();
     telemetry::reset();
+    // Начатая правка названия принадлежит покидаемому чату — поле не
+    // должно пережить переключение и открыться на новом.
+    use_context::<SynChatCtx>().renaming_chat.set(false);
 }
 
 pub fn select(id: &str) {

@@ -222,7 +222,8 @@ fn chat_row(
     // прячется — её место занимают «Сохранить»/«Отмена» в самом пузырьке.
     let show_actions = !editing && (!is_typing || is_last_assistant);
     let bubble_row: Box<dyn Widget> = if show_actions {
-        let actions = actions_widget(Some(msg_idx), body.clone(), is_last_assistant && !outgoing);
+        let actions =
+            actions_widget(Some(msg_idx), body.clone(), is_last_assistant && !outgoing, None);
         let bubble: Box<dyn Widget> = Box::new(bubble);
         let (children, align) = if outgoing {
             (vec![actions, bubble], MainAxisAlignment::End)
@@ -270,13 +271,21 @@ fn chat_row(
 }
 
 /// Панель действий пузырька. `msg_idx = Some(..)` — текстовое сообщение
-/// ленты: копировать / править / удалить (+ regen); `None` — только
-/// копирование (tool-карточки и медиа-ряды правке не подлежат).
-fn actions_widget(msg_idx: Option<usize>, body: String, regen_allowed: bool) -> Box<dyn Widget> {
+/// ленты: копировать / править / удалить (+ regen). `tool_idx = Some(..)` —
+/// tool-карточка: копировать + удалить работу инструмента (вызов вместе с
+/// результатом; правке tool-сообщения не подлежат). Оба `None` — только
+/// копирование (медиа-ряды).
+fn actions_widget(
+    msg_idx: Option<usize>,
+    body: String,
+    regen_allowed: bool,
+    tool_idx: Option<usize>,
+) -> Box<dyn Widget> {
     syngui::widgets::containers::reactive::IntoWidget::into_widget(actions_row(
         msg_idx,
         body,
         regen_allowed,
+        tool_idx,
     ))
 }
 
@@ -284,6 +293,7 @@ fn actions_row(
     msg_idx: Option<usize>,
     body: String,
     regen_allowed: bool,
+    tool_idx: Option<usize>,
 ) -> impl Fn() -> syngui::StyledWidget<DecoratedBox> + Send + Sync + 'static {
     move || {
         let pending = use_context::<SynChatCtx>().pending.get();
@@ -322,6 +332,14 @@ fn actions_row(
                 ToolButton::new(MI_DELETE)
                     .tooltip(tr!("chat.msg.actions.delete.tooltip"))
                     .on_click(move || session::delete_message(idx))
+                    .class("msg-action-delete"),
+            ));
+        }
+        if let Some(idx) = tool_idx {
+            buttons.push(Box::new(
+                ToolButton::new(MI_DELETE)
+                    .tooltip(tr!("chat.msg.actions.delete_tool.tooltip"))
+                    .on_click(move || session::delete_tool_work(idx))
                     .class("msg-action-delete"),
             ));
         }
@@ -765,8 +783,9 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
         ]
     };
 
-    // Copy-кнопка справа от карточки — забирает аргументы вызова как есть.
-    // Во время стрима (`is_typing`) прячем: копировать нечего.
+    // Действия справа от карточки: копировать аргументы + удалить работу
+    // инструмента (вызов вместе с результатом). Во время стрима
+    // (`is_typing`) прячем: копировать нечего, удалять рано.
     let card_with_actions: Box<dyn Widget> = if is_typing {
         Box::new(card)
     } else {
@@ -777,7 +796,7 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .children(vec![
                     Box::new(card) as Box<dyn Widget>,
-                    actions_widget(None, msg.body.clone(), false),
+                    actions_widget(None, msg.body.clone(), false, Some(msg_idx)),
                 ]),
         )
     };
@@ -1091,7 +1110,7 @@ fn tool_result_row(
             .main_axis_alignment(MainAxisAlignment::Start)
             .children(vec![
                 Box::new(card) as Box<dyn Widget>,
-                actions_widget(None, msg.body.clone(), false),
+                actions_widget(None, msg.body.clone(), false, Some(msg_idx)),
             ]),
     );
 

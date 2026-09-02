@@ -107,11 +107,12 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
     }
 }
 
+/// Название чата: клик переводит в поле правки, Enter сохраняет
+/// (`registry::rename_active`). Режим правки живёт в сигнале
+/// `SynChatCtx::renaming_chat` — локальный флаг тут не работал: его
+/// взведение ничем не пересобирало реактивный блок, и клик по названию
+/// внешне не делал ничего.
 fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    let editing_flag = Arc::new(AtomicBool::new(false));
-    let editing_flag_view = editing_flag.clone();
     move || {
         let ctx = use_context::<SynChatCtx>();
         let _gen = ctx.last_saved_fp.get(); // подписка для ребилда после rename
@@ -122,25 +123,22 @@ fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedB
             .and_then(|active| chats.iter().find(|m| &m.id == active).map(|m| m.title.clone()))
             .unwrap_or_else(|| initial.clone());
 
-        if editing_flag_view.load(Ordering::Relaxed) {
-            let flag = editing_flag_view.clone();
+        if ctx.renaming_chat.get() {
             let edit = TextField::new()
                 .text(current_title.clone())
                 .on_submit(move |s| {
-                    let t = s.to_string();
-                    if !t.trim().is_empty() {
+                    let ctx = use_context::<SynChatCtx>();
+                    let t = s.trim().to_string();
+                    if !t.is_empty() {
                         registry::rename_active(t);
                     }
-                    flag.store(false, Ordering::Relaxed);
+                    ctx.renaming_chat.set(false);
                 })
                 .class("chat-header-title-edit");
             DecoratedBox::new().class("chat-header-title-wrap").child(edit)
         } else {
-            let flag = editing_flag_view.clone();
             let clickable = GestureDetector::new()
-                .on_click(move || {
-                    flag.store(true, Ordering::Relaxed);
-                })
+                .on_click(|| use_context::<SynChatCtx>().renaming_chat.set(true))
                 .child(Text::new(current_title).max_lines(1).class("panel-header-title"));
             DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
         }

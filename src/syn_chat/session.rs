@@ -575,6 +575,112 @@ pub fn delete_message(idx: usize) {
     drop_kv_session();
 }
 
+/// Удаляет работу инструмента — вызов ВМЕСТЕ с его результатом. История,
+/// где call остался без result (или наоборот), ломает парность в промпте:
+/// модель видит вызов без ответа и начинает «доделывать» его заново.
+/// Клик по любой из двух карточек сносит обе. Во время генерации — no-op.
+pub fn delete_tool_work(idx: usize) {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    let mut removed = false;
+    ctx.messages.update(|m| {
+        let Some(msg) = m.get(idx) else { return };
+        let pair = match &msg.kind {
+            // Вызов → его результат ищем вперёд по tool_call_id;
+            // исполнитель кладёт его следующим сообщением, но после
+            // ручных правок ленты полагаться на соседство нельзя.
+            ChatMsgKind::ToolCall { .. } => {
+                let ids: Vec<String> = msg
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .map(|c| c.id.clone())
+                    .collect();
+                m.iter().enumerate().skip(idx + 1).find_map(|(j, other)| {
+                    match &other.kind {
+                        ChatMsgKind::ToolResult { tool_call_id, .. }
+                            if ids.iter().any(|id| id == tool_call_id) =>
+                        {
+                            Some(j)
+                        }
+                        _ => None,
+                    }
+                })
+            }
+            // Результат → его вызов ищем назад.
+            ChatMsgKind::ToolResult { tool_call_id, .. } => {
+                let want = tool_call_id.clone();
+                m.iter().enumerate().take(idx).rev().find_map(|(j, other)| {
+                    match &other.kind {
+                        ChatMsgKind::ToolCall { .. }
+                            if other
+                                .tool_calls
+                                .iter()
+                                .flatten()
+                                .any(|c| c.id == want) =>
+                        {
+                            Some(j)
+                        }
+                        _ => None,
+                    }
+                })
+            }
+            _ => None,
+        };
+        let mut to_remove = vec![idx];
+        to_remove.extend(pair);
+        to_remove.sort_unstable();
+        for j in to_remove.into_iter().rev() {
+            m.remove(j);
+        }
+        removed = true;
+    });
+    if !removed {
+        return;
+    }
+    ctx.editing_msg.set(None);
+    reset_index_keyed_ui(&ctx);
+    drop_kv_session();
+}
+
+/// Удаляет цепочку tool-сообщений целиком — `len` подряд идущих сообщений
+/// начиная со `start_idx` (свёрнутая группа «bash ×N» в minimal-режиме).
+/// Диапазон дополнительно сверяется: сносим только Tool*-сообщения, чтобы
+/// разъехавшиеся после чужой правки индексы не задели текст.
+/// Во время генерации — no-op.
+pub fn delete_tool_chain(start_idx: usize, len: usize) {
+    let ctx = use_context::<SynChatCtx>();
+    if ctx.pending.get_untracked() {
+        return;
+    }
+    let mut removed = false;
+    ctx.messages.update(|m| {
+        let end = (start_idx + len).min(m.len());
+        if start_idx >= end {
+            return;
+        }
+        let all_tool = m[start_idx..end].iter().all(|msg| {
+            matches!(
+                msg.kind,
+                ChatMsgKind::ToolCall { .. } | ChatMsgKind::ToolResult { .. }
+            )
+        });
+        if !all_tool {
+            return;
+        }
+        m.drain(start_idx..end);
+        removed = true;
+    });
+    if !removed {
+        return;
+    }
+    ctx.editing_msg.set(None);
+    reset_index_keyed_ui(&ctx);
+    drop_kv_session();
+}
+
 /// Заменяет текст сообщения (правка in-place). Вложения и thinking не
 /// трогаются. Во время генерации — no-op.
 pub fn edit_message(idx: usize, body: String) {

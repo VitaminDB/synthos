@@ -16,7 +16,8 @@ use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::{AnimatedSize, AnimationAxis, Reactive};
 
 use crate::agent::tools::Tool;
-use crate::icons::{MI_EXPAND_LESS, MI_EXPAND_MORE, MI_REPORT, MI_TERMINAL};
+use crate::icons::{MI_DELETE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_REPORT, MI_TERMINAL};
+use crate::syn_chat::session;
 use crate::syn_chat::state::{ChatMsg, ChatMsgKind, SynChatCtx};
 
 use super::message_bubble::{tool_call_card_only, tool_result_card_only};
@@ -167,12 +168,38 @@ pub fn view(group: ToolGroup) -> impl Widget {
         ]
     };
 
+    // Действия справа от карточки группы: снести цепочку целиком. Панель
+    // повторяет поведение остальных `.msg-actions`: во время генерации
+    // прячется — лента принадлежит worker'у.
+    let chain_len = items.len();
+    let actions = syngui::widgets::containers::reactive::IntoWidget::into_widget(move || {
+        if use_context::<SynChatCtx>().pending.get() {
+            return DecoratedBox::new().class("msg-actions-empty");
+        }
+        DecoratedBox::new().class("msg-actions").child(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .children(vec![Box::new(
+                    ToolButton::new(MI_DELETE)
+                        .tooltip(tr!("chat.tool_group.delete.tooltip"))
+                        .on_click(move || session::delete_tool_chain(start_idx, chain_len))
+                        .class("msg-action-delete"),
+                ) as Box<dyn Widget>]),
+        )
+    });
+    let card_with_actions = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::End)
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .children(vec![Box::new(card) as Box<dyn Widget>, actions]);
+
     let meta = Column::new()
         .gap(4.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .children(vec![
             Box::new(meta_header) as Box<dyn Widget>,
-            Box::new(card) as Box<dyn Widget>,
+            Box::new(card_with_actions) as Box<dyn Widget>,
         ]);
 
     mgui! {

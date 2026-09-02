@@ -246,7 +246,10 @@ fn shape_props(
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("notes-props")
         .child(Text::new(tr!("notes.props.shape")).class("notes-links-section"))
-        .child(field_row(tr!("notes.props.shape.kind"), shape_picker(ctx, id, shape)));
+        // Видов десять — в строку рядом с подписью они не влезают, поэтому
+        // подпись отдельной строкой, а сетка иконок под ней.
+        .child(Text::new(tr!("notes.props.shape.kind")).class("notes-props-row-label"))
+        .child(shape_picker(ctx, id, shape));
     if !is_line {
         col = col.child(field_row(
             tr!("notes.props.shape.fill"),
@@ -309,8 +312,15 @@ fn shape_picker(
     id: syngui::widgets::input::document_editor::BlockId,
     current: ShapeKind,
 ) -> impl Widget {
+    let mut grid = Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Start);
     let mut row = Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center);
-    for kind in ShapeKind::ALL {
+    for (i, kind) in ShapeKind::ALL.into_iter().enumerate() {
+        if i > 0 && i % 5 == 0 {
+            grid = grid.child(std::mem::replace(
+                &mut row,
+                Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center),
+            ));
+        }
         let selected = kind == current;
         row = row.child(
             GestureDetector::new()
@@ -334,7 +344,7 @@ fn shape_picker(
                 ),
         );
     }
-    row
+    grid.child(row)
 }
 
 /// Ширина и высота блока (свободная раскладка): те же значения, что

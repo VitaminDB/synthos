@@ -24,7 +24,7 @@ use super::media::{self, PickKind};
 use super::state::NotesCtx;
 
 /// Примитивы в порядке меню: id, вид, иконка, ключ подписи.
-const SHAPES: [(&str, ShapeKind, &str, &str); 7] = [
+const SHAPES: [(&str, ShapeKind, &str, &str); 10] = [
     ("rect", ShapeKind::Rect, MI_CROP_SQUARE, "notes.shape.rect"),
     ("ellipse", ShapeKind::Ellipse, MI_CIRCLE, "notes.shape.ellipse"),
     ("triangle", ShapeKind::Triangle, MI_CHANGE_HISTORY, "notes.shape.triangle"),
@@ -32,6 +32,9 @@ const SHAPES: [(&str, ShapeKind, &str, &str); 7] = [
     ("line", ShapeKind::Line, MI_HORIZONTAL_RULE, "notes.shape.line"),
     ("arrow", ShapeKind::Arrow, MI_ARROW_RIGHT_ALT, "notes.shape.arrow"),
     ("arrow2", ShapeKind::DoubleArrow, MI_COMPARE_ARROWS, "notes.shape.arrow2"),
+    ("curve", ShapeKind::Curve, MI_GESTURE, "notes.shape.curve"),
+    ("curve-arrow", ShapeKind::CurveArrow, MI_REDO, "notes.shape.curve_arrow"),
+    ("curve-arrow2", ShapeKind::CurveDoubleArrow, MI_SWAP_CALLS, "notes.shape.curve_arrow2"),
 ];
 
 /// Подпись вида примитива на языке интерфейса.
@@ -90,6 +93,9 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::Shape(ShapeKind::Line), tr!("notes.shape.line"), "line линия фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Arrow), tr!("notes.shape.arrow"), "arrow стрелка фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::DoubleArrow), tr!("notes.shape.arrow2"), "arrow double двойная стрелка"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Curve), tr!("notes.shape.curve"), "curve bezier кривая безье дуга"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::CurveArrow), tr!("notes.shape.curve_arrow"), "curve arrow bezier кривая стрелка"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::CurveDoubleArrow), tr!("notes.shape.curve_arrow2"), "curve arrow double кривая двойная"),
         SlashItem::new(SlashAction::Custom("image".into()), tr!("notes.menu.image"), "image picture картинка изображение"),
         SlashItem::new(SlashAction::Custom("svg".into()), tr!("notes.menu.svg"), "svg вектор картинка"),
         SlashItem::new(SlashAction::Custom("file".into()), tr!("notes.menu.file"), "file файл вложение"),

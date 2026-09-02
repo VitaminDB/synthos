@@ -254,3 +254,6 @@ pub const MI_OPACITY: &str             = "\u{E91C}"; // прозрачность
 pub const MI_BRUSH: &str               = "\u{E3AE}"; // SVG-файл
 pub const MI_FORMAT_COLOR_FILL: &str   = "\u{E23A}"; // заливка
 pub const MI_HEIGHT: &str              = "\u{EA16}"; // высота блока
+pub const MI_GESTURE: &str             = "\u{E155}"; // кривая Безье
+pub const MI_REDO: &str                = "\u{E15A}"; // кривая со стрелкой
+pub const MI_SWAP_CALLS: &str          = "\u{E15D}"; // двусторонняя кривая

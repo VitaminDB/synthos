@@ -39,8 +39,8 @@ impl EmbedFactory for NotesEmbedFactory {
         let target = target.trim();
         let height = ectx.height.unwrap_or(DEFAULT_OBJECT_H);
         if let Some(id) = target.strip_prefix("kanban:") {
-            let LiveObject::Kanban { handle, .. } = ctx.object("kanban", id.trim())? else { return None };
-            return Some(sized(Box::new(super::kanban::view::view(handle)), height));
+            let LiveObject::Kanban { handle, id: oid } = ctx.object("kanban", id.trim())? else { return None };
+            return Some(sized(Box::new(super::kanban::view::view(ctx, oid, handle)), height));
         }
         if let Some(id) = target.strip_prefix("gantt:") {
             let LiveObject::Gantt { handle, .. } = ctx.object("gantt", id.trim())? else { return None };

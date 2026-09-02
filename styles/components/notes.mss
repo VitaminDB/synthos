@@ -422,19 +422,17 @@ document-editor {
     font-size: 12px;
     color: var(--text-muted);
 }
-.notes-kanban-card-title-input {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    background-color: transparent;
-    border-width: 0px;
-    padding: 2px 4px;
+.notes-kanban-card-divider {
+    height: 1px;
+    background-color: var(--border-soft);
 }
+/* Редактор карточки: заголовок — блок `## …`, поэтому h2 ужат под карточку. */
 .notes-kanban-card-editor {
     --doc-padding: 4px;
     --doc-text-size: 12px;
-    border-radius: 6px;
-    background-color: var(--surface-hover);
+    --doc-h2-size: 15px;
+    --doc-h1-size: 16px;
+    --doc-h3-size: 14px;
 }
 .notes-kanban-card-toolbar {
     padding: 2px 0px 0px 0px;

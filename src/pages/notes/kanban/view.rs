@@ -1,16 +1,17 @@
 //! Виджет канбан-доски: колонки в горизонтальной прокрутке, карточки
-//! перетаскиваются между колонками и внутри них (Draggable / DropArea;
-//! ghost — снимок карточки от фреймворка).
+//! перетаскиваются между колонками, внутри них и **между досками**
+//! (payload — `<доска>|<карточка>`, см. [`super::drop_card`]).
 //!
-//! Карточка — заголовок + markdown-содержимое: в просмотре `MarkdownView`
-//! (событий не перехватывает, так что карточка остаётся перетаскиваемой),
-//! в правке — поле заголовка и `DocumentEditor` с ручкой из
-//! [`KanbanHandle::card_editor`]. Цель дропа — сама карточка («перед
-//! ней») либо хвост колонки («в конец»): вложенных DropArea нет, иначе
-//! дроп получали бы обе. Название колонки правится в шапке, цветная метка
-//! переключается кликом, ширина тянется за правую кромку
-//! ([`super::drag_strip`]); добавление/удаление колонок и внешний вид —
-//! панель «Свойства».
+//! Карточка — заголовок + markdown-содержимое с цветной полосой колонки.
+//! В просмотре: `Text` заголовка, разделитель, `MarkdownView` (событий не
+//! перехватывает — карточка остаётся `Draggable`). В правке — один
+//! `DocumentEditor` с ручкой из [`KanbanHandle::card_editor`]: первый блок
+//! `## …` — заголовок, ниже — содержимое; автофокус, а потеря фокуса
+//! (клик куда угодно ещё) закрывает правку. Карточки и хвосты колонок
+//! обёрнуты в [`super::sinks::RectProbe`] — по этим прямоугольникам
+//! редактор страницы отдаёт сюда блоки, отпущенные после переноса за ⋮⋮.
+//! Цель дропа карточек — сама карточка («перед ней») либо хвост колонки
+//! («в конец»): вложенных DropArea нет, иначе дроп получали бы обе.
 
 use syngui::core::Color;
 use syngui::input::CursorIcon;
@@ -22,33 +23,37 @@ use syngui::widgets::{GestureDetector, MarkdownView};
 
 use crate::icons::*;
 
+use super::super::state::NotesCtx;
 use super::drag_strip::DragStrip;
 use super::model::{KanbanCard, KanbanColumn, KanbanDoc};
-use super::KanbanHandle;
+use super::sinks::{RectProbe, Sink};
+use super::{drop_card, KanbanHandle};
 
-const DRAG_TYPE_CARD: &str = "notes-kanban-card";
+pub const DRAG_TYPE_CARD: &str = "notes-kanban-card";
 
-pub fn view(handle: KanbanHandle) -> impl Widget {
+pub fn view(ctx: NotesCtx, board: String, handle: KanbanHandle) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.structure_rev.get();
         let editing = handle.editing.get();
-        vec![build(handle.clone(), editing)]
+        vec![build(ctx, &board, handle.clone(), editing)]
     })
 }
 
-fn build(handle: KanbanHandle, editing: Option<String>) -> Box<dyn Widget> {
+fn build(ctx: NotesCtx, board: &str, handle: KanbanHandle, editing: Option<String>) -> Box<dyn Widget> {
     let doc = handle.lock().clone();
     let mut lanes = Row::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("notes-kanban");
     for column in &doc.columns {
-        lanes = lanes.child(lane(&handle, &doc, column, editing.as_deref()));
+        lanes = lanes.child(lane(ctx, board, &handle, &doc, column, editing.as_deref()));
     }
     Box::new(ScrollView::new().horizontal().class("notes-kanban-scroll").child(lanes))
 }
 
 fn lane(
+    ctx: NotesCtx,
+    board: &str,
     handle: &KanbanHandle,
     doc: &KanbanDoc,
     column: &KanbanColumn,
@@ -103,6 +108,8 @@ fn lane(
         .class("notes-kanban-cards");
     for c in cards_in {
         cards = cards.child(Stack::new().children(vec![card(
+            ctx,
+            board,
             handle,
             doc,
             &column.color,
@@ -121,30 +128,37 @@ fn lane(
         })
         .child(ScrollView::new().vertical().child(cards));
 
-    // Хвост колонки — цель дропа «в конец» и кнопка новой карточки.
+    // Хвост колонки — цель дропа «в конец» (карточек и блоков страницы) и
+    // кнопка новой карточки.
     let h_tail = handle.clone();
     let id_tail = col_id.clone();
+    let board_tail = board.to_string();
     let h_tail_add = handle.clone();
     let id_tail_add = col_id.clone();
-    let tail = DropArea::new()
-        .accept_types(vec![DRAG_TYPE_CARD.to_string()])
-        .on_drop(move |data| h_tail.move_card(&data.payload, &id_tail, None))
-        .child(
-            GestureDetector::new()
-                .cursor(CursorIcon::Pointer)
-                .on_click(move || {
-                    h_tail_add.add_card(&id_tail_add);
-                })
+    let tail = RectProbe::new(
+        Sink::Tail { board: board.to_string(), column: col_id.clone() },
+        Box::new(
+            DropArea::new()
+                .accept_types(vec![DRAG_TYPE_CARD.to_string()])
+                .on_drop(move |data| drop_card(ctx, &data.payload, &board_tail, &h_tail, &id_tail, None))
                 .child(
-                    DecoratedBox::new().class("notes-kanban-tail").child(
-                        Row::new()
-                            .gap(6.0)
-                            .cross_axis_alignment(CrossAxisAlignment::Center)
-                            .child(Icon::new(MI_ADD).class("notes-insert-icon"))
-                            .child(Text::new(tr!("notes.kanban.add_card")).class("notes-insert-label")),
-                    ),
+                    GestureDetector::new()
+                        .cursor(CursorIcon::Pointer)
+                        .on_click(move || {
+                            h_tail_add.add_card(&id_tail_add);
+                        })
+                        .child(
+                            DecoratedBox::new().class("notes-kanban-tail").child(
+                                Row::new()
+                                    .gap(6.0)
+                                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                                    .child(Icon::new(MI_ADD).class("notes-insert-icon"))
+                                    .child(Text::new(tr!("notes.kanban.add_card")).class("notes-insert-label")),
+                            ),
+                        ),
                 ),
-        );
+        ),
+    );
 
     let mut lane_box = DecoratedBox::new()
         .class("notes-kanban-lane")
@@ -188,8 +202,11 @@ fn color_dot(color: &str) -> impl Widget {
 
 /// Карточка: заголовок и markdown-содержимое с цветной полосой колонки;
 /// перетаскивается, по клику — правка на месте; сама — цель дропа «перед
-/// ней».
+/// ней» и приёмник блоков страницы.
+#[allow(clippy::too_many_arguments)]
 fn card(
+    ctx: NotesCtx,
+    board: &str,
     handle: &KanbanHandle,
     doc: &KanbanDoc,
     lane_color: &str,
@@ -209,30 +226,19 @@ fn card(
 
     if editing {
         let (editor, source) = handle.card_editor(&id);
-        let h_title = handle.clone();
-        let id_title = id.clone();
-        let h_esc = handle.clone();
-        let id_esc = id.clone();
-        let h_done = handle.clone();
-        let id_done = id.clone();
+        let h_blur = handle.clone();
+        let id_blur = id.clone();
         let h_del = handle.clone();
         let id_del = id.clone();
         let body = Column::new()
-            .gap(6.0)
+            .gap(4.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(
-                TextField::new()
-                    .text(c.title.clone())
-                    .placeholder(tr!("notes.kanban.title_placeholder"))
-                    .autofocus(c.title.is_empty())
-                    .on_change(move |v: &str| h_title.set_card_title(&id_title, v))
-                    .on_escape(move || h_esc.finish_editing(&id_esc))
-                    .class("notes-kanban-card-title-input"),
-            )
             .child(
                 DocumentEditor::new()
                     .markdown((*source).clone())
                     .handle(&editor)
+                    .autofocus(true)
+                    .on_focus_lost(move || h_blur.finish_editing(&id_blur))
                     .class("notes-kanban-card-editor"),
             )
             .child(
@@ -240,12 +246,6 @@ fn card(
                     .gap(2.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center)
                     .class("notes-kanban-card-toolbar")
-                    .child(
-                        ToolButton::new(MI_CHECK)
-                            .tooltip(tr!("notes.kanban.done"))
-                            .on_click(move || h_done.finish_editing(&id_done))
-                            .class("notes-kanban-lane-btn"),
-                    )
                     .child(DecoratedBox::new().class("grow"))
                     .child(
                         ToolButton::new(MI_DELETE)
@@ -263,12 +263,17 @@ fn card(
         ));
     }
 
-    let title = if c.title.trim().is_empty() { tr!("notes.kanban.untitled") } else { c.title.clone() };
-    let mut body = Column::new()
-        .gap(4.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new(title.clone()).max_lines(3).class("notes-kanban-card-title"));
-    if !c.md.trim().is_empty() {
+    let has_title = !c.title.trim().is_empty();
+    let has_body = !c.md.trim().is_empty();
+    let title = if has_title { c.title.clone() } else { tr!("notes.kanban.untitled") };
+    let mut body = Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if has_title || !has_body {
+        body = body.child(Text::new(title.clone()).max_lines(3).class("notes-kanban-card-title"));
+    }
+    if has_title && has_body {
+        body = body.child(DecoratedBox::new().class("notes-kanban-card-divider"));
+    }
+    if has_body {
         body = body.child(
             MarkdownView::new(c.md.clone())
                 .selectable(false)
@@ -286,17 +291,24 @@ fn card(
     let h_click = handle.clone();
     let id_click = id.clone();
     let h_drop = handle.clone();
+    let board_drop = board.to_string();
     let column = c.column.clone();
     let id_drop = id.clone();
-    Box::new(
-        DropArea::new()
-            .accept_types(vec![DRAG_TYPE_CARD.to_string()])
-            .on_drop(move |data| h_drop.move_card(&data.payload, &column, Some(&id_drop)))
-            .child(
-                Draggable::new(DRAG_TYPE_CARD, id)
-                    .label(title)
-                    .on_click(move || h_click.start_editing(&id_click))
-                    .child(content),
-            ),
-    )
+    let label = if has_title { title } else { c.md.lines().next().unwrap_or_default().to_string() };
+    Box::new(RectProbe::new(
+        Sink::Card { board: board.to_string(), card: id.clone() },
+        Box::new(
+            DropArea::new()
+                .accept_types(vec![DRAG_TYPE_CARD.to_string()])
+                .on_drop(move |data| {
+                    drop_card(ctx, &data.payload, &board_drop, &h_drop, &column, Some(&id_drop))
+                })
+                .child(
+                    Draggable::new(DRAG_TYPE_CARD, format!("{board}|{id}"))
+                        .label(label)
+                        .on_click(move || h_click.start_editing(&id_click))
+                        .child(content),
+                ),
+        ),
+    ))
 }

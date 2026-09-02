@@ -52,6 +52,10 @@ pub fn body() -> impl Widget {
             .on_drop_file(move |file, token| {
                 super::media::ingest_dropped_file(ctx, page_id.clone(), file, token);
             })
+            // Блок, отпущенный над карточкой доски, уезжает в неё; карточка,
+            // отпущенная на документ, становится его блоками.
+            .on_block_drop(move |pos, block| super::kanban::sinks::take_block(ctx, pos, block))
+            .on_drop_data(move |pos, data| super::kanban::sinks::drop_on_page(ctx, pos, data))
             .class("notes-editor");
         // Поток не выходит за ширину колонки — прокрутка только вниз;
         // холст свободной раскладки — в обе стороны.

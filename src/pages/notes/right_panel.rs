@@ -412,41 +412,45 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
             } else {
                 dot = dot.style("background-color", syngui::core::Color::from_hex(&column.color));
             }
-            col = col.child(
-                Row::new()
-                    .gap(6.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .class("notes-props-row")
-                    .child(
-                        GestureDetector::new()
-                            .cursor(syngui::input::CursorIcon::Pointer)
-                            .on_click(move || h_color.cycle_column_color(&id_color))
-                            .child(dot),
-                    )
-                    .child(
-                        DecoratedBox::new().class("grow").child(
-                            TextField::new()
-                                .text(column.name.clone())
-                                .submit_on_focus_lost(true)
-                                .on_submit(move |v: &str| h_name.rename_column(&id_name, v))
-                                .class("notes-props-name"),
+            // Две строки на колонку: в одну название и спинбокс ширины не
+            // помещались — цифры переносились.
+            col = col
+                .child(
+                    Row::new()
+                        .gap(6.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .class("notes-props-row")
+                        .child(
+                            GestureDetector::new()
+                                .cursor(syngui::input::CursorIcon::Pointer)
+                                .on_click(move || h_color.cycle_column_color(&id_color))
+                                .child(dot),
+                        )
+                        .child(
+                            DecoratedBox::new().class("grow").child(
+                                TextField::new()
+                                    .text(column.name.clone())
+                                    .submit_on_focus_lost(true)
+                                    .on_submit(move |v: &str| h_name.rename_column(&id_name, v))
+                                    .class("notes-props-name"),
+                            ),
+                        )
+                        .child(
+                            ToolButton::new(MI_CLOSE)
+                                .tooltip(tr!("notes.kanban.delete_column"))
+                                .on_click(move || h_del.delete_column(&id_del)),
                         ),
-                    )
-                    .child(
-                        SpinBox::new()
-                            .range(MIN_COLUMN_WIDTH as f64, MAX_COLUMN_WIDTH as f64)
-                            .step(10.0)
-                            .width(84.0)
-                            .value(doc.column_width(column) as f64)
-                            .on_change(move |v| h_w.set_column_width(&id_w, Some(v as f32)))
-                            .class("notes-props-field"),
-                    )
-                    .child(
-                        ToolButton::new(MI_CLOSE)
-                            .tooltip(tr!("notes.kanban.delete_column"))
-                            .on_click(move || h_del.delete_column(&id_del)),
-                    ),
-            );
+                )
+                .child(field_row(
+                    tr!("notes.props.size_box.width"),
+                    SpinBox::new()
+                        .range(MIN_COLUMN_WIDTH as f64, MAX_COLUMN_WIDTH as f64)
+                        .step(10.0)
+                        .width(96.0)
+                        .value(doc.column_width(column) as f64)
+                        .on_change(move |v| h_w.set_column_width(&id_w, Some(v as f32)))
+                        .class("notes-props-field"),
+                ));
         }
         let h_add = handle.clone();
         col = col.child(
@@ -486,13 +490,13 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
             ))
             .child(field_row(
                 tr!("notes.props.kanban.lane_bg"),
-                swatches(BG_PRESETS, Some(style.lane_bg.as_str()), move |v| {
+                swatches(TINT_PRESETS, Some(style.lane_bg.as_str()), move |v| {
                     h_lane.set_style(|s| s.lane_bg = v.unwrap_or_default())
                 }),
             ))
             .child(field_row(
                 tr!("notes.props.kanban.card_bg"),
-                swatches(BG_PRESETS, Some(style.card_bg.as_str()), move |v| {
+                swatches(TINT_PRESETS, Some(style.card_bg.as_str()), move |v| {
                     h_card.set_style(|s| s.card_bg = v.unwrap_or_default())
                 }),
             ))
@@ -577,6 +581,10 @@ const COLOR_PRESETS: &[&str] =
     &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6"];
 const BG_PRESETS: &[&str] =
     &["", "#3A2A28", "#3A3324", "#243A2E", "#243149", "#332944", "#2B2F36"];
+/// Полупрозрачные оттенки для фонов доски: ложатся на любую тему, а не
+/// чёрные пятна, как тёмные подложки текста.
+const TINT_PRESETS: &[&str] =
+    &["", "#EE5E4833", "#E8A33D33", "#4FBF7A33", "#4F8CFF33", "#C08FE833", "#8B95A633"];
 /// Заливка фигуры: первый кружок — «без заливки» (только контур).
 const SHAPE_FILL_PRESETS: &[&str] =
     &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#2B2F36"];

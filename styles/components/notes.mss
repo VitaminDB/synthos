@@ -123,6 +123,8 @@ document-editor {
     --doc-checkbox-check-color: var(--primary);
     --doc-toggle-chevron-color: var(--text-muted);
     --doc-divider-color: var(--border);
+    /* Фон-сетка свободной раскладки: заметна, но не спорит с текстом. */
+    --doc-grid-color: var(--border-soft);
     --doc-media-bg: var(--surface-hover);
     --doc-embed-border-color: var(--border);
     --doc-embed-bg: var(--surface-hover);
@@ -134,6 +136,19 @@ document-editor {
     /* Слева нужно место под ручку ⋮⋮ (16px + зазор 6px), иначе её
      * прижимает к краю панели и она налезает на текст. */
     --doc-padding: 28px;
+}
+
+/* Настройки раскладки страницы в «Свойствах». */
+.notes-props-row {
+    min-height: 26px;
+}
+.notes-props-row-label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.notes-props-hint {
+    font-size: 11px;
+    color: var(--text-subtle);
 }
 
 /* ── Правая панель ────────────────────────────────────────────── */

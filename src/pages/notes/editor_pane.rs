@@ -5,6 +5,11 @@
 //! `doc_epoch` после операций контекстного меню), но по общей ручке
 //! продолжает ту же модель. Правый клик в документе открывает
 //! [`doc_menu`] — оно живёт в Stack рядом с редактором.
+//!
+//! Редактор держит высоту не меньше видимой области (`fill_height`), чтобы
+//! клик и правый клик ниже последнего блока попадали в документ, а
+//! раскладку страницы (поток/свободная, сетка, привязка) отдаёт
+//! `NotesCtx::active_doc_layout` из настроек страницы в дереве.
 
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditor;
@@ -32,6 +37,8 @@ pub fn body() -> impl Widget {
             .media(super::media::resolver(ctx))
             .embeds(super::embeds::factory(ctx))
             .model_epoch(ctx.doc_epoch.get())
+            .layout(ctx.active_doc_layout())
+            .fill_height(true)
             .slash_items(doc_menu::slash_items())
             .on_slash_custom(doc_menu::slash_custom(ctx))
             .on_context_menu(move |pos| {

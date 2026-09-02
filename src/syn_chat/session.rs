@@ -1866,7 +1866,7 @@ async fn run_agent_loop(
                         anyhow::bail!(tr!("chat.session.error.reload_failed", reason = reason));
                     }
                 }
-                let mut for_history = clip_for_history(&res.content);
+                let mut for_history = clip_for_history(&res.content, &tool_name(chat_call));
                 let turns_left = max_turns.saturating_sub(turn + 1);
                 if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
                     for_history.push_str(&system_prompt::budget_note(turns_left));
@@ -1903,8 +1903,9 @@ async fn run_agent_loop(
             push_tool_result(&ctx, chat_call, outcome.content.clone(), outcome.error);
             // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
             // с одного вызова (потолок executor'а) съедают контекст быстрее,
-            // чем агент успевает решить задачу.
-            let mut for_history = clip_for_history(&outcome.content);
+            // чем агент успевает решить задачу. Исключение — `autoskill`:
+            // инструкция нужна модели целиком (см. history_clip_limit).
+            let mut for_history = clip_for_history(&outcome.content, &tool_name(chat_call));
             if total >= REPEAT_HINT_AT {
                 // Не подряд — исполняем (после правки файла та же команда
                 // сборки законна), но если результат не меняется, модель
@@ -2214,15 +2215,27 @@ fn call_key(call: &ChatToolCall) -> String {
     format!("{}\u{1f}{}", tool_name(call), canonical)
 }
 
+/// Предел копии для промпта по инструменту. `None` — не обрезать.
+///
+/// `autoskill` отдаёт не выхлоп команды, а инструкцию, которую модель
+/// обязана выполнить целиком: вырезанная середина — ровно то знание, ради
+/// которого скил и подключали. Его размер ограничивает только потолок
+/// executor'а ([`tools::executor::MAX_SKILL_OUTPUT_BYTES`]); платой идёт
+/// контекст — большой скил занимает его надолго.
+fn history_clip_limit(tool: &str) -> Option<usize> {
+    (tool != crate::agent::tools::catalog::KEY_AUTOSKILL).then_some(HISTORY_TOOL_RESULT_CHARS)
+}
+
 /// Копия вывода инструмента для промпта: голова + хвост, середина заменяется
 /// пометкой. Хвост важен не меньше головы — у команд там exit-код и stderr.
-fn clip_for_history(s: &str) -> String {
+fn clip_for_history(s: &str, tool: &str) -> String {
+    let Some(limit) = history_clip_limit(tool) else { return s.to_string() };
     let total = s.chars().count();
-    if total <= HISTORY_TOOL_RESULT_CHARS {
+    if total <= limit {
         return s.to_string();
     }
-    let head_len = HISTORY_TOOL_RESULT_CHARS * 2 / 3;
-    let tail_len = HISTORY_TOOL_RESULT_CHARS - head_len;
+    let head_len = limit * 2 / 3;
+    let tail_len = limit - head_len;
     let head: String = s.chars().take(head_len).collect();
     let tail: String = s.chars().skip(total - tail_len).collect();
     format!(
@@ -2859,16 +2872,18 @@ mod tests {
         assert_eq!(st.consecutive, 1);
     }
 
+    use crate::agent::tools::catalog::KEY_BASH;
+
     #[test]
     fn clip_for_history_keeps_short_output_intact() {
         let s = "короткий вывод";
-        assert_eq!(clip_for_history(s), s);
+        assert_eq!(clip_for_history(s, KEY_BASH), s);
     }
 
     #[test]
     fn clip_for_history_keeps_head_and_tail() {
         let body = format!("НАЧАЛО{}КОНЕЦ", "x".repeat(HISTORY_TOOL_RESULT_CHARS * 2));
-        let out = clip_for_history(&body);
+        let out = clip_for_history(&body, KEY_BASH);
         assert!(out.starts_with("НАЧАЛО"));
         assert!(out.ends_with("КОНЕЦ"), "хвост с exit-кодом обязан остаться");
         assert!(out.contains("вывод обрезан"));
@@ -2879,7 +2894,17 @@ mod tests {
     fn clip_for_history_is_char_safe() {
         // Обрезка идёт по символам, а не байтам: кириллица не должна биться.
         let body = "я".repeat(HISTORY_TOOL_RESULT_CHARS + 100);
-        let out = clip_for_history(&body);
+        let out = clip_for_history(&body, KEY_BASH);
         assert!(out.contains('я'));
+    }
+
+    #[test]
+    fn skill_reaches_the_model_whole() {
+        // Скил — инструкция, а не выхлоп: вырезанная середина уносит ровно
+        // то знание, ради которого его подключали.
+        use crate::agent::tools::catalog::KEY_AUTOSKILL;
+        let body = "я".repeat(HISTORY_TOOL_RESULT_CHARS * 6);
+        assert_eq!(clip_for_history(&body, KEY_AUTOSKILL), body);
+        assert!(clip_for_history(&body, KEY_BASH).contains("вывод обрезан"));
     }
 }

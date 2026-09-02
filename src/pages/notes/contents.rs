@@ -87,7 +87,17 @@ pub fn body() -> impl Widget {
         );
         vec![Box::new(col)]
     });
-    ScrollView::new().vertical().class("notes-tree-scroll").child(list)
+    // Правый клик по пустому месту панели — новая страница в корне;
+    // на строке первым сработает её собственное меню (события идут
+    // от внутреннего элемента наружу).
+    ContextMenu::new()
+        .items(vec![MenuItem::new("root", tr!("notes.tree.new_root")).icon(MI_NOTE_ADD)])
+        .on_select(move |action| {
+            if action == "root" {
+                ctx.create_page(None, &tr!("notes.untitled"));
+            }
+        })
+        .child(ScrollView::new().vertical().class("notes-tree-scroll").child(list))
 }
 
 fn row(ctx: NotesCtx, r: TreeRow, is_active: bool, is_expanded: bool, is_renaming: bool) -> Box<dyn Widget> {

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use syngui::core::{Point, Rect};
 use syngui::prelude::*;
-use syngui::widgets::input::document_editor::{DocOp, DocumentEditorHandle};
+use syngui::widgets::input::document_editor::{DocGrid, DocLayout, DocOp, DocumentEditorHandle};
 
 use crate::config::{now_millis, AppConfig};
 
@@ -22,7 +22,7 @@ use super::base::BaseHandle;
 use super::canvas::model::CanvasDoc;
 use super::canvas::CanvasHandle;
 use super::index::VaultIndex;
-use super::project::{self, PageNode, ProjectTree};
+use super::project::{self, PageGrid, PageLayout, PageNode, ProjectTree};
 
 /// Загруженная страница: исходник для виджета (fingerprint стабилен между
 /// перестройками) + ручка редактора (модель, ревизия, очередь операций).
@@ -266,6 +266,43 @@ impl NotesCtx {
         });
     }
 
+    /// Раскладка страницы: режим, сетка, привязка (панель «Свойства»).
+    pub fn page_layout(&self, id: &str) -> PageLayout {
+        self.tree.get_untracked().layout_of(id)
+    }
+
+    /// Изменить раскладку страницы; редактор перестроится по `doc_epoch`.
+    pub fn set_page_layout(&self, id: &str, layout: PageLayout) {
+        if self.page_layout(id) == layout {
+            return;
+        }
+        self.edit_tree(|t| {
+            if let Some(n) = t.find_mut(id) {
+                n.layout = layout;
+            }
+        });
+        self.bump_doc_epoch();
+    }
+
+    /// Раскладка активной страницы в терминах редактора.
+    pub fn active_doc_layout(&self) -> DocLayout {
+        let Some(id) = self.active.get() else { return DocLayout::default() };
+        let l = self.tree.get().layout_of(&id);
+        DocLayout {
+            free: l.free,
+            grid: match l.grid {
+                PageGrid::None => DocGrid::None,
+                PageGrid::Dots => DocGrid::Dots,
+                PageGrid::Lines => DocGrid::Lines,
+                PageGrid::Cross => DocGrid::Cross,
+            },
+            grid_step: l.grid_step,
+            snap: l.snap,
+            snap_step: l.snap_step,
+            ..DocLayout::default()
+        }
+    }
+
     /// Удалить страницу с поддеревом: файлы страниц и их объектов уходят
     /// из бандла ближайшим коммитом.
     pub fn delete_page(&self, id: &str) {
@@ -413,34 +450,16 @@ impl NotesCtx {
             .unwrap_or_default()
     }
 
-    /// Сделать страницу активной (и загрузить). Исходник предыдущей
-    /// страницы синхронизируется с моделью — иначе возврат к ней перепарсил
-    /// бы устаревший текст.
+    /// Сделать страницу активной (и загрузить). Исходник страницы после
+    /// загрузки не трогаем: модель живёт в её [`DocumentEditorHandle`] и
+    /// переживает и смену страницы, и размонтирование вкладки.
     pub fn activate(&self, id: &str) {
-        if let Some(prev) = self.active.get_untracked() {
-            if prev != id {
-                self.sync_source(&prev);
-            }
-        }
         if self.page(id).is_none() {
             return;
         }
         self.show_graph.set(false);
         self.expand_ancestors(id);
         self.active.set(Some(id.to_string()));
-    }
-
-    fn sync_source(&self, id: &str) {
-        self.pages.update(|v| {
-            if let Some(p) = v.iter_mut().find(|p| p.id == id) {
-                if p.handle.revision().get_untracked() > 0 {
-                    let md = p.handle.serialize();
-                    if *p.source != md {
-                        p.source = Arc::new(md);
-                    }
-                }
-            }
-        });
     }
 
     pub fn active_page(&self) -> Option<LivePage> {

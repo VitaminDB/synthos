@@ -36,6 +36,68 @@ pub const TREE_VERSION: u32 = 1;
 
 // ─────────────────────────── Дерево ───────────────────────────
 
+/// Настройки раскладки страницы (панель «Свойства»). Сами координаты
+/// блоков живут в markdown страницы — здесь только режим, сетка и привязка.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PageLayout {
+    /// Свободная раскладка: блоки ставятся мышью, а не колонкой потока.
+    #[serde(default)]
+    pub free: bool,
+    /// Фон холста.
+    #[serde(default)]
+    pub grid: PageGrid,
+    #[serde(default = "default_grid_step")]
+    pub grid_step: f32,
+    /// Привязка к сетке при переносе — по умолчанию включена.
+    #[serde(default = "default_true")]
+    pub snap: bool,
+    #[serde(default = "default_snap_step")]
+    pub snap_step: f32,
+}
+
+/// Фон холста свободной раскладки.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PageGrid {
+    None,
+    #[default]
+    Dots,
+    Lines,
+    Cross,
+}
+
+impl PageGrid {
+    pub const ALL: [PageGrid; 4] = [PageGrid::None, PageGrid::Dots, PageGrid::Lines, PageGrid::Cross];
+}
+
+fn default_grid_step() -> f32 {
+    20.0
+}
+fn default_snap_step() -> f32 {
+    5.0
+}
+fn default_true() -> bool {
+    true
+}
+
+impl Default for PageLayout {
+    fn default() -> Self {
+        Self {
+            free: false,
+            grid: PageGrid::default(),
+            grid_step: default_grid_step(),
+            snap: true,
+            snap_step: default_snap_step(),
+        }
+    }
+}
+
+impl PageLayout {
+    pub fn is_default(&self) -> bool {
+        *self == PageLayout::default()
+    }
+}
+
 /// Узел дерева «Содержимое»: страница с детьми.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PageNode {
@@ -44,13 +106,22 @@ pub struct PageNode {
     /// Иконка страницы: эмодзи либо глиф Material-шрифта (PUA).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Раскладка страницы; дефолт в файл не пишется.
+    #[serde(default, skip_serializing_if = "PageLayout::is_default")]
+    pub layout: PageLayout,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<PageNode>,
 }
 
 impl PageNode {
     pub fn new(title: impl Into<String>) -> Self {
-        Self { id: new_id(), title: title.into(), icon: None, children: Vec::new() }
+        Self {
+            id: new_id(),
+            title: title.into(),
+            icon: None,
+            layout: PageLayout::default(),
+            children: Vec::new(),
+        }
     }
 }
 
@@ -121,6 +192,11 @@ impl ProjectTree {
 
     pub fn title_of(&self, id: &str) -> Option<String> {
         self.find(id).map(|n| n.title.clone())
+    }
+
+    /// Раскладка страницы (дефолт — если узла нет).
+    pub fn layout_of(&self, id: &str) -> PageLayout {
+        self.find(id).map(|n| n.layout).unwrap_or_default()
     }
 
     pub fn icon_of(&self, id: &str) -> Option<String> {
@@ -286,6 +362,7 @@ pub fn clone_subtree(node: &PageNode, map: &mut Vec<(String, String)>) -> PageNo
         id,
         title: node.title.clone(),
         icon: node.icon.clone(),
+        layout: node.layout,
         children: node.children.iter().map(|c| clone_subtree(c, map)).collect(),
     }
 }
@@ -594,6 +671,29 @@ fn strip_ci<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_layout_defaults_and_roundtrip() {
+        // Привязка включена по умолчанию с шагом 5 px (запрос UX).
+        let def = PageLayout::default();
+        assert!(def.snap);
+        assert_eq!(def.snap_step, 5.0);
+        assert!(!def.free);
+
+        // Дефолт не попадает в tree.json — старые проекты читаются как есть.
+        let tree = sample_tree();
+        let json = tree.serialize();
+        assert!(!json.contains("layout"), "дефолтная раскладка не должна писаться:\n{json}");
+        assert_eq!(ProjectTree::parse(&json).unwrap().layout_of("a"), def);
+
+        // Изменённая — сохраняется и читается обратно.
+        let mut tree = sample_tree();
+        tree.find_mut("b").unwrap().layout =
+            PageLayout { free: true, grid: PageGrid::Lines, grid_step: 25.0, snap: false, snap_step: 2.0 };
+        let back = ProjectTree::parse(&tree.serialize()).unwrap();
+        assert_eq!(back.layout_of("b"), tree.layout_of("b"));
+        assert_eq!(back.layout_of("c"), PageLayout::default());
+    }
 
     fn sample_tree() -> ProjectTree {
         let mut a = PageNode::new("A");

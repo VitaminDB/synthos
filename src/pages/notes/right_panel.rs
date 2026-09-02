@@ -2,16 +2,23 @@
 //!
 //! Вставка блоков ушла в контекстное меню документа и slash-меню.
 //! «Свойства» — выделенная карточка канваса (цвет/удаление) либо активная
-//! страница (название, иконка, путь в дереве); «Связи» — мини-граф,
-//! обратные и исходящие ссылки.
+//! страница (название, иконка, путь в дереве, раскладка); «Связи» —
+//! мини-граф, обратные и исходящие ссылки.
+//!
+//! Раскладка страницы: «Поток» (колонка Notion) или «Свободная» — блоки
+//! ставятся мышью в любое место, с привязкой к шагу (по умолчанию 5 px) и
+//! фон-сеткой (нет / точки / линии / крест). Настройки живут в дереве
+//! (`PageNode.layout`), координаты блоков — в markdown страницы.
 
 use syngui::prelude::*;
+use syngui::widgets::input::{SpinBox, Toggle};
 use syngui::widgets::navigation::{Tab, TabBar};
-use syngui::widgets::GestureDetector;
+use syngui::widgets::{Dropdown, DropdownItem, GestureDetector};
 
 use crate::icons::*;
 
 use super::icon_picker;
+use super::project::{PageGrid, PageLayout};
 use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
 pub fn header() -> impl Widget {
@@ -162,6 +169,127 @@ fn page_props(ctx: NotesCtx, id: String) -> impl Widget {
         )
         .child(Text::new(tr!("notes.props.path")).class("notes-links-section"))
         .child(Text::new(path).max_lines(3).class("notes-props-path"))
+        .child(layout_props(ctx, id))
+}
+
+/// Раскладка страницы: режим, фон-сетка и привязка.
+fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
+    let layout = ctx.page_layout(&id);
+
+    let free_id = id.clone();
+    let free_row = switch_row(tr!("notes.props.layout.free"), layout.free, move |on| {
+        ctx.set_page_layout(&free_id, PageLayout { free: on, ..ctx.page_layout(&free_id) });
+    });
+
+    let mut col = Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.layout")).class("notes-links-section"))
+        .child(free_row);
+
+    if !layout.free {
+        return col.child(Text::new(tr!("notes.props.layout.hint")).class("notes-props-hint"));
+    }
+
+    let grid_id = id.clone();
+    let grid = Dropdown::new()
+        .items(
+            PageGrid::ALL
+                .iter()
+                .map(|g| DropdownItem::new(grid_value(*g), grid_label(*g)))
+                .collect(),
+        )
+        .selected(grid_value(layout.grid))
+        .on_change(move |v| {
+            let grid = PageGrid::ALL
+                .iter()
+                .copied()
+                .find(|g| grid_value(*g) == v)
+                .unwrap_or_default();
+            ctx.set_page_layout(&grid_id, PageLayout { grid, ..ctx.page_layout(&grid_id) });
+        });
+
+    let step_id = id.clone();
+    let grid_step = SpinBox::new()
+        .range(2.0, 200.0)
+        .step(5.0)
+        .value(layout.grid_step as f64)
+        .on_change(move |v| {
+            ctx.set_page_layout(
+                &step_id,
+                PageLayout { grid_step: v as f32, ..ctx.page_layout(&step_id) },
+            );
+        });
+
+    let snap_id = id.clone();
+    let snap_row = switch_row(tr!("notes.props.layout.snap"), layout.snap, move |on| {
+        ctx.set_page_layout(&snap_id, PageLayout { snap: on, ..ctx.page_layout(&snap_id) });
+    });
+
+    let snap_step_id = id;
+    let snap_step = SpinBox::new()
+        .range(1.0, 100.0)
+        .step(1.0)
+        .value(layout.snap_step as f64)
+        .on_change(move |v| {
+            ctx.set_page_layout(
+                &snap_step_id,
+                PageLayout { snap_step: v as f32, ..ctx.page_layout(&snap_step_id) },
+            );
+        });
+
+    col = col
+        .child(field_row(tr!("notes.props.layout.grid"), grid))
+        .child(field_row(tr!("notes.props.layout.grid_step"), grid_step))
+        .child(snap_row)
+        .child(field_row(tr!("notes.props.layout.snap_step"), snap_step))
+        .child(Text::new(tr!("notes.props.layout.free_hint")).class("notes-props-hint"));
+    col
+}
+
+fn grid_value(grid: PageGrid) -> String {
+    match grid {
+        PageGrid::None => "none",
+        PageGrid::Dots => "dots",
+        PageGrid::Lines => "lines",
+        PageGrid::Cross => "cross",
+    }
+    .to_string()
+}
+
+fn grid_label(grid: PageGrid) -> String {
+    match grid {
+        PageGrid::None => tr!("notes.props.grid.none"),
+        PageGrid::Dots => tr!("notes.props.grid.dots"),
+        PageGrid::Lines => tr!("notes.props.grid.lines"),
+        PageGrid::Cross => tr!("notes.props.grid.cross"),
+    }
+}
+
+/// Строка «подпись — переключатель».
+fn switch_row(
+    label: String,
+    on: bool,
+    change: impl Fn(bool) + Send + Sync + 'static,
+) -> impl Widget {
+    Row::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+        .class("notes-props-row")
+        .child(Text::new(label).class("notes-props-row-label"))
+        .child(Toggle::with_state(on).on_change(move |v| change(v)))
+}
+
+/// Строка «подпись — поле».
+fn field_row(label: String, field: impl Widget + 'static) -> impl Widget {
+    Row::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+        .class("notes-props-row")
+        .child(Text::new(label).class("notes-props-row-label"))
+        .child(field)
 }
 
 /// Свойства выделенной карточки канваса: цвет и удаление.

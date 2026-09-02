@@ -28,6 +28,22 @@ use super::catalog::{
 /// и `kb_search` укладываются в эти границы с большим запасом.
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// Предел для `autoskill`: скил — это не выхлоп команды, а инструкция,
+/// которую модель обязана выполнить целиком. Обрезка на середине забирает
+/// ровно ту часть, ради которой скил и подключали (рукописный скил на
+/// 90 KB терял четверть текста). Вчетверо больше общего предела хватает
+/// на большой скил и всё ещё страхует от патологического файла.
+pub const MAX_SKILL_OUTPUT_BYTES: usize = MAX_OUTPUT_BYTES * 4;
+
+/// Предел вывода конкретного инструмента.
+fn output_limit(tool: &str) -> usize {
+    if tool == KEY_AUTOSKILL {
+        MAX_SKILL_OUTPUT_BYTES
+    } else {
+        MAX_OUTPUT_BYTES
+    }
+}
+
 /// Ошибки парсинга/исполнения инструмента. Не панические — маппятся в
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
@@ -134,8 +150,8 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     match result {
         Ok(content) => ToolOutcome {
             tool_call_id: call.id.clone(),
+            content: truncate_output(&content, output_limit(&name)),
             name,
-            content: truncate_output(&content),
             error: false,
         },
         Err(e) => ToolOutcome {
@@ -194,13 +210,13 @@ pub async fn run_bash(args_json: &str) -> Result<String, ToolError> {
     Ok(out)
 }
 
-/// Обрезает строку до `MAX_OUTPUT_BYTES` по char-boundary. Если укладывается —
+/// Обрезает строку до `limit` по char-boundary. Если укладывается —
 /// возвращает как есть. Если нет — усечение + `…(truncated N bytes)`.
-fn truncate_output(s: &str) -> String {
-    if s.len() <= MAX_OUTPUT_BYTES {
+fn truncate_output(s: &str, limit: usize) -> String {
+    if s.len() <= limit {
         return s.to_string();
     }
-    let mut end = MAX_OUTPUT_BYTES;
+    let mut end = limit;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
@@ -251,7 +267,7 @@ mod tests {
         // длины MAX_OUTPUT_BYTES + ровно один символ сверху, чтобы
         // активировать обрезку.
         let long = "я".repeat(MAX_OUTPUT_BYTES);
-        let t = truncate_output(&long);
+        let t = truncate_output(&long, MAX_OUTPUT_BYTES);
         assert!(t.ends_with(" bytes)"));
         // Убедимся, что не сломали UTF-8.
         let _ = t.chars().count();
@@ -259,6 +275,17 @@ mod tests {
 
     #[test]
     fn truncate_noop_when_short() {
-        assert_eq!(truncate_output("ok"), "ok");
+        assert_eq!(truncate_output("ok", MAX_OUTPUT_BYTES), "ok");
+    }
+
+    #[test]
+    fn skill_body_survives_common_limit() {
+        // Рукописный скил на ~90 KB не должен обрезаться: у `autoskill`
+        // свой предел, иначе модель получает инструкцию без хвоста.
+        let skill = "я".repeat(48 * 1024); // 96 KB в байтах
+        assert!(skill.len() > MAX_OUTPUT_BYTES);
+        assert_eq!(output_limit(KEY_AUTOSKILL), MAX_SKILL_OUTPUT_BYTES);
+        assert_eq!(truncate_output(&skill, output_limit(KEY_AUTOSKILL)), skill);
+        assert!(truncate_output(&skill, output_limit(KEY_BASH)).ends_with(" bytes)"));
     }
 }

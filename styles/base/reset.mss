@@ -112,6 +112,35 @@ Dropdown:hover {
     border-color: var(--primary);
 }
 
+/* DatePicker — поле и всплывающий календарь в теме приложения: без
+ * правила виджет берёт свои дефолты (белая заливка поля и панели, серая
+ * рамка), и в тёмной теме календарь выглядит чужим. `--cal-*` красят
+ * панель: фон/рамка, приглушённые и выходные дни, наведение. */
+DatePicker {
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 10px 14px;
+    font-size: 14px;
+    accent-color: var(--primary);
+    --cal-panel-bg: var(--bg-shell);
+    --cal-panel-border: var(--border);
+    --cal-muted-color: var(--text-subtle);
+    --cal-weekend-color: var(--text-muted);
+    --cal-outside-color: var(--text-subtle);
+    --cal-disabled-color: var(--border-strong);
+    --cal-hover-bg: var(--surface-hover);
+    --cal-today-color: var(--primary);
+    --cal-selected-color: var(--on-primary);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+DatePicker:hover {
+    border-color: var(--primary);
+}
+
 /* Slider — тоже без глобального правила жил на дефолтах syngui: трек
  * #D1D5DB и заливка #3B82F6, то есть светлая полоса и синий «не из темы»
  * (см. slider.rs::build_display_list). Раскладка свойств там такая:

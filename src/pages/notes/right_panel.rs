@@ -413,7 +413,7 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
                 ))
                 .child(field_row(tr!("notes.kanban.due"), kanban::view::due_control(&handle, &card, 140.0)))
                 .child(Text::new(tr!("notes.kanban.tags")).class("notes-props-row-label"))
-                .child(kanban::view::tags_control(&handle, &card))
+                .child(kanban::view::tags_control(&handle, &card, 200.0))
                 .child(
                     GestureDetector::new()
                         .cursor(syngui::input::CursorIcon::Pointer)

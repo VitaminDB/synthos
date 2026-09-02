@@ -479,6 +479,9 @@ document-editor {
 }
 .notes-kanban-field {
     font-size: 11px;
+    padding: 4px 8px;
+    height: 26px;
+    border-radius: 7px;
 }
 .notes-props-card-title {
     font-size: 13px;

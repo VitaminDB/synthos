@@ -379,10 +379,13 @@ fn card(
                     .markdown((*source).clone())
                     .handle(&editor)
                     .autofocus(true)
+                    .plain(true)
+                    .heading_placeholder(tr!("notes.kanban.title_hint"))
+                    .placeholder(tr!("notes.kanban.body_hint"))
                     .on_focus_lost(move || h_blur.finish_editing(&id_blur))
                     .class("notes-kanban-card-editor"),
             )
-            .child(card_fields(handle, c));
+            .child(card_fields(handle, c, lane_width));
         return Box::new(shell.child(
             Row::new()
                 .gap(8.0)
@@ -410,7 +413,7 @@ fn card(
         body = body.child(footer_row(c));
     }
     if selected {
-        body = body.child(card_fields(handle, c));
+        body = body.child(card_fields(handle, c, lane_width));
     }
     let content = shell.child(
         Row::new()
@@ -537,36 +540,40 @@ pub fn due_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl
 }
 
 /// Метки через запятую.
-pub fn tags_control(handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+pub fn tags_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
     let h = handle.clone();
     let id = card.id.clone();
     TextField::with_text(card.tags.join(", "))
         .placeholder(tr!("notes.kanban.tags.hint"))
+        .width(width)
         .submit_on_focus_lost(true)
         .on_submit(move |v: &str| h.set_tags(&id, parse_tags(v)))
         .class("notes-kanban-field")
 }
 
-/// Ряд полей под карточкой: приоритет и срок, метки и «удалить».
-fn card_fields(handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+/// Ширина полей внутри карточки: колонка минус отступы колонки и карточки,
+/// полоса цвета и зазор.
+fn field_width(lane_width: f32) -> f32 {
+    (lane_width - 56.0).max(120.0)
+}
+
+/// Поля под карточкой, столбиком (в колонку шириной 260 в ряд они не
+/// влезают): приоритет, срок, метки + «удалить».
+fn card_fields(handle: &KanbanHandle, card: &KanbanCard, lane_width: f32) -> impl Widget {
     let h_del = handle.clone();
     let id_del = card.id.clone();
+    let w = field_width(lane_width);
     Column::new()
         .gap(4.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
         .class("notes-kanban-card-fields")
+        .child(priority_control(handle, card, w))
+        .child(due_control(handle, card, w))
         .child(
             Row::new()
                 .gap(4.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
-                .child(DecoratedBox::new().class("grow").child(priority_control(handle, card, 104.0)))
-                .child(due_control(handle, card, 100.0)),
-        )
-        .child(
-            Row::new()
-                .gap(4.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .child(DecoratedBox::new().class("grow").child(tags_control(handle, card)))
+                .child(tags_control(handle, card, w - 30.0))
                 .child(
                     ToolButton::new(MI_DELETE)
                         .tooltip(tr!("notes.kanban.delete_card"))

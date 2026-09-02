@@ -409,6 +409,83 @@ document-editor {
 .notes-kanban-card.editing {
     border-color: var(--primary);
 }
+.notes-kanban-card.selected {
+    border-color: var(--primary);
+}
+/* Плейсхолдер места вставки при переносе: пустая карточка высотой с
+   переносимую; неактивный — нулевой высоты. */
+.notes-kanban-gap {
+    border-radius: 10px;
+}
+.notes-kanban-gap.active {
+    border-width: 1px;
+    border-color: var(--primary);
+    background-color: var(--surface-selected);
+}
+/* Чипы приоритета и меток; цвет — из данных, здесь только форма. */
+.notes-kanban-chip {
+    border-radius: 6px;
+    padding: 1px 6px;
+}
+.notes-kanban-chip-text {
+    font-size: 10px;
+    font-weight: 600;
+}
+.notes-kanban-chip-more {
+    font-size: 10px;
+    color: var(--text-subtle);
+}
+.notes-kanban-card-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.notes-kanban-due {
+    border-radius: 6px;
+    padding: 1px 6px 1px 4px;
+    background-color: var(--surface-hover);
+}
+.notes-kanban-due.overdue {
+    background-color: var(--primary-soft);
+}
+.notes-kanban-due-icon {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.notes-kanban-due.overdue .notes-kanban-due-icon {
+    color: var(--error);
+}
+.notes-kanban-due-text {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.notes-kanban-due.overdue .notes-kanban-due-text {
+    color: var(--error);
+    font-weight: 600;
+}
+.notes-kanban-progress-text {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.notes-kanban-progress {
+    width: 56px;
+}
+.notes-kanban-progress-bar {
+    height: 4px;
+    border-radius: 2px;
+}
+/* Поля выбранной карточки под текстом. */
+.notes-kanban-card-fields {
+    padding: 4px 0px 0px 0px;
+}
+.notes-kanban-field {
+    font-size: 11px;
+}
+.notes-props-card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    padding: 0px 4px;
+}
 .notes-kanban-card-accent {
     width: 3px;
     border-radius: 2px;
@@ -439,10 +516,18 @@ document-editor {
 }
 .notes-kanban-tail {
     border-radius: 6px;
-    padding: 6px 8px;
+    padding: 4px 8px;
+    margin-top: 6px;
 }
 .notes-kanban-tail:hover {
     background-color: var(--surface-selected);
+}
+.notes-kanban-tail-icon {
+    font-size: 18px;
+    color: var(--text-subtle);
+}
+.notes-kanban-tail:hover .notes-kanban-tail-icon {
+    color: var(--text);
 }
 
 /* ── Диаграмма Ганта ──────────────────────────────────────────── */

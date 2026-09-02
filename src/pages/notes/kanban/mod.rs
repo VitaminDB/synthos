@@ -8,10 +8,17 @@
 //! карточка, которую сейчас правят; её редактор живёт в `editors` вместе
 //! с исходником на момент начала правки (стабильный отпечаток для
 //! `DocumentEditor`, иначе каждая перестройка перепарсивала бы модель).
+//! `selected` — карточка, чьи поля (приоритет, срок, метки) показывают
+//! панель свойств и ряд контролов под карточкой: правка текста может
+//! закрыться по потере фокуса (клик по этим контролам), а выбор остаётся.
+//! `hover` — место вставки под курсором во время переноса (плейсхолдер),
+//! `drag_h` — высота переносимой карточки для него.
 //! Карточка правится одним редактором: первый блок-заголовок (`## …`) —
 //! её заголовок, остальное — содержимое ([`compose_card`] / [`split_card`]).
 
 pub mod drag_strip;
+#[cfg(all(test, feature = "testing"))]
+mod harness_tests;
 pub mod model;
 pub mod sinks;
 pub mod view;
@@ -22,7 +29,33 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
-use model::{item_id, next_color, KanbanCard, KanbanColumn, KanbanDoc, KanbanStyle};
+use model::{item_id, next_color, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, KanbanStyle, Priority};
+
+/// Поиск доски по id (перенос карточек между досками): в приложении — пул
+/// объектов `NotesCtx`, в тестах — карта.
+pub type Boards = Arc<dyn Fn(&str) -> Option<KanbanHandle> + Send + Sync>;
+
+/// Блок страницы по payload'у drag'а (id блока): его markdown; блок при
+/// этом уходит со страницы — он стал карточкой. `None` — блока нет.
+pub type TakeBlock = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Окружение доски: другие доски и страница, на которой она врезана.
+#[derive(Clone)]
+pub struct BoardEnv {
+    pub boards: Boards,
+    pub take_block: TakeBlock,
+}
+
+/// Окружение из контекста заметок.
+pub fn env(ctx: super::state::NotesCtx) -> BoardEnv {
+    BoardEnv {
+        boards: Arc::new(move |id| match ctx.object("kanban", id) {
+            Some(super::state::LiveObject::Kanban { handle, .. }) => Some(handle),
+            _ => None,
+        }),
+        take_block: Arc::new(move |payload| sinks::take_page_block(ctx, payload)),
+    }
+}
 
 #[derive(Clone)]
 pub struct KanbanHandle {
@@ -31,6 +64,12 @@ pub struct KanbanHandle {
     pub structure_rev: RwSignal<u64>,
     /// Карточка в режиме правки.
     pub editing: RwSignal<Option<String>>,
+    /// Выбранная карточка (поля в панели свойств и под карточкой).
+    pub selected: RwSignal<Option<String>>,
+    /// Место вставки под курсором во время переноса.
+    pub hover: RwSignal<Option<DropSpot>>,
+    /// Высота переносимой карточки (плейсхолдер); 0 — по умолчанию.
+    pub drag_h: RwSignal<f32>,
     /// Редакторы карточек: ручка + исходник на момент начала правки.
     editors: Arc<Mutex<HashMap<String, (DocumentEditorHandle, Arc<String>)>>>,
 }
@@ -42,6 +81,9 @@ impl KanbanHandle {
             revision: use_signal(0),
             structure_rev: use_signal(0),
             editing: use_signal(None),
+            selected: use_signal(None),
+            hover: use_signal(None),
+            drag_h: use_signal(0.0),
             editors: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -159,10 +201,14 @@ impl KanbanHandle {
 
     // ─── Карточки ─────────────────────────────────────────────────────────
 
+    pub fn card(&self, id: &str) -> Option<KanbanCard> {
+        self.lock().card(id).cloned()
+    }
+
     /// Новая пустая карточка в конце колонки; сразу в режиме правки.
     pub fn add_card(&self, column: &str) -> String {
         let id = item_id("k");
-        let card = KanbanCard { id: id.clone(), column: column.to_string(), title: String::new(), md: String::new() };
+        let card = KanbanCard::new(id.clone(), column.to_string());
         self.edit(|doc| doc.cards.push(card));
         self.start_editing(&id);
         id
@@ -180,62 +226,80 @@ impl KanbanHandle {
         }
     }
 
+    pub fn set_priority(&self, id: &str, priority: Option<Priority>) {
+        let changed = self.lock().cards.iter().any(|c| c.id == id && c.priority != priority);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.priority = priority;
+                }
+            });
+        }
+    }
+
+    /// Срок в ISO `yyyy-mm-dd`; `None` — снять.
+    pub fn set_due(&self, id: &str, due: Option<String>) {
+        let due = due.filter(|d| !d.trim().is_empty());
+        let changed = self.lock().cards.iter().any(|c| c.id == id && c.due != due);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.due = due;
+                }
+            });
+        }
+    }
+
+    pub fn set_tags(&self, id: &str, tags: Vec<String>) {
+        let changed = self.lock().cards.iter().any(|c| c.id == id && c.tags != tags);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.tags = tags;
+                }
+            });
+        }
+    }
+
     pub fn delete_card(&self, id: &str) {
         self.editors.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
         if self.editing.get_untracked().as_deref() == Some(id) {
             self.editing.set(None);
         }
+        if self.selected.get_untracked().as_deref() == Some(id) {
+            self.selected.set(None);
+        }
         self.edit(|doc| doc.cards.retain(|c| c.id != id));
     }
 
-    /// Перенос карточки (дроп): в колонку перед `before` либо в её конец.
-    pub fn move_card(&self, card: &str, column: &str, before: Option<&str>) {
-        let mut moved = false;
-        self.edit(|doc| moved = doc.move_card(card, column, before));
-        let _ = moved;
-    }
-
-    /// Дописать markdown в содержимое карточки (дроп блока страницы).
-    pub fn append_card_md(&self, id: &str, md: &str) -> bool {
-        let md = md.trim_end();
-        if md.is_empty() {
-            return false;
-        }
-        let exists = self.lock().cards.iter().any(|c| c.id == id);
-        if !exists {
-            return false;
-        }
-        // Правящаяся карточка держит свой редактор — его исходник устарел бы.
-        if self.editing.get_untracked().as_deref() == Some(id) {
-            self.finish_editing(id);
+    /// Перенос карточки (дроп) в место `spot`.
+    pub fn move_card(&self, card: &str, spot: &DropSpot) {
+        let own = self.lock().is_own_spot(card, spot);
+        if own {
+            return;
         }
         self.edit(|doc| {
-            if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
-                if c.md.trim().is_empty() {
-                    c.md = md.to_string();
-                } else {
-                    c.md = format!("{}\n\n{md}", c.md.trim_end());
-                }
-            }
+            doc.move_card(card, &spot.column, spot.before.as_deref());
         });
-        true
     }
 
-    /// Новая карточка из блока страницы: текстовый блок в одну строку
-    /// становится заголовком, остальное — содержимым.
-    pub fn add_card_from_md(&self, column: &str, md: &str) -> Option<String> {
+    /// Новая карточка из блока страницы в месте `spot`: строка-заголовок
+    /// (или единственная простая строка) становится заголовком, остальное —
+    /// содержимым.
+    pub fn add_card_from_md(&self, spot: &DropSpot, md: &str) -> Option<String> {
         let md = md.trim();
         if md.is_empty() {
             return None;
         }
-        let one_line = !md.contains('\n');
-        let plain = one_line
-            && !md.starts_with(['-', '*', '>', '#', '|', '!', '`'])
-            && !md.starts_with(|c: char| c.is_ascii_digit());
-        let (title, body) = if plain { (md.to_string(), String::new()) } else { (String::new(), md.to_string()) };
+        let (title, body) = split_block(md);
         let id = item_id("k");
-        let card = KanbanCard { id: id.clone(), column: column.to_string(), title, md: body };
-        self.edit(|doc| doc.cards.push(card));
+        let mut card = KanbanCard::new(id.clone(), spot.column.clone());
+        card.title = title;
+        card.md = body;
+        self.edit(|doc| {
+            doc.cards.push(card);
+            doc.move_card(&id, &spot.column, spot.before.as_deref());
+        });
         Some(id)
     }
 
@@ -243,6 +307,9 @@ impl KanbanHandle {
     pub fn take_card(&self, id: &str) -> Option<KanbanCard> {
         if self.editing.get_untracked().as_deref() == Some(id) {
             self.finish_editing(id);
+        }
+        if self.selected.get_untracked().as_deref() == Some(id) {
+            self.selected.set(None);
         }
         self.editors.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
         let mut taken = None;
@@ -254,13 +321,13 @@ impl KanbanHandle {
         taken
     }
 
-    /// Положить чужую карточку в колонку перед `before` (либо в конец).
-    pub fn insert_card(&self, mut card: KanbanCard, column: &str, before: Option<&str>) {
-        card.column = column.to_string();
+    /// Положить чужую карточку в место `spot`.
+    pub fn insert_card(&self, mut card: KanbanCard, spot: &DropSpot) {
+        card.column = spot.column.clone();
         let id = card.id.clone();
         self.edit(|doc| {
             doc.cards.push(card);
-            doc.move_card(&id, column, before);
+            doc.move_card(&id, &spot.column, spot.before.as_deref());
         });
     }
 
@@ -276,6 +343,39 @@ impl KanbanHandle {
         }
     }
 
+    // ─── Перенос: плейсхолдер ─────────────────────────────────────────────
+
+    /// Место вставки под курсором; своё место переносимой карточки
+    /// (`payload` — `<доска>|<карточка>`) не подсвечивается.
+    pub fn set_hover(&self, spot: Option<DropSpot>, board: &str, payload: &str) {
+        let spot = spot.filter(|s| {
+            let own = payload
+                .split_once('|')
+                .filter(|(b, _)| *b == board)
+                .map(|(_, card)| self.lock().is_own_spot(card, s))
+                .unwrap_or(false);
+            !own
+        });
+        if self.hover.get_untracked() != spot {
+            self.hover.set(spot);
+        }
+    }
+
+    pub fn clear_hover(&self) {
+        if self.hover.get_untracked().is_some() {
+            self.hover.set(None);
+        }
+    }
+
+    // ─── Выбор и правка ───────────────────────────────────────────────────
+
+    pub fn select(&self, id: Option<&str>) {
+        let id = id.map(str::to_string);
+        if self.selected.get_untracked() != id {
+            self.selected.set(id);
+        }
+    }
+
     /// Начать правку карточки; правившаяся до этого закрывается.
     pub fn start_editing(&self, id: &str) {
         if let Some(prev) = self.editing.get_untracked() {
@@ -283,6 +383,7 @@ impl KanbanHandle {
                 self.finish_editing(&prev);
             }
         }
+        self.select(Some(id));
         self.editing.set(Some(id.to_string()));
     }
 
@@ -322,7 +423,7 @@ impl KanbanHandle {
 
     /// Закончить правку: пустая карточка выбрасывается, чтобы на доске не
     /// копились безымянные; редактор забывается — следующая правка начнёт
-    /// с актуального текста.
+    /// с актуального текста. Выбор остаётся.
     pub fn finish_editing(&self, id: &str) {
         let empty = self.lock().cards.iter().any(|c| c.id == id && c.is_empty());
         self.editors.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
@@ -330,6 +431,9 @@ impl KanbanHandle {
             self.editing.set(None);
         }
         if empty {
+            if self.selected.get_untracked().as_deref() == Some(id) {
+                self.selected.set(None);
+            }
             self.edit(|doc| doc.cards.retain(|c| c.id != id));
         } else {
             // Вид карточки в просмотре — по свежему тексту.
@@ -368,27 +472,43 @@ pub fn split_card(source: &str) -> (String, String) {
     (title, body.trim().to_string())
 }
 
-/// Перенос карточки по дропу: в пределах доски — сдвиг, между досками —
+/// Блок страницы → (заголовок, содержимое): строка-заголовок — заголовок,
+/// единственная простая строка — тоже, иначе всё в содержимое.
+fn split_block(md: &str) -> (String, String) {
+    let (title, body) = split_card(md);
+    if !title.is_empty() {
+        return (title, body);
+    }
+    let one_line = !md.contains('\n');
+    let plain = one_line
+        && !md.starts_with(['-', '*', '>', '#', '|', '!', '`', '+'])
+        && !md.starts_with(|c: char| c.is_ascii_digit());
+    if plain {
+        (md.to_string(), String::new())
+    } else {
+        (String::new(), md.to_string())
+    }
+}
+
+/// Дроп карточки в место `spot`: в пределах доски — сдвиг, между досками —
 /// изъятие у источника и вставка сюда. Payload — `<доска>|<карточка>`.
-pub fn drop_card(
-    ctx: super::state::NotesCtx,
-    payload: &str,
-    to_board: &str,
-    to: &KanbanHandle,
-    column: &str,
-    before: Option<&str>,
-) {
+pub fn drop_card(boards: &Boards, payload: &str, to_board: &str, to: &KanbanHandle, spot: &DropSpot) {
     let Some((from_board, card)) = payload.split_once('|') else { return };
     if from_board == to_board {
-        to.move_card(card, column, before);
+        to.move_card(card, spot);
         return;
     }
-    let Some(super::state::LiveObject::Kanban { handle: from, .. }) = ctx.object("kanban", from_board) else {
-        return;
-    };
+    let Some(from) = boards(from_board) else { return };
     if let Some(card) = from.take_card(card) {
-        to.insert_card(card, column, before);
+        to.insert_card(card, spot);
     }
+}
+
+/// Дроп блока страницы в место `spot`: блок становится карточкой и уходит
+/// со страницы. `false` — блока нет или он пуст.
+pub fn drop_block(take_block: &TakeBlock, payload: &str, to: &KanbanHandle, spot: &DropSpot) -> bool {
+    let Some(md) = take_block(payload) else { return false };
+    to.add_card_from_md(spot, &md).is_some()
 }
 
 #[cfg(test)]
@@ -396,7 +516,10 @@ mod tests {
     use super::*;
 
     fn card(title: &str, md: &str) -> KanbanCard {
-        KanbanCard { id: "k".into(), column: "c".into(), title: title.into(), md: md.into() }
+        let mut c = KanbanCard::new("k".into(), "c".into());
+        c.title = title.into();
+        c.md = md.into();
+        c
     }
 
     #[test]
@@ -409,5 +532,43 @@ mod tests {
         // Пустой заголовок в редакторе, набранное содержимое — заголовка нет.
         assert_eq!(split_card("## \n\nтекст\n"), ("".into(), "текст".into()));
         assert_eq!(KanbanHandle::card_markdown(&card("З", "т")), "### З\n\nт\n");
+    }
+
+    #[test]
+    fn block_becomes_a_card_with_a_title() {
+        assert_eq!(split_block("# Импорт Excel"), ("Импорт Excel".into(), "".into()));
+        assert_eq!(split_block("Простая строка"), ("Простая строка".into(), "".into()));
+        assert_eq!(split_block("- [ ] пункт"), ("".into(), "- [ ] пункт".into()));
+        assert_eq!(split_block("## Заг\n\nтело"), ("Заг".into(), "тело".into()));
+    }
+
+    #[test]
+    fn drop_between_boards_and_blocks() {
+        let a = KanbanHandle::new(KanbanDoc::template(["A1", "A2", "A3"]));
+        let b = KanbanHandle::new(KanbanDoc::template(["B1", "B2", "B3"]));
+        let (a1, b2) = (a.lock().columns[0].id.clone(), b.lock().columns[1].id.clone());
+        let ka = a.add_card_from_md(&DropSpot::end(&a1), "# Задача").unwrap();
+        a.finish_editing(&ka);
+        let map: HashMap<String, KanbanHandle> = [("a".to_string(), a.clone()), ("b".to_string(), b.clone())].into();
+        let boards: Boards = Arc::new(move |id| map.get(id).cloned());
+        drop_card(&boards, &format!("a|{ka}"), "b", &b, &DropSpot::end(&b2));
+        assert!(a.lock().cards.is_empty());
+        assert_eq!(b.lock().cards_of(&b2).len(), 1);
+        assert_eq!(b.lock().cards[0].title, "Задача");
+        // Дроп своей карточки в своё же место — без изменений ревизии.
+        let rev = b.revision.get_untracked();
+        drop_card(&boards, &format!("b|{ka}"), "b", &b, &DropSpot::before(&b2, &ka));
+        assert_eq!(b.revision.get_untracked(), rev);
+        // Блок страницы.
+        let take: TakeBlock = Arc::new(|p| (p == "7").then(|| "Из страницы\n".to_string()));
+        assert!(drop_block(&take, "7", &b, &DropSpot::before(&b2, &ka)));
+        assert!(!drop_block(&take, "8", &b, &DropSpot::end(&b2)));
+        let titles: Vec<String> = b.lock().cards_of(&b2).iter().map(|c| c.title.clone()).collect();
+        assert_eq!(titles, ["Из страницы", "Задача"]);
+        // Плейсхолдер не встаёт на своё место карточки.
+        b.set_hover(Some(DropSpot::before(&b2, &ka)), "b", &format!("b|{}", b.lock().cards[0].id));
+        assert_eq!(b.hover.get_untracked(), None);
+        b.set_hover(Some(DropSpot::end(&b2)), "b", "a|чужая");
+        assert_eq!(b.hover.get_untracked(), Some(DropSpot::end(&b2)));
     }
 }

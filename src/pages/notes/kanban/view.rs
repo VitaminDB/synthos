@@ -1,70 +1,125 @@
 //! Виджет канбан-доски: колонки в горизонтальной прокрутке, карточки
-//! перетаскиваются между колонками, внутри них и **между досками**
-//! (payload — `<доска>|<карточка>`, см. [`super::drop_card`]).
+//! перетаскиваются внутри колонки, между колонками и **между досками**
+//! (payload — `<доска>|<карточка>`, см. [`super::drop_card`]); блоки
+//! страницы, взятые за ⋮⋮, приходят тем же drag'ом дерева
+//! ([`DRAG_TYPE_BLOCK`]) и становятся карточками.
 //!
-//! Карточка — заголовок + markdown-содержимое с цветной полосой колонки.
-//! В просмотре: `Text` заголовка, разделитель, `MarkdownView` (событий не
-//! перехватывает — карточка остаётся `Draggable`). В правке — один
-//! `DocumentEditor` с ручкой из [`KanbanHandle::card_editor`]: первый блок
-//! `## …` — заголовок, ниже — содержимое; автофокус, а потеря фокуса
-//! (клик куда угодно ещё) закрывает правку. Карточки и хвосты колонок
-//! обёрнуты в [`super::sinks::RectProbe`] — по этим прямоугольникам
-//! редактор страницы отдаёт сюда блоки, отпущенные после переноса за ⋮⋮.
-//! Цель дропа карточек — сама карточка («перед ней») либо хвост колонки
-//! («в конец»): вложенных DropArea нет, иначе дроп получали бы обе.
+//! Цели дропа — вся колонка: `DropArea` каждой карточки (верхняя половина
+//! — «перед ней», нижняя — «после») и `DropArea` тела колонки (пустое
+//! место, хвост — «в конец»); дерево отдаёт событие самой глубокой цели.
+//! Место вставки показывает **плейсхолдер** — пунктирная пустая карточка
+//! высотой с переносимую ([`gap`], сигнал `hover` ручки). Доска целиком
+//! тоже `DropArea`: дроп мимо колонок (шапка, зазор) поглощается, а не
+//! уходит на страницу.
+//!
+//! Карточка: бейдж приоритета и метки, заголовок, первые строки
+//! содержимого без разметки, срок и прогресс чек-листа. Клик — правка
+//! одним `DocumentEditor` (`## …` — заголовок); у выбранной карточки под
+//! текстом ряд полей (приоритет, срок, метки, удалить) — он остаётся и
+//! после закрытия правки, чтобы клик по полю не терял их.
+
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use syngui::core::Color;
-use syngui::input::CursorIcon;
+use syngui::input::{CursorIcon, DragData};
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditor;
-use syngui::widgets::overlay::{Draggable, DropArea};
-use syngui::widgets::{GestureDetector, MarkdownView};
+use syngui::widgets::overlay::{Draggable, DropArea, DropInfo};
+use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, ProgressBar};
 
 use crate::icons::*;
 
-use super::super::state::NotesCtx;
+use super::super::gantt::calendar::{civil_from_days, days_from_civil, parse_days, short_date, today_days};
 use super::drag_strip::DragStrip;
-use super::model::{KanbanCard, KanbanColumn, KanbanDoc};
-use super::sinks::{RectProbe, Sink};
-use super::{drop_card, KanbanHandle};
+use super::model::{parse_tags, preview_text, tag_color, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Priority};
+pub use super::sinks::DRAG_TYPE_BLOCK;
+use super::{drop_block, drop_card, BoardEnv, KanbanHandle};
 
 pub const DRAG_TYPE_CARD: &str = "notes-kanban-card";
 
-pub fn view(ctx: NotesCtx, board: String, handle: KanbanHandle) -> impl Widget {
+/// Высота плейсхолдера, когда переносят не карточку (блок страницы).
+const DEFAULT_GAP_H: f32 = 44.0;
+/// Высота переносимой карточки (общая: карточка может ехать на другую
+/// доску, у которой своей ручки источника нет).
+static CARD_DRAG_H: AtomicU32 = AtomicU32::new(0);
+
+fn accept_types() -> Vec<String> {
+    vec![DRAG_TYPE_CARD.to_string(), DRAG_TYPE_BLOCK.to_string()]
+}
+
+pub fn view(env: BoardEnv, board: String, handle: KanbanHandle) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.structure_rev.get();
         let editing = handle.editing.get();
-        vec![build(ctx, &board, handle.clone(), editing)]
+        let selected = handle.selected.get();
+        vec![build(&env, &board, handle.clone(), editing.as_deref(), selected.as_deref())]
     })
 }
 
-fn build(ctx: NotesCtx, board: &str, handle: KanbanHandle, editing: Option<String>) -> Box<dyn Widget> {
+fn build(
+    env: &BoardEnv,
+    board: &str,
+    handle: KanbanHandle,
+    editing: Option<&str>,
+    selected: Option<&str>,
+) -> Box<dyn Widget> {
     let doc = handle.lock().clone();
     let mut lanes = Row::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("notes-kanban");
     for column in &doc.columns {
-        lanes = lanes.child(lane(ctx, board, &handle, &doc, column, editing.as_deref()));
+        lanes = lanes.child(lane(env, board, &handle, &doc, column, editing, selected));
     }
-    Box::new(ScrollView::new().horizontal().class("notes-kanban-scroll").child(lanes))
+    // Доска целиком: дроп мимо колонок поглощается, плейсхолдер снимается.
+    let h_over = handle.clone();
+    let h_leave = handle.clone();
+    let h_drop = handle.clone();
+    Box::new(
+        DropArea::new()
+            .accept_types(accept_types())
+            .on_drag_over(move |_| h_over.clear_hover())
+            .on_drag_leave(move || h_leave.clear_hover())
+            .on_drop(move |_| h_drop.clear_hover())
+            .child(ScrollView::new().horizontal().class("notes-kanban-scroll").child(lanes)),
+    )
 }
 
+/// Дроп в место `spot`: карточка (своя или с другой доски) либо блок страницы.
+fn drop_into(env: &BoardEnv, data: &DragData, board: &str, handle: &KanbanHandle, spot: &DropSpot) {
+    handle.clear_hover();
+    if data.drag_type == DRAG_TYPE_CARD {
+        drop_card(&env.boards, &data.payload, board, handle, spot);
+    } else if data.drag_type == DRAG_TYPE_BLOCK {
+        drop_block(&env.take_block, &data.payload, handle, spot);
+    }
+}
+
+/// Показать плейсхолдер в месте `spot` для переносимых данных.
+fn hover_at(handle: &KanbanHandle, board: &str, data: &DragData, spot: Option<DropSpot>) {
+    let h = if data.drag_type == DRAG_TYPE_CARD { f32::from_bits(CARD_DRAG_H.load(Ordering::Relaxed)) } else { 0.0 };
+    if handle.drag_h.get_untracked() != h {
+        handle.drag_h.set(h);
+    }
+    handle.set_hover(spot, board, &data.payload);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn lane(
-    ctx: NotesCtx,
+    env: &BoardEnv,
     board: &str,
     handle: &KanbanHandle,
     doc: &KanbanDoc,
     column: &KanbanColumn,
     editing: Option<&str>,
+    selected: Option<&str>,
 ) -> impl Widget {
     let cards_in = doc.cards_of(&column.id);
     let col_id = column.id.clone();
     let width = doc.column_width(column);
 
-    // Шапка: метка цвета (клик — следующий цвет), название, счётчик,
-    // «+ карточка».
+    // Шапка: метка цвета (клик — следующий цвет), название, счётчик, «+».
     let h_color = handle.clone();
     let id_color = col_id.clone();
     let h_name = handle.clone();
@@ -107,58 +162,65 @@ fn lane(
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("notes-kanban-cards");
     for c in cards_in {
-        cards = cards.child(Stack::new().children(vec![card(
-            ctx,
+        cards = cards.child(card_slot(
+            env,
             board,
             handle,
             doc,
             &column.color,
             c,
             editing == Some(c.id.as_str()),
+            selected == Some(c.id.as_str()),
             width,
-        )]));
+        ));
     }
-    // Клик по пустому месту колонки закрывает правку карточки.
+    // Клик по пустому месту колонки закрывает правку и снимает выбор.
     let h_blur = handle.clone();
     let cards_area = GestureDetector::new()
         .on_click(move || {
             if let Some(id) = h_blur.editing.get_untracked() {
                 h_blur.finish_editing(&id);
             }
+            h_blur.select(None);
         })
         .child(ScrollView::new().vertical().child(cards));
 
-    // Хвост колонки — цель дропа «в конец» (карточек и блоков страницы) и
-    // кнопка новой карточки.
-    let h_tail = handle.clone();
-    let id_tail = col_id.clone();
-    let board_tail = board.to_string();
+    // Хвост: полоса «+» — новая карточка.
     let h_tail_add = handle.clone();
     let id_tail_add = col_id.clone();
-    let tail = RectProbe::new(
-        Sink::Tail { board: board.to_string(), column: col_id.clone() },
-        Box::new(
-            DropArea::new()
-                .accept_types(vec![DRAG_TYPE_CARD.to_string()])
-                .on_drop(move |data| drop_card(ctx, &data.payload, &board_tail, &h_tail, &id_tail, None))
-                .child(
-                    GestureDetector::new()
-                        .cursor(CursorIcon::Pointer)
-                        .on_click(move || {
-                            h_tail_add.add_card(&id_tail_add);
-                        })
-                        .child(
-                            DecoratedBox::new().class("notes-kanban-tail").child(
-                                Row::new()
-                                    .gap(6.0)
-                                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                                    .child(Icon::new(MI_ADD).class("notes-insert-icon"))
-                                    .child(Text::new(tr!("notes.kanban.add_card")).class("notes-insert-label")),
-                            ),
-                        ),
-                ),
-        ),
-    );
+    let tail = GestureDetector::new()
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || {
+            h_tail_add.add_card(&id_tail_add);
+        })
+        .child(
+            DecoratedBox::new()
+                .class("notes-kanban-tail")
+                .child(Center::new().child(Icon::new(MI_ADD).class("notes-kanban-tail-icon"))),
+        );
+
+    // Тело колонки — цель дропа «в конец»: пустое место и хвост.
+    let end = DropSpot::end(&col_id);
+    let h_over = handle.clone();
+    let board_over = board.to_string();
+    let end_over = end.clone();
+    let h_drop = handle.clone();
+    let board_drop = board.to_string();
+    let env_drop = env.clone();
+    let end_drop = end.clone();
+    let body = DropArea::new()
+        .accept_types(accept_types())
+        .on_drag_over(move |info: DropInfo| hover_at(&h_over, &board_over, &info.data, Some(end_over.clone())))
+        .on_drop(move |data| drop_into(&env_drop, &data, &board_drop, &h_drop, &end_drop))
+        .child(
+            Column::new()
+                .gap(0.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .child(DecoratedBox::new().class("grow").child(cards_area))
+                .child(gap(handle, end))
+                .child(tail),
+        )
+        .class("grow");
 
     let mut lane_box = DecoratedBox::new()
         .class("notes-kanban-lane")
@@ -171,8 +233,7 @@ fn lane(
             .gap(6.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .child(header)
-            .child(DecoratedBox::new().class("grow").child(cards_area))
-            .child(tail),
+            .child(body),
     );
 
     // Правая кромка — ширина колонки (приращения, текущее — из документа).
@@ -200,23 +261,105 @@ fn color_dot(color: &str) -> impl Widget {
     dot
 }
 
-/// Карточка: заголовок и markdown-содержимое с цветной полосой колонки;
-/// перетаскивается, по клику — правка на месте; сама — цель дропа «перед
-/// ней» и приёмник блоков страницы.
+/// Плейсхолдер места вставки: пустая пунктирная карточка высотой с
+/// переносимую, пока `hover` ручки указывает на `spot`; иначе — ничего.
+/// Своя реактивная обёртка на каждый зазор — доска не перестраивается
+/// на каждое движение курсора, а карточка-источник живёт (призрак
+/// переноса — её живой снимок).
+fn gap(handle: &KanbanHandle, spot: DropSpot) -> impl Widget {
+    let h = handle.clone();
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let active = h.hover.get().as_ref() == Some(&spot);
+        let height = if active {
+            let v = h.drag_h.get_untracked();
+            if v > 0.0 { v } else { DEFAULT_GAP_H }
+        } else {
+            0.0
+        };
+        let (class, spacer) = if active { ("notes-kanban-gap active", 8.0) } else { ("notes-kanban-gap", 0.0) };
+        vec![Box::new(
+            Column::new()
+                .gap(0.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .child(DecoratedBox::new().class(class).style("height", StyleValue::px(height)))
+                .child(DecoratedBox::new().style("height", StyleValue::px(spacer))),
+        )]
+    })
+}
+
+/// Слот карточки: цель дропа (верхняя половина — перед ней, нижняя —
+/// после), плейсхолдер «перед ней» и сама карточка.
 #[allow(clippy::too_many_arguments)]
-fn card(
-    ctx: NotesCtx,
+fn card_slot(
+    env: &BoardEnv,
     board: &str,
     handle: &KanbanHandle,
     doc: &KanbanDoc,
     lane_color: &str,
     c: &KanbanCard,
     editing: bool,
+    selected: bool,
+    lane_width: f32,
+) -> impl Widget {
+    let id = c.id.clone();
+    let spot_of = {
+        let h = handle.clone();
+        let id = id.clone();
+        move |info: &DropInfo| -> Option<DropSpot> {
+            let upper = info.local_position.y < info.size.height / 2.0;
+            let doc = h.lock();
+            if upper { doc.spot_before(&id) } else { doc.spot_after(&id) }
+        }
+    };
+    let h_over = handle.clone();
+    let board_over = board.to_string();
+    let spot_over = spot_of.clone();
+    let h_drop = handle.clone();
+    let board_drop = board.to_string();
+    let env_drop = env.clone();
+    DropArea::new()
+        .accept_types(accept_types())
+        .on_drag_over(move |info: DropInfo| {
+            let spot = spot_over(&info);
+            hover_at(&h_over, &board_over, &info.data, spot);
+        })
+        .on_drop_positioned(move |info: DropInfo| {
+            if let Some(spot) = spot_of(&info) {
+                drop_into(&env_drop, &info.data, &board_drop, &h_drop, &spot);
+            } else {
+                h_drop.clear_hover();
+            }
+        })
+        .child(
+            Column::new()
+                .gap(0.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .child(gap(handle, DropSpot::before(&c.column, &id)))
+                .child(Stack::new().children(vec![card(board, handle, doc, lane_color, c, editing, selected, lane_width)])),
+        )
+}
+
+/// Карточка: заголовок, поля и содержимое с цветной полосой колонки;
+/// перетаскивается, по клику — правка на месте.
+#[allow(clippy::too_many_arguments)]
+fn card(
+    board: &str,
+    handle: &KanbanHandle,
+    doc: &KanbanDoc,
+    lane_color: &str,
+    c: &KanbanCard,
+    editing: bool,
+    selected: bool,
     lane_width: f32,
 ) -> Box<dyn Widget> {
     let id = c.id.clone();
     let accent = if lane_color.is_empty() { "#8B95A6" } else { lane_color };
-    let mut shell = DecoratedBox::new().class(if editing { "notes-kanban-card editing" } else { "notes-kanban-card" });
+    let class = match (editing, selected) {
+        (true, _) => "notes-kanban-card editing",
+        (false, true) => "notes-kanban-card selected",
+        (false, false) => "notes-kanban-card",
+    };
+    let mut shell = DecoratedBox::new().class(class);
     if !doc.style.card_bg.is_empty() {
         shell = shell.style("background-color", Color::from_hex(&doc.style.card_bg));
     }
@@ -228,10 +371,8 @@ fn card(
         let (editor, source) = handle.card_editor(&id);
         let h_blur = handle.clone();
         let id_blur = id.clone();
-        let h_del = handle.clone();
-        let id_del = id.clone();
         let body = Column::new()
-            .gap(4.0)
+            .gap(6.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .child(
                 DocumentEditor::new()
@@ -241,19 +382,7 @@ fn card(
                     .on_focus_lost(move || h_blur.finish_editing(&id_blur))
                     .class("notes-kanban-card-editor"),
             )
-            .child(
-                Row::new()
-                    .gap(2.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .class("notes-kanban-card-toolbar")
-                    .child(DecoratedBox::new().class("grow"))
-                    .child(
-                        ToolButton::new(MI_DELETE)
-                            .tooltip(tr!("notes.kanban.delete_card"))
-                            .on_click(move || h_del.delete_card(&id_del))
-                            .class("notes-kanban-lane-btn"),
-                    ),
-            );
+            .child(card_fields(handle, c));
         return Box::new(shell.child(
             Row::new()
                 .gap(8.0)
@@ -264,22 +393,24 @@ fn card(
     }
 
     let has_title = !c.title.trim().is_empty();
-    let has_body = !c.md.trim().is_empty();
+    let preview = preview_text(&c.md);
+    let has_body = !preview.is_empty();
     let title = if has_title { c.title.clone() } else { tr!("notes.kanban.untitled") };
     let mut body = Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if c.priority.is_some() || !c.tags.is_empty() {
+        body = body.child(chips_row(c, lane_width));
+    }
     if has_title || !has_body {
         body = body.child(Text::new(title.clone()).max_lines(3).class("notes-kanban-card-title"));
     }
-    if has_title && has_body {
-        body = body.child(DecoratedBox::new().class("notes-kanban-card-divider"));
-    }
     if has_body {
-        body = body.child(
-            MarkdownView::new(c.md.clone())
-                .selectable(false)
-                .max_width((lane_width - 52.0).max(80.0))
-                .class("notes-kanban-card-body"),
-        );
+        body = body.child(Text::new(preview).max_lines(3).class("notes-kanban-card-preview"));
+    }
+    if c.due.is_some() || c.checklist().is_some() {
+        body = body.child(footer_row(c));
+    }
+    if selected {
+        body = body.child(card_fields(handle, c));
     }
     let content = shell.child(
         Row::new()
@@ -290,25 +421,163 @@ fn card(
     );
     let h_click = handle.clone();
     let id_click = id.clone();
-    let h_drop = handle.clone();
-    let board_drop = board.to_string();
-    let column = c.column.clone();
-    let id_drop = id.clone();
     let label = if has_title { title } else { c.md.lines().next().unwrap_or_default().to_string() };
-    Box::new(RectProbe::new(
-        Sink::Card { board: board.to_string(), card: id.clone() },
-        Box::new(
-            DropArea::new()
-                .accept_types(vec![DRAG_TYPE_CARD.to_string()])
-                .on_drop(move |data| {
-                    drop_card(ctx, &data.payload, &board_drop, &h_drop, &column, Some(&id_drop))
-                })
+    Box::new(
+        Draggable::new(DRAG_TYPE_CARD, format!("{board}|{id}"))
+            .label(label)
+            .on_click(move || h_click.start_editing(&id_click))
+            .on_drag_start(|bounds| CARD_DRAG_H.store(bounds.size.height.to_bits(), Ordering::Relaxed))
+            .child(content),
+    )
+}
+
+/// Бейдж приоритета и метки (сколько влезает по ширине, остальное — «+n»).
+fn chips_row(c: &KanbanCard, lane_width: f32) -> impl Widget {
+    let mut row = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    let mut used = 0.0;
+    let avail = (lane_width - 60.0).max(80.0);
+    if let Some(p) = c.priority {
+        let label = tr!(&p.i18n_key());
+        used += chip_width(&label);
+        row = row.child(chip(&label, p.color(), "notes-kanban-chip priority"));
+    }
+    let mut hidden = 0;
+    for tag in &c.tags {
+        let w = chip_width(tag);
+        if used + w > avail && used > 0.0 {
+            hidden += 1;
+            continue;
+        }
+        used += w;
+        row = row.child(chip(tag, tag_color(tag), "notes-kanban-chip"));
+    }
+    if hidden > 0 {
+        row = row.child(Text::new(format!("+{hidden}")).class("notes-kanban-chip-more"));
+    }
+    row
+}
+
+/// Прикидка ширины чипа: 6.5px на символ + отступы.
+fn chip_width(text: &str) -> f32 {
+    text.chars().count() as f32 * 6.5 + 16.0
+}
+
+fn chip(text: &str, color: &str, class: &str) -> impl Widget {
+    let c = Color::from_hex(color);
+    DecoratedBox::new()
+        .class(class)
+        .style("background-color", c.with_alpha(0.18))
+        .child(Text::new(text.to_string()).max_lines(1).style("color", c).class("notes-kanban-chip-text"))
+}
+
+/// Подвал: срок (просроченный — красным) и прогресс чек-листа.
+fn footer_row(c: &KanbanCard) -> impl Widget {
+    let mut row = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    if let Some(days) = c.due.as_deref().and_then(parse_days) {
+        let overdue = days < today_days();
+        let class = if overdue { "notes-kanban-due overdue" } else { "notes-kanban-due" };
+        row = row.child(
+            Row::new()
+                .gap(3.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .class(class)
+                .child(Icon::new(MI_TODAY).class("notes-kanban-due-icon"))
+                .child(Text::new(short_date(days)).class("notes-kanban-due-text")),
+        );
+    }
+    row = row.child(DecoratedBox::new().class("grow"));
+    if let Some((done, total)) = c.checklist() {
+        row = row.child(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(Text::new(format!("{done}/{total}")).class("notes-kanban-progress-text"))
                 .child(
-                    Draggable::new(DRAG_TYPE_CARD, format!("{board}|{id}"))
-                        .label(label)
-                        .on_click(move || h_click.start_editing(&id_click))
-                        .child(content),
+                    DecoratedBox::new()
+                        .class("notes-kanban-progress")
+                        .child(ProgressBar::new().value(done as f32 / total as f32).class("notes-kanban-progress-bar")),
                 ),
-        ),
-    ))
+        );
+    }
+    row
+}
+
+// ─── Поля карточки (в карточке и в панели свойств) ────────────────────────
+
+/// Выпадающий список приоритета.
+pub fn priority_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    let mut items = vec![DropdownItem::new("", tr!("notes.kanban.priority.none"))];
+    for p in Priority::ALL {
+        items.push(DropdownItem::new(p.key(), tr!(&p.i18n_key())));
+    }
+    let h = handle.clone();
+    let id = card.id.clone();
+    Dropdown::with_items(items)
+        .selected(card.priority.map(|p| p.key()).unwrap_or(""))
+        .width(width)
+        .on_change(move |v| h.set_priority(&id, Priority::parse(v)))
+        .class("notes-kanban-field")
+}
+
+/// Поле срока с календарём.
+pub fn due_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    let h = handle.clone();
+    let id = card.id.clone();
+    let mut picker = DatePicker::new()
+        .placeholder(tr!("notes.kanban.due"))
+        .width(width)
+        .on_change(move |d: Option<Date>| {
+            h.set_due(&id, d.map(|d| format!("{:04}-{:02}-{:02}", d.year, d.month, d.day)));
+        });
+    if let Some(days) = card.due.as_deref().and_then(parse_days) {
+        let (y, m, d) = civil_from_days(days);
+        picker = picker.selected(Date::new(y as i32, m, d));
+    }
+    picker.class("notes-kanban-field")
+}
+
+/// Метки через запятую.
+pub fn tags_control(handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+    let h = handle.clone();
+    let id = card.id.clone();
+    TextField::with_text(card.tags.join(", "))
+        .placeholder(tr!("notes.kanban.tags.hint"))
+        .submit_on_focus_lost(true)
+        .on_submit(move |v: &str| h.set_tags(&id, parse_tags(v)))
+        .class("notes-kanban-field")
+}
+
+/// Ряд полей под карточкой: приоритет и срок, метки и «удалить».
+fn card_fields(handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+    let h_del = handle.clone();
+    let id_del = card.id.clone();
+    Column::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .class("notes-kanban-card-fields")
+        .child(
+            Row::new()
+                .gap(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(DecoratedBox::new().class("grow").child(priority_control(handle, card, 104.0)))
+                .child(due_control(handle, card, 100.0)),
+        )
+        .child(
+            Row::new()
+                .gap(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(DecoratedBox::new().class("grow").child(tags_control(handle, card)))
+                .child(
+                    ToolButton::new(MI_DELETE)
+                        .tooltip(tr!("notes.kanban.delete_card"))
+                        .on_click(move || h_del.delete_card(&id_del))
+                        .class("notes-kanban-lane-btn"),
+                ),
+        )
+}
+
+/// ISO-дата по дням от эпохи (для тестов панели).
+#[allow(dead_code)]
+pub fn iso_from_ymd(y: i64, m: u32, d: u32) -> String {
+    super::super::gantt::calendar::days_to_iso(days_from_civil(y, m, d))
 }

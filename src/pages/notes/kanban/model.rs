@@ -1,9 +1,11 @@
 //! Формат канбан-доски: `notes/objects/<id>.kanban.json`.
 //!
 //! Доска самодостаточна: колонки (название, цвет, своя ширина), карточки
-//! (заголовок + markdown-содержимое) и настройки внешнего вида. Порядок карточек в
-//! колонке — порядок в `cards`; никакой «базы» под доской нет, всё
-//! правится прямо на ней и в панели свойств.
+//! (заголовок + markdown-содержимое + приоритет, метки, срок) и настройки
+//! внешнего вида. Порядок карточек в колонке — порядок в `cards`; никакой
+//! «базы» под доской нет, всё правится прямо на ней и в панели свойств.
+//! Прогресс чек-листа не хранится — считается по `- [ ]`/`- [x]` в
+//! содержимом ([`checklist_progress`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -45,11 +47,209 @@ pub struct KanbanCard {
     /// Markdown-содержимое (многострочное).
     #[serde(default)]
     pub md: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Срок, ISO `yyyy-mm-dd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
 }
 
 impl KanbanCard {
+    /// Пустая карточка без полей — в колонке и в бандле не нужна.
     pub fn is_empty(&self) -> bool {
-        self.title.trim().is_empty() && self.md.trim().is_empty()
+        self.title.trim().is_empty()
+            && self.md.trim().is_empty()
+            && self.priority.is_none()
+            && self.tags.is_empty()
+            && self.due.is_none()
+    }
+
+    /// Новая карточка колонки без содержимого.
+    pub fn new(id: String, column: String) -> Self {
+        Self { id, column, title: String::new(), md: String::new(), priority: None, tags: Vec::new(), due: None }
+    }
+
+    /// `(сделано, всего)` по пунктам чек-листа содержимого; `None` — их нет.
+    pub fn checklist(&self) -> Option<(usize, usize)> {
+        let (done, total) = checklist_progress(&self.md);
+        (total > 0).then_some((done, total))
+    }
+}
+
+/// Приоритет карточки: цветной бейдж в шапке.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    Low,
+    Medium,
+    High,
+    Urgent,
+}
+
+impl Priority {
+    pub const ALL: [Priority; 4] = [Priority::Low, Priority::Medium, Priority::High, Priority::Urgent];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Priority::Low => "low",
+            Priority::Medium => "medium",
+            Priority::High => "high",
+            Priority::Urgent => "urgent",
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.key() == key)
+    }
+
+    /// Ключ подписи в каталоге i18n.
+    pub fn i18n_key(self) -> String {
+        format!("notes.kanban.priority.{}", self.key())
+    }
+
+    pub fn color(self) -> &'static str {
+        match self {
+            Priority::Low => "#4F8CFF",
+            Priority::Medium => "#E8A33D",
+            Priority::High => "#EE5E48",
+            Priority::Urgent => "#C03E3E",
+        }
+    }
+}
+
+/// `(сделано, всего)` по строкам `- [ ]` / `- [x]` (и `*`, и нумерованным).
+pub fn checklist_progress(md: &str) -> (usize, usize) {
+    let mut done = 0;
+    let mut total = 0;
+    for line in md.lines() {
+        let t = line.trim_start();
+        let rest = t
+            .strip_prefix("- ")
+            .or_else(|| t.strip_prefix("* "))
+            .or_else(|| t.strip_prefix("+ "))
+            .or_else(|| {
+                let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+                (digits > 0).then(|| t[digits..].strip_prefix(". ")).flatten()
+            });
+        let Some(rest) = rest else { continue };
+        if rest.starts_with("[ ] ") || rest == "[ ]" {
+            total += 1;
+        } else if rest.starts_with("[x] ") || rest.starts_with("[X] ") || rest == "[x]" || rest == "[X]" {
+            total += 1;
+            done += 1;
+        }
+    }
+    (done, total)
+}
+
+/// Метки из строки ввода: через запятую/точку с запятой, без пустых и
+/// повторов, в порядке ввода.
+pub fn parse_tags(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in input.split([',', ';', '\n']) {
+        let t = raw.trim().trim_start_matches('#').trim();
+        if t.is_empty() || out.iter().any(|o| o.eq_ignore_ascii_case(t)) {
+            continue;
+        }
+        out.push(t.to_string());
+    }
+    out
+}
+
+/// Цвет метки — стабильно по её тексту (без отдельной настройки).
+pub fn tag_color(tag: &str) -> &'static str {
+    let mut h: u32 = 2166136261;
+    for b in tag.to_lowercase().bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    // Первый цвет палитры — серый «без цвета», метки берут остальные.
+    PALETTE[1 + (h as usize % (PALETTE.len() - 1))]
+}
+
+/// Текст карточки для просмотра: markdown без разметки, по строке на
+/// абзац/пункт (`Text` покажет первые несколько строк).
+pub fn preview_text(md: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for raw in md.lines() {
+        let mut t = raw.trim();
+        if t.is_empty() || t.starts_with("```") || t.starts_with("![[") || t.starts_with("![") {
+            continue;
+        }
+        // Заголовки, цитаты, списки, чекбоксы.
+        t = t.trim_start_matches('#').trim_start();
+        t = t.trim_start_matches('>').trim_start();
+        let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 {
+            if let Some(rest) = t[digits..].strip_prefix(". ") {
+                t = rest;
+            }
+        }
+        for m in ["- ", "* ", "+ "] {
+            if let Some(rest) = t.strip_prefix(m) {
+                t = rest;
+                break;
+            }
+        }
+        let t = t
+            .replace("[ ] ", "☐ ")
+            .replace("[x] ", "☑ ")
+            .replace("[X] ", "☑ ");
+        // Инлайн-разметка: ссылки, жирный/курсив/код.
+        let mut plain = String::with_capacity(t.len());
+        let mut chars = t.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '*' | '_' | '`' | '~' => {}
+                '[' => {
+                    if chars.peek() == Some(&'[') {
+                        chars.next();
+                        let inner: String = chars.by_ref().take_while(|c| *c != ']').collect();
+                        if chars.peek() == Some(&']') {
+                            chars.next();
+                        }
+                        plain.push_str(inner.split('|').next_back().unwrap_or(""));
+                    } else {
+                        let inner: String = chars.by_ref().take_while(|c| *c != ']').collect();
+                        if chars.peek() == Some(&'(') {
+                            chars.next();
+                            for c in chars.by_ref() {
+                                if c == ')' {
+                                    break;
+                                }
+                            }
+                        }
+                        plain.push_str(&inner);
+                    }
+                }
+                _ => plain.push(c),
+            }
+        }
+        let plain = plain.trim().to_string();
+        if !plain.is_empty() {
+            lines.push(plain);
+        }
+    }
+    lines.join("\n")
+}
+
+/// Место вставки на доске: колонка и карточка, перед которой встать
+/// (`None` — в конец колонки).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DropSpot {
+    pub column: String,
+    pub before: Option<String>,
+}
+
+impl DropSpot {
+    pub fn end(column: &str) -> Self {
+        Self { column: column.to_string(), before: None }
+    }
+
+    pub fn before(column: &str, card: &str) -> Self {
+        Self { column: column.to_string(), before: Some(card.to_string()) }
     }
 }
 
@@ -145,6 +345,35 @@ impl KanbanDoc {
         self.cards.iter().filter(|c| c.column == column).collect()
     }
 
+    pub fn card(&self, id: &str) -> Option<&KanbanCard> {
+        self.cards.iter().find(|c| c.id == id)
+    }
+
+    /// Место сразу после карточки: перед следующей в её колонке либо конец.
+    pub fn spot_after(&self, card: &str) -> Option<DropSpot> {
+        let c = self.card(card)?;
+        let next = self
+            .cards
+            .iter()
+            .skip_while(|x| x.id != card)
+            .skip(1)
+            .find(|x| x.column == c.column)
+            .map(|x| x.id.clone());
+        Some(DropSpot { column: c.column.clone(), before: next })
+    }
+
+    /// Место перед карточкой.
+    pub fn spot_before(&self, card: &str) -> Option<DropSpot> {
+        let c = self.card(card)?;
+        Some(DropSpot::before(&c.column, card))
+    }
+
+    /// Место совпадает с текущим положением карточки (перенос ничего не
+    /// изменит) — плейсхолдер там не показываем.
+    pub fn is_own_spot(&self, card: &str, spot: &DropSpot) -> bool {
+        self.spot_before(card).as_ref() == Some(spot) || self.spot_after(card).as_ref() == Some(spot)
+    }
+
     /// Ширина колонки: своя либо общая.
     pub fn column_width(&self, column: &KanbanColumn) -> f32 {
         column
@@ -185,12 +414,9 @@ mod tests {
     fn doc() -> KanbanDoc {
         let mut d = KanbanDoc::template(["Todo", "Doing", "Done"]);
         for (i, col) in [0usize, 0, 1].into_iter().enumerate() {
-            d.cards.push(KanbanCard {
-                id: format!("k{i}"),
-                column: d.columns[col].id.clone(),
-                title: format!("Задача {i}"),
-                md: String::new(),
-            });
+            let mut c = KanbanCard::new(format!("k{i}"), d.columns[col].id.clone());
+            c.title = format!("Задача {i}");
+            d.cards.push(c);
         }
         d
     }
@@ -233,6 +459,38 @@ mod tests {
         assert_eq!(ids, ["k0", "k2"]);
         assert_eq!(d.cards_of(&todo).len(), 1);
         assert!(!d.move_card("нет", &todo, None));
+    }
+
+    #[test]
+    fn spots_around_cards() {
+        let d = doc();
+        let todo = d.columns[0].id.clone();
+        assert_eq!(d.spot_before("k0"), Some(DropSpot::before(&todo, "k0")));
+        assert_eq!(d.spot_after("k0"), Some(DropSpot::before(&todo, "k1")));
+        assert_eq!(d.spot_after("k1"), Some(DropSpot::end(&todo)));
+        assert!(d.is_own_spot("k0", &DropSpot::before(&todo, "k1")));
+        assert!(!d.is_own_spot("k1", &DropSpot::before(&todo, "k0")));
+        assert_eq!(d.spot_after("нет"), None);
+    }
+
+    #[test]
+    fn checklist_tags_and_preview() {
+        assert_eq!(checklist_progress("- [x] a\n- [ ] b\n* [X] c\n1. [ ] d\n- обычный"), (2, 4));
+        assert_eq!(checklist_progress("текст"), (0, 0));
+        assert_eq!(parse_tags(" UI, #дизайн ;ui,, "), vec!["UI", "дизайн"]);
+        assert_eq!(tag_color("ui"), tag_color("UI"));
+        assert_ne!(tag_color("ui"), PALETTE[0]);
+        let p = preview_text("## Заголовок\n\n- [ ] пункт **жирный**\n> цитата [[Стр|Ссылка]] и [текст](http://x)\n```\nкод\n```\n![[img.png]]");
+        assert_eq!(p, "Заголовок\n☐ пункт жирный\nцитата Ссылка и текст\nкод");
+        let mut c = KanbanCard::new("k".into(), "c".into());
+        assert!(c.is_empty());
+        c.priority = Some(Priority::High);
+        assert!(!c.is_empty());
+        assert_eq!(Priority::parse("urgent"), Some(Priority::Urgent));
+        assert_eq!(Priority::parse("x"), None);
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"priority\":\"high\""), "{json}");
+        assert!(!json.contains("tags"), "пустые поля не пишутся: {json}");
     }
 
     #[test]

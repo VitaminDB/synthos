@@ -21,6 +21,7 @@ use crate::icons::*;
 use super::icon_picker;
 use super::blocks;
 use super::doc_menu;
+use super::kanban;
 use super::kanban::model::{MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use super::kanban::KanbanHandle;
 use super::project::{PageGrid, PageLayout};
@@ -391,12 +392,44 @@ fn size_props(
 fn kanban_props(handle: KanbanHandle) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.structure_rev.get();
+        let selected = handle.selected.get();
         let doc = handle.lock().clone();
         let mut col = Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .class("notes-props")
-            .child(Text::new(tr!("notes.props.kanban.columns")).class("notes-links-section"));
+            .class("notes-props");
+        // Выбранная карточка: приоритет, срок, метки — дубль полей под
+        // самой карточкой.
+        if let Some(card) = selected.as_deref().and_then(|id| doc.card(id)).cloned() {
+            let title = if card.title.trim().is_empty() { tr!("notes.kanban.untitled") } else { card.title.clone() };
+            let h_del = handle.clone();
+            let id_del = card.id.clone();
+            col = col
+                .child(Text::new(tr!("notes.kanban.card")).class("notes-links-section"))
+                .child(Text::new(title).max_lines(2).class("notes-props-card-title"))
+                .child(field_row(
+                    tr!("notes.kanban.priority"),
+                    kanban::view::priority_control(&handle, &card, 140.0),
+                ))
+                .child(field_row(tr!("notes.kanban.due"), kanban::view::due_control(&handle, &card, 140.0)))
+                .child(Text::new(tr!("notes.kanban.tags")).class("notes-props-row-label"))
+                .child(kanban::view::tags_control(&handle, &card))
+                .child(
+                    GestureDetector::new()
+                        .cursor(syngui::input::CursorIcon::Pointer)
+                        .on_click(move || h_del.delete_card(&id_del))
+                        .child(
+                            DecoratedBox::new().class("notes-kanban-tail").child(
+                                Row::new()
+                                    .gap(6.0)
+                                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                                    .child(Icon::new(MI_DELETE).class("notes-insert-icon"))
+                                    .child(Text::new(tr!("notes.kanban.delete_card")).class("notes-insert-label")),
+                            ),
+                        ),
+                );
+        }
+        col = col.child(Text::new(tr!("notes.props.kanban.columns")).class("notes-links-section"));
         for column in &doc.columns {
             let h_color = handle.clone();
             let id_color = column.id.clone();

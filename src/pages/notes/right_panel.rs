@@ -13,11 +13,13 @@
 use syngui::prelude::*;
 use syngui::widgets::input::{SpinBox, Toggle};
 use syngui::widgets::navigation::{Tab, TabBar};
-use syngui::widgets::{Dropdown, DropdownItem, GestureDetector};
+use syngui::widgets::input::document_editor::{BlockProps, DocOp, TableOp};
+use syngui::widgets::{Dropdown, DropdownItem, GestureDetector, ToolButton};
 
 use crate::icons::*;
 
 use super::icon_picker;
+use super::blocks;
 use super::project::{PageGrid, PageLayout};
 use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
@@ -121,9 +123,169 @@ fn props_tab(ctx: NotesCtx) -> impl Widget {
             return vec![Box::new(placeholder(MI_TUNE, tr!("notes.right.props.empty")))];
         };
         let _ = ctx.tree.get();
-        vec![Box::new(page_props(ctx, id))]
+        let _ = ctx.doc_epoch.get();
+        // Сначала блок под кареткой: правишь текст — панель про него.
+        let block: Option<Box<dyn Widget>> = ctx.active_page().and_then(|page| {
+            let _ = page.handle.revision().get();
+            let selected = page.handle.selected().get()?;
+            let props = page.handle.block_props(selected)?;
+            Some(Box::new(block_props(ctx, props)) as Box<dyn Widget>)
+        });
+        let mut col = Column::new()
+            .gap(10.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .child(page_props(ctx, id));
+        if let Some(block) = block {
+            col = col.child(Stack::new().children(vec![block]));
+        }
+        vec![Box::new(ScrollView::new().vertical().child(col))]
     })
 }
+
+/// Свойства текущего блока: тип, стиль и операции над ним.
+fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
+    let id = props.id;
+    let attrs = props.attrs.clone();
+    let set = move |key: &'static str, value: Option<String>| {
+        ctx.doc_op(DocOp::SetAttr { block: id, key: key.to_string(), value });
+    };
+
+    let mut col = Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .class("notes-props")
+        .child(
+            Text::new(tr!("notes.props.block", kind = blocks::kind_label(props.kind, props.level)))
+                .class("notes-links-section"),
+        );
+
+    // Тип блока задаёт умолчания; всё ниже — переопределения поверх темы.
+    col = col
+        .child(field_row(tr!("notes.props.color"), swatches(COLOR_PRESETS, attrs.get("color"), move |v| set("color", v))))
+        .child(field_row(tr!("notes.props.bg"), swatches(BG_PRESETS, attrs.get("bg"), move |v| set("bg", v))))
+        .child(field_row(
+            tr!("notes.props.size"),
+            SpinBox::new()
+                .range(0.0, 160.0)
+                .step(1.0)
+                .width(96.0)
+                .value(attrs.get("size").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0))
+                .on_change(move |v| set("size", (v >= 6.0).then(|| format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ))
+        .child(field_row(
+            tr!("notes.props.align"),
+            segmented(
+                &[
+                    (MI_FORMAT_ALIGN_LEFT, "left"),
+                    (MI_FORMAT_ALIGN_CENTER, "center"),
+                    (MI_FORMAT_ALIGN_RIGHT, "right"),
+                ],
+                attrs.get("align").unwrap_or("left"),
+                move |v| set("align", (v != "left").then(|| v.to_string())),
+            ),
+        ))
+        .child(field_row(
+            tr!("notes.props.weight"),
+            segmented(
+                &[(MI_ARTICLE, "normal"), (MI_FORMAT_BOLD, "bold")],
+                attrs.get("weight").unwrap_or("normal"),
+                move |v| set("weight", (v != "normal").then(|| v.to_string())),
+            ),
+        ));
+
+    // Таблица: строки и колонки — иначе её вообще нельзя дорастить.
+    if let Some((rows, cols)) = props.table {
+        col = col
+            .child(
+                Text::new(tr!("notes.props.table", rows = rows, cols = cols))
+                    .class("notes-links-section"),
+            )
+            .child(
+                Row::new()
+                    .gap(4.0)
+                    .child(table_button(ctx, id, MI_TABLE_ROWS, tr!("notes.props.table.add_row"), TableOp::AddRow))
+                    .child(table_button(ctx, id, MI_VIEW_COLUMN, tr!("notes.props.table.add_col"), TableOp::AddColumn))
+                    .child(table_button(ctx, id, MI_DELETE, tr!("notes.props.table.del_row"), TableOp::DeleteRow))
+                    .child(table_button(ctx, id, MI_DELETE, tr!("notes.props.table.del_col"), TableOp::DeleteColumn)),
+            );
+    }
+    col
+}
+
+/// Ряд цветовых кружков; первый — «как в теме» (свойство снимается).
+fn swatches(
+    presets: &'static [&'static str],
+    current: Option<&str>,
+    on_pick: impl Fn(Option<String>) + Send + Sync + Copy + 'static,
+) -> impl Widget {
+    let current = current.unwrap_or("").to_string();
+    let mut row = Row::new().gap(5.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for preset in presets {
+        let value = preset.to_string();
+        let selected = current == value;
+        let mut dot = DecoratedBox::new().class(if selected {
+            "notes-props-swatch selected"
+        } else {
+            "notes-props-swatch"
+        });
+        if value.is_empty() {
+            dot = dot.class(if selected { "notes-props-swatch empty selected" } else { "notes-props-swatch empty" });
+        } else {
+            dot = dot.style("background-color", syngui::core::Color::from_hex(&value));
+        }
+        row = row.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || on_pick((!value.is_empty()).then(|| value.clone())))
+                .child(dot),
+        );
+    }
+    row
+}
+
+/// Переключатель из иконок (выравнивание, начертание).
+fn segmented(
+    items: &'static [(&'static str, &'static str)],
+    current: &str,
+    on_pick: impl Fn(&str) + Send + Sync + Copy + 'static,
+) -> impl Widget {
+    let current = current.to_string();
+    let mut row = Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for (icon, value) in items {
+        let selected = current == *value;
+        let v = *value;
+        row = row.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || on_pick(v))
+                .child(
+                    DecoratedBox::new()
+                        .class(if selected { "notes-props-seg selected" } else { "notes-props-seg" })
+                        .child(Center::new().child(Icon::new(*icon).class("notes-props-seg-icon"))),
+                ),
+        );
+    }
+    row
+}
+
+fn table_button(
+    ctx: NotesCtx,
+    block: syngui::widgets::input::document_editor::BlockId,
+    icon: &'static str,
+    tooltip: String,
+    op: TableOp,
+) -> impl Widget {
+    ToolButton::new(icon)
+        .tooltip(tooltip)
+        .on_click(move || ctx.doc_op(DocOp::Table { block, op }))
+}
+
+/// Цвета текста и подложки: пусто — «как в теме».
+const COLOR_PRESETS: &[&str] =
+    &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6"];
+const BG_PRESETS: &[&str] =
+    &["", "#3A2A28", "#3A3324", "#243A2E", "#243149", "#332944", "#2B2F36"];
 
 /// Свойства страницы: название, иконка и путь в дереве.
 fn page_props(ctx: NotesCtx, id: String) -> impl Widget {

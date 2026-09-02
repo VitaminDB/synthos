@@ -125,6 +125,9 @@ document-editor {
     --doc-divider-color: var(--border);
     /* Фон-сетка свободной раскладки: заметна, но не спорит с текстом. */
     --doc-grid-color: var(--border-soft);
+    /* Габариты блока: заливка под курсором и рамка текущего. */
+    --doc-block-hover-color: var(--surface-hover);
+    --doc-block-selected-color: var(--primary);
     --doc-media-bg: var(--surface-hover);
     --doc-embed-border-color: var(--border);
     --doc-embed-bg: var(--surface-hover);
@@ -142,6 +145,46 @@ document-editor {
 .notes-props-row {
     min-height: 26px;
 }
+/* Дерево блоков: те же строки, что у дерева страниц, плюс тип и метка
+ * закрепления на холсте. */
+.notes-block-row {
+    padding: 0px 6px;
+}
+.notes-block-icon {
+    icon-size: 14px;
+    color: var(--text-subtle);
+}
+.notes-block-pin {
+    icon-size: 12px;
+    color: var(--primary);
+}
+
+/* Переключатель из иконок в свойствах блока (выравнивание, начертание). */
+.notes-props-seg {
+    width: 26px;
+    height: 24px;
+    border-radius: 6px;
+    background-color: var(--bg-search);
+    transition: background-color 120ms ease-out;
+}
+.notes-props-seg:hover {
+    background-color: var(--surface-hover);
+}
+.notes-props-seg.selected {
+    background-color: var(--primary);
+}
+.notes-props-seg-icon {
+    icon-size: 15px;
+    color: var(--text-muted);
+}
+.notes-props-seg.selected .notes-props-seg-icon {
+    color: var(--on-primary);
+}
+.notes-props-swatch.selected {
+    border-width: 2px;
+    border-color: var(--primary);
+}
+
 /* Поля раскладки: компактнее дефолтных 40px, иначе панель распухает. */
 .notes-props-field {
     height: 28px;

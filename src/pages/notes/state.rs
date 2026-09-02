@@ -73,6 +73,9 @@ impl LiveObject {
 /// Вкладки правой панели.
 pub const TAB_PROPS: usize = 0;
 pub const TAB_LINKS: usize = 1;
+/// Вкладки левой панели.
+pub const TAB_PAGES: usize = 0;
+pub const TAB_BLOCKS: usize = 1;
 
 #[derive(Clone, Copy)]
 pub struct NotesCtx {
@@ -91,6 +94,8 @@ pub struct NotesCtx {
     pub pages: RwSignal<Vec<LivePage>>,
     pub objects: RwSignal<Vec<LiveObject>>,
     pub right_tab: RwSignal<usize>,
+    /// Вкладка левой панели: 0 — «Содержимое», 1 — «Блоки».
+    pub left_tab: RwSignal<usize>,
     pub index: RwSignal<Arc<VaultIndex>>,
     /// Тик перестройки блоков редактора после внешних правок модели
     /// (очередь DocOp, patch_media).
@@ -162,6 +167,7 @@ impl NotesCtx {
             pages: use_signal(Vec::new()),
             objects: use_signal(Vec::new()),
             right_tab: use_signal(TAB_PROPS),
+            left_tab: use_signal(TAB_PAGES),
             index: use_signal(Arc::new(index)),
             doc_epoch: use_signal(0),
             tile_opened_at: use_signal(cfg.notes_tile_opened_at),

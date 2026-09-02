@@ -23,6 +23,7 @@ use crate::icons::*;
 
 pub mod autosave;
 pub mod base;
+pub mod blocks;
 pub mod canvas;
 pub mod contents;
 pub mod doc_menu;

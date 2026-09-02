@@ -11,6 +11,7 @@ use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::overlay::context_menu::ContextMenu;
 use syngui::widgets::overlay::menu::MenuItem;
+use syngui::widgets::navigation::{Tab, TabBar};
 use syngui::widgets::{Draggable, DropArea, GestureDetector};
 
 use crate::components::panel_header;
@@ -19,7 +20,7 @@ use crate::rail;
 
 use super::icon_picker;
 use super::project::TreeRow;
-use super::state::NotesCtx;
+use super::state::{NotesCtx, TAB_BLOCKS, TAB_PAGES};
 
 pub const DRAG_TYPE_PAGE: &str = "notes-page";
 /// Высота строки — фиксирована в MSS (`.notes-tree-row`), от неё считаются
@@ -29,12 +30,18 @@ const EDGE: f32 = 7.0;
 
 pub fn header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
+    let tab = ctx.left_tab;
+    // Две вкладки: страницы проекта и блоки активной страницы. Дерево
+    // блоков нужно там же, где дерево страниц, — это навигация, а не
+    // свойства.
+    let tabbar = TabBar::new()
+        .tab(Tab::new(tr!("notes.tree.title"), TAB_PAGES, &tab).icon(MI_LIST_ALT))
+        .tab(Tab::new(tr!("notes.blocks.title"), TAB_BLOCKS, &tab).icon(MI_LAYERS))
+        .class("right-panel-tabbar-inner");
     Row::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
-        .child(DecoratedBox::new().class("grow").child(
-            panel_header::side_title(MI_LIST_ALT, tr!("notes.tree.title")),
-        ))
+        .child(DecoratedBox::new().class("grow").child(tabbar))
         .child(
             panel_header::action_button(MI_NOTE_ADD, tr!("notes.tree.new_page"), move || {
                 ctx.create_page(None, &tr!("notes.untitled"));
@@ -51,6 +58,17 @@ pub fn header() -> impl Widget {
 }
 
 pub fn body() -> impl Widget {
+    let ctx = use_context::<NotesCtx>();
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        match ctx.left_tab.get() {
+            TAB_BLOCKS => vec![Box::new(super::blocks::body())],
+            _ => vec![Box::new(pages())],
+        }
+    })
+}
+
+/// Дерево страниц проекта.
+fn pages() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     let list = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let tree = ctx.tree.get();

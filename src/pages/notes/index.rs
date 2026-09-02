@@ -139,7 +139,7 @@ impl VaultIndex {
 }
 
 /// Сырые цели `[[...]]` в md-тексте; fenced-код и объекты
-/// (`base:`/`canvas:`) пропускаются.
+/// (`base:`/`canvas:`/`shape:`) пропускаются.
 pub fn lex_links(content: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_fence = false;
@@ -169,9 +169,11 @@ pub fn lex_links(content: &str) -> Vec<String> {
     out
 }
 
-/// `base:<id>` / `canvas:<id>` — врезка объекта, не страница.
+/// `base:<id>` / `canvas:<id>` — врезка объекта, `shape:<вид>` — векторный
+/// примитив. Ни то, ни другое не ссылка на страницу: без этой проверки
+/// каждая фигура висела бы в графе битой ссылкой.
 pub fn is_object_target(target: &str) -> bool {
-    target.starts_with("base:") || target.starts_with("canvas:")
+    target.starts_with("base:") || target.starts_with("canvas:") || target.starts_with("shape:")
 }
 
 #[cfg(test)]
@@ -181,7 +183,7 @@ mod tests {
 
     #[test]
     fn lexer_finds_links_and_skips_code_and_objects() {
-        let md = "текст [[Раз]] и ![[Два|врезка]] ![[base:abc]]\n```\n[[не ссылка]]\n```\n[[Три]]";
+        let md = "текст [[Раз]] и ![[Два|врезка]] ![[base:abc]] ![[shape:rect]]\n```\n[[не ссылка]]\n```\n[[Три]]";
         assert_eq!(lex_links(md), vec!["Раз", "Два", "Три"]);
     }
 

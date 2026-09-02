@@ -240,3 +240,17 @@ pub const MI_INBOX: &str               = "\u{E156}";
 pub const MI_UNARCHIVE: &str           = "\u{E169}";
 pub const MI_DELETE_FOREVER: &str      = "\u{E92B}";
 pub const MI_DELETE_SWEEP: &str        = "\u{E16C}";
+
+// Векторные примитивы режима «Заметки» (контекстное меню и панель свойств).
+pub const MI_CATEGORY: &str            = "\u{E574}"; // раздел «Примитивы»
+pub const MI_CHANGE_HISTORY: &str      = "\u{E86B}"; // треугольник
+pub const MI_DIAMOND: &str             = "\u{EAD5}"; // ромб
+pub const MI_ARROW_RIGHT_ALT: &str     = "\u{E941}"; // стрелка
+pub const MI_COMPARE_ARROWS: &str      = "\u{E0C3}"; // двойная стрелка
+pub const MI_LINE_WEIGHT: &str         = "\u{E91A}"; // толщина обводки
+pub const MI_LINE_STYLE: &str          = "\u{E919}"; // пунктир
+pub const MI_ROUNDED_CORNER: &str      = "\u{E920}"; // скругление
+pub const MI_OPACITY: &str             = "\u{E91C}"; // прозрачность
+pub const MI_BRUSH: &str               = "\u{E3AE}"; // SVG-файл
+pub const MI_FORMAT_COLOR_FILL: &str   = "\u{E23A}"; // заливка
+pub const MI_HEIGHT: &str              = "\u{EA16}"; // высота блока

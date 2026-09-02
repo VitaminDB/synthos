@@ -13,13 +13,14 @@
 use syngui::prelude::*;
 use syngui::widgets::input::{SpinBox, Toggle};
 use syngui::widgets::navigation::{Tab, TabBar};
-use syngui::widgets::input::document_editor::{BlockProps, DocOp, TableOp};
+use syngui::widgets::input::document_editor::{BlockProps, DocOp, ShapeKind, TableOp};
 use syngui::widgets::{Dropdown, DropdownItem, GestureDetector, ToolButton};
 
 use crate::icons::*;
 
 use super::icon_picker;
 use super::blocks;
+use super::doc_menu;
 use super::project::{PageGrid, PageLayout};
 use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
@@ -160,39 +161,53 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
         );
 
     // Тип блока задаёт умолчания; всё ниже — переопределения поверх темы.
-    col = col
-        .child(field_row(tr!("notes.props.color"), swatches(COLOR_PRESETS, attrs.get("color"), move |v| set("color", v))))
-        .child(field_row(tr!("notes.props.bg"), swatches(BG_PRESETS, attrs.get("bg"), move |v| set("bg", v))))
-        .child(field_row(
-            tr!("notes.props.size"),
-            SpinBox::new()
-                .range(0.0, 160.0)
-                .step(1.0)
-                .width(96.0)
-                .value(attrs.get("size").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0))
-                .on_change(move |v| set("size", (v >= 6.0).then(|| format!("{}", v as i64))))
-                .class("notes-props-field"),
-        ))
-        .child(field_row(
-            tr!("notes.props.align"),
-            segmented(
-                &[
-                    (MI_FORMAT_ALIGN_LEFT, "left"),
-                    (MI_FORMAT_ALIGN_CENTER, "center"),
-                    (MI_FORMAT_ALIGN_RIGHT, "right"),
-                ],
-                attrs.get("align").unwrap_or("left"),
-                move |v| set("align", (v != "left").then(|| v.to_string())),
-            ),
-        ))
-        .child(field_row(
-            tr!("notes.props.weight"),
-            segmented(
-                &[(MI_ARTICLE, "normal"), (MI_FORMAT_BOLD, "bold")],
-                attrs.get("weight").unwrap_or("normal"),
-                move |v| set("weight", (v != "normal").then(|| v.to_string())),
-            ),
-        ));
+    // У фигуры и картинки текста нет — кегль, начертание, цвет и
+    // выравнивание им ни к чему; их настройки идут секциями ниже.
+    if props.shape.is_none() && props.kind != "media" {
+        col = col
+            .child(field_row(tr!("notes.props.color"), swatches(COLOR_PRESETS, attrs.get("color"), move |v| set("color", v))))
+            .child(field_row(tr!("notes.props.bg"), swatches(BG_PRESETS, attrs.get("bg"), move |v| set("bg", v))))
+            .child(field_row(
+                tr!("notes.props.size"),
+                SpinBox::new()
+                    .range(0.0, 160.0)
+                    .step(1.0)
+                    .width(96.0)
+                    .value(attrs.get("size").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0))
+                    .on_change(move |v| set("size", (v >= 6.0).then(|| format!("{}", v as i64))))
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.align"),
+                segmented(
+                    &[
+                        (MI_FORMAT_ALIGN_LEFT, "left"),
+                        (MI_FORMAT_ALIGN_CENTER, "center"),
+                        (MI_FORMAT_ALIGN_RIGHT, "right"),
+                    ],
+                    attrs.get("align").unwrap_or("left"),
+                    move |v| set("align", (v != "left").then(|| v.to_string())),
+                ),
+            ))
+            .child(field_row(
+                tr!("notes.props.weight"),
+                segmented(
+                    &[(MI_ARTICLE, "normal"), (MI_FORMAT_BOLD, "bold")],
+                    attrs.get("weight").unwrap_or("normal"),
+                    move |v| set("weight", (v != "normal").then(|| v.to_string())),
+                ),
+            ));
+    }
+
+    // Примитив: вид, заливка, обводка, пунктир, скругление, прозрачность.
+    if let Some(shape) = props.shape {
+        col = col.child(shape_props(ctx, id, shape, &attrs, set));
+    }
+    // Размеры — у того, у кого высота своя (фигура, картинка): текст
+    // растёт по контенту, задавать ему высоту нечего.
+    if props.shape.is_some_and(|s| !s.is_line()) || props.kind == "media" {
+        col = col.child(size_props(&attrs, set));
+    }
 
     // Таблица: строки и колонки — иначе её вообще нельзя дорастить.
     if let Some((rows, cols)) = props.table {
@@ -211,6 +226,149 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
             );
     }
     col
+}
+
+/// Оформление примитива. Вид меняется через «превратить в» (сохраняя
+/// оформление), остальное — атрибуты блока.
+fn shape_props(
+    ctx: NotesCtx,
+    id: syngui::widgets::input::document_editor::BlockId,
+    shape: ShapeKind,
+    attrs: &syngui::widgets::input::document_editor::Attrs,
+    set: impl Fn(&'static str, Option<String>) + Send + Sync + Copy + 'static,
+) -> impl Widget {
+    let is_line = shape.is_line();
+    let num = |key: &str, default: f64| -> f64 {
+        attrs.get(key).and_then(|v| v.parse::<f64>().ok()).unwrap_or(default)
+    };
+    let mut col = Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .class("notes-props")
+        .child(Text::new(tr!("notes.props.shape")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.shape.kind"), shape_picker(ctx, id, shape)));
+    if !is_line {
+        col = col.child(field_row(
+            tr!("notes.props.shape.fill"),
+            swatches(SHAPE_FILL_PRESETS, attrs.get("fill"), move |v| set("fill", v)),
+        ));
+    }
+    col = col
+        .child(field_row(
+            tr!("notes.props.shape.stroke"),
+            swatches(COLOR_PRESETS, attrs.get("stroke"), move |v| set("stroke", v)),
+        ))
+        .child(field_row(
+            tr!("notes.props.shape.width"),
+            SpinBox::new()
+                .range(0.0, 40.0)
+                .step(1.0)
+                .width(96.0)
+                .value(num("sw", 2.0))
+                .on_change(move |v| set("sw", Some(format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ))
+        .child(field_row(
+            tr!("notes.props.shape.dash"),
+            SpinBox::new()
+                .range(0.0, 60.0)
+                .step(1.0)
+                .width(96.0)
+                .value(num("dash", 0.0))
+                .on_change(move |v| set("dash", (v >= 1.0).then(|| format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ));
+    if matches!(shape, ShapeKind::Rect) {
+        col = col.child(field_row(
+            tr!("notes.props.shape.radius"),
+            SpinBox::new()
+                .range(0.0, 200.0)
+                .step(1.0)
+                .width(96.0)
+                .value(num("radius", 8.0))
+                .on_change(move |v| set("radius", Some(format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ));
+    }
+    col.child(field_row(
+        tr!("notes.props.shape.opacity"),
+        SpinBox::new()
+            .range(5.0, 100.0)
+            .step(5.0)
+            .width(96.0)
+            .value(num("opacity", 100.0))
+            .on_change(move |v| set("opacity", (v < 100.0).then(|| format!("{}", v as i64))))
+            .class("notes-props-field"),
+    ))
+}
+
+/// Выбор вида примитива иконками — это «превратить в», оформление и
+/// координаты при смене сохраняются.
+fn shape_picker(
+    ctx: NotesCtx,
+    id: syngui::widgets::input::document_editor::BlockId,
+    current: ShapeKind,
+) -> impl Widget {
+    let mut row = Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for kind in ShapeKind::ALL {
+        let selected = kind == current;
+        row = row.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || {
+                    // Сначала делаем фигуру текущей: панель могла показывать
+                    // её, пока каретка стоит в другом блоке.
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::TurnInto(
+                        syngui::widgets::input::document_editor::SlashAction::Shape(kind),
+                    ));
+                })
+                .child(
+                    DecoratedBox::new()
+                        .class(if selected { "notes-props-seg selected" } else { "notes-props-seg" })
+                        .child(
+                            Center::new().child(
+                                Icon::new(doc_menu::shape_icon(kind)).class("notes-props-seg-icon"),
+                            ),
+                        ),
+                ),
+        );
+    }
+    row
+}
+
+/// Ширина и высота блока (свободная раскладка): те же значения, что
+/// тянутся за кромки, но набираемые точно.
+fn size_props(
+    attrs: &syngui::widgets::input::document_editor::Attrs,
+    set: impl Fn(&'static str, Option<String>) + Send + Sync + Copy + 'static,
+) -> impl Widget {
+    let num = |key: &str| -> f64 { attrs.get(key).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) };
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .class("notes-props")
+        .child(Text::new(tr!("notes.props.size_box")).class("notes-links-section"))
+        .child(field_row(
+            tr!("notes.props.size_box.width"),
+            SpinBox::new()
+                .range(0.0, 4000.0)
+                .step(10.0)
+                .width(96.0)
+                .value(num("w"))
+                .on_change(move |v| set("w", (v >= 40.0).then(|| format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ))
+        .child(field_row(
+            tr!("notes.props.size_box.height"),
+            SpinBox::new()
+                .range(0.0, 4000.0)
+                .step(10.0)
+                .width(96.0)
+                .value(num("h"))
+                .on_change(move |v| set("h", (v >= 20.0).then(|| format!("{}", v as i64))))
+                .class("notes-props-field"),
+        ))
 }
 
 /// Ряд цветовых кружков; первый — «как в теме» (свойство снимается).
@@ -286,6 +444,9 @@ const COLOR_PRESETS: &[&str] =
     &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6"];
 const BG_PRESETS: &[&str] =
     &["", "#3A2A28", "#3A3324", "#243A2E", "#243149", "#332944", "#2B2F36"];
+/// Заливка фигуры: первый кружок — «без заливки» (только контур).
+const SHAPE_FILL_PRESETS: &[&str] =
+    &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#2B2F36"];
 
 /// Свойства страницы: название, иконка и путь в дереве.
 fn page_props(ctx: NotesCtx, id: String) -> impl Widget {

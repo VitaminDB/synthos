@@ -34,6 +34,7 @@ pub fn kind_icon(kind: &str) -> &'static str {
         "divider" => MI_HORIZONTAL_RULE,
         "media" => MI_IMAGE_ICON,
         "embed" => MI_ACCOUNT_TREE,
+        "shape" => MI_CATEGORY,
         _ => MI_ARTICLE,
     }
 }
@@ -56,6 +57,7 @@ pub fn kind_label(kind: &str, level: u8) -> String {
         "divider" => tr!("notes.block.divider"),
         "media" => tr!("notes.block.media"),
         "embed" => tr!("notes.block.embed"),
+        "shape" => tr!("notes.block.shape"),
         _ => tr!("notes.block.text"),
     }
 }
@@ -99,7 +101,13 @@ fn flatten(nodes: &[BlockOutline], depth: usize, out: &mut Vec<(usize, BlockOutl
 fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn Widget> {
     let id = b.id;
     let indent = 4.0 + depth as f32 * 12.0;
-    let label = if b.label.trim().is_empty() {
+    // У фигуры подпись — машинное имя вида (`rect`), в дереве нужен
+    // локализованный: имя вида и есть его тип.
+    let label = if b.kind == "shape" {
+        syngui::widgets::input::document_editor::ShapeKind::from_name(&b.label)
+            .map(super::doc_menu::shape_label)
+            .unwrap_or_else(|| kind_label(b.kind, b.level))
+    } else if b.label.trim().is_empty() {
         kind_label(b.kind, b.level)
     } else {
         b.label.clone()

@@ -6,14 +6,64 @@
 //! действия над блоком (дублировать/сдвинуть/удалить) — идут в редактор
 //! очередью [`DocOp`] через ручку страницы (`NotesCtx::doc_op`): правка
 //! проходит через историю undo и ставит каретку в новый блок.
+//!
+//! Два раздела вставки живут отдельными подменю, иначе список не влезал бы
+//! на экран: «Примитивы» (прямоугольник … двойная стрелка — блоки
+//! `![[shape:<вид>]]`, настраиваются в панели свойств) и медиа («Картинка…»,
+//! «SVG-файл…», «SVG из буфера», «Файл…» — вложения бандла, см.
+//! [`super::media`]).
 
 use syngui::prelude::*;
-use syngui::widgets::input::document_editor::{DocOp, SlashAction, SlashItem};
+use syngui::widgets::input::document_editor::{DocOp, ShapeKind, SlashAction, SlashItem};
 use syngui::widgets::{MenuItem, PopupAnchor, PopupMenu};
 
+use crate::context::AppCtx;
 use crate::icons::*;
 
+use super::media::{self, PickKind};
 use super::state::NotesCtx;
+
+/// Примитивы в порядке меню: id, вид, иконка, ключ подписи.
+const SHAPES: [(&str, ShapeKind, &str, &str); 7] = [
+    ("rect", ShapeKind::Rect, MI_CROP_SQUARE, "notes.shape.rect"),
+    ("ellipse", ShapeKind::Ellipse, MI_CIRCLE, "notes.shape.ellipse"),
+    ("triangle", ShapeKind::Triangle, MI_CHANGE_HISTORY, "notes.shape.triangle"),
+    ("diamond", ShapeKind::Diamond, MI_DIAMOND, "notes.shape.diamond"),
+    ("line", ShapeKind::Line, MI_HORIZONTAL_RULE, "notes.shape.line"),
+    ("arrow", ShapeKind::Arrow, MI_ARROW_RIGHT_ALT, "notes.shape.arrow"),
+    ("arrow2", ShapeKind::DoubleArrow, MI_COMPARE_ARROWS, "notes.shape.arrow2"),
+];
+
+/// Подпись вида примитива на языке интерфейса.
+pub fn shape_label(kind: ShapeKind) -> String {
+    SHAPES
+        .iter()
+        .find(|(_, k, _, _)| *k == kind)
+        .map(|(_, _, _, key)| syngui::i18n::tr(key))
+        .unwrap_or_default()
+}
+
+pub fn shape_icon(kind: ShapeKind) -> &'static str {
+    SHAPES
+        .iter()
+        .find(|(_, k, _, _)| *k == kind)
+        .map(|(_, _, icon, _)| *icon)
+        .unwrap_or(MI_CROP_SQUARE)
+}
+
+/// Пункты подменю «Примитивы» с общим префиксом (вставка / превратить в).
+fn shape_items(prefix: &str) -> Vec<MenuItem> {
+    SHAPES
+        .iter()
+        .map(|(id, _, icon, key)| {
+            MenuItem::new(format!("{prefix}{id}"), syngui::i18n::tr(key)).icon(*icon)
+        })
+        .collect()
+}
+
+fn shape_of(id: &str) -> Option<ShapeKind> {
+    SHAPES.iter().find(|(name, _, _, _)| *name == id).map(|(_, k, _, _)| *k)
+}
 
 /// Slash-каталог «/» на языке интерфейса + объекты проекта.
 pub fn slash_items() -> Vec<SlashItem> {
@@ -33,12 +83,34 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::Divider, tr!("notes.block.divider"), "divider hr разделитель"),
         SlashItem::new(SlashAction::Custom("base".into()), tr!("notes.block.base"), "base database база таблица"),
         SlashItem::new(SlashAction::Custom("canvas".into()), tr!("notes.block.canvas"), "canvas board канвас доска"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Rect), tr!("notes.shape.rect"), "rect shape прямоугольник фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Ellipse), tr!("notes.shape.ellipse"), "ellipse circle овал круг фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Triangle), tr!("notes.shape.triangle"), "triangle треугольник фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Diamond), tr!("notes.shape.diamond"), "diamond ромб фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Line), tr!("notes.shape.line"), "line линия фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::Arrow), tr!("notes.shape.arrow"), "arrow стрелка фигура"),
+        SlashItem::new(SlashAction::Shape(ShapeKind::DoubleArrow), tr!("notes.shape.arrow2"), "arrow double двойная стрелка"),
+        SlashItem::new(SlashAction::Custom("image".into()), tr!("notes.menu.image"), "image picture картинка изображение"),
+        SlashItem::new(SlashAction::Custom("svg".into()), tr!("notes.menu.svg"), "svg вектор картинка"),
+        SlashItem::new(SlashAction::Custom("file".into()), tr!("notes.menu.file"), "file файл вложение"),
     ]
 }
 
-/// Обработчик кастомных пунктов slash-меню: объекты проекта.
+/// Обработчик кастомных пунктов slash-меню: объекты проекта и медиа.
 pub fn slash_custom(ctx: NotesCtx) -> impl Fn(&str) + Send + Sync + 'static {
-    move |id| insert_object(ctx, id)
+    move |id| match id {
+        "image" => media::pick_and_insert(ctx, PickKind::Image),
+        "svg" => media::pick_and_insert(ctx, PickKind::Svg),
+        "file" => media::pick_and_insert(ctx, PickKind::File),
+        _ => insert_object(ctx, id),
+    }
+}
+
+/// SVG из буфера обмена; если там не разметка — подсказка тостом.
+fn paste_svg(ctx: NotesCtx) {
+    if !media::insert_svg_from_clipboard(ctx) {
+        use_context::<AppCtx>().notifications.info(tr!("notes.menu.svg_clipboard.empty"));
+    }
 }
 
 /// Создать базу/канвас и вставить живую врезку в место каретки.
@@ -71,11 +143,30 @@ fn items() -> Vec<MenuItem> {
     insert.push(MenuItem::new("ins_table", tr!("notes.block.table")).icon(MI_GRID_ON));
     insert.push(MenuItem::new("ins_divider", tr!("notes.block.divider")).icon(MI_HORIZONTAL_RULE));
     insert.push(MenuItem::separator());
+    // Примитивы и медиа — своими разделами: их много, плоским списком
+    // меню растянулось бы на весь экран.
+    insert.push(
+        MenuItem::new("ins_shapes", tr!("notes.menu.shapes"))
+            .icon(MI_CATEGORY)
+            .children(shape_items("ins_shape_")),
+    );
+    insert.push(MenuItem::new("ins_image", tr!("notes.menu.image")).icon(MI_IMAGE_ICON));
+    insert.push(MenuItem::new("ins_svg", tr!("notes.menu.svg")).icon(MI_BRUSH));
+    insert.push(MenuItem::new("ins_svg_clip", tr!("notes.menu.svg_clipboard")).icon(MI_CODE));
+    insert.push(MenuItem::new("ins_file", tr!("notes.menu.file")).icon(MI_ATTACH_FILE));
+    insert.push(MenuItem::separator());
     insert.push(MenuItem::new("ins_base", tr!("notes.block.base")).icon(MI_GRID_ON));
     insert.push(MenuItem::new("ins_canvas", tr!("notes.block.canvas")).icon(MI_ACCOUNT_TREE));
+    let mut turn = block_items("turn_");
+    turn.push(MenuItem::separator());
+    turn.push(
+        MenuItem::new("turn_shapes", tr!("notes.menu.shapes"))
+            .icon(MI_CATEGORY)
+            .children(shape_items("turn_shape_")),
+    );
     vec![
         MenuItem::new("insert", tr!("notes.menu.insert")).icon(MI_ADD).children(insert),
-        MenuItem::new("turn", tr!("notes.menu.turn_into")).icon(MI_AUTORENEW).children(block_items("turn_")),
+        MenuItem::new("turn", tr!("notes.menu.turn_into")).icon(MI_AUTORENEW).children(turn),
         MenuItem::separator(),
         MenuItem::new("dup", tr!("notes.menu.duplicate")).icon(MI_CONTENT_COPY),
         MenuItem::new("up", tr!("notes.menu.move_up")).icon(MI_ARROW_UPWARD),
@@ -105,9 +196,21 @@ fn action_of(kind: &str) -> Option<SlashAction> {
 }
 
 pub fn handle(ctx: NotesCtx, id: &str) {
+    if let Some(name) = id.strip_prefix("ins_shape_").and_then(shape_of) {
+        ctx.doc_op(DocOp::InsertBlock(SlashAction::Shape(name)));
+        return;
+    }
+    if let Some(name) = id.strip_prefix("turn_shape_").and_then(shape_of) {
+        ctx.doc_op(DocOp::TurnInto(SlashAction::Shape(name)));
+        return;
+    }
     if let Some(kind) = id.strip_prefix("ins_") {
         match kind {
             "base" | "canvas" => insert_object(ctx, kind),
+            "image" => media::pick_and_insert(ctx, PickKind::Image),
+            "svg" => media::pick_and_insert(ctx, PickKind::Svg),
+            "svg_clip" => paste_svg(ctx),
+            "file" => media::pick_and_insert(ctx, PickKind::File),
             _ => {
                 if let Some(a) = action_of(kind) {
                     ctx.doc_op(DocOp::InsertBlock(a));

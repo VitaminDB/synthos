@@ -128,6 +128,10 @@ document-editor {
     /* Габариты блока: заливка под курсором и рамка текущего. */
     --doc-block-hover-color: var(--surface-hover);
     --doc-block-selected-color: var(--primary);
+    /* Примитивы: контур по умолчанию — приглушённый текст, хваталки
+     * концов и углов — акцентом, чтобы их было видно на любой фигуре. */
+    --doc-shape-stroke-color: var(--text-muted);
+    --doc-shape-handle-color: var(--primary);
     --doc-media-bg: var(--surface-hover);
     --doc-embed-border-color: var(--border);
     --doc-embed-bg: var(--surface-hover);

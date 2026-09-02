@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
-use syngui::widgets::input::document_editor::{DocMediaResolver, MediaKind, ResolvedMedia};
+use syngui::prelude::*;
+use syngui::widgets::input::document_editor::{DocMediaResolver, DocOp, MediaKind, ResolvedMedia};
 
 use crate::syn_chat::attach::blobs;
 
@@ -165,6 +166,99 @@ pub fn ingest_dropped_file(ctx: NotesCtx, page_id: String, file: PathBuf, token:
     });
 }
 
+/// Что предлагает выбрать диалог вставки медиа.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickKind {
+    Image,
+    Svg,
+    File,
+}
+
+/// Байты → вложение проекта: sha256, кэш распакованных, очередь автосейва.
+/// Возвращает ссылку `asset:<sha>.<ext>` для markdown.
+pub fn ingest_bytes(project_path: &Path, bytes: Vec<u8>, ext: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let sha = format!("{:x}", hasher.finalize());
+    let ext = ext.trim_start_matches('.').to_lowercase();
+    let ext = if ext.is_empty() { "bin".to_string() } else { ext };
+    let name = format!("{sha}.{ext}");
+    // Сразу в кэш — картинка отрисуется до commit'а бандла.
+    let dir = assets_cache_dir(project_path);
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join(&name), &bytes);
+    }
+    autosave::queue_bytes(&project::asset_path(&name), bytes);
+    format!("asset:{name}")
+}
+
+/// Диалог выбора файла и вставка медиа-блока в место каретки (в свободной
+/// раскладке — в точку правого клика).
+pub fn pick_and_insert(ctx: NotesCtx, kind: PickKind) {
+    let title = match kind {
+        PickKind::Image => tr!("notes.menu.image"),
+        PickKind::Svg => tr!("notes.menu.svg"),
+        PickKind::File => tr!("notes.menu.file"),
+    };
+    let mut dlg = rfd::FileDialog::new().set_title(&title);
+    dlg = match kind {
+        PickKind::Image => dlg.add_filter(
+            &tr!("notes.media.filter.image"),
+            &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
+        ),
+        PickKind::Svg => dlg.add_filter("SVG", &["svg"]),
+        PickKind::File => dlg,
+    };
+    let Some(path) = dlg.pick_file() else { return };
+    insert_file(ctx, &path);
+}
+
+/// Файл с диска → вложение бандла → медиа-блок документа.
+pub fn insert_file(ctx: NotesCtx, file: &Path) {
+    let bytes = match std::fs::read(file) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("notes: не прочитан {}: {e}", file.display());
+            return;
+        }
+    };
+    let ext = file.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+    let url = ingest_bytes(&ctx.project_path.get_untracked(), bytes, &ext);
+    // Скобки в подписи разъехались бы с синтаксисом `![alt](url)`.
+    let alt = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().replace(['[', ']', '\n'], " "))
+        .unwrap_or_default();
+    ctx.doc_op(DocOp::InsertMarkdown(format!("![{alt}]({url})")));
+}
+
+/// SVG-разметка из буфера обмена → вложение проекта → картинка в документе.
+/// `false` — в буфере не SVG (хост показывает подсказку).
+pub fn insert_svg_from_clipboard(ctx: NotesCtx) -> bool {
+    let Some(text) = syngui::clipboard::paste() else { return false };
+    let trimmed = text.trim();
+    if !looks_like_svg(trimmed) {
+        return false;
+    }
+    let url = ingest_bytes(
+        &ctx.project_path.get_untracked(),
+        trimmed.as_bytes().to_vec(),
+        "svg",
+    );
+    ctx.doc_op(DocOp::InsertMarkdown(format!("![svg]({url})")));
+    true
+}
+
+/// Похож ли текст на SVG-разметку: корневой тег либо пролог/DOCTYPE перед
+/// ним. Проверка нужна до записи вложения — иначе в проект попадал бы любой
+/// скопированный текст.
+pub fn looks_like_svg(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("<svg")
+        || ((t.starts_with("<?xml") || t.starts_with("<!DOCTYPE") || t.starts_with("<!--"))
+            && t.contains("<svg"))
+}
+
 /// Все sha256 общего CAS, на которые ещё ссылаются страницы проекта
 /// (`blob:` первой волны) — чтобы GC блобов чатов их не выбросил.
 pub fn collect_blob_refs(referenced: &mut HashSet<String>) {
@@ -205,6 +299,17 @@ mod tests {
         assert!(parse_asset_url("asset:short.mp4").is_none());
         assert!(parse_asset_url(&format!("asset:{sha}")).is_none());
         assert!(parse_asset_url("https://x/y.mp4").is_none());
+    }
+
+    #[test]
+    fn svg_sniffing() {
+        assert!(looks_like_svg("<svg viewBox=\"0 0 10 10\"></svg>"));
+        assert!(looks_like_svg("  \n<svg/>"));
+        assert!(looks_like_svg("<?xml version=\"1.0\"?>\n<svg></svg>"));
+        assert!(looks_like_svg("<!-- иконка -->\n<svg></svg>"));
+        assert!(!looks_like_svg("просто текст"));
+        assert!(!looks_like_svg("<html><body>svg</body></html>"));
+        assert!(!looks_like_svg("<?xml version=\"1.0\"?><rss/>"));
     }
 
     #[test]

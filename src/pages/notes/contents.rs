@@ -11,7 +11,6 @@ use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::overlay::context_menu::ContextMenu;
 use syngui::widgets::overlay::menu::MenuItem;
-use syngui::widgets::navigation::{Tab, TabBar};
 use syngui::widgets::{Draggable, DropArea, GestureDetector};
 
 use crate::components::panel_header;
@@ -30,31 +29,47 @@ const EDGE: f32 = 7.0;
 
 pub fn header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
-    let tab = ctx.left_tab;
-    // Две вкладки: страницы проекта и блоки активной страницы. Дерево
-    // блоков нужно там же, где дерево страниц, — это навигация, а не
-    // свойства.
-    let tabbar = TabBar::new()
-        .tab(Tab::new(tr!("notes.tree.title"), TAB_PAGES, &tab).icon(MI_LIST_ALT))
-        .tab(Tab::new(tr!("notes.blocks.title"), TAB_BLOCKS, &tab).icon(MI_LAYERS))
-        .class("right-panel-tabbar-inner");
-    Row::new()
-        .gap(6.0)
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .child(DecoratedBox::new().class("grow").child(tabbar))
-        .child(
-            panel_header::action_button(MI_NOTE_ADD, tr!("notes.tree.new_page"), move || {
-                ctx.create_page(None, &tr!("notes.untitled"));
-                ctx.open_tile();
-                rail::navigate("notes");
-            }),
-        )
-        .child(
-            panel_header::action_button(MI_HUB, tr!("notes.graph.title"), move || {
-                ctx.show_graph.set(true);
-                rail::navigate("notes");
-            }),
-        )
+    // Две вкладки в узкой панели не помещаются подписями — показываем
+    // название только активной, а переключение отдаём иконке соседней.
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let blocks = ctx.left_tab.get() == TAB_BLOCKS;
+        let (icon, title) = if blocks {
+            (MI_LAYERS, tr!("notes.blocks.title"))
+        } else {
+            (MI_LIST_ALT, tr!("notes.tree.title"))
+        };
+        let (other_icon, other_title) = if blocks {
+            (MI_LIST_ALT, tr!("notes.tree.title"))
+        } else {
+            (MI_LAYERS, tr!("notes.blocks.title"))
+        };
+        let mut row = Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(DecoratedBox::new().class("grow").child(panel_header::side_title(icon, title)))
+            .child(panel_header::action_button(other_icon, other_title, move || {
+                ctx.left_tab.set(if blocks { TAB_PAGES } else { TAB_BLOCKS });
+            }));
+        // Создание страницы и граф — про дерево страниц; на вкладке блоков
+        // они только съедали бы ширину.
+        if !blocks {
+            row = row
+                .child(panel_header::action_button(
+                    MI_NOTE_ADD,
+                    tr!("notes.tree.new_page"),
+                    move || {
+                        ctx.create_page(None, &tr!("notes.untitled"));
+                        ctx.open_tile();
+                        rail::navigate("notes");
+                    },
+                ))
+                .child(panel_header::action_button(MI_HUB, tr!("notes.graph.title"), move || {
+                    ctx.show_graph.set(true);
+                    rail::navigate("notes");
+                }));
+        }
+        vec![Box::new(row)]
+    })
 }
 
 pub fn body() -> impl Widget {

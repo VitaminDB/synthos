@@ -144,11 +144,13 @@
  * Правка: поле ровно в габаритах строки заголовка (шрифт/вес совпадают с
  * .panel-header-title, вертикальный паддинг съеден в 1px) — переключение
  * режимов не двигает ни подзаголовок, ни пилюлю поиска. */
+/* Выравнивание по одной вертикали: у названия (просмотр), у текста в поле
+ * правки (padding поля уважается TextField'ом) и у подзаголовка «Модель…»
+ * общий левый отступ 6px. Отрицательные margin-компенсации не в ходу. */
 .chat-header-title-wrap {
     cursor: pointer;
     border-radius: 8px;
     padding: 1px 6px;
-    margin: 0 0 0 -6px; /* компенсируем паддинг: текст стоит там же */
     transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
@@ -169,15 +171,16 @@
 .chat-header-title-wrap-editing {
     cursor: text;
     padding: 0;
-    /* Внутренний отступ текста TextField — константа 12px (MSS-паддинг на
-     * него не влияет): сдвигаем поле влево ровно на неё, чтобы текст в поле
-     * стоял там же, где название в просмотре и «Модель не загружена» под ним. */
-    margin: 0 0 0 -12px;
     background-color: transparent;
 }
 
 .chat-header-title-wrap-editing:hover {
     background-color: transparent;
+}
+
+/* «Модель не загружена» — на той же вертикали, что буква Н названия. */
+.chat-header-subtitle-wrap {
+    padding-left: 6px;
 }
 
 .chat-header-title-edit {
@@ -188,6 +191,8 @@
      * распухала, и подзаголовок уезжал под нижний край шапки. 26px — чуть
      * воздуха тексту, но всё ещё в габаритах строки. */
     height: 26px;
+    /* Текст поля на тех же 6px, что название и подзаголовок. */
+    padding: 0 6px;
     border-radius: 8px;
     background-color: var(--bg-search);
     border-width: 1.5px;

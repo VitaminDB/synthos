@@ -139,16 +139,50 @@
     width: 96px;
 }
 
-/* Inline-переименование (чат, граф): поле той же высоты, что заголовок. */
+/* Inline-переименование (чат, граф). Просмотр: название + приглушённый
+ * карандаш, проявляющийся на hover — подсказка, что имя кликабельно.
+ * Правка: поле ровно в габаритах строки заголовка (шрифт/вес совпадают с
+ * .panel-header-title, вертикальный паддинг съеден в 1px) — переключение
+ * режимов не двигает ни подзаголовок, ни пилюлю поиска. */
 .chat-header-title-wrap {
     cursor: pointer;
+    border-radius: 8px;
+    padding: 1px 6px;
+    margin: 0 0 0 -6px; /* компенсируем паддинг: текст стоит там же */
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.chat-header-title-wrap:hover {
+    background-color: var(--surface-hover);
+}
+
+.chat-header-title-pencil {
+    icon-size: 13px;
+    color: transparent;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.chat-header-title-wrap:hover .chat-header-title-pencil {
+    color: var(--text-subtle);
+}
+
+.chat-header-title-wrap-editing {
+    cursor: text;
+    padding: 0;
+    margin: 0 0 0 -6px;
+    background-color: transparent;
+}
+
+.chat-header-title-wrap-editing:hover {
+    background-color: transparent;
 }
 
 .chat-header-title-edit {
     font-size: 15px;
     font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 6px;
+    width: 280px;
+    padding: 1px 6px;
+    border-radius: 8px;
     background-color: var(--bg-search);
     border-width: 1px;
     border-color: var(--primary);

@@ -124,8 +124,13 @@ fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedB
             .unwrap_or_else(|| initial.clone());
 
         if ctx.renaming_chat.get() {
+            // Enter и клик мимо поля — сохранить, Escape — отменить без
+            // сохранения. Поле забирает фокус сразу: клик по названию и
+            // есть намерение печатать.
             let edit = TextField::new()
                 .text(current_title.clone())
+                .autofocus(true)
+                .submit_on_focus_lost(true)
                 .on_submit(move |s| {
                     let ctx = use_context::<SynChatCtx>();
                     let t = s.trim().to_string();
@@ -134,12 +139,23 @@ fn title_block_reactive(initial: String) -> impl Fn() -> StyledWidget<DecoratedB
                     }
                     ctx.renaming_chat.set(false);
                 })
+                .on_escape(|| use_context::<SynChatCtx>().renaming_chat.set(false))
                 .class("chat-header-title-edit");
-            DecoratedBox::new().class("chat-header-title-wrap").child(edit)
+            DecoratedBox::new()
+                .class("chat-header-title-wrap chat-header-title-wrap-editing")
+                .child(edit)
         } else {
+            // Карандаш — приглушённая подсказка «название кликабельно»,
+            // проявляется на hover обоймы (см. panel_header.mss).
+            let row = mgui! {
+                Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Text::new(current_title).max_lines(1).class("panel-header-title"),
+                    Icon::new(MI_EDIT).class("chat-header-title-pencil"),
+                ]
+            };
             let clickable = GestureDetector::new()
                 .on_click(|| use_context::<SynChatCtx>().renaming_chat.set(true))
-                .child(Text::new(current_title).max_lines(1).class("panel-header-title"));
+                .child(row);
             DecoratedBox::new().class("chat-header-title-wrap").child(clickable)
         }
     }

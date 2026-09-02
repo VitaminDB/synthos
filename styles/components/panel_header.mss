@@ -169,7 +169,10 @@
 .chat-header-title-wrap-editing {
     cursor: text;
     padding: 0;
-    margin: 0 0 0 -6px;
+    /* Внутренний отступ текста TextField — константа 12px (MSS-паддинг на
+     * него не влияет): сдвигаем поле влево ровно на неё, чтобы текст в поле
+     * стоял там же, где название в просмотре и «Модель не загружена» под ним. */
+    margin: 0 0 0 -12px;
     background-color: transparent;
 }
 
@@ -180,15 +183,14 @@
 .chat-header-title-edit {
     font-size: 15px;
     font-weight: 600;
-    width: 280px;
+    width: 292px;
     /* Дефолтная высота TextField — 40px: колонка «название + модель»
-     * распухала, и подзаголовок уезжал под нижний край шапки. Держим поле
-     * в высоту строки заголовка. */
-    height: 22px;
-    padding: 0 6px;
-    border-radius: 6px;
+     * распухала, и подзаголовок уезжал под нижний край шапки. 26px — чуть
+     * воздуха тексту, но всё ещё в габаритах строки. */
+    height: 26px;
+    border-radius: 8px;
     background-color: var(--bg-search);
-    border-width: 1px;
+    border-width: 1.5px;
     border-color: var(--primary);
     color: var(--text);
 }

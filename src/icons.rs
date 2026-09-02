@@ -230,6 +230,9 @@ pub const MI_FULLSCREEN: &str          = "\u{E5D0}";
 /// «vertical_split» / «view_sidebar» — тогглы левой и правой панели в шапке.
 pub const MI_VERTICAL_SPLIT: &str      = "\u{E949}";
 pub const MI_VIEW_SIDEBAR: &str        = "\u{F114}";
+pub const MI_VIEW_KANBAN: &str         = "\u{EB7F}";
+pub const MI_VIEW_TIMELINE: &str       = "\u{EB85}";
+pub const MI_TODAY: &str               = "\u{E8DF}";
 /// «horizontal_rule» — пункт «Разделитель» в меню «+» рейла.
 pub const MI_HORIZONTAL_RULE: &str     = "\u{F108}";
 /// «dashboard_customize» — открыть окно шаблонов из шапки нод.

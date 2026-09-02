@@ -1,9 +1,9 @@
 //! Правая панель «Заметок»: TabBar «Свойства | Связи».
 //!
 //! Вставка блоков ушла в контекстное меню документа и slash-меню.
-//! «Свойства» — выделенная карточка канваса (цвет/удаление) либо активная
-//! страница (название, иконка, путь в дереве, раскладка); «Связи» —
-//! мини-граф, обратные и исходящие ссылки.
+//! «Свойства» — активная страница (название, иконка, путь в дереве,
+//! раскладка) и текущий блок (стиль, фигура, размер); «Связи» — мини-граф,
+//! обратные и исходящие ссылки.
 //!
 //! Раскладка страницы: «Поток» (колонка Notion) или «Свободная» — блоки
 //! ставятся мышью в любое место, с привязкой к шагу (по умолчанию 5 px) и
@@ -22,7 +22,7 @@ use super::icon_picker;
 use super::blocks;
 use super::doc_menu;
 use super::project::{PageGrid, PageLayout};
-use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
+use super::state::{NotesCtx, TAB_LINKS, TAB_PROPS};
 
 pub fn header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
@@ -106,17 +106,9 @@ fn link_row(ctx: NotesCtx, id: String, title: String) -> Box<dyn Widget> {
     )
 }
 
-/// Инспектор «Свойства»: карточка канваса либо активная страница.
+/// Инспектор «Свойства»: активная страница и текущий блок.
 fn props_tab(ctx: NotesCtx) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        // Выделенная карточка любого живого канваса.
-        for o in ctx.objects.get().iter() {
-            if let LiveObject::Canvas { handle, .. } = o {
-                if let Some(node_id) = handle.selected.get() {
-                    return vec![Box::new(canvas_card_props(handle.clone(), node_id))];
-                }
-            }
-        }
         if ctx.show_graph.get() {
             return vec![Box::new(placeholder(MI_HUB, tr!("notes.right.props.empty")))];
         }
@@ -151,19 +143,24 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
         ctx.doc_op(DocOp::SetAttr { block: id, key: key.to_string(), value });
     };
 
+    // Доска и диаграмма — объекты со своей высотой: у них нет текста, зато
+    // есть размер.
+    let sized_object = props.embed.as_deref().is_some_and(super::embeds::is_sized_object);
+    let kind_label = match props.embed.as_deref() {
+        Some(t) if t.starts_with("kanban:") => tr!("notes.block.kanban"),
+        Some(t) if t.starts_with("gantt:") => tr!("notes.block.gantt"),
+        _ => blocks::kind_label(props.kind, props.level),
+    };
     let mut col = Column::new()
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .class("notes-props")
-        .child(
-            Text::new(tr!("notes.props.block", kind = blocks::kind_label(props.kind, props.level)))
-                .class("notes-links-section"),
-        );
+        .child(Text::new(tr!("notes.props.block", kind = kind_label)).class("notes-links-section"));
 
     // Тип блока задаёт умолчания; всё ниже — переопределения поверх темы.
-    // У фигуры и картинки текста нет — кегль, начертание, цвет и
+    // У фигуры, картинки и объекта текста нет — кегль, начертание, цвет и
     // выравнивание им ни к чему; их настройки идут секциями ниже.
-    if props.shape.is_none() && props.kind != "media" {
+    if props.shape.is_none() && props.kind != "media" && !sized_object {
         col = col
             .child(field_row(tr!("notes.props.color"), swatches(COLOR_PRESETS, attrs.get("color"), move |v| set("color", v))))
             .child(field_row(tr!("notes.props.bg"), swatches(BG_PRESETS, attrs.get("bg"), move |v| set("bg", v))))
@@ -203,9 +200,9 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     if let Some(shape) = props.shape {
         col = col.child(shape_props(ctx, id, shape, &attrs, set));
     }
-    // Размеры — у того, у кого высота своя (фигура, картинка): текст
-    // растёт по контенту, задавать ему высоту нечего.
-    if props.shape.is_some_and(|s| !s.is_line()) || props.kind == "media" {
+    // Размеры — у того, у кого высота своя (фигура, картинка, доска,
+    // диаграмма): текст растёт по контенту, задавать ему высоту нечего.
+    if props.shape.is_some_and(|s| !s.is_line()) || props.kind == "media" || sized_object {
         col = col.child(size_props(&attrs, set));
     }
 
@@ -629,42 +626,6 @@ fn field_row(label: String, field: impl Widget + 'static) -> impl Widget {
         .class("notes-props-row")
         .child(Text::new(label).class("notes-props-row-label"))
         .child(field)
-}
-
-/// Свойства выделенной карточки канваса: цвет и удаление.
-fn canvas_card_props(handle: super::canvas::CanvasHandle, node_id: String) -> impl Widget {
-    const PRESETS: &[&str] = &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6"];
-    let mut swatches = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center);
-    for preset in PRESETS {
-        let h = handle.clone();
-        let id = node_id.clone();
-        let color = preset.to_string();
-        let mut dot = DecoratedBox::new().class("notes-props-swatch");
-        if color.is_empty() {
-            dot = dot.class("notes-props-swatch empty");
-        } else {
-            dot = dot.style("background-color", syngui::core::Color::from_hex(&color));
-        }
-        swatches = swatches.child(
-            GestureDetector::new()
-                .cursor(syngui::input::CursorIcon::Pointer)
-                .on_click(move || h.set_node_color(&id, &color))
-                .child(dot),
-        );
-    }
-    let h_del = handle.clone();
-    let id_del = node_id.clone();
-    Column::new()
-        .gap(8.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .class("notes-props")
-        .child(Text::new(tr!("notes.props.card_color")).class("notes-links-section"))
-        .child(swatches)
-        .child(
-            Button::new(tr!("notes.canvas.delete"))
-                .on_click(move || h_del.delete_node(&id_del))
-                .class("notes-props-delete"),
-        )
 }
 
 fn placeholder(icon: &'static str, text: String) -> impl Widget {

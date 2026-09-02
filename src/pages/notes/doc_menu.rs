@@ -9,9 +9,11 @@
 //!
 //! Два раздела вставки живут отдельными подменю, иначе список не влезал бы
 //! на экран: «Примитивы» (прямоугольник … двойная стрелка — блоки
-//! `![[shape:<вид>]]`, настраиваются в панели свойств) и медиа («Картинка…»,
-//! «SVG-файл…», «SVG из буфера», «Файл…» — вложения бандла, см.
-//! [`super::media`]).
+//! `![[shape:<вид>]]`, настраиваются в панели свойств; там же канбан-доска
+//! и диаграмма Ганта — объекты проекта `![[kanban:<id>]]` /
+//! `![[gantt:<id>]]`, см. [`super::kanban`], [`super::gantt`]) и медиа
+//! («Картинка…», «SVG-файл…», «SVG из буфера», «Файл…» — вложения бандла,
+//! см. [`super::media`]).
 
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{DocOp, ShapeKind, SlashAction, SlashItem};
@@ -54,6 +56,12 @@ pub fn shape_icon(kind: ShapeKind) -> &'static str {
         .unwrap_or(MI_CROP_SQUARE)
 }
 
+/// Объекты-примитивы: id, иконка, ключ подписи.
+const OBJECTS: [(&str, &str, &str); 2] = [
+    ("kanban", MI_VIEW_KANBAN, "notes.block.kanban"),
+    ("gantt", MI_VIEW_TIMELINE, "notes.block.gantt"),
+];
+
 /// Пункты подменю «Примитивы» с общим префиксом (вставка / превратить в).
 fn shape_items(prefix: &str) -> Vec<MenuItem> {
     SHAPES
@@ -62,6 +70,18 @@ fn shape_items(prefix: &str) -> Vec<MenuItem> {
             MenuItem::new(format!("{prefix}{id}"), syngui::i18n::tr(key)).icon(*icon)
         })
         .collect()
+}
+
+/// Подменю «Примитивы» для вставки: фигуры, затем доска и диаграмма.
+fn insert_primitive_items() -> Vec<MenuItem> {
+    let mut items = shape_items("ins_shape_");
+    items.push(MenuItem::separator());
+    items.extend(
+        OBJECTS
+            .iter()
+            .map(|(id, icon, key)| MenuItem::new(format!("ins_object_{id}"), syngui::i18n::tr(key)).icon(*icon)),
+    );
+    items
 }
 
 fn shape_of(id: &str) -> Option<ShapeKind> {
@@ -84,8 +104,8 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::CodeBlock, tr!("notes.block.code"), "code код"),
         SlashItem::new(SlashAction::Table, tr!("notes.block.table"), "table таблица"),
         SlashItem::new(SlashAction::Divider, tr!("notes.block.divider"), "divider hr разделитель"),
-        SlashItem::new(SlashAction::Custom("base".into()), tr!("notes.block.base"), "base database база таблица"),
-        SlashItem::new(SlashAction::Custom("canvas".into()), tr!("notes.block.canvas"), "canvas board канвас доска"),
+        SlashItem::new(SlashAction::Custom("kanban".into()), tr!("notes.block.kanban"), "kanban board канбан доска задачи"),
+        SlashItem::new(SlashAction::Custom("gantt".into()), tr!("notes.block.gantt"), "gantt timeline гант диаграмма план сроки"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Rect), tr!("notes.shape.rect"), "rect shape прямоугольник фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Ellipse), tr!("notes.shape.ellipse"), "ellipse circle овал круг фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Triangle), tr!("notes.shape.triangle"), "triangle треугольник фигура"),
@@ -119,10 +139,15 @@ fn paste_svg(ctx: NotesCtx) {
     }
 }
 
-/// Создать базу/канвас и вставить живую врезку в место каретки.
+/// Создать доску/диаграмму и вставить живую врезку в место каретки: сразу
+/// с высотой по умолчанию, чтобы в свободной раскладке блок был нужного
+/// размера и его можно было тянуть за нижнюю кромку.
 pub fn insert_object(ctx: NotesCtx, kind: &str) {
     if let Some(id) = ctx.create_object(kind) {
-        ctx.doc_op(DocOp::InsertMarkdown(format!("![[{kind}:{id}]]")));
+        ctx.doc_op(DocOp::InsertMarkdown(format!(
+            "![[{kind}:{id}]]{{h={}}}",
+            super::embeds::DEFAULT_OBJECT_H as i64
+        )));
     }
 }
 
@@ -154,15 +179,12 @@ fn items() -> Vec<MenuItem> {
     insert.push(
         MenuItem::new("ins_shapes", tr!("notes.menu.shapes"))
             .icon(MI_CATEGORY)
-            .children(shape_items("ins_shape_")),
+            .children(insert_primitive_items()),
     );
     insert.push(MenuItem::new("ins_image", tr!("notes.menu.image")).icon(MI_IMAGE_ICON));
     insert.push(MenuItem::new("ins_svg", tr!("notes.menu.svg")).icon(MI_BRUSH));
     insert.push(MenuItem::new("ins_svg_clip", tr!("notes.menu.svg_clipboard")).icon(MI_CODE));
     insert.push(MenuItem::new("ins_file", tr!("notes.menu.file")).icon(MI_ATTACH_FILE));
-    insert.push(MenuItem::separator());
-    insert.push(MenuItem::new("ins_base", tr!("notes.block.base")).icon(MI_GRID_ON));
-    insert.push(MenuItem::new("ins_canvas", tr!("notes.block.canvas")).icon(MI_ACCOUNT_TREE));
     let mut turn = block_items("turn_");
     turn.push(MenuItem::separator());
     turn.push(
@@ -210,9 +232,14 @@ pub fn handle(ctx: NotesCtx, id: &str) {
         ctx.doc_op(DocOp::TurnInto(SlashAction::Shape(name)));
         return;
     }
+    if let Some(kind) = id.strip_prefix("ins_object_") {
+        if OBJECTS.iter().any(|(k, _, _)| *k == kind) {
+            insert_object(ctx, kind);
+        }
+        return;
+    }
     if let Some(kind) = id.strip_prefix("ins_") {
         match kind {
-            "base" | "canvas" => insert_object(ctx, kind),
             "image" => media::pick_and_insert(ctx, PickKind::Image),
             "svg" => media::pick_and_insert(ctx, PickKind::Svg),
             "svg_clip" => paste_svg(ctx),

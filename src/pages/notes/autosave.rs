@@ -15,8 +15,6 @@ use std::time::{Duration, Instant};
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
-use super::base::BaseHandle;
-use super::canvas::CanvasHandle;
 use super::project::{self, ProjectTree, WriteOp};
 use super::state::{LiveObject, NotesCtx};
 
@@ -24,8 +22,8 @@ use super::state::{LiveObject, NotesCtx};
 #[derive(Clone)]
 enum SaveSource {
     Doc(DocumentEditorHandle),
-    Base(BaseHandle),
-    Canvas(CanvasHandle),
+    /// Доска/диаграмма: ручка сериализуется без сигналов.
+    Object(LiveObject),
     Tree(Arc<ProjectTree>),
     Bytes(Arc<Vec<u8>>),
     Remove,
@@ -35,8 +33,7 @@ impl SaveSource {
     fn to_op(&self, path: &str) -> WriteOp {
         match self {
             SaveSource::Doc(h) => WriteOp::Put { path: path.into(), bytes: h.serialize().into_bytes() },
-            SaveSource::Base(h) => WriteOp::Put { path: path.into(), bytes: h.serialize().into_bytes() },
-            SaveSource::Canvas(h) => WriteOp::Put { path: path.into(), bytes: h.serialize().into_bytes() },
+            SaveSource::Object(o) => WriteOp::Put { path: path.into(), bytes: o.serialize().into_bytes() },
             SaveSource::Tree(t) => WriteOp::Put { path: path.into(), bytes: t.serialize().into_bytes() },
             SaveSource::Bytes(b) => WriteOp::Put { path: path.into(), bytes: (**b).clone() },
             SaveSource::Remove => WriteOp::Remove { path: path.into() },
@@ -215,17 +212,15 @@ pub fn install_notes_autosave() {
                 enqueue(&path, SaveSource::Doc(p.handle.clone()), rev, Some(p.id.clone()), false);
             }
         }
-        // Базы и канвасы.
+        // Доски и диаграммы.
         for o in ctx.objects.get().iter() {
-            let (rev, source) = match o {
-                LiveObject::Base { handle, .. } => (handle.revision.get(), SaveSource::Base(handle.clone())),
-                LiveObject::Canvas { handle, .. } => {
-                    (handle.revision.get(), SaveSource::Canvas(handle.clone()))
-                }
+            let rev = match o {
+                LiveObject::Kanban { handle, .. } => handle.revision.get(),
+                LiveObject::Gantt { handle, .. } => handle.revision.get(),
             };
             let path = o.bundle_path();
             if rev > saved_rev(&path) {
-                enqueue(&path, source, rev, None, false);
+                enqueue(&path, SaveSource::Object(o.clone()), rev, None, false);
             }
         }
     });

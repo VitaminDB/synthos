@@ -351,45 +351,7 @@ document-editor {
     padding: 8px 4px 2px 4px;
 }
 
-/* ── Базы данных ──────────────────────────────────────────────── */
-.notes-base-switcher {
-    padding: 8px 12px 4px 12px;
-}
-.notes-base-tab {
-    border-radius: 6px;
-    padding: 4px 10px;
-    transition: background-color 120ms ease-out;
-}
-.notes-base-tab:hover {
-    background-color: var(--surface-hover);
-}
-.notes-base-tab.selected {
-    background-color: var(--surface-selected);
-}
-.notes-base-tab-icon {
-    font-size: 14px;
-    color: var(--text-muted);
-}
-.notes-base-tab-label {
-    font-size: 12px;
-    color: var(--text);
-}
-.notes-base-table {
-    margin: 4px 12px;
-}
-.notes-base-add-row {
-    border-radius: 6px;
-    padding: 6px 12px;
-    margin: 0px 12px 10px 12px;
-}
-.notes-base-add-row:hover {
-    background-color: var(--surface-hover);
-}
-.notes-base-row-delete {
-    font-size: 13px;
-}
-
-/* ── Канбан ───────────────────────────────────────────────────── */
+/* ── Канбан-доска ─────────────────────────────────────────────── */
 .notes-kanban {
     padding: 10px 12px;
 }
@@ -399,22 +361,41 @@ document-editor {
     background-color: var(--surface-hover);
     padding: 8px;
 }
+.notes-kanban-lane.ghost {
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 12px;
+}
+.notes-kanban-lane.ghost:hover {
+    background-color: var(--surface-hover);
+}
 .notes-kanban-lane-header {
     padding: 2px 4px 6px 4px;
 }
 .notes-kanban-dot {
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
     border-radius: 5px;
 }
-.notes-kanban-lane-title {
+.notes-kanban-dot.empty {
+    border-width: 1px;
+    border-color: var(--border-strong);
+}
+.notes-kanban-lane-name {
     font-size: 12px;
     font-weight: 600;
     color: var(--text);
+    background-color: transparent;
+    border-width: 0px;
+    padding: 2px 4px;
 }
 .notes-kanban-lane-count {
     font-size: 11px;
     color: var(--text-subtle);
+}
+.notes-kanban-lane-btn {
+    font-size: 14px;
 }
 .notes-kanban-card {
     border-radius: 8px;
@@ -423,35 +404,65 @@ document-editor {
     border-color: var(--border-soft);
     padding: 8px 10px;
 }
+.notes-kanban-card:hover {
+    border-color: var(--border-strong);
+}
+.notes-kanban-card.editing {
+    border-color: var(--primary);
+    padding: 4px 6px;
+}
+.notes-kanban-card-input {
+    font-size: 13px;
+    color: var(--text);
+    background-color: transparent;
+    border-width: 0px;
+    padding: 2px 4px;
+}
 .notes-kanban-card-title {
     font-size: 13px;
     color: var(--text);
 }
-.notes-kanban-card-meta {
-    font-size: 11px;
-    color: var(--text-muted);
+.notes-kanban-tail {
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+.notes-kanban-tail:hover {
+    background-color: var(--surface-selected);
 }
 
-/* ── Канвасы ──────────────────────────────────────────────────── */
-.notes-canvas-viewport {
-    background-color: var(--bg-chat);
-}
-.notes-canvas-toolbar {
-    background-color: var(--bg-panel);
-    border-width: 1px;
+/* ── Диаграмма Ганта ──────────────────────────────────────────── */
+.notes-gantt-toolbar {
+    padding: 6px 8px;
+    border-bottom-width: 1px;
     border-color: var(--border-soft);
-    border-radius: 10px;
-    padding: 4px;
 }
-.notes-canvas-card {
-    background-color: var(--bg-panel);
-    border-width: 1px;
-    border-color: var(--border);
-    border-radius: 10px;
+.notes-gantt-labels {
+    border-right-width: 1px;
+    border-color: var(--border-soft);
 }
-.notes-canvas-card.selected {
-    border-color: var(--primary);
-    border-width: 2px;
+.notes-gantt-labels-header {
+    padding: 0px 12px;
+}
+.notes-gantt-labels-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-subtle);
+}
+.notes-gantt-row {
+    padding: 0px 6px 0px 10px;
+}
+.notes-gantt-task-name {
+    font-size: 13px;
+    color: var(--text);
+    background-color: transparent;
+    border-width: 0px;
+    padding: 2px 4px;
+}
+/* Цвета шкалы: текст, сетка, акцент (бар без своего цвета, «сегодня»). */
+.notes-gantt-chart {
+    color: var(--text-muted);
+    border-color: var(--border-soft);
+    accent-color: var(--primary);
 }
 
 /* ── Врезки ![[…]] ────────────────────────────────────────────── */

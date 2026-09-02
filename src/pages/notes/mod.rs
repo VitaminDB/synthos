@@ -22,16 +22,16 @@ use crate::context::AppCtx;
 use crate::icons::*;
 
 pub mod autosave;
-pub mod base;
 pub mod blocks;
-pub mod canvas;
 pub mod contents;
 pub mod doc_menu;
 pub mod editor_pane;
 pub mod embeds;
+pub mod gantt;
 pub mod graph;
 pub mod icon_picker;
 pub mod index;
+pub mod kanban;
 pub mod links;
 pub mod media;
 pub mod project;

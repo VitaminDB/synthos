@@ -102,11 +102,19 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
     let id = b.id;
     let indent = 4.0 + depth as f32 * 12.0;
     // У фигуры подпись — машинное имя вида (`rect`), в дереве нужен
-    // локализованный: имя вида и есть его тип.
+    // локализованный: имя вида и есть его тип. У врезки-объекта (доска,
+    // диаграмма) подпись — `kind:id`, показываем тип и свою иконку.
+    let mut icon = kind_icon(b.kind);
     let label = if b.kind == "shape" {
         syngui::widgets::input::document_editor::ShapeKind::from_name(&b.label)
             .map(super::doc_menu::shape_label)
             .unwrap_or_else(|| kind_label(b.kind, b.level))
+    } else if b.kind == "embed" && b.label.starts_with("kanban:") {
+        icon = MI_VIEW_KANBAN;
+        tr!("notes.block.kanban")
+    } else if b.kind == "embed" && b.label.starts_with("gantt:") {
+        icon = MI_VIEW_TIMELINE;
+        tr!("notes.block.gantt")
     } else if b.label.trim().is_empty() {
         kind_label(b.kind, b.level)
     } else {
@@ -120,7 +128,7 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(DecoratedBox::new().style("width", StyleValue::px(indent)))
-        .child(Icon::new(kind_icon(b.kind)).class("notes-block-icon"))
+        .child(Icon::new(icon).class("notes-block-icon"))
         .child(
             DecoratedBox::new()
                 .class("grow")

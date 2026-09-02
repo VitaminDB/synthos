@@ -2,7 +2,7 @@
 //!
 //! Проект — один `.syn`-файл ([`project`]); дерево страниц живёт в памяти
 //! (`tree`) и пишется автосейвом по `tree_rev`. Страницы и объекты
-//! (базы/канвасы) загружаются лениво и держатся в пулах `pages`/`objects`
+//! (доски/диаграммы) загружаются лениво и держатся в пулах `pages`/`objects`
 //! — у каждого своя ручка с сигналом ревизии, на который подписан автосейв.
 //! Активная страница одна; плитка рейла одна на проект.
 
@@ -17,11 +17,11 @@ use syngui::widgets::input::document_editor::{DocGrid, DocLayout, DocOp, Documen
 use crate::config::{now_millis, AppConfig};
 
 use super::autosave;
-use super::base::model::BaseDoc;
-use super::base::BaseHandle;
-use super::canvas::model::CanvasDoc;
-use super::canvas::CanvasHandle;
+use super::gantt::model::GanttDoc;
+use super::gantt::GanttHandle;
 use super::index::VaultIndex;
+use super::kanban::model::KanbanDoc;
+use super::kanban::KanbanHandle;
 use super::project::{self, PageGrid, PageLayout, PageNode, ProjectTree};
 
 /// Загруженная страница: исходник для виджета (fingerprint стабилен между
@@ -44,24 +44,35 @@ impl LivePage {
     }
 }
 
+/// Виды объектов-примитивов (`![[<kind>:<id>]]`).
+pub const OBJECT_KINDS: [&str; 2] = ["kanban", "gantt"];
+
 /// Загруженный объект-врезка.
 #[derive(Clone)]
 pub enum LiveObject {
-    Base { id: String, handle: BaseHandle },
-    Canvas { id: String, handle: CanvasHandle },
+    Kanban { id: String, handle: KanbanHandle },
+    Gantt { id: String, handle: GanttHandle },
 }
 
 impl LiveObject {
     pub fn id(&self) -> &str {
         match self {
-            LiveObject::Base { id, .. } | LiveObject::Canvas { id, .. } => id,
+            LiveObject::Kanban { id, .. } | LiveObject::Gantt { id, .. } => id,
         }
     }
 
     pub fn kind(&self) -> &'static str {
         match self {
-            LiveObject::Base { .. } => "base",
-            LiveObject::Canvas { .. } => "canvas",
+            LiveObject::Kanban { .. } => "kanban",
+            LiveObject::Gantt { .. } => "gantt",
+        }
+    }
+
+    /// Сериализация без сигналов (автосейв, копии).
+    pub fn serialize(&self) -> String {
+        match self {
+            LiveObject::Kanban { handle, .. } => handle.serialize(),
+            LiveObject::Gantt { handle, .. } => handle.serialize(),
         }
     }
 
@@ -387,10 +398,7 @@ impl NotesCtx {
                     .get_untracked()
                     .iter()
                     .find(|o| o.id() == oid)
-                    .map(|o| match o {
-                        LiveObject::Base { handle, .. } => handle.serialize(),
-                        LiveObject::Canvas { handle, .. } => handle.serialize(),
-                    })
+                    .map(|o| o.serialize())
                     .or_else(|| project::read_text(&self.project_path.get_untracked(), &src_path));
                 if let Some(content) = content {
                     autosave::queue_bytes(&project::object_path(&kind, &new_oid), content.into_bytes());
@@ -484,7 +492,7 @@ impl NotesCtx {
         self.doc_epoch.set(self.doc_epoch.get_untracked() + 1);
     }
 
-    // ─── Объекты (базы/канвасы) ───────────────────────────────────────────
+    // ─── Объекты (доски/диаграммы) ────────────────────────────────────────
 
     /// Живой объект по виду и id: из пула либо из бандла.
     pub fn object(&self, kind: &str, id: &str) -> Option<LiveObject> {
@@ -494,10 +502,13 @@ impl NotesCtx {
         let path = project::object_path(kind, id);
         let content = project::read_text(&self.project_path.get_untracked(), &path)?;
         let obj = match kind {
-            "base" => LiveObject::Base { id: id.to_string(), handle: BaseHandle::new(BaseDoc::parse(&content).ok()?) },
-            "canvas" => LiveObject::Canvas {
+            "kanban" => LiveObject::Kanban {
                 id: id.to_string(),
-                handle: CanvasHandle::new(CanvasDoc::parse(&content).ok()?),
+                handle: KanbanHandle::new(KanbanDoc::parse(&content).ok()?),
+            },
+            "gantt" => LiveObject::Gantt {
+                id: id.to_string(),
+                handle: GanttHandle::new(GanttDoc::parse(&content).ok()?),
             },
             _ => return None,
         };
@@ -510,15 +521,19 @@ impl NotesCtx {
     pub fn create_object(&self, kind: &str) -> Option<String> {
         let id = project::new_id();
         let (obj, content) = match kind {
-            "base" => {
-                let doc = BaseDoc::template();
+            "kanban" => {
+                let doc = KanbanDoc::template([
+                    &tr!("notes.kanban.col.todo"),
+                    &tr!("notes.kanban.col.doing"),
+                    &tr!("notes.kanban.col.done"),
+                ]);
                 let content = doc.serialize();
-                (LiveObject::Base { id: id.clone(), handle: BaseHandle::new(doc) }, content)
+                (LiveObject::Kanban { id: id.clone(), handle: KanbanHandle::new(doc) }, content)
             }
-            "canvas" => {
-                let doc = CanvasDoc::template();
+            "gantt" => {
+                let doc = GanttDoc::template();
                 let content = doc.serialize();
-                (LiveObject::Canvas { id: id.clone(), handle: CanvasHandle::new(doc) }, content)
+                (LiveObject::Gantt { id: id.clone(), handle: GanttHandle::new(doc) }, content)
             }
             _ => return None,
         };
@@ -564,7 +579,7 @@ impl NotesCtx {
     }
 }
 
-/// `(kind, id)` всех врезок объектов в markdown: `![[base:<id>]]`.
+/// `(kind, id)` всех врезок объектов в markdown: `![[kanban:<id>]]`.
 pub fn object_refs(md: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = md;
@@ -573,7 +588,7 @@ pub fn object_refs(md: &str) -> Vec<(String, String)> {
         let Some(end) = after.find("]]") else { break };
         let inner = after[..end].trim();
         if let Some((kind, id)) = inner.split_once(':') {
-            if (kind == "base" || kind == "canvas") && !id.is_empty() {
+            if OBJECT_KINDS.contains(&kind) && !id.is_empty() {
                 let pair = (kind.to_string(), id.trim().to_string());
                 if !out.contains(&pair) {
                     out.push(pair);
@@ -591,10 +606,10 @@ mod tests {
 
     #[test]
     fn object_refs_parse() {
-        let md = "a ![[base:abc]] b [[Страница]] ![[canvas:xy]] ![[base:abc]]";
+        let md = "a ![[kanban:abc]] b [[Страница]] ![[gantt:xy]] ![[kanban:abc]] ![[base:old]]";
         assert_eq!(
             object_refs(md),
-            vec![("base".to_string(), "abc".to_string()), ("canvas".to_string(), "xy".to_string())]
+            vec![("kanban".to_string(), "abc".to_string()), ("gantt".to_string(), "xy".to_string())]
         );
     }
 }

@@ -7,8 +7,8 @@
 //! ```text
 //! notes/tree.json               дерево страниц: id / title / icon / children
 //! notes/pages/<id>.md           markdown страницы
-//! notes/objects/<id>.base.json  база данных (блок `![[base:<id>]]` в странице)
-//! notes/objects/<id>.canvas.json канвас (блок `![[canvas:<id>]]`)
+//! notes/objects/<id>.kanban.json канбан-доска (блок `![[kanban:<id>]]` в странице)
+//! notes/objects/<id>.gantt.json  диаграмма Ганта (блок `![[gantt:<id>]]`)
 //! notes/assets/<sha256>.<ext>   вложения (`asset:<sha256>.<ext>` в md)
 //! ```
 //!
@@ -376,7 +376,7 @@ pub fn page_path(id: &str) -> String {
     format!("{PAGES_DIR}/{id}.md")
 }
 
-/// `kind` — `base` | `canvas`.
+/// `kind` — `kanban` | `gantt`.
 pub fn object_path(kind: &str, id: &str) -> String {
     format!("{OBJECTS_DIR}/{id}.{kind}.json")
 }
@@ -578,10 +578,10 @@ pub fn list_assets(path: &Path) -> Vec<String> {
 
 // ─────────────────────────── Миграция старого vault'а ───────────────────────────
 
-/// Импорт папки первой волны (`.md` + `*.base.json` + `*.canvas.json`,
-/// вложенность папок) в дерево + файлы бандла. Папка `X/` рядом с `X.md`
-/// становится детьми страницы X; базы и канвасы — страницами с единственным
-/// блоком-врезкой. Пустая/отсутствующая папка → `None`.
+/// Импорт папки первой волны (`.md`, вложенность папок) в дерево + файлы
+/// бандла. Папка `X/` рядом с `X.md` становится детьми страницы X. Базы и
+/// канвасы тех волн (`*.base.json`, `*.canvas.json`) больше не
+/// поддерживаются и пропускаются. Пустая/отсутствующая папка → `None`.
 pub fn migrate_folder(root: &Path) -> Option<(ProjectTree, Vec<(String, Vec<u8>)>)> {
     if !root.is_dir() {
         return None;
@@ -617,26 +617,13 @@ fn migrate_dir(dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Vec<PageNode> 
             continue;
         }
         let lower = name.to_lowercase();
-        let (title, kind) = if let Some(t) = strip_ci(name, ".base.json") {
-            (t.to_string(), "base")
-        } else if let Some(t) = strip_ci(name, ".canvas.json") {
-            (t.to_string(), "canvas")
-        } else if lower.ends_with(".md") {
-            (name[..name.len() - 3].to_string(), "page")
-        } else {
+        if !lower.ends_with(".md") {
             continue;
-        };
+        }
+        let title = name[..name.len() - 3].to_string();
         let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
         let mut node = PageNode::new(title.clone());
-        match kind {
-            "page" => files.push((page_path(&node.id), bytes)),
-            _ => {
-                let oid = new_id();
-                files.push((object_path(kind, &oid), bytes));
-                let md = format!("![[{kind}:{oid}]]\n");
-                files.push((page_path(&node.id), md.into_bytes()));
-            }
-        }
+        files.push((page_path(&node.id), bytes));
         if dirs.contains(&title) {
             node.children = migrate_dir(&dir.join(&title), files);
             consumed_dirs.insert(title);
@@ -658,17 +645,6 @@ fn migrate_dir(dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Vec<PageNode> 
         out.push(node);
     }
     out
-}
-
-fn strip_ci<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
-    if name.len() < suffix.len() {
-        return None;
-    }
-    let idx = name.len() - suffix.len();
-    if !name.is_char_boundary(idx) {
-        return None;
-    }
-    name[idx..].eq_ignore_ascii_case(suffix).then(|| &name[..idx])
 }
 
 #[cfg(test)]
@@ -790,19 +766,14 @@ mod tests {
         std::fs::create_dir_all(dir.join("Проект")).unwrap();
         std::fs::write(dir.join("Проект.md"), "root").unwrap();
         std::fs::write(dir.join("Проект/Идеи.md"), "ideas").unwrap();
+        // Базы первой волны больше не импортируются.
         std::fs::write(dir.join("План.base.json"), "{}").unwrap();
         let (tree, files) = migrate_folder(&dir).unwrap();
-        assert_eq!(tree.roots.len(), 2);
+        assert_eq!(tree.roots.len(), 1);
         let proj = tree.roots.iter().find(|n| n.title == "Проект").unwrap();
         assert_eq!(proj.children[0].title, "Идеи");
-        let plan = tree.roots.iter().find(|n| n.title == "План").unwrap();
-        let md = files
-            .iter()
-            .find(|(p, _)| *p == page_path(&plan.id))
-            .map(|(_, b)| String::from_utf8_lossy(b).to_string())
-            .unwrap();
-        assert!(md.starts_with("![[base:"));
-        assert!(files.iter().any(|(p, _)| p.starts_with(OBJECTS_DIR)));
+        assert!(tree.roots.iter().all(|n| n.title != "План"));
+        assert!(!files.iter().any(|(p, _)| p.starts_with(OBJECTS_DIR)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

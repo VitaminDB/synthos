@@ -1,9 +1,11 @@
 //! Живые врезки `![[…]]` в страницах.
 //!
-//! `![[base:<id>]]` / `![[canvas:<id>]]` — объекты проекта, живые и
-//! редактируемые прямо в странице (ручки из пула `NotesCtx.objects`,
-//! автосейв подписан и на них). `![[Название]]` — другая страница read-only
-//! (глубина ≤ 2, циклы отсекаются по цепочке id).
+//! `![[kanban:<id>]]` / `![[gantt:<id>]]` — примитивы-объекты проекта
+//! (канбан-доска, диаграмма Ганта), живые и редактируемые прямо в странице
+//! (ручки из пула `NotesCtx.objects`, автосейв подписан и на них). Высота
+//! такой врезки — ключ `h` свободной раскладки (тянется за нижнюю кромку,
+//! правится в свойствах); без него — дефолт. `![[Название]]` — другая
+//! страница read-only (глубина ≤ 2, циклы отсекаются по цепочке id).
 
 use std::sync::Arc;
 
@@ -12,9 +14,16 @@ use syngui::widgets::input::document_editor::{DocumentEditor, EmbedCtx, EmbedFac
 
 use crate::icons::*;
 
-use super::state::{LiveObject, NotesCtx, TAB_PROPS};
+use super::state::{LiveObject, NotesCtx};
 
 const MAX_DEPTH: usize = 2;
+/// Высота доски/диаграммы, пока её не растянули.
+pub const DEFAULT_OBJECT_H: f32 = 340.0;
+
+/// Цель врезки — объект-примитив со своей высотой.
+pub fn is_sized_object(target: &str) -> bool {
+    target.starts_with("kanban:") || target.starts_with("gantt:")
+}
 
 pub struct NotesEmbedFactory {
     ctx: NotesCtx,
@@ -28,20 +37,21 @@ impl EmbedFactory for NotesEmbedFactory {
     fn build(&self, target: &str, ectx: &EmbedCtx) -> Option<Box<dyn Widget>> {
         let ctx = self.ctx;
         let target = target.trim();
-        if let Some(id) = target.strip_prefix("base:") {
-            let LiveObject::Base { handle, .. } = ctx.object("base", id.trim())? else { return None };
+        let height = ectx.height.unwrap_or(DEFAULT_OBJECT_H);
+        if let Some(id) = target.strip_prefix("kanban:") {
+            let LiveObject::Kanban { handle, .. } = ctx.object("kanban", id.trim())? else { return None };
             return Some(framed(
-                object_header(MI_GRID_ON, tr!("notes.embed.base")),
-                Box::new(super::base::pane::view(handle)),
+                object_header(MI_VIEW_KANBAN, tr!("notes.embed.kanban")),
+                Box::new(super::kanban::view::view(handle)),
+                height,
             ));
         }
-        if let Some(id) = target.strip_prefix("canvas:") {
-            let LiveObject::Canvas { handle, .. } = ctx.object("canvas", id.trim())? else { return None };
-            // Выделение карточки переключает правую панель на «Свойства».
-            handle.set_on_select(move || ctx.right_tab.set(TAB_PROPS));
+        if let Some(id) = target.strip_prefix("gantt:") {
+            let LiveObject::Gantt { handle, .. } = ctx.object("gantt", id.trim())? else { return None };
             return Some(framed(
-                object_header(MI_ACCOUNT_TREE, tr!("notes.embed.canvas")),
-                Box::new(super::canvas::pane::view(handle)),
+                object_header(MI_VIEW_TIMELINE, tr!("notes.embed.gantt")),
+                Box::new(super::gantt::view::view(handle)),
+                height,
             ));
         }
         let id = ctx.index.get_untracked().resolve(target)?;
@@ -53,7 +63,7 @@ impl EmbedFactory for NotesEmbedFactory {
         }
         let mut chain = ectx.chain.clone();
         chain.push(id.clone());
-        let inner_ctx = EmbedCtx { depth: ectx.depth + 1, chain };
+        let inner_ctx = EmbedCtx { depth: ectx.depth + 1, chain, height: None };
         let content = ctx.page_markdown(&id);
         let title = ctx.title_of(&id);
         Some(Box::new(
@@ -72,6 +82,10 @@ impl EmbedFactory for NotesEmbedFactory {
                         .class("notes-embed-page"),
                 ),
         ))
+    }
+
+    fn has_own_height(&self, target: &str) -> bool {
+        is_sized_object(target.trim())
     }
 }
 
@@ -106,8 +120,8 @@ fn object_header(icon: &'static str, title: String) -> impl Widget {
         .child(Text::new(title).max_lines(1).class("notes-embed-title"))
 }
 
-/// База/канвас во врезке живут в фиксированной высоте.
-fn framed(header: impl Widget + 'static, body: Box<dyn Widget>) -> Box<dyn Widget> {
+/// Доска/диаграмма во врезке живут в фиксированной высоте блока.
+fn framed(header: impl Widget + 'static, body: Box<dyn Widget>, height: f32) -> Box<dyn Widget> {
     Box::new(
         Column::new()
             .gap(4.0)
@@ -115,7 +129,7 @@ fn framed(header: impl Widget + 'static, body: Box<dyn Widget>) -> Box<dyn Widge
             .child(header)
             .child(
                 DecoratedBox::new()
-                    .style("height", syngui::mss::StyleValue::px(340.0))
+                    .style("height", syngui::mss::StyleValue::px(height.max(80.0)))
                     .class("notes-embed-frame")
                     .child(crate::components::workspace_frame::expand(body)),
             ),

@@ -9,7 +9,10 @@
 //! Редактор держит высоту не меньше видимой области (`fill_height`), чтобы
 //! клик и правый клик ниже последнего блока попадали в документ, а
 //! раскладку страницы (поток/свободная, сетка, привязка) отдаёт
-//! `NotesCtx::active_doc_layout` из настроек страницы в дереве.
+//! `NotesCtx::active_doc_layout` из настроек страницы в дереве. В
+//! свободной раскладке страница прокручивается и по горизонтали: блок,
+//! ушедший за правый край, растягивает холст (распорка редактора), а
+//! колонка потока при этом держит ширину видимой области.
 
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditor;
@@ -30,6 +33,7 @@ pub fn body() -> impl Widget {
             return vec![Box::new(empty_state())];
         };
         let page_id = page.id.clone();
+        let layout = ctx.active_doc_layout();
         let editor = DocumentEditor::new()
             .markdown((*page.source).clone())
             .handle(&page.handle)
@@ -37,7 +41,7 @@ pub fn body() -> impl Widget {
             .media(super::media::resolver(ctx))
             .embeds(super::embeds::factory(ctx))
             .model_epoch(ctx.doc_epoch.get())
-            .layout(ctx.active_doc_layout())
+            .layout(layout)
             .fill_height(true)
             .slash_items(doc_menu::slash_items())
             .on_slash_custom(doc_menu::slash_custom(ctx))
@@ -49,10 +53,13 @@ pub fn body() -> impl Widget {
                 super::media::ingest_dropped_file(ctx, page_id.clone(), file, token);
             })
             .class("notes-editor");
+        // Поток не выходит за ширину колонки — прокрутка только вниз;
+        // холст свободной раскладки — в обе стороны.
+        let scroller = if layout.free { Page::new().both() } else { Page::new().vertical() };
         vec![Box::new(
             Stack::new()
                 .clip(false)
-                .child(Page::new().child(editor).class("notes-editor-page"))
+                .child(scroller.child(editor).class("notes-editor-page"))
                 .child(doc_menu::popup(ctx)),
         )]
     })

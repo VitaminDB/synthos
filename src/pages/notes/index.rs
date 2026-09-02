@@ -2,7 +2,7 @@
 //!
 //! Лёгкий лексер по сырому markdown собирает `[[цели]]` (и `![[врезки]]`
 //! — они тоже связи), минуя fenced-код. Цель — название страницы (без
-//! регистра); ссылки на объекты (`base:<id>`, `canvas:<id>`) не считаются
+//! регистра); ссылки на объекты (`kanban:<id>`, `gantt:<id>`) не считаются
 //! связями между страницами. Ключ всюду — id страницы из дерева проекта.
 
 use std::collections::HashMap;
@@ -139,7 +139,7 @@ impl VaultIndex {
 }
 
 /// Сырые цели `[[...]]` в md-тексте; fenced-код и объекты
-/// (`base:`/`canvas:`/`shape:`) пропускаются.
+/// (`kanban:`/`gantt:`/`shape:`) пропускаются.
 pub fn lex_links(content: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_fence = false;
@@ -169,11 +169,12 @@ pub fn lex_links(content: &str) -> Vec<String> {
     out
 }
 
-/// `base:<id>` / `canvas:<id>` — врезка объекта, `shape:<вид>` — векторный
-/// примитив. Ни то, ни другое не ссылка на страницу: без этой проверки
-/// каждая фигура висела бы в графе битой ссылкой.
+/// `kanban:<id>` / `gantt:<id>` — врезка объекта, `shape:<вид>` — векторный
+/// примитив; `base:`/`canvas:` — объекты первых волн, которых больше нет.
+/// Ничто из этого не ссылка на страницу: без этой проверки каждая фигура
+/// висела бы в графе битой ссылкой.
 pub fn is_object_target(target: &str) -> bool {
-    target.starts_with("base:") || target.starts_with("canvas:") || target.starts_with("shape:")
+    ["kanban:", "gantt:", "shape:", "base:", "canvas:"].iter().any(|p| target.starts_with(p))
 }
 
 #[cfg(test)]
@@ -183,7 +184,7 @@ mod tests {
 
     #[test]
     fn lexer_finds_links_and_skips_code_and_objects() {
-        let md = "текст [[Раз]] и ![[Два|врезка]] ![[base:abc]] ![[shape:rect]]\n```\n[[не ссылка]]\n```\n[[Три]]";
+        let md = "текст [[Раз]] и ![[Два|врезка]] ![[kanban:abc]] ![[gantt:x]] ![[shape:rect]]\n```\n[[не ссылка]]\n```\n[[Три]]";
         assert_eq!(lex_links(md), vec!["Раз", "Два", "Три"]);
     }
 

@@ -26,6 +26,7 @@ use crate::icons::{
     MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
 };
 use crate::pages::node_editor::run_controls;
+use crate::pages::settings::theme_data;
 use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
 use crate::pages::node_editor::timing;
 use crate::syn_chat::session;
@@ -406,9 +407,23 @@ fn edit_box(msg_idx: usize, body: String) -> impl Widget {
 fn bubble_markdown(body: &str, class: &'static str) -> impl Widget {
     let normalized = normalize_assistant_markdown(body);
     MarkdownView::new(normalized)
-        .with_syntax_theme("InspiredGitHub")
+        .with_syntax_theme(syntax_theme())
         .with_copy_code(true)
         .class(class)
+}
+
+/// Тема syntect-подсветки под текущую тему приложения. Раньше везде стоял
+/// светлый `InspiredGitHub`, и на тёмных темах код в карточках tool-call
+/// был тёмным по тёмному.
+fn syntax_theme() -> &'static str {
+    let dark = theme_data::find(&use_context::<AppCtx>().theme_key.get())
+        .map(|t| t.is_dark)
+        .unwrap_or(true);
+    if dark {
+        "base16-ocean.dark"
+    } else {
+        "InspiredGitHub"
+    }
 }
 
 fn normalize_assistant_markdown(body: &str) -> String {
@@ -583,7 +598,7 @@ fn streaming_tool_preview(raw: &str) -> Box<dyn Widget> {
         Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
             MarkdownView::new(fence_plain_text(text, "json"))
                 .with_copy_code(false)
-                .with_syntax_theme("InspiredGitHub")
+                .with_syntax_theme(syntax_theme())
                 .class("tool-call-args"),
         ))
     };
@@ -725,7 +740,7 @@ pub(super) fn tool_call_card_only(
             MarkdownView::new(md)
                 .selectable(true)
                 .with_copy_code(false)
-                .with_syntax_theme("InspiredGitHub")
+                .with_syntax_theme(syntax_theme())
                 .class("tool-call-args"),
         ))
     };

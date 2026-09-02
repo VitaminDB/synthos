@@ -181,8 +181,12 @@
     font-size: 15px;
     font-weight: 600;
     width: 280px;
-    padding: 1px 6px;
-    border-radius: 8px;
+    /* Дефолтная высота TextField — 40px: колонка «название + модель»
+     * распухала, и подзаголовок уезжал под нижний край шапки. Держим поле
+     * в высоту строки заголовка. */
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 6px;
     background-color: var(--bg-search);
     border-width: 1px;
     border-color: var(--primary);

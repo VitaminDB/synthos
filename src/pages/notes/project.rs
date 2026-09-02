@@ -38,10 +38,13 @@ pub const TREE_VERSION: u32 = 1;
 
 /// Настройки раскладки страницы (панель «Свойства»). Сами координаты
 /// блоков живут в markdown страницы — здесь только режим, сетка и привязка.
+///
+/// Дефолт — **свободная раскладка с привязкой** (шаг 5 px) и сеткой из
+/// точек: страница ведёт себя как холст, поток включается вручную.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PageLayout {
     /// Свободная раскладка: блоки ставятся мышью, а не колонкой потока.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub free: bool,
     /// Фон холста.
     #[serde(default)]
@@ -83,7 +86,7 @@ fn default_true() -> bool {
 impl Default for PageLayout {
     fn default() -> Self {
         Self {
-            free: false,
+            free: true,
             grid: PageGrid::default(),
             grid_step: default_grid_step(),
             snap: true,
@@ -678,7 +681,7 @@ mod tests {
         let def = PageLayout::default();
         assert!(def.snap);
         assert_eq!(def.snap_step, 5.0);
-        assert!(!def.free);
+        assert!(def.free, "свободная раскладка — режим по умолчанию");
 
         // Дефолт не попадает в tree.json — старые проекты читаются как есть.
         let tree = sample_tree();
@@ -689,7 +692,7 @@ mod tests {
         // Изменённая — сохраняется и читается обратно.
         let mut tree = sample_tree();
         tree.find_mut("b").unwrap().layout =
-            PageLayout { free: true, grid: PageGrid::Lines, grid_step: 25.0, snap: false, snap_step: 2.0 };
+            PageLayout { free: false, grid: PageGrid::Lines, grid_step: 25.0, snap: false, snap_step: 2.0 };
         let back = ProjectTree::parse(&tree.serialize()).unwrap();
         assert_eq!(back.layout_of("b"), tree.layout_of("b"));
         assert_eq!(back.layout_of("c"), PageLayout::default());

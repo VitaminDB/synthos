@@ -193,6 +193,7 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
 
     let grid_id = id.clone();
     let grid = Dropdown::new()
+        .width(132.0)
         .items(
             PageGrid::ALL
                 .iter()
@@ -207,19 +208,22 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
                 .find(|g| grid_value(*g) == v)
                 .unwrap_or_default();
             ctx.set_page_layout(&grid_id, PageLayout { grid, ..ctx.page_layout(&grid_id) });
-        });
+        })
+        .class("notes-props-field");
 
     let step_id = id.clone();
     let grid_step = SpinBox::new()
         .range(2.0, 200.0)
         .step(5.0)
+        .width(96.0)
         .value(layout.grid_step as f64)
         .on_change(move |v| {
             ctx.set_page_layout(
                 &step_id,
                 PageLayout { grid_step: v as f32, ..ctx.page_layout(&step_id) },
             );
-        });
+        })
+        .class("notes-props-field");
 
     let snap_id = id.clone();
     let snap_row = switch_row(tr!("notes.props.layout.snap"), layout.snap, move |on| {
@@ -230,13 +234,15 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
     let snap_step = SpinBox::new()
         .range(1.0, 100.0)
         .step(1.0)
+        .width(96.0)
         .value(layout.snap_step as f64)
         .on_change(move |v| {
             ctx.set_page_layout(
                 &snap_step_id,
                 PageLayout { snap_step: v as f32, ..ctx.page_layout(&snap_step_id) },
             );
-        });
+        })
+        .class("notes-props-field");
 
     col = col
         .child(field_row(tr!("notes.props.layout.grid"), grid))

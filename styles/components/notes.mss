@@ -142,6 +142,12 @@ document-editor {
 .notes-props-row {
     min-height: 26px;
 }
+/* Поля раскладки: компактнее дефолтных 40px, иначе панель распухает. */
+.notes-props-field {
+    height: 28px;
+    font-size: 12px;
+    border-radius: 8px;
+}
 .notes-props-row-label {
     font-size: 12px;
     color: var(--text-muted);

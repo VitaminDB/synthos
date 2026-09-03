@@ -75,6 +75,11 @@ pub struct ToolOutcome {
     /// `true` — результат неуспешен (non-zero exit, ошибка парсинга,
     /// неизвестный инструмент). Красится UI иначе.
     pub error: bool,
+    /// `true` — до исполнения не дошло: вызов не прошёл разбор аргументов
+    /// (битый JSON, нет обязательного поля, неизвестный инструмент).
+    /// Agent-loop считает такие ходы подряд: модель, которая трижды не
+    /// смогла собрать вызов, уже не соберёт его и на десятый раз.
+    pub invalid_args: bool,
 }
 
 /// Диспетчер исполнения: читает `call.function.name` и вызывает
@@ -156,10 +161,15 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
             content: truncate_output(&content, output_limit(&name)),
             name,
             error: false,
+            invalid_args: false,
         },
         Err(e) => ToolOutcome {
             tool_call_id: call.id.clone(),
             name,
+            invalid_args: matches!(
+                e,
+                ToolError::BadArgs(_) | ToolError::MissingField(_) | ToolError::Unknown(_)
+            ),
             content: e.to_string(),
             error: true,
         },

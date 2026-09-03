@@ -198,6 +198,8 @@ scraper = "0.20"
 
 # URL — нужен для unwrap DDG-обёрток `/l/?uddg=…` (parse + query_pairs).
 url = "2"
+# Локальное смещение таймзоны для меток времени в ленте (`localtime_r`).
+libc = "0.2"
 
 # Кодирование query-string в URL поиска DDG.
 urlencoding = "2"
@@ -288,3 +290,7 @@ incremental = true
 [[bin]]
 name = "quant_pack_smoke"
 path = "src/bin/quant_pack_smoke.rs"
+
+[[bin]]
+name = "agent_smoke"
+path = "src/bin/agent_smoke.rs"

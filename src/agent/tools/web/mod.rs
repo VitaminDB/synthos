@@ -4,7 +4,7 @@
 //! - [`action`]   — типы аргументов tool-call'а и их парсинг
 //!   (`{action: "search"|"read", query?, url?, max_results?, lang?}`).
 //! - [`http`]     — общий low-level fetch (reqwest, единый UA, лимит 1 MB).
-//! - [`search`]   — DuckDuckGo html-endpoint + scraper-парсер SERP.
+//! - [`search`]   — DuckDuckGo html/lite-endpoint'ы + Bing как запасной, scraper-парсеры SERP.
 //! - [`read`]     — fetch HTML → Readability (`dom_smoothie`) → htmd → markdown.
 //! - [`envelope`] — форматирование результата для LLM (plain-секции
 //!   `WEB_SEARCH … --- results ---`, `GET … --- markdown ---`,
@@ -43,7 +43,12 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
             max_results,
             lang,
         } => match search::search(&query, &lang, max_results).await {
-            Ok(hits) => Ok(envelope::format_search_envelope(&query, &lang, &hits)),
+            Ok(found) => Ok(envelope::format_search_envelope(
+                &query,
+                &lang,
+                found.engine,
+                &found.hits,
+            )),
             // SearchError::{Network,Challenge,Empty} → форматируется через
             // Display импл; envelope печатает осмысленное «почему».
             Err(e) => Ok(envelope::format_search_error(&query, &lang, &e.to_string())),

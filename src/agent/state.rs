@@ -239,6 +239,14 @@ pub struct ChatMsg {
     /// сообщение. Старые JSON-чаты без поля грузятся как `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compacted_iter: Option<u32>,
+    /// Дописка к телу, которую видит только модель: заметки agent-loop'а к
+    /// результату инструмента («вызов сделан N-й раз», «осталось K ходов»).
+    /// В UI не показывается, в промпт уходит вслед за телом — так история,
+    /// собранная из ленты на следующем сообщении, совпадает с той, что была у
+    /// хода, и префикс-KV диалога не обнуляется. Старые чаты без поля
+    /// читаются как пустая строка.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model_note: String,
 }
 
 impl ChatMsg {
@@ -263,6 +271,7 @@ impl ChatMsg {
             tool_calls: None,
             attachments,
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 
@@ -281,6 +290,7 @@ impl ChatMsg {
             tool_calls: None,
             attachments: Vec::new(),
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 
@@ -299,6 +309,7 @@ impl ChatMsg {
             tool_calls: None,
             attachments: Vec::new(),
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 
@@ -323,6 +334,7 @@ impl ChatMsg {
             tool_calls: Some(calls),
             attachments: Vec::new(),
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 
@@ -352,6 +364,7 @@ impl ChatMsg {
             tool_calls: None,
             attachments: Vec::new(),
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 
@@ -386,6 +399,7 @@ impl ChatMsg {
             tool_calls: None,
             attachments: Vec::new(),
             compacted_iter: None,
+            model_note: String::new(),
         }
     }
 }

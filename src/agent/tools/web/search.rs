@@ -1,4 +1,4 @@
-//! Поиск через DuckDuckGo: основной html-endpoint + lite-fallback.
+//! Поиск: DuckDuckGo (html-endpoint + lite-fallback), затем Bing.
 //!
 //! Pipeline:
 //! 1. `try_html_endpoint` → `https://html.duckduckgo.com/html/?q=…`
@@ -6,14 +6,19 @@
 //! 2. Если ответ — challenge-страница (anti-bot) или просто пустой
 //!    SERP, переходим к `try_lite_endpoint` → `https://lite.duckduckgo.com/lite/?q=…`
 //!    с другой вёрсткой (table-based, прямые URL без `/l/?uddg=`).
-//! 3. Сетевая ошибка (DNS / timeout / 4xx-5xx) на ЛЮБОМ шаге проброшена
-//!    как `SearchError::Network` без попытки следующего endpoint'а —
-//!    это означает «нет интернета», fallback не поможет.
+//! 3. Если и lite не дал карточек — `try_bing` → `https://www.bing.com/search?q=…`.
+//!    DDG режет капчей целые выходные IP (03.09.2026: все запросы из
+//!    Казахстана получали challenge, и агент остался без поиска вообще),
+//!    Bing при этом отдаёт обычную SSR-выдачу без JS.
+//! 4. Сетевая ошибка (DNS / timeout / 4xx-5xx) на DDG проброшена как
+//!    `SearchError::Network` без попытки следующего endpoint'а — это
+//!    означает «нет интернета», fallback не поможет. Сетевая ошибка на Bing
+//!    (DDG-то ответил) — не фатальна: возвращаем исход DDG.
 //!
 //! Контракт ошибок [`SearchError`]:
 //! - `Network`     — network/transport error → envelope печатает как «DDG fetch: …»;
-//! - `Challenge`   — оба endpoint'а отдали captcha → envelope подсказывает VPN/exit-IP;
-//! - `Empty`       — оба endpoint'а отдали 200 без карточек → envelope подсказывает переформулировать.
+//! - `Challenge`   — DDG отдал captcha, Bing не помог → envelope подсказывает VPN/exit-IP;
+//! - `Empty`       — все движки отдали 200 без карточек → envelope подсказывает переформулировать.
 
 use scraper::{Html, Selector};
 
@@ -34,6 +39,23 @@ const DDG_LITE_BASE: &str = "https://lite.duckduckgo.com/lite/";
 /// это ведёт себя стабильнее, чем referer от `duckduckgo.com`.
 const DDG_REFERER: &str = "https://html.duckduckgo.com/";
 const DDG_LITE_REFERER: &str = "https://lite.duckduckgo.com/";
+
+/// Запасной движок. SSR-выдача Bing работает без JS и без Referer'а;
+/// карточка результата — `li.b_algo`, ссылка заголовка идёт через
+/// редирект `/ck/a?…&u=a1<base64url>` (см. [`unwrap_bing_redirect`]).
+const BING_BASE: &str = "https://www.bing.com/search";
+const BING_REFERER: &str = "https://www.bing.com/";
+
+/// Имена движков для шапки envelope'а (`engine=…`).
+pub const ENGINE_DDG: &str = "duckduckgo";
+pub const ENGINE_BING: &str = "bing";
+
+/// Успешный поиск: чьи карточки отдаём.
+#[derive(Debug, Clone)]
+pub struct SearchHits {
+    pub engine: &'static str,
+    pub hits: Vec<SerpHit>,
+}
 
 /// Типизированная ошибка поиска. Все варианты конвертируются в
 /// envelope с секцией `--- error ---` (см. `mod.rs::run`).
@@ -56,14 +78,15 @@ impl std::fmt::Display for SearchError {
             Self::Network(e) => write!(f, "DDG fetch: {e}"),
             Self::Challenge => write!(
                 f,
-                "DDG is demanding a captcha (anti-bot challenge). Wait or \
-                 switch the exit IP (VPN)."
+                "DDG is demanding a captcha (anti-bot challenge) and the Bing \
+                 fallback returned no results. Wait, switch the exit IP (VPN), \
+                 or rephrase the query."
             ),
             Self::Empty => write!(
                 f,
-                "The DDG html and lite endpoints returned an empty SERP. \
-                 The markup may have changed, or the query is too narrow — \
-                 try rephrasing it."
+                "The DDG html and lite endpoints and the Bing fallback returned \
+                 an empty SERP. The markup may have changed, or the query is \
+                 too narrow — try rephrasing it."
             ),
         }
     }
@@ -76,15 +99,17 @@ enum EndpointOutcome {
     Empty,
 }
 
-/// Entrypoint для tool'а. Каскадно пробует html → lite endpoint.
+/// Entrypoint для tool'а. Каскадно пробует DDG html → DDG lite → Bing.
 pub async fn search(
     query: &str,
     lang: &str,
     max_results: usize,
-) -> Result<Vec<SerpHit>, SearchError> {
+) -> Result<SearchHits, SearchError> {
     let primary = try_html_endpoint(query, lang, max_results).await?;
     match primary {
-        EndpointOutcome::Hits(hits) if !hits.is_empty() => return Ok(hits),
+        EndpointOutcome::Hits(hits) if !hits.is_empty() => {
+            return Ok(SearchHits { engine: ENGINE_DDG, hits });
+        }
         EndpointOutcome::Hits(_) | EndpointOutcome::Empty | EndpointOutcome::Challenge => {
             // Падающий вниз сценарий: оба исхода без хитов → пробуем lite.
         }
@@ -94,17 +119,65 @@ pub async fn search(
     // или empty, выбираем «более информативное» сообщение.
     let primary_was_challenge = matches!(primary, EndpointOutcome::Challenge);
     let secondary = try_lite_endpoint(query, lang, max_results).await?;
-    match secondary {
-        EndpointOutcome::Hits(hits) if !hits.is_empty() => Ok(hits),
-        EndpointOutcome::Challenge => Err(SearchError::Challenge),
+    let ddg_error = match secondary {
+        EndpointOutcome::Hits(hits) if !hits.is_empty() => {
+            return Ok(SearchHits { engine: ENGINE_DDG, hits });
+        }
+        EndpointOutcome::Challenge => SearchError::Challenge,
         EndpointOutcome::Hits(_) | EndpointOutcome::Empty => {
             if primary_was_challenge {
-                Err(SearchError::Challenge)
+                SearchError::Challenge
             } else {
-                Err(SearchError::Empty)
+                SearchError::Empty
             }
         }
+    };
+
+    // DDG не дал карточек — идём в Bing. Его сетевая ошибка не фатальна:
+    // интернет есть (DDG ответил), сообщаем исход DDG.
+    match try_bing(query, lang, max_results).await {
+        Ok(EndpointOutcome::Hits(hits)) if !hits.is_empty() => {
+            log::info!("[web] DDG без результатов ({ddg_error}) — взяли Bing: {} карточек", hits.len());
+            Ok(SearchHits { engine: ENGINE_BING, hits })
+        }
+        Ok(_) => Err(ddg_error),
+        Err(e) => {
+            log::warn!("[web] Bing fallback не ответил: {e}");
+            Err(ddg_error)
+        }
     }
+}
+
+async fn try_bing(
+    query: &str,
+    lang: &str,
+    max_results: usize,
+) -> Result<EndpointOutcome, SearchError> {
+    let url = build_bing_url(query, lang, max_results);
+    let html = http::fetch_html_text_with(
+        &url,
+        FetchOpts {
+            referer: Some(BING_REFERER),
+            accept_language: Some(accept_language_for(lang)),
+        },
+    )
+    .await
+    .map_err(|e| SearchError::Network(e.to_string()))?;
+
+    let mut hits = parse_bing(&html, max_results);
+    hits = dedup_by_origin(hits);
+    let hits = renumber(hits, max_results);
+    if hits.is_empty() {
+        Ok(EndpointOutcome::Empty)
+    } else {
+        Ok(EndpointOutcome::Hits(hits))
+    }
+}
+
+fn build_bing_url(query: &str, lang: &str, max_results: usize) -> String {
+    let q_enc = urlencoding::encode(query);
+    let count = max_results.clamp(1, 50);
+    format!("{BING_BASE}?q={q_enc}&setlang={lang}&count={count}")
 }
 
 async fn try_html_endpoint(
@@ -329,6 +402,82 @@ fn parse_ddg_lite(html: &str, max: usize) -> Vec<SerpHit> {
     out
 }
 
+/// Парсер SSR-выдачи Bing: карточка — `li.b_algo`, заголовок — `h2 a`,
+/// сниппет — `div.b_caption p` (или `p.b_lineclamp*`). Ссылка заголовка
+/// обёрнута в редирект `bing.com/ck/a?…&u=a1<base64url>` — распаковываем.
+fn parse_bing(html: &str, max: usize) -> Vec<SerpHit> {
+    let doc = Html::parse_document(html);
+    let Ok(card_sel) = Selector::parse("li.b_algo") else {
+        return Vec::new();
+    };
+    let Ok(title_sel) = Selector::parse("h2 a") else {
+        return Vec::new();
+    };
+    let Ok(snippet_sel) = Selector::parse("div.b_caption p, p[class*=\"b_lineclamp\"]") else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<SerpHit> = Vec::new();
+    for card in doc.select(&card_sel) {
+        if out.len() >= max {
+            break;
+        }
+        let Some(a) = card.select(&title_sel).next() else {
+            continue;
+        };
+        let title = clean_text(&a.text().collect::<String>());
+        if title.is_empty() {
+            continue;
+        }
+        let url = unwrap_bing_redirect(a.value().attr("href").unwrap_or(""));
+        if !is_http_url(&url) {
+            continue;
+        }
+        let snippet = card
+            .select(&snippet_sel)
+            .next()
+            .map(|s| clean_text(&s.text().collect::<String>()))
+            .unwrap_or_default();
+        out.push(SerpHit {
+            rank: out.len() + 1,
+            title,
+            url,
+            snippet,
+        });
+    }
+    out
+}
+
+/// Распаковывает редирект Bing `https://www.bing.com/ck/a?…&u=a1<base64url>`:
+/// параметр `u` — это `a1` плюс base64url (обычно без паддинга) целевого
+/// URL. Прямой http(s)-href возвращается как есть.
+fn unwrap_bing_redirect(href: &str) -> String {
+    use base64::Engine as _;
+    let Ok(u) = url::Url::parse(href) else {
+        return href.to_string();
+    };
+    let is_redirect = u
+        .host_str()
+        .is_some_and(|h| h.ends_with("bing.com"))
+        && u.path().starts_with("/ck/");
+    if !is_redirect {
+        return href.to_string();
+    }
+    let Some((_, v)) = u.query_pairs().find(|(k, _)| k == "u") else {
+        return href.to_string();
+    };
+    let payload = v.strip_prefix("a1").unwrap_or(&v);
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload))
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok());
+    match decoded {
+        Some(target) if is_http_url(&target) => target,
+        _ => href.to_string(),
+    }
+}
+
 /// Распаковывает обёртку DDG `/l/?uddg=<encoded url>`. Если href —
 /// обычный http(s):// URL, возвращает его как есть.
 ///
@@ -397,6 +546,45 @@ fn is_http_url(u: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bing_redirect_unwraps_base64url_target() {
+        // u=a1 + base64url("https://www.mi.com/global/product-list/redmi/")
+        let href = "https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly93d3cubWkuY29tL2dsb2JhbC9wcm9kdWN0LWxpc3QvcmVkbWkv&ntb=1";
+        assert_eq!(
+            unwrap_bing_redirect(href),
+            "https://www.mi.com/global/product-list/redmi/"
+        );
+        assert_eq!(unwrap_bing_redirect("https://a.b/c"), "https://a.b/c");
+        assert_eq!(unwrap_bing_redirect("javascript:void(0)"), "javascript:void(0)");
+    }
+
+    #[test]
+    fn bing_parser_reads_cards_and_unwraps_links() {
+        let html = r#"<html><body><ol id="b_results">
+            <li class="b_algo"><div class="b_tpcn"><a class="tilk" href="https://www.bing.com/ck/a?p=1&u=a1aHR0cHM6Ly93d3cubWkuY29tL2dsb2JhbC9wcm9kdWN0LWxpc3QvcmVkbWkv">mi.com</a></div>
+              <h2><a href="https://www.bing.com/ck/a?p=1&u=a1aHR0cHM6Ly93d3cubWkuY29tL2dsb2JhbC9wcm9kdWN0LWxpc3QvcmVkbWkv">Redmi <strong>Series</strong> | Xiaomi</a></h2>
+              <div class="b_caption"><p class="b_lineclamp2">View  Xiaomi Redmi Series.</p></div></li>
+            <li class="b_algo"><h2><a href="https://xdaforums.com/t/redmi-9c.123/">Redmi 9C unlock</a></h2>
+              <div class="b_caption"><p>Thread about unlocking.</p></div></li>
+            <li class="b_ad"><h2><a href="https://ads.example/">Ad</a></h2></li>
+        </ol></body></html>"#;
+        let hits = parse_bing(html, 10);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].url, "https://www.mi.com/global/product-list/redmi/");
+        assert_eq!(hits[0].title, "Redmi Series | Xiaomi");
+        assert_eq!(hits[0].snippet, "View Xiaomi Redmi Series.");
+        assert_eq!(hits[1].url, "https://xdaforums.com/t/redmi-9c.123/");
+        assert_eq!(hits[1].rank, 2);
+    }
+
+    #[test]
+    fn bing_url_carries_query_lang_and_count() {
+        let u = build_bing_url("redmi 9c", "ru", 10);
+        assert!(u.starts_with("https://www.bing.com/search?q=redmi%209c"), "{u}");
+        assert!(u.contains("setlang=ru"), "{u}");
+        assert!(u.contains("count=10"), "{u}");
+    }
 
     #[test]
     fn build_url_encodes_cyrillic_and_locale() {
@@ -678,10 +866,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     #[ignore]
     async fn smoke_search_real_ddg() {
-        let hits = super::search("rust async", "en", 10)
+        let found = super::search("rust async", "en", 10)
             .await
             .expect("DDG должен ответить");
-        eprintln!("hits: {}", hits.len());
+        let hits = found.hits;
+        eprintln!("engine={} hits: {}", found.engine, hits.len());
         for h in &hits {
             eprintln!("  {}. {} → {}", h.rank, h.title, h.url);
         }
@@ -700,10 +889,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     #[ignore]
     async fn smoke_search_real_ddg_ru() {
-        let hits = super::search("новости сегодня главные события", "ru", 10)
+        let found = super::search("новости сегодня главные события", "ru", 10)
             .await
             .expect("DDG должен ответить на русский запрос");
-        eprintln!("ru hits: {}", hits.len());
+        let hits = found.hits;
+        eprintln!("engine={} ru hits: {}", found.engine, hits.len());
         for h in &hits {
             eprintln!("  {}. {} → {}", h.rank, h.title, h.url);
         }

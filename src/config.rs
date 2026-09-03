@@ -1346,6 +1346,17 @@ impl AppConfig {
         }
     }
 
+    /// Одноразовая миграция дефолтов сэмплинга Syn-чата (03.09.2026): старый
+    /// набор 0.7 / 0.9 / 40 / repeat 1.05 → рекомендованные Qwen 0.6 / 0.95 /
+    /// 20 без штрафа за повторы. Переписываем только конфиг, в котором лежит
+    /// ровно старый дефолт, — значения, изменённые пользователем, остаются.
+    /// Параметры уже существующих чатов (per-chat override) не трогаем.
+    pub fn migrate_sampling_defaults(&mut self) {
+        if self.syn_chat_defaults == SamplingParams::legacy_v1() {
+            self.syn_chat_defaults = SamplingParams::default();
+        }
+    }
+
     pub fn load() -> Self {
         let path = Self::path();
         match std::fs::read_to_string(&path) {
@@ -1356,6 +1367,7 @@ impl AppConfig {
                         m.migrate_legacy_dtype();
                     }
                     cfg.introduce_notes_tool();
+                    cfg.migrate_sampling_defaults();
                     cfg
                 }
                 Err(e) => {
@@ -1582,6 +1594,23 @@ mod tests {
         assert!(json.contains("\"device\""));
         assert!(json.contains("\"storage_dtype\""));
         assert!(json.contains("\"compute_dtype\""));
+    }
+
+    #[test]
+    fn legacy_sampling_defaults_migrate_to_current() {
+        let mut cfg = AppConfig::default();
+        cfg.syn_chat_defaults = SamplingParams::legacy_v1();
+        cfg.migrate_sampling_defaults();
+        assert_eq!(cfg.syn_chat_defaults, SamplingParams::default());
+    }
+
+    #[test]
+    fn customized_sampling_defaults_survive_migration() {
+        let mut cfg = AppConfig::default();
+        cfg.syn_chat_defaults = SamplingParams { temperature: 0.2, ..SamplingParams::legacy_v1() };
+        cfg.migrate_sampling_defaults();
+        assert_eq!(cfg.syn_chat_defaults.temperature, 0.2);
+        assert_eq!(cfg.syn_chat_defaults.top_k, 40);
     }
 
     #[test]

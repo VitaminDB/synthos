@@ -327,7 +327,9 @@ fn backdrop_config(blur: bool, maximized: bool) -> syngui::window::BackdropConfi
     syngui::window::BackdropConfig::frosted().with_shell(inset, radius)
 }
 
-fn build_context() -> (RwSignal<String>, AppCtx) {
+/// Собирает `AppCtx` из сохранённого конфига. Публична ради headless-раннеров
+/// (`src/bin/agent_smoke.rs`): им нужен тот же контекст, что и окну.
+pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let saved = AppConfig::load();
 
     // Тема: resolve id → MSS. Пустой id или неизвестный → дефолт.

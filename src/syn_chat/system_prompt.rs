@@ -175,25 +175,44 @@ pub fn build(env: &PromptEnv) -> String {
         if env.tools.iter().any(|t| t == "notes") {
             s.push_str(
                 "\nNotes (`notes`) — the user's notebook in the app: a tree of \
-                 markdown pages with kanban boards and Gantt charts embedded \
-                 in them.\n\
+                 markdown pages (each page is a free canvas) with shapes, \
+                 arrows, kanban boards and Gantt charts embedded in them.\n\
                  - Start with list (page tree, ids, the boards/charts on each \
                  page) or search; read a page before editing it — update \
                  with content and mode=replace overwrites the whole page.\n\
                  - Address pages by id (12 hex) or exact title; an ambiguous \
                  title is an error — use the id. Boards and charts: by id \
-                 from list/read, or implicitly when the page has one.\n\
+                 from list/read, or implicitly when the page has one. \
+                 Blocks: by index from read blocks=true / blocks op=list \
+                 (re-list after inserting or deleting — indices shift) or \
+                 find:<text>.\n\
                  - Small edits: update with find/replace (an exact markdown \
-                 fragment from read) or mode=append. Rewrite a whole page \
-                 only when the user asks for it.\n\
-                 - Boards: kanban op=create on a page (columns optional), \
-                 then add_card / update_card / move_card; cards carry a \
-                 title, a markdown body (a `- [ ]` checklist shows progress), \
-                 priority low|medium|high|urgent, tags and a due date \
-                 yyyy-mm-dd. A task \"done\" = move_card to the done column.\n\
+                 fragment from read), mode=append, or blocks op=set_markdown \
+                 / insert / delete / move — these keep the canvas position \
+                 and style of untouched blocks. Rewrite a whole page only \
+                 when the user asks for it.\n\
+                 - Canvas: coordinates are px from the page's top-left; a \
+                 block with x y is pinned there, without them it flows in \
+                 the column. blocks op=pin / move place blocks (x y, w, h), \
+                 op=set_attrs styles them (color, bg, size, align, weight). \
+                 update sets the page grid (none|dots|lines|cross, \
+                 grid_step) and snap (snap, snap_step).\n\
+                 - Shapes and arrows: shape op=create kind=rect|ellipse|\
+                 triangle|diamond with x y w h and fill/stroke/sw/dash/\
+                 radius/opacity; lines, arrows and curves take absolute end \
+                 points x1 y1 x2 y2. shape op=connect from=<block> \
+                 to=<block> draws an arrow between two pinned blocks (pin \
+                 them first). A diagram = pinned text blocks + connect.\n\
+                 - Boards: kanban op=create on a page (columns optional; \
+                 index/after/before and x y w h place it), then add_card / \
+                 update_card / move_card; cards carry a title, a markdown \
+                 body (a `- [ ]` checklist shows progress), priority \
+                 low|medium|high|urgent, tags and a due date yyyy-mm-dd. A \
+                 task \"done\" = move_card to the done column. op=set_style \
+                 sets column_width, lane_bg, card_bg, show_counts.\n\
                  - Charts: gantt op=create, add_task with start/end \
                  yyyy-mm-dd (after=<task> adds a dependency), update_task, \
-                 add_dep.\n\
+                 add_dep, set_zoom.\n\
                  - Changes are saved automatically and show up in the UI at \
                  once; open shows a page to the user. Don't ask to confirm \
                  routine edits the user already requested.\n",
@@ -322,6 +341,8 @@ mod tests {
         assert!(s.contains("Notes (`notes`)"), "{s}");
         assert!(s.contains("find/replace"), "{s}");
         assert!(s.contains("kanban op=create"), "{s}");
+        assert!(s.contains("shape op=connect"), "{s}");
+        assert!(s.contains("blocks op=pin"), "{s}");
     }
 
     #[test]

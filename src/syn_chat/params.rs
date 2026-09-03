@@ -9,9 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use synaptix::facade::llm::GenerationOptions;
 use serde::{Deserialize, Serialize};
 
-/// Дефолты — баланс «разнообразие vs стабильность» из текущих констант
-/// `syn_chat::session` плюс умеренный `repeat_penalty`, чтобы Qwen3 не
-/// вырождался в loop'ы на простых prompt'ах.
+/// Дефолты — рекомендованные Qwen для семейства Qwen3 в режиме размышлений:
+/// temperature 0.6, top_p 0.95, top_k 20, min_p 0, без штрафов за повторы.
+/// Greedy-декод (temperature 0) Qwen прямо не советует: он даёт повторы, а
+/// повтор в агентном цикле включает guard. Штрафы за повторы (repeat/
+/// frequency) в агентном режиме вредны: они бьют по самым частым токенам
+/// вызова инструмента — кавычкам, переводам строк, скобкам — и модель
+/// подменяет их редкими вариантами, ломая синтаксис вызова (см. разбор
+/// 03.09.2026 в `docs/chat_tool_call_robustness_2026.md`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SamplingParams {
@@ -34,11 +39,11 @@ pub struct SamplingParams {
 impl Default for SamplingParams {
     fn default() -> Self {
         Self {
-            temperature: 0.7,
-            top_p: 0.9,
-            top_k: 40,
+            temperature: 0.6,
+            top_p: 0.95,
+            top_k: 20,
             min_p: 0.0,
-            repeat_penalty: 1.05,
+            repeat_penalty: 1.0,
             repeat_last_n: 64,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
@@ -72,6 +77,20 @@ fn entropy_seed() -> u64 {
 }
 
 impl SamplingParams {
+    /// Дефолты до 03.09.2026 (0.7 / 0.9 / 40 / repeat 1.05). Нужны только
+    /// [`crate::config::AppConfig::migrate_sampling_defaults`]: конфиг с ровно
+    /// этим набором переводится на новые дефолты, изменённый пользователем —
+    /// не трогается.
+    pub fn legacy_v1() -> Self {
+        Self {
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            repeat_penalty: 1.05,
+            ..Self::default()
+        }
+    }
+
     pub fn to_options(&self) -> GenerationOptions {
         let seed = if self.seed < 0 {
             entropy_seed()

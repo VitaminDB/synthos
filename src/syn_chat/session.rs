@@ -89,13 +89,31 @@ const REPEAT_HINT_AT: usize = 3;
 /// Температура, ниже которой ход не опускается после детекта повтора:
 /// greedy-декод из петли не выходит в принципе, нужна хоть какая-то
 /// стохастика. Пользовательскую настройку не понижаем — только поднимаем.
+///
+/// Температура — единственное, что анти-loop режим меняет в сэмплинге.
+/// До 03.09.2026 он ещё включал frequency-штраф 0.25 по окну в 256 токенов
+/// и растягивал до того же окна `repeat_penalty` пользователя. На агентном
+/// промпте это ломало сам вызов инструмента: самые частые токены окна —
+/// кавычки, переводы строк, `>` из JSON и тегов — получали по −0,25·count
+/// логитов, и модель подменяла их редкими вариантами (`>>`, `\r\n`,
+/// `\n\n\n`, `<invoke name=bash">` без кавычки). Проза при этом оставалась
+/// осмысленной, ломался только синтаксис — в ленте это выглядело как
+/// `bash {}` три раза подряд и стоп по guard'у.
 const ANTI_LOOP_TEMPERATURE: f32 = 0.6;
-/// Frequency-штраф, включаемый там же: он аддитивный и растёт с числом
-/// повторов, то есть бьёт именно по зацикленному тексту.
-const ANTI_LOOP_FREQUENCY_PENALTY: f32 = 0.25;
-/// Окно штрафов при анти-loop режиме. По всему промпту штраф размазывается
-/// в шум, поэтому смотрим только на свежий хвост.
-const ANTI_LOOP_PENALTY_WINDOW: usize = 256;
+/// Сколько полных периодов чередования «A, B, A, B…» считаем предупреждением
+/// (аналог [`REPEAT_WARN_AT`] для петли из двух вызовов) и остановкой.
+/// Guard «тот же вызов подряд» такую петлю не видит: 28.08.2026 агент
+/// 25 ходов чередовал `bash" {}` и `bash {"arguments":"\n\n\n"}`, пока не
+/// кончился бюджет ходов.
+const ALTERNATION_WARN_AT: usize = 2;
+const ALTERNATION_STOP_AT: usize = 3;
+/// Сколько последних ключей вызовов держим для детекта чередования.
+const ALTERNATION_WINDOW: usize = 2 * ALTERNATION_STOP_AT;
+/// Сколько вызовов подряд, не прошедших разбор аргументов (битый JSON, нет
+/// обязательного поля, неизвестный инструмент), останавливают ход. Модель,
+/// трижды не собравшая вызов, не соберёт его и на десятый раз — а бюджет
+/// ходов при этом сгорает молча.
+const INVALID_ARGS_STOP_AT: usize = 3;
 /// Сколько символов результата инструмента уходит в промпт модели.
 ///
 /// В UI пузырь остаётся полным, обрезается только копия для истории:
@@ -1123,6 +1141,36 @@ struct RepeatState {
     totals: HashMap<String, usize>,
     last: Option<String>,
     consecutive: usize,
+    /// Последние [`ALTERNATION_WINDOW`] ключей вызовов — для детекта
+    /// чередования (см. [`alternation_periods`]).
+    recent: std::collections::VecDeque<String>,
+}
+
+/// Сколько полных периодов «A, B, A, B…» (A ≠ B) лежит в хвосте `keys`.
+fn alternation_periods(keys: &std::collections::VecDeque<String>) -> usize {
+    let n = keys.len();
+    if n < 4 {
+        return 0;
+    }
+    let (a, b) = (&keys[n - 2], &keys[n - 1]);
+    if a == b {
+        return 0;
+    }
+    let mut periods = 0;
+    let mut i = n;
+    while i >= 2 && &keys[i - 2] == a && &keys[i - 1] == b {
+        periods += 1;
+        i -= 2;
+    }
+    periods
+}
+
+/// Запомнить ключ вызова в окне детекта чередования.
+fn remember_call(recent: &mut std::collections::VecDeque<String>, key: &str) {
+    if recent.len() >= ALTERNATION_WINDOW {
+        recent.pop_front();
+    }
+    recent.push_back(key.to_string());
 }
 
 fn seen_calls_in_current_turn(ctx: &SynChatCtx) -> RepeatState {
@@ -1149,6 +1197,7 @@ fn repeat_state_from(msgs: &[ChatMsg]) -> RepeatState {
             } else {
                 1
             };
+            remember_call(&mut st.recent, &key);
             st.last = Some(key);
         }
     }
@@ -1199,6 +1248,7 @@ async fn run_agent_loop(
                 totals: mut call_seen,
                 last: last_call_key,
                 consecutive: consecutive_repeats,
+                recent: mut recent_keys,
             },
     } = settings;
     let model_cap = model.model.config().max_seq_len;
@@ -1258,9 +1308,19 @@ async fn run_agent_loop(
     // Guard от вырождения в петлю. Счётчики приходят из ленты, поэтому
     // переживают «Прервать» и «Продолжить» — иначе кнопка просто
     // перезапускала бы ту же петлю с чистого листа.
-    let mut anti_loop = consecutive_repeats >= REPEAT_WARN_AT;
+    let mut anti_loop = consecutive_repeats >= REPEAT_WARN_AT
+        || alternation_periods(&recent_keys) >= ALTERNATION_WARN_AT;
     let mut last_call: Option<String> = last_call_key;
     let mut consecutive = consecutive_repeats;
+    // Сколько вызовов подряд не прошли разбор аргументов (см.
+    // [`INVALID_ARGS_STOP_AT`]).
+    let mut invalid_streak = 0usize;
+    // Заметка модели на один ход (после пустого хода). В `history` не
+    // кладём: истории, собранной из ленты на следующем сообщении, такой
+    // заметки взять неоткуда, и промпт разошёлся бы с промптом хода навсегда
+    // — префикс-KV обнулялся бы на каждом сообщении. Один перепрефилл после
+    // хода с заметкой дешевле.
+    let mut pending_note: Option<&'static str> = None;
     // Причина досрочной остановки: показывается вместо сообщения о лимите
     // ходов, чтобы пользователь видел именно «агент зациклился».
     let mut stop_reason: Option<String> = None;
@@ -1270,16 +1330,28 @@ async fn run_agent_loop(
             return Ok(());
         }
 
-        let prompt = model.tokenizer.apply_chat_template_ex_tools(
-            &history,
-            true,
-            params.enable_thinking,
-            if tool_schemas.is_empty() {
-                None
-            } else {
-                Some(&tool_schemas)
-            },
-        )?;
+        let prompt = {
+            let with_note;
+            let for_prompt: &[Message] = match pending_note.take() {
+                Some(note) => {
+                    let mut h = history.clone();
+                    h.push(Message::user(note));
+                    with_note = h;
+                    &with_note
+                }
+                None => &history,
+            };
+            model.tokenizer.apply_chat_template_ex_tools(
+                for_prompt,
+                true,
+                params.enable_thinking,
+                if tool_schemas.is_empty() {
+                    None
+                } else {
+                    Some(&tool_schemas)
+                },
+            )?
+        };
         let prompt_ids = model.tokenizer.encode(&prompt)?;
         log::info!(
             "[syn_chat] turn={} prompt={} chars / {} tokens, tools={}",
@@ -1314,27 +1386,15 @@ async fn run_agent_loop(
             opts.max_new_tokens = plan.max_new;
             if anti_loop {
                 // Повтор уже случился. Greedy-декод из петли не выходит
-                // никогда, поэтому поднимаем температуру и включаем
-                // frequency-штраф по свежему хвосту. Настройки пользователя
-                // только повышаем, но не понижаем.
+                // никогда, поэтому поднимаем температуру — и только её:
+                // штрафы за повторы на агентном промпте ломают синтаксис
+                // вызова (см. [`ANTI_LOOP_TEMPERATURE`]). Настройку
+                // пользователя только повышаем, но не понижаем. Режим
+                // снимается первым же неповторённым вызовом.
                 opts.temperature = opts.temperature.max(ANTI_LOOP_TEMPERATURE);
-                opts.frequency_penalty =
-                    opts.frequency_penalty.max(ANTI_LOOP_FREQUENCY_PENALTY);
-                // Окно должно накрывать весь повторяющийся блок
-                // (tool_call + результат), иначе штраф смотрит только в
-                // хвост прошлого результата и на выбор команды не влияет.
-                // `0` в настройках означает «весь контекст» — на промпте
-                // агента это размазывает штраф в шум.
-                opts.repeat_last_n = if opts.repeat_last_n == 0 {
-                    ANTI_LOOP_PENALTY_WINDOW
-                } else {
-                    opts.repeat_last_n.max(ANTI_LOOP_PENALTY_WINDOW)
-                };
                 log::info!(
-                    "[syn_chat] анти-loop сэмплинг: temp={:.2}, freq_penalty={:.2}, окно {}",
-                    opts.temperature,
-                    opts.frequency_penalty,
-                    opts.repeat_last_n
+                    "[syn_chat] анти-loop сэмплинг: temp={:.2}",
+                    opts.temperature
                 );
             }
             log::info!(
@@ -1384,11 +1444,9 @@ async fn run_agent_loop(
 
             // Разбор потока — по протоколу модели (ChatML или канальный).
             let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
-            // Полный текст ответа модели за этот turn — нужен для канонического
-            // assistant-msg в history (с `<tool_call>` тегами как-есть). В
-            // канальном режиме сырой текст непригоден: в нём заголовки каналов
-            // (` to=user`), поэтому там историю собираем из разобранного тела.
-            let mut raw_text: String = String::new();
+            // Текст ответа за этот turn вне tool_call-блоков. Реплика для
+            // истории собирается из него и разобранных вызовов
+            // (`tool_turn_text`) — сырой поток модели в историю не идёт.
             let mut clean_text: String = String::new();
             let mut buf_body = String::new();
             let mut buf_think = String::new();
@@ -1415,7 +1473,6 @@ async fn run_agent_loop(
                 if ttft_ms.is_none() {
                     ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
                 }
-                raw_text.push_str(delta);
                 tokens_this_turn += 1;
 
                 let (body, thinking, tool) = parser.feed(id, delta);
@@ -1643,7 +1700,6 @@ async fn run_agent_loop(
             run_on_main_thread(move || stat.apply(&ctx_stat));
 
             break (
-                raw_text,
                 clean_text,
                 raw_calls,
                 tokens_this_turn,
@@ -1653,7 +1709,7 @@ async fn run_agent_loop(
                 plan.by_mem.min(plan.cap),
             );
         };
-        let (raw_text, clean_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
+        let (clean_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
             turn_result;
 
         total_gen_tokens += tokens_this_turn;
@@ -1683,8 +1739,8 @@ async fn run_agent_loop(
                 // как два хода по одинаковому числу токенов. Заметка меняет
                 // контекст и заодно говорит, чего от модели ждали: чаще
                 // всего сюда приводит `<tool_call>` с битым JSON, который
-                // парсер не смог принять.
-                history.push(Message::user(EMPTY_TURN_NOTE));
+                // парсер не смог принять. Живёт один ход (см. `pending_note`).
+                pending_note = Some(EMPTY_TURN_NOTE);
                 continue;
             }
             // Обычный текстовый ответ. commit_streaming_tail сделает
@@ -1699,14 +1755,23 @@ async fn run_agent_loop(
         let ctx_commit = ctx.clone();
         run_on_main_thread(move || ctx_commit.commit_streaming_tail());
 
-        // History: assistant с полным сырым текстом (включая `<tool_call>`).
-        // В канальном режиме сырой текст содержит заголовки каналов, которые
-        // chat-шаблон припишет заново, — поэтому пересобираем реплику из
-        // разобранного тела и ATEM-блока вызовов.
+        // History: реплика ассистента с вызовами в каноническом виде — том
+        // же, что `build_history` соберёт из ленты на следующем сообщении.
+        // Сырой текст модели сюда не идёт: её собственная расстановка
+        // пробелов в JSON (или XML-стиль) в ленте не сохраняется, и промпт
+        // следующего сообщения расходился бы с промптом хода — префикс-KV
+        // диалога обнулялся на каждом сообщении. В канальном режиме сырой
+        // текст содержит заголовки каналов, которые chat-шаблон припишет
+        // заново, — там реплика пересобирается из тела и ATEM-блока вызовов.
         history.push(Message::assistant(if channel_mode {
             channel_parser::rebuild_turn_text(&clean_text, &raw_calls)
         } else {
-            raw_text.clone()
+            tool_turn_text(
+                &clean_text,
+                raw_calls
+                    .iter()
+                    .map(|c| (c.name.as_str(), c.arguments_json.as_str())),
+            )
         }));
 
         tool_calls_made += raw_calls.len();
@@ -1769,32 +1834,58 @@ async fn run_agent_loop(
             } else {
                 1
             };
+            remember_call(&mut recent_keys, &key);
+            let periods = alternation_periods(&recent_keys);
             last_call = Some(key);
-            if consecutive >= REPEAT_STOP_AT {
-                let text = format!(
-                    "Остановлено: инструмент `{}` вызван с теми же аргументами \
-                     {consecutive}-й раз подряд — агент ходит по кругу.",
-                    tool_name(chat_call)
-                );
+            // Новый вызов — петля разорвана, возвращаем сэмплинг пользователя.
+            if consecutive < REPEAT_WARN_AT && periods < ALTERNATION_WARN_AT {
+                anti_loop = false;
+            }
+            if consecutive >= REPEAT_STOP_AT || periods >= ALTERNATION_STOP_AT {
+                let text = if consecutive >= REPEAT_STOP_AT {
+                    format!(
+                        "Остановлено: инструмент `{}` вызван с теми же аргументами \
+                         {consecutive}-й раз подряд — агент ходит по кругу.",
+                        tool_name(chat_call)
+                    )
+                } else {
+                    format!(
+                        "Остановлено: агент {periods} раза подряд чередует одни и те же \
+                         два вызова (последний — `{}`) — ходит по кругу.",
+                        tool_name(chat_call)
+                    )
+                };
                 log::warn!("[syn_chat] guard повторов: {text}");
                 push_tool_result(&ctx, chat_call, text.clone(), true);
                 history.push(Message::tool_named(tool_name(chat_call), text.clone()));
                 stop_reason = Some(text);
                 break 'agent;
             }
-            if consecutive >= REPEAT_WARN_AT {
-                let text = format!(
-                    "Вызов `{}` с этими аргументами только что выполнялся — между \
-                     двумя одинаковыми вызовами подряд ничего не произошло, \
-                     результат выше и он не изменится, поэтому повторно он не \
-                     исполнен. Смени подход: другая команда, другой путь, другой \
-                     инструмент — либо дай текстовый ответ по тому, что уже \
-                     известно.",
-                    tool_name(chat_call)
-                );
+            if consecutive >= REPEAT_WARN_AT || periods >= ALTERNATION_WARN_AT {
+                let text = if consecutive >= REPEAT_WARN_AT {
+                    format!(
+                        "Вызов `{}` с этими аргументами только что выполнялся — между \
+                         двумя одинаковыми вызовами подряд ничего не произошло, \
+                         результат выше и он не изменится, поэтому повторно он не \
+                         исполнен. Смени подход: другая команда, другой путь, другой \
+                         инструмент — либо дай текстовый ответ по тому, что уже \
+                         известно.",
+                        tool_name(chat_call)
+                    )
+                } else {
+                    format!(
+                        "Вызов `{}` с этими аргументами уже чередуется с предыдущим \
+                         второй раз подряд — результаты обоих выше и не меняются, \
+                         поэтому повторно он не исполнен. Смени подход: другая \
+                         команда, другой путь, другой инструмент — либо дай \
+                         текстовый ответ по тому, что уже известно.",
+                        tool_name(chat_call)
+                    )
+                };
                 log::warn!(
-                    "[syn_chat] guard повторов: `{}` повторён, вызов пропущен",
-                    tool_name(chat_call)
+                    "[syn_chat] guard повторов: `{}` {}, вызов пропущен",
+                    tool_name(chat_call),
+                    if consecutive >= REPEAT_WARN_AT { "повторён" } else { "чередуется" }
                 );
                 anti_loop = true;
                 push_tool_result(&ctx, chat_call, text.clone(), true);
@@ -1845,12 +1936,19 @@ async fn run_agent_loop(
                     abort_snapshot,
                 )
                 .await;
+                let turns_left = max_turns.saturating_sub(turn + 1);
+                let note = if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
+                    system_prompt::budget_note(turns_left)
+                } else {
+                    String::new()
+                };
                 push_tool_result_with(
                     &ctx,
                     chat_call,
                     res.content.clone(),
                     res.error,
                     res.attachments,
+                    note.clone(),
                 );
                 if res.aborted {
                     return Ok(());
@@ -1867,10 +1965,7 @@ async fn run_agent_loop(
                     }
                 }
                 let mut for_history = clip_for_history(&res.content, &tool_name(chat_call));
-                let turns_left = max_turns.saturating_sub(turn + 1);
-                if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
-                    for_history.push_str(&system_prompt::budget_note(turns_left));
-                }
+                for_history.push_str(&note);
                 history.push(Message::tool_named(tool_name(chat_call), for_history));
                 continue;
             }
@@ -1900,17 +1995,15 @@ async fn run_agent_loop(
                 unpark_kv_session(&mut kv_slot, &model);
             }
 
-            push_tool_result(&ctx, chat_call, outcome.content.clone(), outcome.error);
-            // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
-            // с одного вызова (потолок executor'а) съедают контекст быстрее,
-            // чем агент успевает решить задачу. Исключение — `autoskill`:
-            // инструкция нужна модели целиком (см. history_clip_limit).
-            let mut for_history = clip_for_history(&outcome.content, &tool_name(chat_call));
+            // Заметки для модели к результату. В ленту они уходят скрытым
+            // полем `model_note`, а не в тело: так история, собранная из
+            // ленты на следующем сообщении, совпадает с историей хода.
+            let mut note = String::new();
             if total >= REPEAT_HINT_AT {
                 // Не подряд — исполняем (после правки файла та же команда
                 // сборки законна), но если результат не меняется, модель
                 // должна это заметить сама.
-                for_history.push_str(&format!(
+                note.push_str(&format!(
                     "\n\n[Системная заметка: этот вызов с теми же аргументами \
                      сделан {total}-й раз за ход. Если результат не меняется — \
                      меняй подход, а не повторяй.]"
@@ -1921,9 +2014,39 @@ async fn run_agent_loop(
             // правка на каждом ходу обнуляла бы его целиком.
             let turns_left = max_turns.saturating_sub(turn + 1);
             if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
-                for_history.push_str(&system_prompt::budget_note(turns_left));
+                note.push_str(&system_prompt::budget_note(turns_left));
             }
+            push_tool_result_with(
+                &ctx,
+                chat_call,
+                outcome.content.clone(),
+                outcome.error,
+                Vec::new(),
+                note.clone(),
+            );
+            // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
+            // с одного вызова (потолок executor'а) съедают контекст быстрее,
+            // чем агент успевает решить задачу. Исключение — `autoskill`:
+            // инструкция нужна модели целиком (см. history_clip_limit).
+            let mut for_history = clip_for_history(&outcome.content, &tool_name(chat_call));
+            for_history.push_str(&note);
             history.push(Message::tool_named(tool_name(chat_call), for_history));
+
+            // Серия вызовов, не дошедших до исполнения: модель не может
+            // собрать вызов — дальше только сгорает бюджет ходов.
+            invalid_streak = if outcome.invalid_args { invalid_streak + 1 } else { 0 };
+            if invalid_streak >= INVALID_ARGS_STOP_AT {
+                let text = format!(
+                    "Остановлено: {invalid_streak} вызова подряд не прошли разбор \
+                     аргументов (последний — `{}`: {}). Агент не может собрать \
+                     вызов инструмента.",
+                    tool_name(chat_call),
+                    outcome.content.lines().next().unwrap_or("").trim()
+                );
+                log::warn!("[syn_chat] guard аргументов: {text}");
+                stop_reason = Some(text);
+                break 'agent;
+            }
         }
 
         // ── Компактификация ВНУТРИ хода. Межходовой автокомпакт тут
@@ -2439,26 +2562,31 @@ async fn reload_if_needed(
 
 /// Пушит tool_result-бабл в ленту.
 fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, error: bool) {
-    push_tool_result_with(ctx, call, content, error, Vec::new());
+    push_tool_result_with(ctx, call, content, error, Vec::new(), String::new());
 }
 
 /// Как [`push_tool_result`], но с медиа-вложениями (результаты пайплайна:
 /// mp4/wav из save-нод). В промпт они не попадают — `build_history` для
 /// ToolResult отдаёт `attachments: Vec::new()` — а в ленте рендерятся
 /// плитками с полноэкранным просмотрщиком.
+///
+/// `model_note` — дописка к телу только для модели (см. `ChatMsg::model_note`).
 fn push_tool_result_with(
     ctx: &SynChatCtx,
     call: &ChatToolCall,
     content: String,
     error: bool,
     attachments: Vec<crate::agent::state::MsgAttachment>,
+    model_note: String,
 ) {
     let id = call.id.clone();
     let name = call.function.name.clone().unwrap_or_default();
     let ctx = ctx.clone();
     run_on_main_thread(move || {
         ctx.messages.update(|m| {
-            m.push(ChatMsg::tool_result(id, name, content, error));
+            let mut msg = ChatMsg::tool_result(id, name, content, error);
+            msg.model_note = model_note;
+            m.push(msg);
             // Медиа — отдельным сообщением ленты, а не внутри карточки
             // инструмента: результат прогона смотрят как результат, а не как
             // приложение к техническому выводу (и карточка не схлопывается
@@ -2569,6 +2697,30 @@ fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
 ///     не идут;
 ///   - summary autocompact-маркеров дописывается в начальное
 ///     system-сообщение, сами маркеры в историю не попадают.
+/// Реплика ассистента с вызовами инструментов в том виде, в каком её видит
+/// модель: текст до вызова, затем блоки `<tool_call>` в родном формате Qwen
+/// (`{"name": …, "arguments": …}` — порядок ключей и пробелы как в шаблоне
+/// чата, `serde_json::json!` без `preserve_order` ставил бы `arguments`
+/// первым). Одна функция на оба пути — ход агента и пересборку истории из
+/// ленты — иначе промпт следующего сообщения расходится с промптом хода и
+/// префикс-KV диалога обнуляется на каждом сообщении.
+fn tool_turn_text<'a>(prose: &str, calls: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    let mut body = prose.trim().to_string();
+    for (name, args_json) in calls {
+        let args: serde_json::Value =
+            serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&format!(
+            "<tool_call>\n{{\"name\": {}, \"arguments\": {}}}\n</tool_call>",
+            serde_json::Value::String(name.to_string()),
+            args
+        ));
+    }
+    body
+}
+
 fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
     let msgs = ctx.messages.get_untracked();
 
@@ -2595,6 +2747,10 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
             tool_name: None,
         });
     }
+    // Индекс в `out` текста ассистента, если он был последним добавленным
+    // элементом: текст перед вызовом инструмента лежит в ленте отдельным
+    // пузырём прямо перед ним, а в промпте это одна реплика (как в ходе).
+    let mut prose_before_call: Option<usize> = None;
     for m in msgs.iter() {
         // Пустой assistant — это плейсхолдер под стрим (в том числе
         // оставшийся от прерванного хода). В промпт он не идёт никогда: не
@@ -2621,23 +2777,24 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
                     attachments: m.attachments.clone(),
                     tool_name: None,
                 });
+                prose_before_call = (m.role == ChatMsgRole::Assistant).then_some(out.len() - 1);
             }
             ChatMsgKind::ToolCall { .. } => {
-                let mut body = String::new();
-                for c in m.tool_calls.iter().flatten() {
-                    let name = c.function.name.clone().unwrap_or_default();
-                    let args = c
-                        .function
-                        .arguments
-                        .as_deref()
-                        .and_then(|a| serde_json::from_str::<serde_json::Value>(a).ok())
-                        .unwrap_or(serde_json::Value::Null);
-                    let call = serde_json::json!({ "name": name, "arguments": args });
-                    if !body.is_empty() {
-                        body.push('\n');
+                let prose = match prose_before_call.take() {
+                    Some(idx) if idx + 1 == out.len() => {
+                        out.pop().map(|i| i.body).unwrap_or_default()
                     }
-                    body.push_str(&format!("<tool_call>\n{call}\n</tool_call>"));
-                }
+                    _ => String::new(),
+                };
+                let body = tool_turn_text(
+                    &prose,
+                    m.tool_calls.iter().flatten().map(|c| {
+                        (
+                            c.function.name.as_deref().unwrap_or_default(),
+                            c.function.arguments.as_deref().unwrap_or("null"),
+                        )
+                    }),
+                );
                 if body.is_empty() {
                     continue;
                 }
@@ -2649,12 +2806,18 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
                 });
             }
             ChatMsgKind::ToolResult { tool_name, .. } => {
+                // Та же обрезка, что у хода (`clip_for_history`), плюс
+                // заметки для модели: иначе промпт следующего сообщения
+                // не совпадает с промптом хода и префикс-KV обнуляется.
+                let mut body = clip_for_history(&m.body, tool_name);
+                body.push_str(&m.model_note);
                 out.push(HistoryItem {
                     role: m.role,
-                    body: m.body.clone(),
+                    body,
                     attachments: Vec::new(),
                     tool_name: Some(tool_name.clone()),
                 });
+                prose_before_call = None;
             }
             // Уже учтён в system-префиксе выше.
             ChatMsgKind::CompactionMarker { .. } => continue,

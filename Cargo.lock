@@ -7478,6 +7478,7 @@ dependencies = [
  "hound",
  "htmd",
  "image",
+ "libc",
  "log",
  "notify",
  "nvml-wrapper",

@@ -117,17 +117,7 @@ impl ToolCallParser {
                     if let Some(idx) = work.find(CLOSE_TAG) {
                         tool_out.push_str(&work[..idx]);
                         self.inner.push_str(&work[..idx]);
-                        match parse_tool_call_body(&self.inner) {
-                            Some((call, _format)) => {
-                                self.calls.push(call);
-                            }
-                            None => {
-                                tracing::warn!(
-                                    tool_call_body = %self.inner.trim(),
-                                    "failed to parse <tool_call> JSON — пропускаем"
-                                );
-                            }
-                        }
+                        self.accept_body(false);
                         self.inner.clear();
                         work.drain(..idx + CLOSE_TAG.len());
                         self.state = State::Outside;
@@ -170,23 +160,61 @@ impl ToolCallParser {
                 // и пользователю остаётся жать «Продолжить». Поэтому сначала
                 // пробуем разобрать накопленное, и только если не вышло —
                 // выбрасываем.
-                self.inner.push_str(&self.buf);
-                match parse_tool_call_body(&self.inner) {
-                    Some((call, _format)) => {
-                        tracing::debug!(
-                            name = %call.name,
-                            "tool_call без </tool_call> — тело целое, принимаем"
-                        );
-                        self.calls.push(call);
-                    }
-                    None => tracing::warn!(
-                        truncated_body = %self.inner.trim(),
-                        "stream закончился внутри <tool_call> без </tool_call>, \
-                         тело не разбирается — отбрасываем"
-                    ),
-                }
+                let buf = std::mem::take(&mut self.buf);
+                self.inner.push_str(&buf);
+                self.accept_body(true);
                 (self.calls, String::new())
             }
+        }
+    }
+}
+
+impl ToolCallParser {
+    /// Разобрать накопленное тело блока и, если вышло, добавить вызов.
+    ///
+    /// Заодно оставляет в журнале то, без чего поломки вызовов не разобрать
+    /// (сырой вывод модели больше нигде не сохраняется):
+    /// - тело целиком, когда парсер узнал имя, но не нашёл ни одного
+    ///   параметра — так выглядят ходы «bash {}», после которых агент ходит
+    ///   по кругу, а в ленте остаётся только `{}`;
+    /// - факт XML-стиля вместо родного JSON — верный признак того, что
+    ///   сэмплинг или контекст увели модель с обученного формата.
+    ///
+    /// `unclosed` — поток кончился без `</tool_call>`: модель нередко
+    /// заканчивает генерацию сразу после JSON, тело при этом целое.
+    /// Отбрасывать такой вызов значит потерять ход, поэтому разбираем.
+    fn accept_body(&mut self, unclosed: bool) {
+        match parse_tool_call_body(&self.inner) {
+            Some((call, format)) => {
+                if unclosed {
+                    tracing::debug!(
+                        name = %call.name,
+                        "tool_call без </tool_call> — тело целое, принимаем"
+                    );
+                }
+                if call.arguments_json == "{}" {
+                    tracing::warn!(
+                        name = %call.name,
+                        tool_call_body = %self.inner.trim(),
+                        "tool_call без аргументов — модель не дописала параметры"
+                    );
+                } else if format == ToolCallFormat::AnthropicXml {
+                    tracing::info!(
+                        name = %call.name,
+                        "tool_call в XML-стиле вместо родного JSON"
+                    );
+                }
+                self.calls.push(call);
+            }
+            None if unclosed => tracing::warn!(
+                truncated_body = %self.inner.trim(),
+                "stream закончился внутри <tool_call> без </tool_call>, \
+                 тело не разбирается — отбрасываем"
+            ),
+            None => tracing::warn!(
+                tool_call_body = %self.inner.trim(),
+                "failed to parse <tool_call> JSON — пропускаем"
+            ),
         }
     }
 }
@@ -259,11 +287,63 @@ fn parse_tool_call_json_qwen(body: &str) -> Option<RawToolCall> {
         );
     }
     let name = v.get("name")?.as_str()?.to_string();
-    let arguments_json = match v.get("arguments") {
-        Some(args) => serde_json::to_string(args).ok()?,
-        None => "{}".to_string(),
+    let arguments = match v.get("arguments") {
+        Some(args) => normalize_arguments(args.clone()),
+        // Обёртки `arguments` нет: модель положила параметры рядом с `name`
+        // (`{"name":"bash","command":"ls"}`). Берём всё, кроме имени.
+        None => {
+            let mut rest = v.as_object().cloned().unwrap_or_default();
+            rest.remove("name");
+            normalize_arguments(serde_json::Value::Object(rest))
+        }
     };
+    let arguments_json = serde_json::to_string(&arguments).ok()?;
     Some(RawToolCall { name, arguments_json })
+}
+
+/// Приводит `arguments` к тому, что ждёт executor: JSON-объект с полями
+/// инструмента. Модели устойчиво промахиваются тремя способами, и каждый
+/// раньше заканчивался «Missing required field» с зацикливанием на месте:
+///
+/// - `arguments` — строка с экранированным JSON внутри
+///   (`"arguments": "{\"command\": \"ls\"}"`), ровно то, что правило 7
+///   системного промпта запрещает, но flash-next так пишет и без штрафов;
+/// - лишняя вложенность `{"arguments": {"command": …}}` — параметр назван
+///   именем обёртки (в XML-стиле — `<parameter name="arguments">`);
+/// - пустой параметр-заглушка `"arguments": "\n\n"` рядом с настоящими
+///   полями.
+///
+/// Всё это разворачивается без потерь: у инструментов нет собственного
+/// параметра с именем `arguments`, так что путаницы быть не может.
+fn normalize_arguments(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => match serde_json::from_str::<Value>(s.trim()) {
+            Ok(inner @ Value::Object(_)) => normalize_arguments(inner),
+            _ => Value::String(s),
+        },
+        Value::Object(mut map) => {
+            let blank = map
+                .get("arguments")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.trim().is_empty());
+            if blank {
+                map.remove("arguments");
+                return Value::Object(map);
+            }
+            if map.len() == 1 {
+                if let Some(inner) = map.remove("arguments") {
+                    let inner = normalize_arguments(inner);
+                    if inner.is_object() {
+                        return inner;
+                    }
+                    map.insert("arguments".to_string(), inner);
+                }
+            }
+            Value::Object(map)
+        }
+        other => other,
+    }
 }
 
 /// Парсер для Anthropic-стиля. Синтаксис у него два поколения, и модели
@@ -296,7 +376,8 @@ fn parse_xml_invoke_style(body: &str) -> Option<RawToolCall> {
         return None;
     }
     let args = parse_xml_params_attr(&after_tag[tag_end + 1..]);
-    let arguments_json = serde_json::to_string(&serde_json::Value::Object(args)).ok()?;
+    let arguments_json =
+        serde_json::to_string(&normalize_arguments(serde_json::Value::Object(args))).ok()?;
     Some(RawToolCall { name, arguments_json })
 }
 
@@ -405,7 +486,8 @@ fn parse_xml_function_eq_style(body: &str) -> Option<RawToolCall> {
         cursor = &after_p[value_start + value_end_rel + "</parameter>".len()..];
     }
 
-    let arguments_json = serde_json::to_string(&serde_json::Value::Object(args)).ok()?;
+    let arguments_json =
+        serde_json::to_string(&normalize_arguments(serde_json::Value::Object(args))).ok()?;
     Some(RawToolCall { name, arguments_json })
 }
 
@@ -443,6 +525,64 @@ mod tests {
             out.push_str(&parser.feed(c).clean_delta);
         }
         out
+    }
+
+    /// `arguments` строкой с JSON внутри (так пишет flash-next даже на
+    /// temp 0) — разворачивается в объект.
+    #[test]
+    fn stringified_arguments_are_unwrapped() {
+        let mut p = ToolCallParser::new();
+        p.feed(r#"<tool_call>{"name":"bash","arguments":"{\"command\": \"ls -la\"}"}</tool_call>"#);
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments_json, r#"{"command":"ls -la"}"#);
+    }
+
+    /// Лишняя вложенность `{"arguments": {...}}` (чат 28.08) снимается.
+    #[test]
+    fn nested_arguments_wrapper_is_unwrapped() {
+        let mut p = ToolCallParser::new();
+        p.feed(r#"<tool_call>{"name":"bash","arguments":{"arguments":{"command":"pwd"}}}</tool_call>"#);
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].arguments_json, r#"{"command":"pwd"}"#);
+    }
+
+    /// Пустая заглушка `"arguments": "\n\n"` рядом с настоящим полем
+    /// выбрасывается, а одна — даёт пустой объект.
+    #[test]
+    fn blank_arguments_stub_is_dropped() {
+        let mut p = ToolCallParser::new();
+        p.feed("<tool_call>{\"name\":\"bash\",\"arguments\":{\"arguments\":\"\\n\\n\",\"command\":\"id\"}}</tool_call>");
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].arguments_json, r#"{"command":"id"}"#);
+
+        let mut p = ToolCallParser::new();
+        p.feed("<tool_call>{\"name\":\"bash\",\"arguments\":{\"arguments\":\"\\n\"}}</tool_call>");
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].arguments_json, "{}");
+    }
+
+    /// Параметры рядом с `name`, без обёртки `arguments`.
+    #[test]
+    fn parameters_next_to_name_become_arguments() {
+        let mut p = ToolCallParser::new();
+        p.feed(r#"<tool_call>{"name":"bash","command":"uname -a"}</tool_call>"#);
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].arguments_json, r#"{"command":"uname -a"}"#);
+    }
+
+    /// XML-стиль с параметром `arguments` (модель назвала параметр именем
+    /// обёртки) — тоже разворачивается.
+    #[test]
+    fn xml_arguments_parameter_is_unwrapped() {
+        let mut p = ToolCallParser::new();
+        p.feed(
+            "<tool_call><invoke name=\"bash\"><parameter name=\"arguments\">\
+             {\"command\": \"ls\"}</parameter></invoke></tool_call>",
+        );
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].name, "bash");
+        assert_eq!(calls[0].arguments_json, r#"{"command":"ls"}"#);
     }
 
     #[test]

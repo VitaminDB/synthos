@@ -290,21 +290,31 @@ pub(super) fn build_all() -> Vec<Tool> {
             label: "notes",
             icon: MI_EDIT_NOTE,
             description: "Read and edit the user's Notes (the Notes mode of \
-                the app): a tree of markdown pages with kanban boards and \
-                Gantt charts embedded in them. Changes appear in the UI at \
-                once and are saved automatically. Actions: list (page tree \
-                with ids and the boards/charts on each page), search \
-                (titles + text), read (page markdown, its boards/charts with \
-                card ids, links), create / update / move / delete / \
-                duplicate (pages), open (show a page to the user), attach \
-                (file or chat attachment → media block on a page), kanban \
-                (op=create | read | add_column | update_column | \
-                delete_column | add_card | update_card | move_card | \
-                delete_card | delete), gantt (op=create | read | add_task | \
-                update_task | delete_task | add_dep | delete_dep | delete). \
-                Workflow: list → read the page → edit. Prefer update with \
-                find/replace or mode=append over rewriting a whole page. \
-                Pages are addressed by id (12 hex) or exact title; boards \
+                the app): a tree of markdown pages — a free canvas where \
+                blocks have coordinates — with shapes/arrows, kanban boards \
+                and Gantt charts embedded in them. Changes appear in the UI \
+                at once and are saved automatically. Actions: list (page \
+                tree with ids and the boards/charts on each page), search \
+                (titles + text), read (page markdown, layout, its \
+                boards/charts with card ids, links; blocks=true lists blocks \
+                with coordinates), create / update / move / delete / \
+                duplicate (pages; update also sets grid/snap and inserts \
+                content at a position), open (show a page to the user), \
+                attach (file or chat attachment → media block), blocks \
+                (op=list | read | insert | set_markdown | delete | move | \
+                set_attrs | pin | unpin — blocks by index, coordinates x y w h, \
+                text style color/bg/size/align/weight), shape (op=create | \
+                update | delete | connect — rect/ellipse/triangle/diamond, \
+                lines and arrows with absolute end points, connect draws an \
+                arrow between two pinned blocks), kanban (op=create | read | \
+                set_style | add_column | update_column | delete_column | \
+                add_card | update_card | move_card | delete_card | delete), \
+                gantt (op=create | read | add_task | update_task | \
+                delete_task | add_dep | delete_dep | set_zoom | show_today | \
+                delete). Workflow: list → read the page → edit. Prefer \
+                update with find/replace, mode=append or blocks ops over \
+                rewriting a whole page. Pages are addressed by id (12 hex) \
+                or exact title; blocks by index from blocks op=list; boards \
                 and charts by id, or implicitly when the page has one.",
             schema: notes_schema(),
         },
@@ -373,13 +383,15 @@ pub(super) fn build_all() -> Vec<Tool> {
 
 /// Схема `notes`: свойств много, и один `json!` на всё упирается в лимит
 /// рекурсии макроса — собираем карту из мелких литералов.
-fn notes_schema() -> serde_json::Value {
+pub(crate) fn notes_schema() -> serde_json::Value {
     let props: Vec<(&str, serde_json::Value)> = vec![
         ("action", json!({
             "type": "string",
             "enum": ["list", "search", "read", "create", "update", "move",
-                     "delete", "duplicate", "open", "attach", "kanban", "gantt"],
-            "description": "What to do. kanban and gantt take the sub-operation in op."
+                     "delete", "duplicate", "open", "attach", "blocks", "shape",
+                     "kanban", "gantt"],
+            "description": "What to do. blocks, shape, kanban and gantt take the \
+                sub-operation in op."
         })),
         ("page", json!({
             "type": "string",
@@ -399,13 +411,19 @@ fn notes_schema() -> serde_json::Value {
             "description": "Page markdown for create and update (see mode). \
                 Supported: # headings, - lists, 1. lists, - [ ] todos, > quotes, \
                 > [!note] callouts, > [!toggle] toggles, | tables |, ``` code, \
-                --- dividers, [[Page title]] wiki links, ![[Page title]] page embeds."
+                --- dividers, [[Page title]] wiki links, ![[Page title]] page \
+                embeds, ![[shape:rect]]{fill=#4F8CFF} shapes (rect | ellipse | \
+                triangle | diamond | line | arrow | arrow2 | curve | curve-arrow | \
+                curve-arrow2), heading/callout attributes {color=… bg=… \
+                align=center size=22}."
         })),
         ("mode", json!({
             "type": "string",
-            "enum": ["replace", "append", "prepend"],
+            "enum": ["replace", "append", "prepend", "insert"],
             "description": "update with content: replace the whole page \
-                (default) or add the fragment at the end / the start."
+                (default; blocks whose markdown changed lose their canvas \
+                position and style), or add the fragment at the end / the \
+                start / at index|after|before, optionally placed at x y (w h)."
         })),
         ("find", json!({
             "type": "string",
@@ -428,8 +446,10 @@ fn notes_schema() -> serde_json::Value {
         })),
         ("index", json!({
             "type": "integer",
-            "description": "create/move: 0-based position among siblings; omit \
-                for the end."
+            "description": "create/move (pages): 0-based position among \
+                siblings; omit for the end. blocks insert/move, shape create, \
+                attach, update mode=append, kanban/gantt op=create: 0-based \
+                block index to insert at."
         })),
         ("icon", json!({
             "type": "string",
@@ -470,10 +490,159 @@ fn notes_schema() -> serde_json::Value {
         })),
         ("op", json!({
             "type": "string",
-            "description": "kanban: create | read | add_column | update_column | \
-                delete_column | add_card | update_card | move_card | \
-                delete_card | delete. gantt: create | read | add_task | \
-                update_task | delete_task | add_dep | delete_dep | delete."
+            "description": "blocks: list | read | insert | set_markdown | delete | \
+                move | set_attrs | pin | unpin. shape: create | update | delete | \
+                connect. kanban: create | read | set_style | add_column | \
+                update_column | delete_column | add_card | update_card | \
+                move_card | delete_card | delete. gantt: create | read | \
+                add_task | update_task | delete_task | add_dep | delete_dep | \
+                set_zoom | show_today | delete."
+        })),
+        ("blocks", json!({
+            "type": "boolean",
+            "description": "read: also list the page blocks with index, kind, \
+                canvas coordinates (x y w h; ~ = estimated height) and \
+                attributes — needed before blocks/shape ops."
+        })),
+        ("block", json!({
+            "type": "string",
+            "description": "blocks/shape: the block — its index from blocks \
+                op=list (\"3\") or find:<text> that occurs in exactly one block. \
+                Re-list after inserting or deleting blocks: indices shift."
+        })),
+        ("md", json!({
+            "type": "string",
+            "description": "blocks insert: markdown to insert (one or more \
+                blocks). blocks set_markdown: the block's new markdown (its \
+                coordinates and style are kept). kanban add_card/update_card: \
+                card body markdown (a `- [ ]` checklist shows progress)."
+        })),
+        ("x", json!({
+            "type": "number",
+            "description": "Canvas x of the block's top-left corner in px (with \
+                y): blocks insert/move/pin, shape create/update (frame \
+                shapes), update mode=append, attach, kanban/gantt op=create. \
+                The page origin is the top-left; a block without x/y flows \
+                in the column."
+        })),
+        ("y", json!({
+            "type": "number",
+            "description": "Canvas y of the block's top-left corner in px (with x)."
+        })),
+        ("w", json!({
+            "type": "number",
+            "description": "Block width in px (≥ 40; default 520 for text)."
+        })),
+        ("h", json!({
+            "type": "number",
+            "description": "Block height in px (≥ 20): shapes, images, boards, \
+                charts. Text blocks size themselves."
+        })),
+        ("attrs", json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "blocks set_attrs: attributes to set; null or \"\" \
+                clears one. Text: color, bg (#rrggbb), size (6..160), weight \
+                (bold|normal), align (left|center|right). Geometry: x y w h. \
+                Shapes: fill, stroke (#rrggbb or none), sw (0..40), dash \
+                (0..60), radius (0..200), opacity (0..100); line points x1 y1 \
+                x2 y2 cx1 cy1 cx2 cy2 are relative to the block — prefer \
+                shape op=update with absolute points."
+        })),
+        ("kind", json!({
+            "type": "string",
+            "description": "shape create/update/connect: rect | ellipse | \
+                triangle | diamond | line | arrow | arrow2 (both ends) | curve | \
+                curve-arrow | curve-arrow2. Default rect (create) / arrow \
+                (connect)."
+        })),
+        ("fill", json!({
+            "type": "string",
+            "description": "shape: fill color #rrggbb (frame shapes; none = no fill)."
+        })),
+        ("stroke", json!({
+            "type": "string",
+            "description": "shape: outline color #rrggbb, none = no outline."
+        })),
+        ("sw", json!({
+            "type": "number",
+            "description": "shape: stroke width px (0..40, default 2)."
+        })),
+        ("dash", json!({
+            "type": "number",
+            "description": "shape: dash length px (0..60, 0 = solid)."
+        })),
+        ("radius", json!({
+            "type": "number",
+            "description": "shape rect: corner radius px (0..200)."
+        })),
+        ("opacity", json!({
+            "type": "number",
+            "description": "shape: opacity percent (0..100)."
+        })),
+        ("x1", json!({
+            "type": "number",
+            "description": "shape create/update (lines, arrows, curves): start \
+                point x in absolute canvas px (with y1). The block frame is \
+                computed from the points."
+        })),
+        ("y1", json!({ "type": "number", "description": "shape: start point y (absolute)." })),
+        ("x2", json!({ "type": "number", "description": "shape: end point x (absolute, with y2)." })),
+        ("y2", json!({ "type": "number", "description": "shape: end point y (absolute)." })),
+        ("cx1", json!({
+            "type": "number",
+            "description": "shape curves: first control point x (absolute, with \
+                cy1); omit for an automatic S-curve."
+        })),
+        ("cy1", json!({ "type": "number", "description": "shape curves: first control point y." })),
+        ("cx2", json!({ "type": "number", "description": "shape curves: second control point x (with cy2)." })),
+        ("cy2", json!({ "type": "number", "description": "shape curves: second control point y." })),
+        ("from_side", json!({
+            "type": "string",
+            "description": "shape connect: side of the from block the arrow \
+                starts at — auto (facing the other block) | left | right | top \
+                | bottom | center."
+        })),
+        ("to_side", json!({
+            "type": "string",
+            "description": "shape connect: side of the to block the arrow ends at (same values)."
+        })),
+        ("grid", json!({
+            "type": "string",
+            "description": "create/update: canvas grid — none | dots | lines | cross."
+        })),
+        ("grid_step", json!({
+            "type": "number",
+            "description": "create/update: grid step px (2..200, default 20)."
+        })),
+        ("snap", json!({
+            "type": "boolean",
+            "description": "create/update: snap blocks to the snap step when dragged."
+        })),
+        ("snap_step", json!({
+            "type": "number",
+            "description": "create/update: snap step px (1..100, default 5)."
+        })),
+        ("column_width", json!({
+            "type": "number",
+            "description": "kanban set_style: default column width px (140..800)."
+        })),
+        ("lane_bg", json!({
+            "type": "string",
+            "description": "kanban set_style: column background #rrggbb or \
+                #rrggbbaa (translucent tints look best); none = theme."
+        })),
+        ("card_bg", json!({
+            "type": "string",
+            "description": "kanban set_style: card background #rrggbb / #rrggbbaa; none = theme."
+        })),
+        ("show_counts", json!({
+            "type": "boolean",
+            "description": "kanban set_style: show card counts in column headers."
+        })),
+        ("zoom", json!({
+            "type": "number",
+            "description": "gantt set_zoom: px per day (5..90, default 26)."
         })),
         ("board", json!({
             "type": "string",
@@ -517,11 +686,6 @@ fn notes_schema() -> serde_json::Value {
             "description": "kanban update_card/move_card/delete_card: card id \
                 or exact title."
         })),
-        ("md", json!({
-            "type": "string",
-            "description": "kanban add_card/update_card: card body markdown \
-                (a `- [ ]` checklist shows progress on the card)."
-        })),
         ("priority", json!({
             "type": "string",
             "description": "kanban add_card/update_card: low | medium | high | \
@@ -540,8 +704,11 @@ fn notes_schema() -> serde_json::Value {
         })),
         ("before", json!({
             "type": "string",
-            "description": "kanban add_card/move_card: place the card before \
-                this card (id or title) of the target column; omit for the end."
+            "description": "kanban add_card/move_card/update_card: place the \
+                card before this card (id or title) of the target column; omit \
+                for the end. Elsewhere (blocks insert/move, shape create, \
+                attach, update mode=append, kanban/gantt op=create): insert \
+                before this block (index or find:<text>)."
         })),
         ("to_board", json!({
             "type": "string",
@@ -565,7 +732,9 @@ fn notes_schema() -> serde_json::Value {
         ("after", json!({
             "type": "string",
             "description": "gantt add_task: make the new task depend on this \
-                task (id or name)."
+                task (id or name). Elsewhere (blocks insert/move, shape create, \
+                attach, update mode=append, kanban/gantt op=create): insert \
+                after this block (index or find:<text>)."
         })),
         ("from", json!({
             "type": "string",

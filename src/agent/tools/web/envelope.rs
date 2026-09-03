@@ -35,11 +35,13 @@ pub struct ReadDoc {
     pub truncated: bool,
 }
 
-pub fn format_search_envelope(query: &str, lang: &str, hits: &[SerpHit]) -> String {
+/// `engine` — чьи карточки в результате (`search::ENGINE_DDG` / `ENGINE_BING`).
+pub fn format_search_envelope(query: &str, lang: &str, engine: &str, hits: &[SerpHit]) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "WEB_SEARCH query=\"{}\" engine=duckduckgo lang={}\n",
+        "WEB_SEARCH query=\"{}\" engine={} lang={}\n",
         escape_quotes(query),
+        engine,
         lang
     ));
     out.push_str(&format!("results-count: {}\n", hits.len()));
@@ -49,7 +51,7 @@ pub fn format_search_envelope(query: &str, lang: &str, hits: &[SerpHit]) -> Stri
         out.push_str(
             "The search engine returned no results. Possible reasons: the \
              SERP parser is outdated, the query is too narrow, a temporary \
-             DDG error. Try rephrasing the query.\n",
+             engine error. Try rephrasing the query.\n",
         );
         return out;
     }
@@ -140,7 +142,7 @@ mod tests {
                 snippet: String::new(),
             },
         ];
-        let out = format_search_envelope("hi", "ru", &hits);
+        let out = format_search_envelope("hi", "ru", "duckduckgo", &hits);
         assert!(out.starts_with("WEB_SEARCH query=\"hi\" engine=duckduckgo lang=ru\n"));
         assert!(out.contains("results-count: 2"));
         assert!(out.contains("--- results ---"));
@@ -154,7 +156,7 @@ mod tests {
 
     #[test]
     fn search_envelope_empty_results() {
-        let out = format_search_envelope("hi", "ru", &[]);
+        let out = format_search_envelope("hi", "ru", "bing", &[]);
         assert!(out.contains("results-count: 0"));
         assert!(out.contains("--- error ---"));
         assert!(out.contains("The search engine returned no results"));

@@ -18,18 +18,30 @@
 //! - `open` — показать страницу пользователю; `attach` — файл с диска или
 //!   вложение чата → вложение проекта + медиа-блок на странице.
 //! - `kanban` / `gantt` — объекты-примитивы: создать на странице, прочитать,
-//!   колонки/карточки и задачи/зависимости, удалить (врезки убираются со
-//!   страниц, файл — из бандла).
+//!   колонки/карточки и задачи/зависимости, стиль доски и масштаб
+//!   диаграммы, удалить (врезки убираются со страниц, файл — из бандла).
+//! - `blocks` — блоки страницы как структура: список с индексами,
+//!   геометрией и атрибутами; вставка, замена, перенос, удаление одного
+//!   блока; любые атрибуты (стиль текста, координаты и размеры, параметры
+//!   фигур); закрепление на холсте и снятие с него.
+//! - `shape` — примитивы: создать фигуру или линию (концы — в абсолютных
+//!   координатах холста), изменить, удалить, `connect` — стрелка между
+//!   двумя закреплёнными блоками.
 //!
 //! Адресация: страница — id (12 hex) либо название (без регистра; при
 //! совпадениях — путь «Родитель / Страница» или id); доска/диаграмма — id
 //! объекта либо страница, на которой объект один; колонка — id или
-//! название; карточка/задача — id или заголовок.
+//! название; карточка/задача — id или заголовок; блок — индекс верхнего
+//! уровня из `blocks op=list` либо `find:<фрагмент>` с единственным
+//! вхождением.
 //!
-//! **Геометрия свободной раскладки.** Агент видит и правит «плоский»
-//! markdown без служебного хвоста ```` ```doc-layout ````: при записи
-//! блоки, чей markdown не изменился, получают свои прежние координаты
-//! ([`with_geometry`]) — перестановка абзаца агентом не сбивает холст.
+//! **Служебный хвост.** Агент видит и правит «плоский» markdown без хвоста
+//! ```` ```doc-layout ````: там по индексу блока лежат координаты и —
+//! у блоков без места под инлайн-атрибуты (абзац, списки, код, таблица)
+//! — все их свойства. При записи блоки, чей markdown не изменился, получают
+//! свои прежние атрибуты ([`with_sidecar`]) — перестановка абзаца агентом
+//! не сбивает ни холст, ни оформление. Точечные правки (`find`/`replace`,
+//! `blocks`) идут по модели документа и атрибуты блока не теряют.
 //!
 //! Все сигналы — main-thread: действие целиком исполняется в
 //! `run_on_main_thread`-замыкании, результат уходит через oneshot
@@ -41,15 +53,18 @@ use serde_json::Value as Json;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 use syngui::tr;
+use syngui::widgets::input::document_editor::attrs::{parse_attr_block, serialize_attrs};
 use syngui::widgets::input::document_editor::serialize::block_markdown;
-use syngui::widgets::input::document_editor::{free, parse_document, serialize_document, BlockKind, DocBlock};
+use syngui::widgets::input::document_editor::{
+    free, parse_document, props, serialize_document, shape, Attrs, BlockKind, DocBlock, DocModel, ShapeKind,
+};
 
 use crate::pages::notes::gantt::calendar::{days_to_iso, parse_days, today_days};
 use crate::pages::notes::gantt::model::GanttDoc;
 use crate::pages::notes::gantt::GanttHandle;
 use crate::pages::notes::kanban::model::{item_id, parse_tags, DropSpot, KanbanCard, KanbanColumn, Priority, PALETTE};
 use crate::pages::notes::kanban::KanbanHandle;
-use crate::pages::notes::project::PageLayout;
+use crate::pages::notes::project::{PageGrid, PageLayout};
 use crate::pages::notes::state::{object_refs, LiveObject, NotesCtx};
 use crate::pages::notes::{embeds, media};
 use crate::syn_chat::attach::blobs;
@@ -89,9 +104,11 @@ pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String>
         "attach" => attach_impl(ctx, v),
         "kanban" => kanban_impl(ctx, v),
         "gantt" => gantt_impl(ctx, v),
+        "blocks" => blocks_impl(ctx, v),
+        "shape" => shape_impl(ctx, v),
         other => Err(format!(
             "unknown action \"{other}\" (list | search | read | create | update | move | delete | \
-             duplicate | open | attach | kanban | gantt)"
+             duplicate | open | attach | blocks | shape | kanban | gantt)"
         )),
     }
 }
@@ -104,6 +121,15 @@ pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String>
 /// и индексы как попало.
 fn str_field<'a>(v: &'a Json, key: &str) -> Option<&'a str> {
     v.get(key)?.as_str().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Ссылка на блок: строка либо число (индекс).
+fn ref_field(v: &Json, key: &str) -> Option<String> {
+    match v.get(key)? {
+        Json::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Json::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 /// Строка как есть (возможно пустая — «очистить»); `null` — поля нет.
@@ -330,29 +356,35 @@ fn object_page_line(ctx: NotesCtx, kind: &str, id: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Markdown: плоская форма и геометрия
+// Markdown: плоская форма и служебный хвост
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn strip_geom(block: &mut DocBlock) {
-    for k in [free::ATTR_X, free::ATTR_Y, free::ATTR_W, free::ATTR_H] {
-        block.attrs.remove(k);
+/// Снять с блока всё, что уходит в служебный хвост: геометрию — всегда, а
+/// у блоков без места под инлайн-атрибуты — все атрибуты (иначе агент
+/// увидел бы ```` ```doc-layout ```` с индексами и сдвинул бы их вставкой).
+fn strip_sidecar(block: &mut DocBlock) {
+    if free::has_inline_attrs(&block.kind) {
+        for k in [free::ATTR_X, free::ATTR_Y, free::ATTR_W, free::ATTR_H] {
+            block.attrs.remove(k);
+        }
+    } else {
+        block.attrs = Attrs::default();
     }
 }
 
-/// Markdown страницы без служебной геометрии свободной раскладки — то, что
-/// видит и правит агент.
+/// Markdown страницы без служебного хвоста — то, что видит и правит агент.
 pub fn plain_markdown(md: &str) -> String {
     let mut model = parse_document(md);
     for b in &mut model.blocks {
-        strip_geom(b);
+        strip_sidecar(b);
     }
     serialize_document(&model)
 }
 
-/// Текст страницы от агента + геометрия старых блоков: блок, чей markdown
-/// не изменился, остаётся на своём месте холста (совпадение по тексту, по
-/// порядку, каждый старый блок — один раз).
-pub fn with_geometry(current: &str, new_plain: &str) -> String {
+/// Текст страницы от агента + атрибуты старых блоков: блок, чей markdown
+/// не изменился, остаётся на своём месте холста и в своём оформлении
+/// (совпадение по тексту, по порядку, каждый старый блок — один раз).
+pub fn with_sidecar(current: &str, new_plain: &str) -> String {
     let old = parse_document(current);
     let old_md: Vec<String> = old.blocks.iter().map(block_markdown).collect();
     let mut used = vec![false; old.blocks.len()];
@@ -361,26 +393,531 @@ pub fn with_geometry(current: &str, new_plain: &str) -> String {
         let key = block_markdown(b);
         let Some(i) = (0..old.blocks.len()).find(|&i| !used[i] && old_md[i] == key) else { continue };
         used[i] = true;
-        for k in [free::ATTR_X, free::ATTR_Y, free::ATTR_W, free::ATTR_H] {
-            if let Some(val) = old.blocks[i].attrs.get(k) {
-                if b.attrs.get(k).is_none() {
-                    b.attrs.set(k, val.to_string());
-                }
+        for (k, val) in old.blocks[i].attrs.0.iter() {
+            if b.attrs.get(k).is_none() {
+                b.attrs.set(k.clone(), val.clone());
             }
         }
     }
     serialize_document(&fresh)
 }
 
-/// Записать новый плоский текст страницы, сохранив геометрию.
+/// Записать новый плоский текст страницы, сохранив атрибуты нетронутых блоков.
 fn write_page(ctx: NotesCtx, id: &str, new_plain: &str) -> Result<(), String> {
     let current = ctx.page_markdown(id);
-    let merged = with_geometry(&current, new_plain);
-    if ctx.set_page_markdown(id, &merged) {
+    let merged = with_sidecar(&current, new_plain);
+    store_markdown(ctx, id, &merged)
+}
+
+fn store_markdown(ctx: NotesCtx, id: &str, md: &str) -> Result<(), String> {
+    if ctx.set_page_markdown(id, md) {
         Ok(())
     } else {
         Err(format!("page {id} not found"))
     }
+}
+
+/// Модель страницы со служебным хвостом — для правок на уровне блоков.
+fn load_model(ctx: NotesCtx, id: &str) -> DocModel {
+    parse_document(&ctx.page_markdown(id))
+}
+
+fn store_model(ctx: NotesCtx, id: &str, model: &DocModel) -> Result<(), String> {
+    store_markdown(ctx, id, &serialize_document(model))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Блоки: адресация, геометрия, вставка
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ширина блока в потоке / без своей ширины (как `DocLayout::block_width`).
+const DEFAULT_BLOCK_W: f32 = 520.0;
+
+/// Куда вставлять фрагмент относительно верхнеуровневых блоков.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum InsertPos {
+    End,
+    Start,
+    Index(usize),
+}
+
+/// Позиция из `index` / `after` / `before` (ссылки на блоки); без них —
+/// `fallback`.
+fn parse_pos(model: &DocModel, v: &Json, fallback: InsertPos) -> Result<InsertPos, String> {
+    if let Some(i) = usize_field(v, "index") {
+        return Ok(InsertPos::Index(i.min(model.blocks.len())));
+    }
+    if let Some(a) = ref_field(v, "after") {
+        return Ok(InsertPos::Index(resolve_block(model, &a)? + 1));
+    }
+    if let Some(b) = ref_field(v, "before") {
+        return Ok(InsertPos::Index(resolve_block(model, &b)?));
+    }
+    Ok(fallback)
+}
+
+fn pos_index(model: &DocModel, pos: InsertPos) -> usize {
+    match pos {
+        InsertPos::End => model.blocks.len(),
+        InsertPos::Start => 0,
+        InsertPos::Index(i) => i.min(model.blocks.len()),
+    }
+}
+
+fn pos_text(pos: InsertPos) -> String {
+    match pos {
+        InsertPos::End => "at the end of the page".to_string(),
+        InsertPos::Start => "at the start of the page".to_string(),
+        InsertPos::Index(i) => format!("at block #{i}"),
+    }
+}
+
+/// Геометрия из аргументов `x y w h`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Geom {
+    x: Option<f32>,
+    y: Option<f32>,
+    w: Option<f32>,
+    h: Option<f32>,
+}
+
+fn parse_geom(v: &Json) -> Result<Geom, String> {
+    let num = |k: &str| -> Result<Option<f32>, String> {
+        match v.get(k) {
+            None | Some(Json::Null) => Ok(None),
+            Some(_) => f32_field(v, k).filter(|f| f.is_finite()).map(Some).ok_or_else(|| format!("bad \"{k}\" — a number in px")),
+        }
+    };
+    let g = Geom { x: num("x")?, y: num("y")?, w: num("w")?, h: num("h")? };
+    if let Some(w) = g.w {
+        if w < 40.0 {
+            return Err("\"w\" must be at least 40 px".to_string());
+        }
+    }
+    if let Some(h) = g.h {
+        if h < 20.0 {
+            return Err("\"h\" must be at least 20 px".to_string());
+        }
+    }
+    if g.x.is_some() != g.y.is_some() {
+        return Err("pass both \"x\" and \"y\" to place a block on the canvas".to_string());
+    }
+    Ok(g)
+}
+
+impl Geom {
+    fn is_empty(&self) -> bool {
+        self.x.is_none() && self.w.is_none() && self.h.is_none()
+    }
+
+    fn apply(&self, attrs: &mut Attrs) {
+        if let (Some(x), Some(y)) = (self.x, self.y) {
+            free::set_pos(attrs, x, y);
+        }
+        if let Some(w) = self.w {
+            free::set_width(attrs, w);
+        }
+        if let Some(h) = self.h {
+            free::set_height(attrs, h);
+        }
+    }
+}
+
+/// Число в атрибут: до десятых, целые — без хвоста.
+fn fnum(v: f32) -> String {
+    let r = (v * 10.0).round() / 10.0;
+    if (r - r.round()).abs() < f32::EPSILON {
+        format!("{}", r.round() as i64)
+    } else {
+        format!("{r}")
+    }
+}
+
+/// Блок по ссылке агента: индекс верхнего уровня (`3`, `#3`) либо
+/// `find:<фрагмент>` / текст — единственное вхождение в markdown блока.
+fn resolve_block(model: &DocModel, s: &str) -> Result<usize, String> {
+    let t = s.trim();
+    let t = t.strip_prefix("block:").unwrap_or(t).trim();
+    let n = model.blocks.len();
+    if let Ok(i) = t.trim_start_matches('#').parse::<usize>() {
+        return (i < n).then_some(i).ok_or_else(|| format!("block #{i} does not exist — the page has {n} blocks (blocks op=list)"));
+    }
+    let needle = t.strip_prefix("find:").unwrap_or(t).trim().to_lowercase();
+    if needle.is_empty() {
+        return Err("empty block reference — pass an index from blocks op=list or find:<text>".to_string());
+    }
+    let hits: Vec<usize> =
+        (0..n).filter(|&i| block_markdown(&model.blocks[i]).to_lowercase().contains(&needle)).collect();
+    match hits.len() {
+        1 => Ok(hits[0]),
+        0 => Err(format!("no block contains \"{t}\" — see blocks op=list")),
+        _ => Err(format!(
+            "{} blocks contain \"{t}\" — use the index: {}",
+            hits.len(),
+            hits.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// Оценка высоты блока в px (модель не знает раскладки текста — числа
+/// приблизительные, в выводе помечаются тильдой).
+fn est_height(b: &DocBlock, w: f32) -> f32 {
+    fn text_lines(chars: usize, w: f32, glyph: f32) -> f32 {
+        let per_line = ((w - 16.0) / glyph).max(8.0);
+        (chars as f32 / per_line).ceil().max(1.0)
+    }
+    match &b.kind {
+        BlockKind::Shape { shape } if shape.is_line() => shape::line_box(&b.attrs, *shape).height,
+        BlockKind::Shape { .. } => shape::height_of(&b.attrs),
+        BlockKind::Media { .. } => free::height_of(&b.attrs).unwrap_or(220.0),
+        BlockKind::Divider => 17.0,
+        BlockKind::Embed { .. } => free::height_of(&b.attrs).unwrap_or(200.0),
+        BlockKind::Table { rows, .. } => (rows.len() as f32 + 1.0) * 30.0,
+        BlockKind::CodeBlock { code, .. } => code.lines().count().max(1) as f32 * 20.0 + 16.0,
+        BlockKind::Heading { level, text } => {
+            let size = match level {
+                1 => 32.0,
+                2 => 26.0,
+                3 => 22.0,
+                _ => 18.0,
+            };
+            text_lines(text.text().chars().count(), w, size * 0.55) * size * 1.4 + 8.0
+        }
+        _ => {
+            let chars = b.kind.text().map(|t| t.text().chars().count()).unwrap_or(0);
+            let own = text_lines(chars, w, 8.5) * 24.0 + 8.0;
+            let children: f32 = b.kind.children().map(|c| c.iter().map(|x| est_height(x, w - 24.0)).sum()).unwrap_or(0.0);
+            own + children
+        }
+    }
+}
+
+fn block_width(b: &DocBlock) -> f32 {
+    free::width_of(&b.attrs).unwrap_or(DEFAULT_BLOCK_W)
+}
+
+/// Прямоугольник закреплённого блока на холсте (высота — из `h` либо оценка).
+fn block_rect(b: &DocBlock) -> Option<(f32, f32, f32, f32)> {
+    let (x, y) = free::pos_of(&b.attrs)?;
+    let w = block_width(b);
+    let h = free::height_of(&b.attrs).unwrap_or_else(|| est_height(b, w));
+    Some((x, y, w, h))
+}
+
+fn kind_label(b: &DocBlock) -> String {
+    match &b.kind {
+        BlockKind::Heading { level, .. } => format!("heading{level}"),
+        BlockKind::Shape { shape } => format!("shape:{}", shape.name()),
+        BlockKind::Embed { target } => format!("embed:{}", target.trim()),
+        other => props::kind_name(other).to_string(),
+    }
+}
+
+/// Абсолютные точки линейной фигуры (концы и, у кривой, направляющие) —
+/// только у закреплённого блока; иначе локальные.
+fn line_points_abs(b: &DocBlock, kind: ShapeKind) -> Vec<(f32, f32)> {
+    let (ox, oy) = free::pos_of(&b.attrs).map(|(x, y)| (x + shape::LINE_PAD, y + shape::LINE_PAD)).unwrap_or((0.0, 0.0));
+    shape::line_handles(&b.attrs, kind).into_iter().map(|(x, y)| (x + ox, y + oy)).collect()
+}
+
+/// Строка блока в `blocks op=list`.
+fn block_line(i: usize, b: &DocBlock) -> String {
+    let mut s = format!("#{i} {}", kind_label(b));
+    let label = props::label_of(b).replace(['\n', '"'], " ");
+    if !label.trim().is_empty() && !matches!(b.kind, BlockKind::Shape { .. } | BlockKind::Embed { .. }) {
+        s.push_str(&format!(" \"{}\"", label.trim()));
+    }
+    let w = block_width(b);
+    match free::pos_of(&b.attrs) {
+        Some((x, y)) => s.push_str(&format!(" · x={} y={} w={}", fnum(x), fnum(y), fnum(w))),
+        None => s.push_str(" · flow"),
+    }
+    match free::height_of(&b.attrs) {
+        Some(h) => s.push_str(&format!(" h={}", fnum(h))),
+        None => s.push_str(&format!(" h=~{}", fnum(est_height(b, w)))),
+    }
+    let mut rest = Attrs::default();
+    for (k, v) in b.attrs.0.iter() {
+        let is_point = matches!(b.kind, BlockKind::Shape { shape } if shape.is_line())
+            && matches!(k.as_str(), "x1" | "y1" | "x2" | "y2" | "cx1" | "cy1" | "cx2" | "cy2");
+        if !free::is_geom_key(k) && !is_point {
+            rest.set(k.clone(), v.clone());
+        }
+    }
+    if let BlockKind::Shape { shape } = &b.kind {
+        if shape.is_line() {
+            let pts = line_points_abs(b, *shape);
+            let p = |i: usize| format!("({},{})", fnum(pts[i].0), fnum(pts[i].1));
+            s.push_str(&format!(" · from {} to {}", p(0), p(1)));
+            if shape.is_curve() && pts.len() == 4 {
+                s.push_str(&format!(" via {} {}", p(2), p(3)));
+            }
+            if free::pos_of(&b.attrs).is_none() {
+                s.push_str(" (relative — not pinned)");
+            }
+        }
+    }
+    if !rest.is_empty() {
+        s.push_str(&format!(" · {}", serialize_attrs(&rest)));
+    }
+    s
+}
+
+fn blocks_text(model: &DocModel) -> String {
+    if model.blocks.is_empty() {
+        return "(no blocks)\n".to_string();
+    }
+    let mut out = String::new();
+    for (i, b) in model.blocks.iter().enumerate() {
+        out.push_str(&block_line(i, b));
+        out.push('\n');
+    }
+    out
+}
+
+/// Разобрать фрагмент markdown в блоки; геометрия — первому (`last=false`)
+/// или последнему блоку фрагмента.
+fn fragment_blocks(md: &str, geom: &Geom, last: bool) -> Result<Vec<DocBlock>, String> {
+    let mut blocks = parse_document(md).blocks;
+    if blocks.is_empty() {
+        return Err("the markdown fragment is empty".to_string());
+    }
+    if !geom.is_empty() {
+        let idx = if last { blocks.len() - 1 } else { 0 };
+        geom.apply(&mut blocks[idx].attrs);
+    }
+    Ok(blocks)
+}
+
+/// Вставить блоки в позицию; возвращает индексы вставленных.
+fn insert_blocks(model: &mut DocModel, blocks: Vec<DocBlock>, pos: InsertPos) -> Vec<usize> {
+    let at = pos_index(model, pos);
+    let n = blocks.len();
+    let tail = model.blocks.split_off(at);
+    model.blocks.extend(blocks);
+    model.blocks.extend(tail);
+    (at..at + n).collect()
+}
+
+fn indices_text(idx: &[usize]) -> String {
+    idx.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+}
+
+/// Заменить блок `i` результатом разбора `md`; первый новый блок наследует
+/// атрибуты старого (те, которых у него нет).
+fn replace_block(model: &mut DocModel, i: usize, md: &str) -> Result<Vec<usize>, String> {
+    let old = model.blocks.remove(i);
+    let mut fresh = parse_document(md).blocks;
+    if fresh.is_empty() {
+        return Ok(Vec::new());
+    }
+    for (k, v) in old.attrs.0.iter() {
+        if fresh[0].attrs.get(k).is_none() {
+            fresh[0].attrs.set(k.clone(), v.clone());
+        }
+    }
+    Ok(insert_blocks(model, fresh, InsertPos::Index(i)))
+}
+
+/// `find`/`replace` по блокам: совпадение ищется внутри markdown одного
+/// верхнеуровневого блока, блок перепарсивается с сохранением атрибутов.
+fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str, all: bool) -> Result<usize, String> {
+    let per_block: Vec<usize> = model.blocks.iter().map(|b| block_markdown(b).matches(find).count()).collect();
+    let n: usize = per_block.iter().sum();
+    if n == 0 {
+        let joined: String = model.blocks.iter().map(block_markdown).collect::<Vec<_>>().join("\n");
+        return Err(if joined.contains(find) {
+            "find text spans several blocks — replace it with blocks op=set_markdown, or update with \
+             content"
+                .to_string()
+        } else {
+            "find text not found on the page — read the page and copy the fragment exactly \
+             (the page is compared as markdown, not as rendered text)"
+                .to_string()
+        });
+    }
+    if n > 1 && !all {
+        return Err(format!(
+            "find text occurs {n} times — pass all=true to replace every occurrence, or a longer \
+             unique fragment"
+        ));
+    }
+    // С конца — индексы впереди не съезжают.
+    for i in (0..model.blocks.len()).rev() {
+        if per_block[i] == 0 {
+            continue;
+        }
+        let md = block_markdown(&model.blocks[i]);
+        let new_md = if all { md.replace(find, replace) } else { md.replacen(find, replace, 1) };
+        replace_block(model, i, &new_md)?;
+    }
+    Ok(n)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Атрибуты блока
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `#rrggbb` / `#rgb` / имя палитры / `none`; с `alpha` — и `#rrggbbaa`.
+fn parse_hex_color(s: &str, alpha: bool) -> Result<String, String> {
+    if let Ok(c) = parse_color(s) {
+        return Ok(c);
+    }
+    let t = s.trim();
+    let hex = t.strip_prefix('#').unwrap_or(t);
+    if alpha && hex.len() == 8 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(format!("#{}", hex.to_uppercase()));
+    }
+    Err(format!(
+        "bad color \"{s}\" — use #rrggbb{}, gray | orange | green | blue | purple | red | teal or none",
+        if alpha { " / #rrggbbaa" } else { "" }
+    ))
+}
+
+/// Проверить и нормализовать значение атрибута блока; `Ok(None)` — снять.
+fn validate_attr(key: &str, value: &str) -> Result<Option<String>, String> {
+    let v = value.trim();
+    let cleared = v.is_empty() || matches!(v.to_ascii_lowercase().as_str(), "none" | "null" | "default");
+    let range = |lo: f32, hi: f32| -> Result<Option<String>, String> {
+        if cleared {
+            return Ok(None);
+        }
+        let n: f32 = v.parse().map_err(|_| format!("bad \"{key}\" \"{v}\" — a number {lo}..{hi}"))?;
+        if !(lo..=hi).contains(&n) {
+            return Err(format!("\"{key}\" must be within {lo}..{hi}"));
+        }
+        Ok(Some(fnum(n)))
+    };
+    match key {
+        "color" | "bg" | "fill" => {
+            if cleared {
+                return Ok(None);
+            }
+            parse_hex_color(v, true).map(Some)
+        }
+        "stroke" => {
+            if v.is_empty() || matches!(v.to_ascii_lowercase().as_str(), "default" | "null") {
+                return Ok(None);
+            }
+            if v.eq_ignore_ascii_case("none") {
+                return Ok(Some("none".to_string()));
+            }
+            parse_hex_color(v, true).map(Some)
+        }
+        "size" => range(6.0, 160.0),
+        "weight" => match v.to_ascii_lowercase().as_str() {
+            "" | "none" | "null" | "default" => Ok(None),
+            "bold" | "normal" => Ok(Some(v.to_ascii_lowercase())),
+            _ => Err(format!("bad \"weight\" \"{v}\" (bold | normal)")),
+        },
+        "align" => match v.to_ascii_lowercase().as_str() {
+            "" | "none" | "null" | "default" => Ok(None),
+            "left" | "center" | "right" => Ok(Some(v.to_ascii_lowercase())),
+            _ => Err(format!("bad \"align\" \"{v}\" (left | center | right)")),
+        },
+        "x" | "y" | "x1" | "y1" | "x2" | "y2" | "cx1" | "cy1" | "cx2" | "cy2" => range(-1.0e6, 1.0e6),
+        "w" => range(40.0, 1.0e5),
+        "h" => range(20.0, 1.0e5),
+        "sw" => range(0.0, 40.0),
+        "dash" => range(0.0, 60.0),
+        "radius" => range(0.0, 200.0),
+        "opacity" => range(0.0, 100.0),
+        other => Err(format!(
+            "unknown attribute \"{other}\" — allowed: color bg size weight align (text), x y w h (geometry), \
+             fill stroke sw dash radius opacity (shape), x1 y1 x2 y2 cx1 cy1 cx2 cy2 (line ends, relative)"
+        )),
+    }
+}
+
+/// Атрибуты из аргумента `attrs`: JSON-объект либо строка `{k=v …}` /
+/// `k=v k=v` / JSON-текст.
+fn attrs_arg(v: &Json) -> Result<Vec<(String, String)>, String> {
+    let raw = v.get("attrs").ok_or("missing \"attrs\" (object {key: value}; empty or null value clears)")?;
+    let mut out = Vec::new();
+    match raw {
+        Json::Object(map) => {
+            for (k, val) in map {
+                let s = match val {
+                    Json::Null => String::new(),
+                    Json::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                out.push((k.clone(), s));
+            }
+        }
+        Json::String(s) => {
+            let t = s.trim();
+            if let Ok(Json::Object(map)) = serde_json::from_str::<Json>(t) {
+                return attrs_arg(&serde_json::json!({ "attrs": map }));
+            }
+            let braced = if t.starts_with('{') { t.to_string() } else { format!("{{{t}}}") };
+            let parsed = parse_attr_block(&braced).ok_or_else(|| format!("can't parse attrs \"{t}\" — pass an object"))?;
+            for (k, val) in parsed.0 {
+                out.push((k, val));
+            }
+        }
+        _ => return Err("\"attrs\" must be an object {key: value}".to_string()),
+    }
+    if out.is_empty() {
+        return Err("\"attrs\" is empty".to_string());
+    }
+    Ok(out)
+}
+
+/// Применить проверенные атрибуты к блоку; возвращает описание изменений.
+fn apply_attrs(block: &mut DocBlock, pairs: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut changes = Vec::new();
+    for (k, v) in pairs {
+        let key = k.trim().to_ascii_lowercase();
+        match validate_attr(&key, v)? {
+            Some(val) => {
+                block.attrs.set(key.clone(), val.clone());
+                changes.push(format!("{key}={val}"));
+            }
+            None => {
+                block.attrs.remove(&key);
+                changes.push(format!("{key} cleared"));
+            }
+        }
+    }
+    // Координаты — только парой; ширина/высота у линии пересчитываются по концам.
+    let has_x = block.attrs.get("x").is_some();
+    let has_y = block.attrs.get("y").is_some();
+    if has_x != has_y {
+        block.attrs.remove("x");
+        block.attrs.remove("y");
+        return Err("pass both x and y (or clear both) to place a block on the canvas".to_string());
+    }
+    if let BlockKind::Shape { shape } = block.kind {
+        if shape.is_line() {
+            canonicalize_line(block, shape);
+        }
+    }
+    Ok(changes)
+}
+
+/// Привести линейную фигуру к канону: минимум точек — в нуле, рамка сдвинута
+/// под них, ширина/высота — по bbox с полем.
+fn canonicalize_line(block: &mut DocBlock, kind: ShapeKind) {
+    let pts = shape::line_handles(&block.attrs, kind);
+    let (min_x, min_y) = pts.iter().fold((f32::MAX, f32::MAX), |m, p| (m.0.min(p.0), m.1.min(p.1)));
+    if min_x.abs() > 0.05 || min_y.abs() > 0.05 {
+        let (p1, p2) = shape::endpoints_of(&block.attrs);
+        shape::set_endpoints(&mut block.attrs, (p1.0 - min_x, p1.1 - min_y), (p2.0 - min_x, p2.1 - min_y));
+        // Направляющие сдвигаются только те, что заданы явно: остальные
+        // выводятся из концов заново.
+        for (key, d) in [("cx1", min_x), ("cy1", min_y), ("cx2", min_x), ("cy2", min_y)] {
+            if let Some(v) = block.attrs.get(key).and_then(|v| v.parse::<f32>().ok()) {
+                block.attrs.set(key, fnum(v - d));
+            }
+        }
+        if let Some((x, y)) = free::pos_of(&block.attrs) {
+            free::set_pos(&mut block.attrs, x + min_x, y + min_y);
+        }
+    }
+    let size = shape::line_box(&block.attrs, kind);
+    free::set_width(&mut block.attrs, size.width.max(40.0));
+    free::set_height(&mut block.attrs, size.height.max(20.0));
 }
 
 /// Убрать врезки `![[kind:id]]` из markdown (и из вложенных блоков).
@@ -493,14 +1030,15 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let id = page_arg(ctx, v, "page")?;
     let tree = ctx.tree.get_untracked();
     let node = tree.find(&id).ok_or("page vanished")?;
-    let md = plain_markdown(&ctx.page_markdown(&id));
+    let raw = ctx.page_markdown(&id);
+    let md = plain_markdown(&raw);
     let mut out = String::new();
     out.push_str(&page_line(ctx, &id));
     out.push('\n');
     out.push_str(&format!(
-        "icon: {} · layout: {} · {} words · children: {}\n",
+        "icon: {} · {} · {} words · children: {}\n",
         node.icon.as_deref().unwrap_or("none"),
-        if node.layout.free { "free" } else { "flow" },
+        layout_text(&node.layout),
         count_words(&md),
         node.children.len()
     ));
@@ -512,6 +1050,10 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         if !md.ends_with('\n') {
             out.push('\n');
         }
+    }
+    if bool_field(v, "blocks").unwrap_or(false) {
+        out.push_str("--- Blocks (index · kind · canvas x y w h, ~ = estimated · attributes) ---\n");
+        out.push_str(&blocks_text(&parse_document(&raw)));
     }
     let objects = object_refs(&md);
     if !objects.is_empty() {
@@ -563,9 +1105,7 @@ fn create_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     if let Some(icon) = str_field(v, "icon") {
         ctx.set_icon(&id, Some(icon.to_string()));
     }
-    if let Some(layout) = str_field(v, "layout") {
-        set_layout(ctx, &id, layout)?;
-    }
+    apply_layout_args(ctx, &id, v)?;
     if let Some(content) = raw_string(v, "content") {
         write_page(ctx, &id, &content)?;
         out.push_str(&format!("content: {} words\n", count_words(&content)));
@@ -578,15 +1118,73 @@ fn create_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     Ok(out)
 }
 
-fn set_layout(ctx: NotesCtx, id: &str, layout: &str) -> Result<(), String> {
-    let mut l: PageLayout = ctx.page_layout(id);
-    match layout.to_ascii_lowercase().as_str() {
-        "free" | "canvas" => l.free = true,
-        "flow" | "document" | "column" => l.free = false,
-        other => return Err(format!("unknown layout \"{other}\" (free | flow)")),
+/// Раскладка страницы одной строкой (для `read`).
+fn layout_text(l: &PageLayout) -> String {
+    let grid = match l.grid {
+        PageGrid::None => "none".to_string(),
+        g => format!("{} step {}", grid_name(g), fnum(l.grid_step)),
+    };
+    format!(
+        "layout: {} · grid: {grid} · snap: {}",
+        if l.free { "free" } else { "flow" },
+        if l.snap { format!("on step {}", fnum(l.snap_step)) } else { "off".to_string() }
+    )
+}
+
+fn grid_name(g: PageGrid) -> &'static str {
+    match g {
+        PageGrid::None => "none",
+        PageGrid::Dots => "dots",
+        PageGrid::Lines => "lines",
+        PageGrid::Cross => "cross",
     }
-    ctx.set_page_layout(id, l);
-    Ok(())
+}
+
+/// Раскладка страницы из аргументов `layout grid grid_step snap snap_step`;
+/// возвращает список изменений.
+fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, String> {
+    let mut l: PageLayout = ctx.page_layout(id);
+    let mut changes = Vec::new();
+    if let Some(layout) = str_field(v, "layout") {
+        match layout.to_ascii_lowercase().as_str() {
+            "free" | "canvas" => l.free = true,
+            "flow" | "document" | "column" => l.free = false,
+            other => return Err(format!("unknown layout \"{other}\" (free | flow)")),
+        }
+        changes.push(format!("layout: {}", if l.free { "free" } else { "flow" }));
+    }
+    if let Some(grid) = str_field(v, "grid") {
+        l.grid = match grid.to_ascii_lowercase().as_str() {
+            "none" | "off" => PageGrid::None,
+            "dots" | "dot" => PageGrid::Dots,
+            "lines" | "line" => PageGrid::Lines,
+            "cross" | "crosses" => PageGrid::Cross,
+            other => return Err(format!("unknown grid \"{other}\" (none | dots | lines | cross)")),
+        };
+        changes.push(format!("grid: {}", grid_name(l.grid)));
+    }
+    if let Some(step) = f32_field(v, "grid_step") {
+        if !(2.0..=200.0).contains(&step) {
+            return Err("\"grid_step\" must be within 2..200 px".to_string());
+        }
+        l.grid_step = step.round();
+        changes.push(format!("grid_step: {}", fnum(l.grid_step)));
+    }
+    if let Some(snap) = bool_field(v, "snap") {
+        l.snap = snap;
+        changes.push(format!("snap: {}", if snap { "on" } else { "off" }));
+    }
+    if let Some(step) = f32_field(v, "snap_step") {
+        if !(1.0..=100.0).contains(&step) {
+            return Err("\"snap_step\" must be within 1..100 px".to_string());
+        }
+        l.snap_step = step.round();
+        changes.push(format!("snap_step: {}", fnum(l.snap_step)));
+    }
+    if !changes.is_empty() {
+        ctx.set_page_layout(id, l);
+    }
+    Ok(changes)
 }
 
 fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
@@ -604,22 +1202,26 @@ fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         ctx.set_icon(&id, (!cleared).then_some(icon.clone()));
         changes.push(if cleared { "icon cleared".to_string() } else { format!("icon set to {icon}") });
     }
-    if let Some(layout) = str_field(v, "layout") {
-        set_layout(ctx, &id, layout)?;
-        changes.push(format!("layout: {layout}"));
-    }
+    changes.extend(apply_layout_args(ctx, &id, v)?);
 
     let mode = str_field(v, "mode").map(|m| m.to_ascii_lowercase()).unwrap_or_else(|| "replace".to_string());
     if let Some(content) = raw_string(v, "content") {
-        let current = plain_markdown(&ctx.page_markdown(&id));
-        let new_plain = match mode.as_str() {
-            "replace" => content.clone(),
-            "append" => join_blocks(&current, &content),
-            "prepend" => join_blocks(&content, &current),
-            other => return Err(format!("unknown mode \"{other}\" (replace | append | prepend)")),
-        };
-        write_page(ctx, &id, &new_plain)?;
-        changes.push(format!("content {mode}: {} words now", count_words(&new_plain)));
+        match mode.as_str() {
+            "replace" => {
+                write_page(ctx, &id, &content)?;
+                changes.push(format!("content replaced: {} words now", count_words(&content)));
+            }
+            "append" | "prepend" | "insert" => {
+                let mut model = load_model(ctx, &id);
+                let fallback = if mode == "prepend" { InsertPos::Start } else { InsertPos::End };
+                let pos = parse_pos(&model, v, fallback)?;
+                let blocks = fragment_blocks(&content, &parse_geom(v)?, false)?;
+                let idx = insert_blocks(&mut model, blocks, pos);
+                store_model(ctx, &id, &model)?;
+                changes.push(format!("inserted {} block{} {} ({})", idx.len(), if idx.len() == 1 { "" } else { "s" }, pos_text(pos), indices_text(&idx)));
+            }
+            other => return Err(format!("unknown mode \"{other}\" (replace | append | prepend | insert)")),
+        }
     }
 
     if let Some(find) = raw_string(v, "find") {
@@ -627,30 +1229,16 @@ fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             return Err("\"find\" is empty".to_string());
         }
         let replace = raw_string(v, "replace").unwrap_or_default();
-        let current = plain_markdown(&ctx.page_markdown(&id));
-        let n = current.matches(&find).count();
-        if n == 0 {
-            return Err(
-                "find text not found on the page — read the page and copy the fragment exactly \
-                 (the page is compared as markdown, not as rendered text)"
-                    .to_string(),
-            );
-        }
         let all = bool_field(v, "all").unwrap_or(false);
-        if n > 1 && !all {
-            return Err(format!(
-                "find text occurs {n} times — pass all=true to replace every occurrence, or a \
-                 longer unique fragment"
-            ));
-        }
-        let new_plain = if all { current.replace(&find, &replace) } else { current.replacen(&find, &replace, 1) };
-        write_page(ctx, &id, &new_plain)?;
+        let mut model = load_model(ctx, &id);
+        let n = replace_in_blocks(&mut model, &find, &replace, all)?;
+        store_model(ctx, &id, &model)?;
         changes.push(format!("replaced {n} occurrence{}", if n == 1 { "" } else { "s" }));
     }
 
     if changes.is_empty() {
         return Err(
-            "nothing to update: pass title, icon, layout, content (+mode) or find/replace".to_string()
+            "nothing to update: pass title, icon, layout/grid/snap, content (+mode) or find/replace".to_string()
         );
     }
     let mut out = changes.join("\n");
@@ -658,17 +1246,6 @@ fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     out.push_str(&page_line(ctx, &id));
     out.push('\n');
     Ok(out)
-}
-
-/// Два markdown-фрагмента через пустую строку.
-fn join_blocks(a: &str, b: &str) -> String {
-    let a = a.trim_end();
-    let b = b.trim_start();
-    match (a.is_empty(), b.is_empty()) {
-        (true, _) => format!("{b}\n"),
-        (_, true) => format!("{a}\n"),
-        _ => format!("{a}\n\n{b}\n"),
-    }
 }
 
 fn move_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
@@ -766,9 +1343,17 @@ fn attach_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let caption = str_field(v, "caption").map(str::to_string).unwrap_or(default_caption);
     let caption = caption.replace(['[', ']', '\n'], " ");
     let block = format!("![{caption}]({url})");
-    let current = plain_markdown(&ctx.page_markdown(&id));
-    write_page(ctx, &id, &join_blocks(&current, &block))?;
-    Ok(format!("attached {url} ({size} bytes) as a media block at the end of the page\n{}\n", page_line(ctx, &id)))
+    let mut model = load_model(ctx, &id);
+    let pos = parse_pos(&model, v, InsertPos::End)?;
+    let blocks = fragment_blocks(&block, &parse_geom(v)?, false)?;
+    let idx = insert_blocks(&mut model, blocks, pos);
+    store_model(ctx, &id, &model)?;
+    Ok(format!(
+        "attached {url} ({size} bytes) as a media block {} ({})\n{}\n",
+        pos_text(pos),
+        indices_text(&idx),
+        page_line(ctx, &id)
+    ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -903,8 +1488,10 @@ fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
         doc.cards.len(),
         if full {
             format!(
-                " · style: column_width={} counts={}",
+                " · style: column_width={} lane_bg={} card_bg={} counts={}",
                 doc.style.column_width,
+                if doc.style.lane_bg.is_empty() { "theme" } else { doc.style.lane_bg.as_str() },
+                if doc.style.card_bg.is_empty() { "theme" } else { doc.style.card_bg.as_str() },
                 if doc.style.show_counts { "on" } else { "off" }
             )
         } else {
@@ -960,18 +1547,69 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                         .collect();
                 });
             }
-            let embed = format!("![[kanban:{id}]]{{h={}}}", embeds::DEFAULT_OBJECT_H as i64);
-            let block = match str_field(v, "title") {
-                Some(t) => format!("### {t}\n\n{embed}"),
-                None => embed,
-            };
-            let current = plain_markdown(&ctx.page_markdown(&pid));
-            write_page(ctx, &pid, &join_blocks(&current, &block))?;
-            Ok(format!("created board at the end of the page\n{}{}\n", board_text(&id, &handle, false), page_line(ctx, &pid)))
+            let (pos, idx) = embed_object(ctx, &pid, "kanban", &id, v)?;
+            Ok(format!(
+                "created board {} ({})\n{}{}\n",
+                pos_text(pos),
+                indices_text(&idx),
+                board_text(&id, &handle, false),
+                page_line(ctx, &pid)
+            ))
         }
         "read" => {
             let (id, handle) = kanban_handle(ctx, v)?;
             Ok(format!("{}{}\n", board_text(&id, &handle, true), object_page_line(ctx, "kanban", &id)))
+        }
+        "set_style" => {
+            let (id, handle) = kanban_handle(ctx, v)?;
+            let mut changes = Vec::new();
+            let column_width = f32_field(v, "column_width");
+            let lane_bg = match raw_string(v, "lane_bg") {
+                Some(c) => Some(parse_hex_color(&c, true).or_else(|e| if c.trim().is_empty() { Ok(String::new()) } else { Err(e) })?),
+                None => None,
+            };
+            let card_bg = match raw_string(v, "card_bg") {
+                Some(c) => Some(parse_hex_color(&c, true).or_else(|e| if c.trim().is_empty() { Ok(String::new()) } else { Err(e) })?),
+                None => None,
+            };
+            let show_counts = bool_field(v, "show_counts");
+            if let Some(w) = column_width {
+                if !(crate::pages::notes::kanban::model::MIN_COLUMN_WIDTH..=crate::pages::notes::kanban::model::MAX_COLUMN_WIDTH).contains(&w) {
+                    return Err(format!(
+                        "\"column_width\" must be within {}..{} px",
+                        crate::pages::notes::kanban::model::MIN_COLUMN_WIDTH,
+                        crate::pages::notes::kanban::model::MAX_COLUMN_WIDTH
+                    ));
+                }
+                changes.push(format!("column_width {}", fnum(w)));
+            }
+            if let Some(c) = &lane_bg {
+                changes.push(if c.is_empty() { "lane_bg cleared".to_string() } else { format!("lane_bg {c}") });
+            }
+            if let Some(c) = &card_bg {
+                changes.push(if c.is_empty() { "card_bg cleared".to_string() } else { format!("card_bg {c}") });
+            }
+            if let Some(s) = show_counts {
+                changes.push(format!("counts {}", if s { "on" } else { "off" }));
+            }
+            if changes.is_empty() {
+                return Err("nothing to change: pass column_width, lane_bg, card_bg or show_counts".to_string());
+            }
+            handle.set_style(|s| {
+                if let Some(w) = column_width {
+                    s.column_width = w;
+                }
+                if let Some(c) = lane_bg {
+                    s.lane_bg = c;
+                }
+                if let Some(c) = card_bg {
+                    s.card_bg = c;
+                }
+                if let Some(v) = show_counts {
+                    s.show_counts = v;
+                }
+            });
+            Ok(format!("style: {}\n{}", changes.join(", "), board_text(&id, &handle, true)))
         }
         "add_column" => {
             let (id, handle) = kanban_handle(ctx, v)?;
@@ -1089,13 +1727,26 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 handle.set_due(&card.id, parse_due(&d)?);
                 changes.push("due".to_string());
             }
-            if let Some(c) = str_field(v, "column") {
-                let col = resolve_column(&handle, c)?;
-                handle.move_card(&card.id, &DropSpot::end(&col.id));
+            if str_field(v, "column").is_some() || str_field(v, "before").is_some() {
+                let col = match str_field(v, "column") {
+                    Some(c) => resolve_column(&handle, c)?,
+                    None => resolve_column(&handle, &card.column)?,
+                };
+                let spot = match str_field(v, "before") {
+                    Some(b) => {
+                        let b = resolve_card(&handle, b)?;
+                        if b.column != col.id {
+                            return Err(format!("card \"{}\" is not in column \"{}\"", b.title, col.name));
+                        }
+                        DropSpot::before(&col.id, &b.id)
+                    }
+                    None => DropSpot::end(&col.id),
+                };
+                handle.move_card(&card.id, &spot);
                 changes.push(format!("moved to \"{}\"", col.name));
             }
             if changes.is_empty() {
-                return Err("nothing to update: pass title, md, priority, tags, due or column".to_string());
+                return Err("nothing to update: pass title, md, priority, tags, due, column or before".to_string());
             }
             let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
             Ok(format!("updated {}: {line}\n{}", changes.join(", "), board_text(&id, &handle, false)))
@@ -1150,10 +1801,29 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             delete_object(ctx, "kanban", &id)
         }
         other => Err(format!(
-            "unknown kanban op \"{other}\" (create | read | add_column | update_column | delete_column | \
-             add_card | update_card | move_card | delete_card | delete)"
+            "unknown kanban op \"{other}\" (create | read | set_style | add_column | update_column | \
+             delete_column | add_card | update_card | move_card | delete_card | delete)"
         )),
     }
+}
+
+/// Врезать объект на страницу: `### title` (если задан) + `![[kind:id]]`
+/// с высотой по умолчанию; позиция и геометрия — из аргументов (геометрия
+/// достаётся самой врезке).
+fn embed_object(ctx: NotesCtx, pid: &str, kind: &str, id: &str, v: &Json) -> Result<(InsertPos, Vec<usize>), String> {
+    let geom = parse_geom(v)?;
+    let h = geom.h.unwrap_or(embeds::DEFAULT_OBJECT_H);
+    let embed = format!("![[{kind}:{id}]]{{h={}}}", fnum(h));
+    let md = match str_field(v, "title") {
+        Some(t) => format!("### {t}\n\n{embed}"),
+        None => embed,
+    };
+    let mut model = load_model(ctx, pid);
+    let pos = parse_pos(&model, v, InsertPos::End)?;
+    let blocks = fragment_blocks(&md, &Geom { h: None, ..geom }, true)?;
+    let idx = insert_blocks(&mut model, blocks, pos);
+    store_model(ctx, pid, &model)?;
+    Ok((pos, idx))
 }
 
 /// Удалить объект: врезки — со страниц, файл — из бандла.
@@ -1245,18 +1915,30 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         "create" => {
             let pid = page_arg(ctx, v, "page")?;
             let id = ctx.create_object("gantt").ok_or("failed to create the chart")?;
-            let embed = format!("![[gantt:{id}]]{{h={}}}", embeds::DEFAULT_OBJECT_H as i64);
-            let block = match str_field(v, "title") {
-                Some(t) => format!("### {t}\n\n{embed}"),
-                None => embed,
-            };
-            let current = plain_markdown(&ctx.page_markdown(&pid));
-            write_page(ctx, &pid, &join_blocks(&current, &block))?;
-            Ok(format!("created chart gantt:{id} at the end of the page\n{}\n", page_line(ctx, &pid)))
+            let (pos, idx) = embed_object(ctx, &pid, "gantt", &id, v)?;
+            Ok(format!("created chart gantt:{id} {} ({})\n{}\n", pos_text(pos), indices_text(&idx), page_line(ctx, &pid)))
         }
         "read" => {
             let (id, handle) = gantt_handle(ctx, v)?;
             Ok(format!("{}{}\n", chart_text(&id, &handle), object_page_line(ctx, "gantt", &id)))
+        }
+        "set_zoom" => {
+            let (id, handle) = gantt_handle(ctx, v)?;
+            let zoom = f32_field(v, "zoom").ok_or("missing \"zoom\" (px per day, 5..90)")?;
+            if !(crate::pages::notes::gantt::ZOOM_MIN..=crate::pages::notes::gantt::ZOOM_MAX).contains(&zoom) {
+                return Err(format!(
+                    "\"zoom\" must be within {}..{} px per day",
+                    crate::pages::notes::gantt::ZOOM_MIN,
+                    crate::pages::notes::gantt::ZOOM_MAX
+                ));
+            }
+            handle.set_zoom(zoom);
+            Ok(format!("zoom {} px/day\n{}", fnum(zoom), chart_text(&id, &handle)))
+        }
+        "show_today" => {
+            let (id, handle) = gantt_handle(ctx, v)?;
+            handle.show_today();
+            Ok(format!("scrolled the chart to today\n{}", chart_text(&id, &handle)))
         }
         "add_task" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -1342,8 +2024,381 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         other => Err(format!(
             "unknown gantt op \"{other}\" (create | read | add_task | update_task | delete_task | add_dep | \
-             delete_dep | delete)"
+             delete_dep | set_zoom | show_today | delete)"
         )),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blocks
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let op = str_field(v, "op")
+        .ok_or("missing \"op\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin)")?;
+    let id = page_arg(ctx, v, "page")?;
+    let mut model = load_model(ctx, &id);
+    let block_arg = |model: &DocModel| -> Result<usize, String> {
+        resolve_block(model, &ref_field(v, "block").ok_or("missing \"block\" (index from blocks op=list or find:<text>)")?)
+    };
+    match op {
+        "list" => Ok(format!("{}{}\n", blocks_text(&model), page_line(ctx, &id))),
+        "read" => {
+            let i = block_arg(&model)?;
+            let b = &model.blocks[i];
+            let mut out = format!("{}\n--- Markdown ---\n{}", block_line(i, b), block_markdown(b));
+            if !b.attrs.is_empty() {
+                out.push_str(&format!("--- Attributes ---\n{}\n", serialize_attrs(&b.attrs)));
+            }
+            Ok(out)
+        }
+        "insert" => {
+            let md = raw_string(v, "md").or_else(|| raw_string(v, "content")).ok_or("missing \"md\" (markdown to insert)")?;
+            let pos = parse_pos(&model, v, InsertPos::End)?;
+            let blocks = fragment_blocks(&md, &parse_geom(v)?, false)?;
+            let idx = insert_blocks(&mut model, blocks, pos);
+            store_model(ctx, &id, &model)?;
+            let lines: Vec<String> = idx.iter().map(|&i| block_line(i, &model.blocks[i])).collect();
+            Ok(format!("inserted {} {}\n{}\n{}\n", indices_text(&idx), pos_text(pos), lines.join("\n"), page_line(ctx, &id)))
+        }
+        "set_markdown" => {
+            let i = block_arg(&model)?;
+            let md = raw_string(v, "md").or_else(|| raw_string(v, "content")).ok_or("missing \"md\" (new markdown of the block)")?;
+            let idx = replace_block(&mut model, i, &md)?;
+            store_model(ctx, &id, &model)?;
+            if idx.is_empty() {
+                return Ok(format!("block #{i} removed (empty markdown)\n{}\n", page_line(ctx, &id)));
+            }
+            let lines: Vec<String> = idx.iter().map(|&i| block_line(i, &model.blocks[i])).collect();
+            Ok(format!("replaced block #{i} with {}\n{}\n{}\n", indices_text(&idx), lines.join("\n"), page_line(ctx, &id)))
+        }
+        "delete" => {
+            let i = block_arg(&model)?;
+            let line = block_line(i, &model.blocks[i]);
+            model.blocks.remove(i);
+            store_model(ctx, &id, &model)?;
+            Ok(format!("deleted {line}\n{} blocks left\n{}\n", model.blocks.len(), page_line(ctx, &id)))
+        }
+        "move" => {
+            let i = block_arg(&model)?;
+            let geom = parse_geom(v)?;
+            let has_pos = usize_field(v, "index").is_some() || ref_field(v, "after").is_some() || ref_field(v, "before").is_some();
+            if !has_pos && geom.x.is_none() {
+                return Err("pass index / after / before (order) and/or x + y (place on the canvas)".to_string());
+            }
+            let mut changes = Vec::new();
+            let mut at = i;
+            if has_pos {
+                let pos = parse_pos(&model, v, InsertPos::End)?;
+                let mut target = pos_index(&model, pos);
+                let block = model.blocks.remove(i);
+                if target > i {
+                    target -= 1;
+                }
+                let target = target.min(model.blocks.len());
+                model.blocks.insert(target, block);
+                at = target;
+                changes.push(format!("order #{i} → #{target}"));
+            }
+            if geom.x.is_some() {
+                geom.apply(&mut model.blocks[at].attrs);
+                if let BlockKind::Shape { shape } = model.blocks[at].kind {
+                    if shape.is_line() {
+                        canonicalize_line(&mut model.blocks[at], shape);
+                    }
+                }
+                changes.push("placed on the canvas".to_string());
+            }
+            store_model(ctx, &id, &model)?;
+            Ok(format!("moved: {}\n{}\n{}\n", changes.join(", "), block_line(at, &model.blocks[at]), page_line(ctx, &id)))
+        }
+        "set_attrs" => {
+            let i = block_arg(&model)?;
+            let pairs = attrs_arg(v)?;
+            let changes = apply_attrs(&mut model.blocks[i], &pairs)?;
+            store_model(ctx, &id, &model)?;
+            Ok(format!("set {}\n{}\n{}\n", changes.join(", "), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+        }
+        "pin" => {
+            let i = block_arg(&model)?;
+            let geom = parse_geom(v)?;
+            let (x, y) = match (geom.x, geom.y) {
+                (Some(x), Some(y)) => (x, y),
+                _ => {
+                    // Под самым нижним закреплённым блоком, у левого края холста.
+                    let pinned: Vec<(f32, f32, f32, f32)> = model.blocks.iter().filter_map(block_rect).collect();
+                    match pinned.iter().map(|r| r.1 + r.3).fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.max(v)))) {
+                        Some(bottom) => (pinned.iter().map(|r| r.0).fold(f32::MAX, f32::min).max(0.0), bottom + 20.0),
+                        None => (40.0, 40.0),
+                    }
+                }
+            };
+            free::set_pos(&mut model.blocks[i].attrs, x, y);
+            if let Some(w) = geom.w {
+                free::set_width(&mut model.blocks[i].attrs, w);
+            }
+            if let Some(h) = geom.h {
+                free::set_height(&mut model.blocks[i].attrs, h);
+            }
+            if let BlockKind::Shape { shape } = model.blocks[i].kind {
+                if shape.is_line() {
+                    canonicalize_line(&mut model.blocks[i], shape);
+                }
+            }
+            store_model(ctx, &id, &model)?;
+            Ok(format!("pinned at x={} y={}\n{}\n{}\n", fnum(x), fnum(y), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+        }
+        "unpin" => {
+            let i = block_arg(&model)?;
+            free::clear(&mut model.blocks[i].attrs);
+            store_model(ctx, &id, &model)?;
+            Ok(format!("unpinned — the block flows in the column again\n{}\n{}\n", block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+        }
+        other => Err(format!(
+            "unknown blocks op \"{other}\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin)"
+        )),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shapes
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SHAPE_STYLE_KEYS: [&str; 6] = ["fill", "stroke", "sw", "dash", "radius", "opacity"];
+const LINE_POINT_KEYS: [&str; 8] = ["x1", "y1", "x2", "y2", "cx1", "cy1", "cx2", "cy2"];
+
+fn parse_shape_kind(s: &str) -> Result<ShapeKind, String> {
+    ShapeKind::from_name(&s.trim().to_ascii_lowercase()).ok_or_else(|| {
+        format!(
+            "unknown shape \"{s}\" — rect | ellipse | triangle | diamond | line | arrow | arrow2 | curve | \
+             curve-arrow | curve-arrow2"
+        )
+    })
+}
+
+/// Стиль фигуры из аргументов (`fill stroke sw dash radius opacity`).
+fn shape_style_pairs(v: &Json) -> Vec<(String, String)> {
+    SHAPE_STYLE_KEYS
+        .iter()
+        .filter_map(|k| raw_string(v, k).map(|val| (k.to_string(), val)))
+        .collect()
+}
+
+/// Абсолютные точки линии из аргументов `x1 y1 x2 y2 [cx1 cy1 cx2 cy2]`.
+fn line_points_arg(v: &Json) -> Result<Option<Vec<(String, f32)>>, String> {
+    let mut out = Vec::new();
+    for k in LINE_POINT_KEYS {
+        if v.get(k).is_some_and(|x| !x.is_null()) {
+            let n = f32_field(v, k).filter(|f| f.is_finite()).ok_or_else(|| format!("bad \"{k}\" — a number in px"))?;
+            out.push((k.to_string(), n));
+        }
+    }
+    if out.is_empty() {
+        return Ok(None);
+    }
+    let has = |k: &str| out.iter().any(|(key, _)| key == k);
+    if has("x1") != has("y1") || has("x2") != has("y2") || has("cx1") != has("cy1") || has("cx2") != has("cy2") {
+        return Err("line points come in pairs: x1 y1, x2 y2, cx1 cy1, cx2 cy2".to_string());
+    }
+    Ok(Some(out))
+}
+
+/// Записать абсолютные точки линии в блок: пересчитать рамку и относительные
+/// координаты (канон: минимум точек в нуле). У незакреплённого блока точки
+/// считаются относительными.
+fn set_line_points(block: &mut DocBlock, kind: ShapeKind, points: &[(String, f32)]) {
+    let pinned = free::pos_of(&block.attrs);
+    let (ox, oy) = pinned.map(|(x, y)| (x + shape::LINE_PAD, y + shape::LINE_PAD)).unwrap_or((0.0, 0.0));
+    // Текущие абсолютные значения, затем перекрываем заданными.
+    let (p1, p2) = shape::endpoints_of(&block.attrs);
+    let mut abs: Vec<(String, f32)> = vec![
+        ("x1".into(), p1.0 + ox),
+        ("y1".into(), p1.1 + oy),
+        ("x2".into(), p2.0 + ox),
+        ("y2".into(), p2.1 + oy),
+    ];
+    if kind.is_curve() {
+        for k in ["cx1", "cy1", "cx2", "cy2"] {
+            if let Some(val) = block.attrs.get(k).and_then(|s| s.parse::<f32>().ok()) {
+                abs.push((k.to_string(), val + if k.starts_with("cx") { ox } else { oy }));
+            }
+        }
+    }
+    for (k, val) in points {
+        if let Some(e) = abs.iter_mut().find(|(key, _)| key == k) {
+            e.1 = *val;
+        } else if kind.is_curve() {
+            abs.push((k.clone(), *val));
+        }
+    }
+    let xs: Vec<f32> = abs.iter().filter(|(k, _)| k.ends_with("x1") || k.ends_with("x2")).map(|(_, v)| *v).collect();
+    let ys: Vec<f32> = abs.iter().filter(|(k, _)| k.ends_with("y1") || k.ends_with("y2")).map(|(_, v)| *v).collect();
+    let min_x = xs.iter().copied().fold(f32::MAX, f32::min);
+    let min_y = ys.iter().copied().fold(f32::MAX, f32::min);
+    for k in LINE_POINT_KEYS {
+        block.attrs.remove(k);
+    }
+    for (k, val) in &abs {
+        let d = if k.ends_with("x1") || k.ends_with("x2") { min_x } else { min_y };
+        block.attrs.set(k.clone(), fnum(val - d));
+    }
+    if pinned.is_some() || points.iter().any(|(k, _)| k == "x1" || k == "x2") {
+        free::set_pos(&mut block.attrs, min_x - shape::LINE_PAD, min_y - shape::LINE_PAD);
+    }
+    let size = shape::line_box(&block.attrs, kind);
+    free::set_width(&mut block.attrs, size.width.max(40.0));
+    free::set_height(&mut block.attrs, size.height.max(20.0));
+}
+
+/// Середина стороны прямоугольника; `auto` — сторона, обращённая к `other`.
+fn side_point(rect: (f32, f32, f32, f32), side: &str, other: (f32, f32)) -> Result<(f32, f32), String> {
+    let (x, y, w, h) = rect;
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let side = match side.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => {
+            let (dx, dy) = (other.0 - cx, other.1 - cy);
+            if dx.abs() >= dy.abs() {
+                if dx >= 0.0 { "right" } else { "left" }
+            } else if dy >= 0.0 {
+                "bottom"
+            } else {
+                "top"
+            }
+        }
+        "left" | "l" => "left",
+        "right" | "r" => "right",
+        "top" | "t" => "top",
+        "bottom" | "b" => "bottom",
+        "center" | "c" => "center",
+        other => return Err(format!("bad side \"{other}\" (auto | left | right | top | bottom | center)")),
+    };
+    Ok(match side {
+        "left" => (x, cy),
+        "right" => (x + w, cy),
+        "top" => (cx, y),
+        "bottom" => (cx, y + h),
+        _ => (cx, cy),
+    })
+}
+
+fn shape_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let op = str_field(v, "op").ok_or("missing \"op\" (create | update | delete | connect)")?;
+    let id = page_arg(ctx, v, "page")?;
+    let mut model = load_model(ctx, &id);
+    match op {
+        "create" => {
+            let kind = parse_shape_kind(str_field(v, "kind").unwrap_or("rect"))?;
+            let mut block = DocBlock { id: model.alloc_id(), kind: BlockKind::Shape { shape: kind }, attrs: Attrs::default() };
+            apply_attrs(&mut block, &shape_style_pairs(v))?;
+            let geom = parse_geom(v)?;
+            if kind.is_line() {
+                let points = line_points_arg(v)?.unwrap_or_else(|| {
+                    let (x, y) = (geom.x.unwrap_or(40.0), geom.y.unwrap_or(40.0));
+                    vec![("x1".into(), x), ("y1".into(), y), ("x2".into(), x + shape::DEFAULT_W), ("y2".into(), y)]
+                });
+                if let (Some(x), Some(y)) = (geom.x, geom.y) {
+                    free::set_pos(&mut block.attrs, x, y);
+                }
+                set_line_points(&mut block, kind, &points);
+            } else {
+                geom.apply(&mut block.attrs);
+                if geom.w.is_none() {
+                    free::set_width(&mut block.attrs, shape::DEFAULT_W);
+                }
+                if geom.h.is_none() {
+                    free::set_height(&mut block.attrs, shape::DEFAULT_H);
+                }
+            }
+            let pos = parse_pos(&model, v, InsertPos::End)?;
+            let idx = insert_blocks(&mut model, vec![block], pos);
+            store_model(ctx, &id, &model)?;
+            let i = idx[0];
+            Ok(format!("created shape {}\n{}\n{}\n", pos_text(pos), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+        }
+        "update" => {
+            let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\"")?)?;
+            let BlockKind::Shape { shape: mut kind } = model.blocks[i].kind else {
+                return Err(format!("block #{i} is not a shape (blocks op=set_attrs edits other blocks)"));
+            };
+            let mut changes = Vec::new();
+            if let Some(k) = str_field(v, "kind") {
+                let new_kind = parse_shape_kind(k)?;
+                if new_kind != kind {
+                    model.blocks[i].kind = BlockKind::Shape { shape: new_kind };
+                    if new_kind.is_line() != kind.is_line() {
+                        for key in LINE_POINT_KEYS {
+                            model.blocks[i].attrs.remove(key);
+                        }
+                    }
+                    kind = new_kind;
+                    changes.push(format!("kind {}", new_kind.name()));
+                }
+            }
+            let style = shape_style_pairs(v);
+            if !style.is_empty() {
+                changes.extend(apply_attrs(&mut model.blocks[i], &style)?);
+            }
+            let geom = parse_geom(v)?;
+            if !geom.is_empty() {
+                geom.apply(&mut model.blocks[i].attrs);
+                changes.push("geometry".to_string());
+            }
+            if let Some(points) = line_points_arg(v)? {
+                if !kind.is_line() {
+                    return Err("x1/y1/x2/y2 apply to lines and arrows; frame shapes take x y w h".to_string());
+                }
+                set_line_points(&mut model.blocks[i], kind, &points);
+                changes.push("points".to_string());
+            } else if kind.is_line() {
+                canonicalize_line(&mut model.blocks[i], kind);
+            }
+            if changes.is_empty() {
+                return Err("nothing to change: pass kind, fill/stroke/sw/dash/radius/opacity, x y w h or line points".to_string());
+            }
+            store_model(ctx, &id, &model)?;
+            Ok(format!("updated {}\n{}\n{}\n", changes.join(", "), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+        }
+        "delete" => {
+            let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\"")?)?;
+            if !matches!(model.blocks[i].kind, BlockKind::Shape { .. }) {
+                return Err(format!("block #{i} is not a shape — blocks op=delete removes any block"));
+            }
+            let line = block_line(i, &model.blocks[i]);
+            model.blocks.remove(i);
+            store_model(ctx, &id, &model)?;
+            Ok(format!("deleted {line}\n{}\n", page_line(ctx, &id)))
+        }
+        "connect" => {
+            let from = resolve_block(&model, &ref_field(v, "from").ok_or("missing \"from\" (block)")?)?;
+            let to = resolve_block(&model, &ref_field(v, "to").ok_or("missing \"to\" (block)")?)?;
+            if from == to {
+                return Err("\"from\" and \"to\" are the same block".to_string());
+            }
+            let need = |i: usize| block_rect(&model.blocks[i]).ok_or_else(|| format!("block #{i} has no coordinates — blocks op=pin it first"));
+            let (ra, rb) = (need(from)?, need(to)?);
+            let center = |r: (f32, f32, f32, f32)| (r.0 + r.2 / 2.0, r.1 + r.3 / 2.0);
+            let p1 = side_point(ra, str_field(v, "from_side").unwrap_or("auto"), center(rb))?;
+            let p2 = side_point(rb, str_field(v, "to_side").unwrap_or("auto"), center(ra))?;
+            let kind = parse_shape_kind(str_field(v, "kind").unwrap_or("arrow"))?;
+            if !kind.is_line() {
+                return Err("connect draws a line: kind must be line | arrow | arrow2 | curve | curve-arrow | curve-arrow2".to_string());
+            }
+            let mut block = DocBlock { id: model.alloc_id(), kind: BlockKind::Shape { shape: kind }, attrs: Attrs::default() };
+            apply_attrs(&mut block, &shape_style_pairs(v))?;
+            let points = vec![("x1".into(), p1.0), ("y1".into(), p1.1), ("x2".into(), p2.0), ("y2".into(), p2.1)];
+            set_line_points(&mut block, kind, &points);
+            let pos = parse_pos(&model, v, InsertPos::End)?;
+            let idx = insert_blocks(&mut model, vec![block], pos);
+            store_model(ctx, &id, &model)?;
+            let i = idx[0];
+            Ok(format!(
+                "connected #{from} → #{to} with {}\n{}\n{}\n",
+                kind.name(),
+                block_line(i, &model.blocks[i]),
+                page_line(ctx, &id)
+            ))
+        }
+        other => Err(format!("unknown shape op \"{other}\" (create | update | delete | connect)")),
     }
 }
 
@@ -1385,15 +2440,174 @@ mod tests {
 
         // Абзац переписан, заголовок и пункт остались — координаты у них на месте.
         let edited = plain.replace("Абзац", "Новый абзац");
-        let merged = with_geometry(md, &edited);
+        let merged = with_sidecar(md, &edited);
         assert!(merged.contains("Новый абзац"), "{merged}");
         assert!(merged.contains("0 {w=200 x=40 y=300}"), "заголовок потерял координаты: {merged}");
         assert!(!merged.contains("x=400"), "переписанный абзац не должен наследовать координаты: {merged}");
         // Вставка блока перед заголовком не сбивает его координаты.
         let shifted = format!("Преамбула\n\n{plain}");
-        let merged = with_geometry(md, &shifted);
+        let merged = with_sidecar(md, &shifted);
         assert!(merged.contains("1 {w=200 x=40 y=300}"), "{merged}");
         assert!(merged.contains("2 {w=200 x=400 y=60}"), "{merged}");
+    }
+
+    /// Стили абзаца живут в том же хвосте, что и координаты: агент их не
+    /// видит, а нетронутый абзац их не теряет.
+    #[test]
+    fn plain_markdown_strips_style_sidecar_and_write_keeps_it() {
+        let md = "Первый\n\nВторой\n\n```doc-layout\n1 {bg=#243149 color=#FF8800 x=40 y=60}\n```\n";
+        let plain = plain_markdown(md);
+        assert!(!plain.contains("doc-layout") && !plain.contains("bg="), "{plain}");
+        let merged = with_sidecar(md, &format!("Нулевой\n\n{plain}"));
+        assert!(merged.contains("2 {bg=#243149 color=#FF8800 x=40 y=60}"), "{merged}");
+        // Правка через find/replace идёт по блоку — атрибуты остаются.
+        let mut model = parse_document(md);
+        let n = replace_in_blocks(&mut model, "Второй", "Второй и главный", false).unwrap();
+        assert_eq!(n, 1);
+        let out = serialize_document(&model);
+        assert!(out.contains("Второй и главный") && out.contains("1 {bg=#243149 color=#FF8800 x=40 y=60}"), "{out}");
+        let err = replace_in_blocks(&mut model, "Первый\n\nВторой", "x", false).unwrap_err();
+        assert!(err.contains("spans several blocks"), "{err}");
+        assert!(replace_in_blocks(&mut model, "нет такого", "x", false).unwrap_err().contains("not found"));
+    }
+
+    /// Блоки: список с геометрией, вставка в позицию, атрибуты, закрепление,
+    /// перенос и удаление — всё по индексам, с сохранением остального.
+    #[test]
+    fn blocks_ops_through_the_tool() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Холст", "content": "# Схема\n\nАбзац\n"})));
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("#0 heading1 \"Схема\" · flow h=~"), "{listed}");
+        assert!(listed.contains("#1 paragraph \"Абзац\""), "{listed}");
+
+        // Вставка с геометрией после заголовка.
+        let out = call(ctx, "blocks", serde_json::json!({"op": "insert", "page": &page, "md": "Заметка", "after": 0, "x": 100, "y": 200, "w": 240}));
+        assert!(out.contains("inserted #1 at block #1") && out.contains("x=100 y=200 w=240"), "{out}");
+        assert!(ctx.page_markdown(&page).contains("1 {w=240 x=100 y=200}"), "{}", ctx.page_markdown(&page));
+
+        // Атрибуты: стиль ставится и снимается; чужой ключ — ошибка.
+        let out = call(ctx, "blocks", serde_json::json!({"op": "set_attrs", "page": &page, "block": "find:Заметка", "attrs": {"bg": "#243149", "align": "center", "size": 18}}));
+        assert!(out.contains("align=center") && out.contains("bg=#243149"), "{out}");
+        assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "set_attrs", "page": &page, "block": 1, "attrs": {"font": "x"}})).is_err());
+        call(ctx, "blocks", serde_json::json!({"op": "set_attrs", "page": &page, "block": 1, "attrs": {"size": null}}));
+        assert!(!ctx.page_markdown(&page).contains("size="));
+        // Замена markdown блока сохраняет его координаты и стиль.
+        call(ctx, "blocks", serde_json::json!({"op": "set_markdown", "page": &page, "block": 1, "md": "Заметка подробнее"}));
+        let md = ctx.page_markdown(&page);
+        assert!(md.contains("Заметка подробнее") && md.contains("align=center") && md.contains("x=100"), "{md}");
+
+        // pin без координат — под нижним закреплённым; unpin — снова в потоке; move меняет порядок.
+        let out = call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 2}));
+        assert!(out.contains("pinned at x=100 y="), "{out}");
+        call(ctx, "blocks", serde_json::json!({"op": "unpin", "page": &page, "block": 2}));
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("#2 paragraph \"Абзац\" · flow"), "{listed}");
+        call(ctx, "blocks", serde_json::json!({"op": "move", "page": &page, "block": 2, "index": 0}));
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.starts_with("#0 paragraph \"Абзац\""), "{listed}");
+        let out = call(ctx, "blocks", serde_json::json!({"op": "delete", "page": &page, "block": 0}));
+        assert!(out.contains("2 blocks left"), "{out}");
+        let read = call(ctx, "read", serde_json::json!({"page": &page, "blocks": true}));
+        assert!(read.contains("--- Blocks") && read.contains("grid: dots step 20 · snap: on step 5"), "{read}");
+        assert!(ctx.page(&page).unwrap().handle.history_state().get_untracked().0);
+    }
+
+    /// Фигуры: рамка из x y w h, линия из абсолютных концов (рамка считается
+    /// сама), connect между закреплёнными блоками, ошибка для незакреплённого.
+    #[test]
+    fn shapes_create_update_and_connect() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Фигуры", "content": "Старт\n\nФиниш\n"})));
+        let out = call(ctx, "shape", serde_json::json!({"op": "create", "page": &page, "kind": "rect", "x": 40, "y": 40, "w": 200, "h": 100, "fill": "blue", "sw": 3}));
+        assert!(out.contains("#2 shape:rect · x=40 y=40 w=200 h=100") && out.contains("fill=#") && out.contains("sw=3"), "{out}");
+        let md = ctx.page_markdown(&page);
+        assert!(md.contains("![[shape:rect]]{fill=") && md.contains("2 {h=100 w=200 x=40 y=40}"), "{md}");
+
+        // Линия по абсолютным концам: рамка — bbox с полем 12.
+        let out = call(ctx, "shape", serde_json::json!({"op": "create", "page": &page, "kind": "arrow", "x1": 100, "y1": 300, "x2": 300, "y2": 340}));
+        assert!(out.contains("shape:arrow · x=88 y=288 w=224 h=64 · from (100,300) to (300,340)"), "{out}");
+        // update концов пересчитывает рамку; смена вида сохраняет оформление.
+        let out = call(ctx, "shape", serde_json::json!({"op": "update", "page": &page, "block": 3, "x2": 500, "y2": 300, "kind": "line", "stroke": "red", "dash": 6}));
+        assert!(out.contains("shape:line · x=88 y=288 w=424 h=24 · from (100,300) to (500,300)") && out.contains("dash=6"), "{out}");
+
+        // connect: незакреплённые блоки — ошибка; закрепим и соединим.
+        let err = dispatch(ctx, "shape", &serde_json::json!({"op": "connect", "page": &page, "from": 0, "to": 1})).unwrap_err();
+        assert!(err.contains("no coordinates"), "{err}");
+        call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 0, "y": 0, "w": 100, "h": 40}));
+        call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 1, "x": 400, "y": 0, "w": 100, "h": 40}));
+        let out = call(ctx, "shape", serde_json::json!({"op": "connect", "page": &page, "from": "find:Старт", "to": "find:Финиш"}));
+        assert!(out.contains("connected #0 → #1 with arrow") && out.contains("from (100,20) to (400,20)"), "{out}");
+        let out = call(ctx, "shape", serde_json::json!({"op": "delete", "page": &page, "block": 4}));
+        assert!(out.contains("deleted #4 shape:arrow"), "{out}");
+        assert!(dispatch(ctx, "shape", &serde_json::json!({"op": "delete", "page": &page, "block": 0})).is_err());
+    }
+
+    /// Страница: сетка/привязка через update, объекты — в позицию с высотой,
+    /// стиль доски и зум диаграммы.
+    #[test]
+    fn layout_objects_style_and_zoom_through_the_tool() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Раскладка", "content": "Один\n\nДва\n"})));
+        let out = call(ctx, "update", serde_json::json!({"page": &page, "grid": "lines", "grid_step": 32, "snap": false}));
+        assert!(out.contains("grid: lines") && out.contains("snap: off"), "{out}");
+        let l = ctx.page_layout(&page);
+        assert_eq!((l.grid, l.grid_step, l.snap), (PageGrid::Lines, 32.0, false));
+        assert!(dispatch(ctx, "update", &serde_json::json!({"page": &page, "snap_step": 0})).is_err());
+        let read = call(ctx, "read", serde_json::json!({"page": &page}));
+        assert!(read.contains("layout: free · grid: lines step 32 · snap: off"), "{read}");
+
+        // append в позицию и attach-подобная вставка с геометрией.
+        let out = call(ctx, "update", serde_json::json!({"page": &page, "content": "Между", "mode": "append", "after": 0, "x": 10, "y": 20}));
+        assert!(out.contains("inserted 1 block at block #1 (#1)"), "{out}");
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("#1 paragraph \"Между\" · x=10 y=20"), "{listed}");
+
+        // Доска в начале страницы со своей высотой, стиль и чтение.
+        let out = call(ctx, "kanban", serde_json::json!({"op": "create", "page": &page, "index": 0, "h": 500, "x": 0, "y": 600, "title": "Доска"}));
+        assert!(out.contains("created board at block #0 (#0, #1)"), "{out}");
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("#0 heading3 \"Доска\" · flow") && listed.contains("#1 embed:kanban:") && listed.contains("x=0 y=600 w=520 h=500"), "{listed}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "set_style", "page": &page, "column_width": 320, "lane_bg": "#4F8CFF33", "show_counts": false}));
+        assert!(out.contains("column_width=320 lane_bg=#4F8CFF33 card_bg=theme counts=off"), "{out}");
+        assert!(dispatch(ctx, "kanban", &serde_json::json!({"op": "set_style", "page": &page, "column_width": 10})).is_err());
+        call(ctx, "kanban", serde_json::json!({"op": "add_card", "page": &page, "title": "А"}));
+        call(ctx, "kanban", serde_json::json!({"op": "add_card", "page": &page, "title": "Б"}));
+        call(ctx, "kanban", serde_json::json!({"op": "update_card", "page": &page, "card": "Б", "before": "А"}));
+        let (_, board) = object_refs(&ctx.page_markdown(&page)).into_iter().find(|(k, _)| k == "kanban").unwrap();
+        let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", &board) else { panic!() };
+        assert_eq!(handle.lock().cards.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), ["Б", "А"]);
+
+        // Диаграмма: зум в пределах, «сегодня».
+        call(ctx, "gantt", serde_json::json!({"op": "create", "page": &page}));
+        let out = call(ctx, "gantt", serde_json::json!({"op": "set_zoom", "page": &page, "zoom": 40}));
+        assert!(out.contains("zoom: 40 px/day"), "{out}");
+        assert!(dispatch(ctx, "gantt", &serde_json::json!({"op": "set_zoom", "page": &page, "zoom": 500})).is_err());
+        assert!(call(ctx, "gantt", serde_json::json!({"op": "show_today", "page": &page})).contains("today"));
+    }
+
+    /// Каждый ключ, который читает инструмент, обязан быть в схеме — иначе
+    /// валидатор (`additionalProperties: false`) его отрежет.
+    #[test]
+    fn schema_covers_every_argument() {
+        let schema = crate::agent::tools::catalog::notes_schema();
+        let props = schema["properties"].as_object().unwrap();
+        let src = include_str!("notes.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        let mut missing = Vec::new();
+        for pat in ["str_field(v, \"", "ref_field(v, \"", "raw_string(v, \"", "bool_field(v, \"", "usize_field(v, \"", "f32_field(v, \"", "list_field(v, \""] {
+            for (i, _) in body.match_indices(pat) {
+                let rest = &body[i + pat.len()..];
+                let key = rest.split('"').next().unwrap();
+                if !props.contains_key(key) && !missing.contains(&key) {
+                    missing.push(key);
+                }
+            }
+        }
+        for key in ["x", "y", "w", "h", "attrs"] {
+            assert!(props.contains_key(key), "schema lacks {key}");
+        }
+        assert!(missing.is_empty(), "schema lacks {missing:?}");
     }
 
     #[test]
@@ -1407,8 +2621,14 @@ mod tests {
         assert!(parse_priority("meh").is_err());
         assert_eq!(parse_due("2026-09-10").unwrap().as_deref(), Some("2026-09-10"));
         assert!(parse_due("вчера").is_err());
-        assert_eq!(join_blocks("а\n", "\nб"), "а\n\nб\n");
-        assert_eq!(join_blocks("", "б"), "б\n");
+        assert_eq!(fnum(12.0), "12");
+        assert_eq!(fnum(12.34), "12.3");
+        assert_eq!(validate_attr("size", "22").unwrap().as_deref(), Some("22"));
+        assert!(validate_attr("size", "500").is_err());
+        assert_eq!(validate_attr("stroke", "none").unwrap().as_deref(), Some("none"));
+        assert_eq!(validate_attr("bg", "").unwrap(), None);
+        assert_eq!(validate_attr("fill", "#4F8CFF80").unwrap().as_deref(), Some("#4F8CFF80"));
+        assert!(validate_attr("font", "x").is_err());
         let v = serde_json::json!({"tags": "ui, дизайн", "n": "3", "b": "yes"});
         assert_eq!(list_field(&v, "tags").unwrap(), vec!["ui", "дизайн"]);
         assert_eq!(usize_field(&v, "n"), Some(3));

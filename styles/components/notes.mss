@@ -163,6 +163,23 @@ document-editor {
     color: var(--primary);
 }
 
+/* Кнопки истории правок (отменить/повторить) в шапке центра — компактные,
+ * прозрачные; недоступную ToolButton рисует полупрозрачной сам. */
+.notes-history-btn {
+    width: 28px;
+    height: 28px;
+    icon-size: 18px;
+    border-radius: 8px;
+    background-color: transparent;
+    color: var(--text-subtle);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+.notes-history-btn:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
 /* Переключатель из иконок в свойствах блока (выравнивание, начертание). */
 .notes-props-seg {
     width: 26px;

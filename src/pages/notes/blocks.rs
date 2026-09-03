@@ -12,7 +12,8 @@
 //! над блоком, что в меню документа (дублировать, сдвинуть, удалить):
 //! блок сначала делается текущим (`DocOp::Select`), потом идёт действие —
 //! очередь операций применяется по порядку; удаление — адресное
-//! (`DocOp::DeleteBlock`), каретку ради него никуда не двигаем.
+//! (`DocOp::DeleteBlock`), каретку ради него никуда не двигаем. Буфер
+//! (копировать/вырезать/вставить) — те же операции над этим блоком.
 
 use syngui::input::CursorIcon;
 use syngui::mss::StyleValue;
@@ -78,6 +79,9 @@ pub fn body() -> impl Widget {
         };
         let _ = page.handle.revision().get();
         let selected = page.handle.selected().get();
+        // Выделенные блоки страницы (рамка, Ctrl+клик) подсвечены так же,
+        // как текущий.
+        let multi = page.handle.block_selection().get();
         let outline = page.handle.outline();
         if outline.is_empty() {
             return vec![Box::new(empty(tr!("notes.blocks.empty")))];
@@ -89,7 +93,7 @@ pub fn body() -> impl Widget {
         let mut rows = Vec::new();
         flatten(&outline, 0, &mut rows);
         for (depth, b) in rows {
-            let is_sel = selected == Some(b.id);
+            let is_sel = selected == Some(b.id) || multi.contains(&b.id);
             col = col.child(Stack::new().children(vec![row(ctx, &b, depth, is_sel)]));
         }
         vec![Box::new(col)]
@@ -153,6 +157,18 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
         ContextMenu::new()
             .items(super::doc_menu::block_action_items())
             .on_select(move |action| match action {
+                "copy" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Copy);
+                }
+                "cut" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Cut);
+                }
+                "paste" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Paste);
+                }
                 "dup" => {
                     ctx.doc_op(DocOp::Select(id));
                     ctx.doc_op(DocOp::Duplicate);

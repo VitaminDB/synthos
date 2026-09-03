@@ -14,7 +14,8 @@
 
 use syngui::input::CursorIcon;
 use syngui::prelude::*;
-use syngui::widgets::GestureDetector;
+use syngui::widgets::input::document_editor::DocOp;
+use syngui::widgets::{GestureDetector, ToolButton};
 
 use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::{self, FrameSpec, Pane};
@@ -69,8 +70,35 @@ pub fn view() -> impl Widget {
         .child(icon_picker::view())
 }
 
-/// Шапка центра: иконка страницы (клик — выбор иконки), название и путь в
-/// дереве; для графа — его заголовок; без страницы — имя проекта.
+/// Кнопки истории правок страницы (отменить / повторить) — слева в шапке
+/// центра, как «назад/вперёд» в браузере. Доступность — из сигнала ручки
+/// `history_state`; операции идут очередью `DocOp` в редактор, а он просит
+/// фокус обратно, чтобы восстановленная каретка была видна.
+fn history_buttons(ctx: NotesCtx) -> impl Widget {
+    let (can_undo, can_redo) =
+        ctx.active_page().map(|p| p.handle.history_state().get()).unwrap_or((false, false));
+    Row::new()
+        .gap(2.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            ToolButton::new(MI_UNDO)
+                .tooltip(tr!("notes.undo"))
+                .disabled(!can_undo)
+                .on_click(move || ctx.doc_op(DocOp::Undo))
+                .class("notes-history-btn"),
+        )
+        .child(
+            ToolButton::new(MI_REDO)
+                .tooltip(tr!("notes.redo"))
+                .disabled(!can_redo)
+                .on_click(move || ctx.doc_op(DocOp::Redo))
+                .class("notes-history-btn"),
+        )
+}
+
+/// Шапка центра: кнопки истории, иконка страницы (клик — выбор иконки),
+/// название и путь в дереве; для графа — его заголовок; без страницы —
+/// имя проекта.
 fn center_header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
@@ -92,7 +120,7 @@ fn center_header() -> impl Widget {
         crumbs.pop();
         let subtitle = if crumbs.is_empty() { project } else { crumbs.join(" / ") };
         let id_icon = id.clone();
-        let leading = GestureDetector::new()
+        let bubble = GestureDetector::new()
             .cursor(CursorIcon::Pointer)
             .on_click_with_bounds(move |_, bounds| icon_picker::open_for(ctx, &id_icon, bounds))
             .child(
@@ -100,6 +128,11 @@ fn center_header() -> impl Widget {
                     .class("panel-header-icon-bubble notes-header-icon-bubble")
                     .child(Center::new().child(icon_picker::render_icon(&icon, "panel-header-icon notes-header-icon"))),
             );
+        let leading = Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(history_buttons(ctx))
+            .child(bubble);
         vec![Box::new(panel_header::center(CenterSpec::new(panel_header::identity(
             leading,
             panel_header::title_text(title),

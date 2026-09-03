@@ -227,8 +227,14 @@ fn items() -> Vec<MenuItem> {
 }
 
 /// Действия над блоком — общие для меню документа и строки панели «Блоки».
+/// Буфер обмена работает над выделенными блоками (рамка, Ctrl+клик), без
+/// выделения — над текущим; «Вставить» ставит блоки из буфера следом.
 pub fn block_action_items() -> Vec<MenuItem> {
     vec![
+        MenuItem::new("copy", tr!("app.copy")).icon(MI_CONTENT_COPY),
+        MenuItem::new("cut", tr!("app.cut")).icon(MI_CONTENT_CUT),
+        MenuItem::new("paste", tr!("app.paste")).icon(MI_CONTENT_PASTE),
+        MenuItem::separator(),
         MenuItem::new("dup", tr!("notes.menu.duplicate")).icon(MI_CONTENT_COPY),
         MenuItem::new("up", tr!("notes.menu.move_up")).icon(MI_ARROW_UPWARD),
         MenuItem::new("down", tr!("notes.menu.move_down")).icon(MI_ARROW_DOWNWARD),
@@ -292,6 +298,9 @@ pub fn handle(ctx: NotesCtx, id: &str) {
         return;
     }
     match id {
+        "copy" => ctx.doc_op(DocOp::Copy),
+        "cut" => ctx.doc_op(DocOp::Cut),
+        "paste" => ctx.doc_op(DocOp::Paste),
         "dup" => ctx.doc_op(DocOp::Duplicate),
         "up" => ctx.doc_op(DocOp::Move { down: false }),
         "down" => ctx.doc_op(DocOp::Move { down: true }),

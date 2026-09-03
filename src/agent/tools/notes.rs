@@ -1125,9 +1125,10 @@ fn layout_text(l: &PageLayout) -> String {
         g => format!("{} step {}", grid_name(g), fnum(l.grid_step)),
     };
     format!(
-        "layout: {} · grid: {grid} · snap: {}",
+        "layout: {} · grid: {grid} · snap: {} · bg: {}",
         if l.free { "free" } else { "flow" },
-        if l.snap { format!("on step {}", fnum(l.snap_step)) } else { "off".to_string() }
+        if l.snap { format!("on step {}", fnum(l.snap_step)) } else { "off".to_string() },
+        if l.bg.is_empty() { "theme" } else { l.bg.as_str() }
     )
 }
 
@@ -1180,6 +1181,10 @@ fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, S
         }
         l.snap_step = step.round();
         changes.push(format!("snap_step: {}", fnum(l.snap_step)));
+    }
+    if let Some(bg) = raw_string(v, "bg") {
+        l.bg = if bg.trim().is_empty() { String::new() } else { parse_hex_color(&bg, true)? };
+        changes.push(if l.bg.is_empty() { "bg: theme".to_string() } else { format!("bg: {}", l.bg) });
     }
     if !changes.is_empty() {
         ctx.set_page_layout(id, l);
@@ -2555,7 +2560,13 @@ mod tests {
         assert_eq!((l.grid, l.grid_step, l.snap), (PageGrid::Lines, 32.0, false));
         assert!(dispatch(ctx, "update", &serde_json::json!({"page": &page, "snap_step": 0})).is_err());
         let read = call(ctx, "read", serde_json::json!({"page": &page}));
-        assert!(read.contains("layout: free · grid: lines step 32 · snap: off"), "{read}");
+        assert!(read.contains("layout: free · grid: lines step 32 · snap: off · bg: theme"), "{read}");
+        let out = call(ctx, "update", serde_json::json!({"page": &page, "bg": "#243149"}));
+        assert!(out.contains("bg: #243149"), "{out}");
+        assert_eq!(ctx.page_layout(&page).bg, "#243149");
+        assert!(dispatch(ctx, "update", &serde_json::json!({"page": &page, "bg": "plaid"})).is_err());
+        call(ctx, "update", serde_json::json!({"page": &page, "bg": "none"}));
+        assert!(ctx.page_layout(&page).bg.is_empty());
 
         // append в позицию и attach-подобная вставка с геометрией.
         let out = call(ctx, "update", serde_json::json!({"page": &page, "content": "Между", "mode": "append", "after": 0, "x": 10, "y": 20}));

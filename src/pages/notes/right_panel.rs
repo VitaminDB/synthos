@@ -14,7 +14,7 @@ use syngui::prelude::*;
 use syngui::widgets::input::{SpinBox, Toggle};
 use syngui::widgets::navigation::{Tab, TabBar};
 use syngui::widgets::input::document_editor::{BlockProps, DocOp, ShapeKind, TableOp};
-use syngui::widgets::{Dropdown, DropdownItem, GestureDetector, ToolButton};
+use syngui::widgets::{ColorPicker, ColorValue, Dropdown, DropdownItem, GestureDetector, ToolButton};
 
 use crate::icons::*;
 
@@ -727,7 +727,7 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
         ctx.set_page_layout(&snap_id, PageLayout { snap: on, ..ctx.page_layout(&snap_id) });
     });
 
-    let snap_step_id = id;
+    let snap_step_id = id.clone();
     let snap_step = SpinBox::new()
         .range(1.0, 100.0)
         .step(1.0)
@@ -741,11 +741,34 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
         })
         .class("notes-props-field");
 
+    // Фон страницы: пресеты подложек + точный цвет через ColorPicker.
+    let bg_current = (!layout.bg.is_empty()).then(|| layout.bg.clone());
+    let bg_id = id.clone();
+    let bg_swatches = swatches(BG_PRESETS, bg_current.as_deref(), move |c| {
+        ctx.set_page_layout(&bg_id, PageLayout { bg: c.unwrap_or_default(), ..ctx.page_layout(&bg_id) });
+    });
+    let picker_id = id;
+    let initial = bg_current
+        .as_deref()
+        .map(|h| ColorValue::from_color(syngui::core::Color::from_hex(h)))
+        .unwrap_or_else(|| ColorValue::new(36, 49, 73));
+    let picker = ColorPicker::new()
+        .color(initial)
+        .width(96.0)
+        .on_change(move |c| {
+            ctx.set_page_layout(&picker_id, PageLayout { bg: c.to_hex(), ..ctx.page_layout(&picker_id) });
+        });
+    let bg_row = field_row(
+        tr!("notes.props.layout.bg"),
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).child(bg_swatches).child(picker),
+    );
+
     col = col
         .child(field_row(tr!("notes.props.layout.grid"), grid))
         .child(field_row(tr!("notes.props.layout.grid_step"), grid_step))
         .child(snap_row)
         .child(field_row(tr!("notes.props.layout.snap_step"), snap_step))
+        .child(bg_row)
         .child(Text::new(tr!("notes.props.layout.free_hint")).class("notes-props-hint"));
     col
 }

@@ -41,7 +41,7 @@ pub const TREE_VERSION: u32 = 1;
 ///
 /// Дефолт — **свободная раскладка с привязкой** (шаг 5 px) и сеткой из
 /// точек: страница ведёт себя как холст, поток включается вручную.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PageLayout {
     /// Свободная раскладка: блоки ставятся мышью, а не колонкой потока.
     #[serde(default = "default_true")]
@@ -56,6 +56,9 @@ pub struct PageLayout {
     pub snap: bool,
     #[serde(default = "default_snap_step")]
     pub snap_step: f32,
+    /// Фон страницы `#rrggbb` / `#rrggbbaa`; пусто — как в теме.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub bg: String,
 }
 
 /// Фон холста свободной раскладки.
@@ -91,6 +94,7 @@ impl Default for PageLayout {
             grid_step: default_grid_step(),
             snap: true,
             snap_step: default_snap_step(),
+            bg: String::new(),
         }
     }
 }
@@ -199,7 +203,7 @@ impl ProjectTree {
 
     /// Раскладка страницы (дефолт — если узла нет).
     pub fn layout_of(&self, id: &str) -> PageLayout {
-        self.find(id).map(|n| n.layout).unwrap_or_default()
+        self.find(id).map(|n| n.layout.clone()).unwrap_or_default()
     }
 
     pub fn icon_of(&self, id: &str) -> Option<String> {
@@ -365,7 +369,7 @@ pub fn clone_subtree(node: &PageNode, map: &mut Vec<(String, String)>) -> PageNo
         id,
         title: node.title.clone(),
         icon: node.icon.clone(),
-        layout: node.layout,
+        layout: node.layout.clone(),
         children: node.children.iter().map(|c| clone_subtree(c, map)).collect(),
     }
 }
@@ -667,11 +671,22 @@ mod tests {
 
         // Изменённая — сохраняется и читается обратно.
         let mut tree = sample_tree();
-        tree.find_mut("b").unwrap().layout =
-            PageLayout { free: false, grid: PageGrid::Lines, grid_step: 25.0, snap: false, snap_step: 2.0 };
-        let back = ProjectTree::parse(&tree.serialize()).unwrap();
+        tree.find_mut("b").unwrap().layout = PageLayout {
+            free: false,
+            grid: PageGrid::Lines,
+            grid_step: 25.0,
+            snap: false,
+            snap_step: 2.0,
+            bg: "#243149".to_string(),
+        };
+        let json = tree.serialize();
+        assert!(json.contains("\"bg\": \"#243149\""), "{json}");
+        let back = ProjectTree::parse(&json).unwrap();
         assert_eq!(back.layout_of("b"), tree.layout_of("b"));
         assert_eq!(back.layout_of("c"), PageLayout::default());
+        // Пустой фон не пишется.
+        tree.find_mut("b").unwrap().layout.bg.clear();
+        assert!(!tree.serialize().contains("\"bg\""));
     }
 
     fn sample_tree() -> ProjectTree {

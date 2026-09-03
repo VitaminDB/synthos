@@ -382,6 +382,7 @@ impl NotesCtx {
             grid_step: l.grid_step,
             snap: l.snap,
             snap_step: l.snap_step,
+            background: (!l.bg.is_empty()).then(|| syngui::core::Color::from_hex(&l.bg)),
             ..DocLayout::default()
         }
     }

@@ -623,6 +623,11 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "number",
             "description": "create/update: snap step px (1..100, default 5)."
         })),
+        ("bg", json!({
+            "type": "string",
+            "description": "create/update: page background #rrggbb / #rrggbbaa \
+                (painted under the grid); none = theme."
+        })),
         ("column_width", json!({
             "type": "number",
             "description": "kanban set_style: default column width px (140..800)."

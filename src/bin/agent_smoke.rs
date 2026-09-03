@@ -26,7 +26,6 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use syngui::context_provider::provide_context;
-use syngui::prelude::*;
 use synthos::agent::state::{ChatMsg, ChatMsgKind, ChatMsgRole};
 use synthos::syn_chat::params::SamplingParams;
 use synthos::syn_chat::{session, SynChatCtx, SynModelRegistry};

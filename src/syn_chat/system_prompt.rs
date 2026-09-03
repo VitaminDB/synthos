@@ -171,6 +171,34 @@ pub fn build(env: &PromptEnv) -> String {
                  — in pipelines list).\n",
             );
         }
+        // Правила заметок — тоже только при активном инструменте.
+        if env.tools.iter().any(|t| t == "notes") {
+            s.push_str(
+                "\nNotes (`notes`) — the user's notebook in the app: a tree of \
+                 markdown pages with kanban boards and Gantt charts embedded \
+                 in them.\n\
+                 - Start with list (page tree, ids, the boards/charts on each \
+                 page) or search; read a page before editing it — update \
+                 with content and mode=replace overwrites the whole page.\n\
+                 - Address pages by id (12 hex) or exact title; an ambiguous \
+                 title is an error — use the id. Boards and charts: by id \
+                 from list/read, or implicitly when the page has one.\n\
+                 - Small edits: update with find/replace (an exact markdown \
+                 fragment from read) or mode=append. Rewrite a whole page \
+                 only when the user asks for it.\n\
+                 - Boards: kanban op=create on a page (columns optional), \
+                 then add_card / update_card / move_card; cards carry a \
+                 title, a markdown body (a `- [ ]` checklist shows progress), \
+                 priority low|medium|high|urgent, tags and a due date \
+                 yyyy-mm-dd. A task \"done\" = move_card to the done column.\n\
+                 - Charts: gantt op=create, add_task with start/end \
+                 yyyy-mm-dd (after=<task> adds a dependency), update_task, \
+                 add_dep.\n\
+                 - Changes are saved automatically and show up in the UI at \
+                 once; open shows a page to the user. Don't ask to confirm \
+                 routine edits the user already requested.\n",
+            );
+        }
     }
 
     s.push_str(
@@ -282,6 +310,18 @@ mod tests {
     #[test]
     fn budget_note_mentions_remaining_turns() {
         assert!(budget_note(2).contains("agent turns remaining — 2"));
+    }
+
+    #[test]
+    fn notes_rules_only_with_notes_tool() {
+        let s = build(&env());
+        assert!(!s.contains("Notes (`notes`)"));
+        let mut e = env();
+        e.tools.push("notes".to_string());
+        let s = build(&e);
+        assert!(s.contains("Notes (`notes`)"), "{s}");
+        assert!(s.contains("find/replace"), "{s}");
+        assert!(s.contains("kanban op=create"), "{s}");
     }
 
     #[test]

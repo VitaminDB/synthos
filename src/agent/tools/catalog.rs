@@ -3,7 +3,8 @@
 use serde_json::json;
 
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_BOLT, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE,
+    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL,
+    MI_TRAVEL_EXPLORE,
 };
 
 use super::descriptor::Tool;
@@ -16,6 +17,7 @@ pub const KEY_AUTOSKILL: &str = "autoskill";
 pub const KEY_SUBAGENT: &str = "subagent";
 pub const KEY_SYSTEM: &str = "system";
 pub const KEY_PIPELINES: &str = "pipelines";
+pub const KEY_NOTES: &str = "notes";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -284,6 +286,29 @@ pub(super) fn build_all() -> Vec<Tool> {
             }),
         },
         Tool {
+            key: KEY_NOTES,
+            label: "notes",
+            icon: MI_EDIT_NOTE,
+            description: "Read and edit the user's Notes (the Notes mode of \
+                the app): a tree of markdown pages with kanban boards and \
+                Gantt charts embedded in them. Changes appear in the UI at \
+                once and are saved automatically. Actions: list (page tree \
+                with ids and the boards/charts on each page), search \
+                (titles + text), read (page markdown, its boards/charts with \
+                card ids, links), create / update / move / delete / \
+                duplicate (pages), open (show a page to the user), attach \
+                (file or chat attachment → media block on a page), kanban \
+                (op=create | read | add_column | update_column | \
+                delete_column | add_card | update_card | move_card | \
+                delete_card | delete), gantt (op=create | read | add_task | \
+                update_task | delete_task | add_dep | delete_dep | delete). \
+                Workflow: list → read the page → edit. Prefer update with \
+                find/replace or mode=append over rewriting a whole page. \
+                Pages are addressed by id (12 hex) or exact title; boards \
+                and charts by id, or implicitly when the page has one.",
+            schema: notes_schema(),
+        },
+        Tool {
             key: KEY_SUBAGENT,
             label: "subagent",
             icon: MI_BOLT,
@@ -344,4 +369,221 @@ pub(super) fn build_all() -> Vec<Tool> {
             }),
         },
     ]
+}
+
+/// Схема `notes`: свойств много, и один `json!` на всё упирается в лимит
+/// рекурсии макроса — собираем карту из мелких литералов.
+fn notes_schema() -> serde_json::Value {
+    let props: Vec<(&str, serde_json::Value)> = vec![
+        ("action", json!({
+            "type": "string",
+            "enum": ["list", "search", "read", "create", "update", "move",
+                     "delete", "duplicate", "open", "attach", "kanban", "gantt"],
+            "description": "What to do. kanban and gantt take the sub-operation in op."
+        })),
+        ("page", json!({
+            "type": "string",
+            "description": "Page: id (12 hex, from list) or exact title; \
+                for duplicate titles use \"Parent / Title\" or the id. \
+                Required by read, update, move, delete, duplicate, attach \
+                and by kanban/gantt op=create."
+        })),
+        ("title", json!({
+            "type": "string",
+            "description": "create: page title (made unique among siblings). \
+                update: new title. kanban/gantt op=create: optional heading \
+                above the object. kanban add_card/update_card: card title."
+        })),
+        ("content", json!({
+            "type": "string",
+            "description": "Page markdown for create and update (see mode). \
+                Supported: # headings, - lists, 1. lists, - [ ] todos, > quotes, \
+                > [!note] callouts, > [!toggle] toggles, | tables |, ``` code, \
+                --- dividers, [[Page title]] wiki links, ![[Page title]] page embeds."
+        })),
+        ("mode", json!({
+            "type": "string",
+            "enum": ["replace", "append", "prepend"],
+            "description": "update with content: replace the whole page \
+                (default) or add the fragment at the end / the start."
+        })),
+        ("find", json!({
+            "type": "string",
+            "description": "update: exact markdown fragment to replace — copy \
+                it from read. Must occur once unless all=true."
+        })),
+        ("replace", json!({
+            "type": "string",
+            "description": "update: replacement for find (empty string deletes \
+                the fragment)."
+        })),
+        ("all", json!({
+            "type": "boolean",
+            "description": "update: replace every occurrence of find."
+        })),
+        ("parent", json!({
+            "type": "string",
+            "description": "create/move: parent page (id or title); omit or \
+                \"root\" for the top level."
+        })),
+        ("index", json!({
+            "type": "integer",
+            "description": "create/move: 0-based position among siblings; omit \
+                for the end."
+        })),
+        ("icon", json!({
+            "type": "string",
+            "description": "create/update: page icon — an emoji; \"none\" clears it."
+        })),
+        ("layout", json!({
+            "type": "string",
+            "enum": ["free", "flow"],
+            "description": "create/update: free canvas (blocks keep their \
+                coordinates) or a plain document flow."
+        })),
+        ("query", json!({
+            "type": "string",
+            "description": "search: case-insensitive text to find in titles and \
+                page markdown."
+        })),
+        ("limit", json!({
+            "type": "integer",
+            "description": "search: max pages to return (default 20)."
+        })),
+        ("path", json!({
+            "type": "string",
+            "description": "attach: file on disk to put into the page (image, \
+                svg, audio, video or any file)."
+        })),
+        ("attachment", json!({
+            "type": "string",
+            "description": "attach: a chat attachment instead of a path — file \
+                name, sha256 prefix or \"last\"."
+        })),
+        ("caption", json!({
+            "type": "string",
+            "description": "attach: caption / alt text of the media block."
+        })),
+        ("open", json!({
+            "type": "boolean",
+            "description": "create: also show the new page to the user."
+        })),
+        ("op", json!({
+            "type": "string",
+            "description": "kanban: create | read | add_column | update_column | \
+                delete_column | add_card | update_card | move_card | \
+                delete_card | delete. gantt: create | read | add_task | \
+                update_task | delete_task | add_dep | delete_dep | delete."
+        })),
+        ("board", json!({
+            "type": "string",
+            "description": "kanban: board id (kanban:<id> from list/read). Omit \
+                when the page (or the whole project) has exactly one board."
+        })),
+        ("chart", json!({
+            "type": "string",
+            "description": "gantt: chart id (gantt:<id> from list/read). Omit \
+                when the page (or the whole project) has exactly one chart."
+        })),
+        ("columns", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "kanban op=create: column names (default: To do / \
+                In progress / Done)."
+        })),
+        ("column", json!({
+            "type": "string",
+            "description": "kanban: column by id, name or 1-based number — \
+                target of add_card, subject of update_column/delete_column, \
+                destination of move_card/update_card."
+        })),
+        ("name", json!({
+            "type": "string",
+            "description": "kanban add_column/update_column: column name. \
+                gantt add_task/update_task: task name."
+        })),
+        ("color", json!({
+            "type": "string",
+            "description": "Column or task color: #rrggbb or gray | orange | \
+                green | blue | purple | red | teal; \"none\" clears it."
+        })),
+        ("width", json!({
+            "type": "number",
+            "description": "kanban add_column/update_column: column width in \
+                px (0 = the board default)."
+        })),
+        ("card", json!({
+            "type": "string",
+            "description": "kanban update_card/move_card/delete_card: card id \
+                or exact title."
+        })),
+        ("md", json!({
+            "type": "string",
+            "description": "kanban add_card/update_card: card body markdown \
+                (a `- [ ]` checklist shows progress on the card)."
+        })),
+        ("priority", json!({
+            "type": "string",
+            "description": "kanban add_card/update_card: low | medium | high | \
+                urgent | none."
+        })),
+        ("tags", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "kanban add_card/update_card: tags (array or a \
+                comma-separated string)."
+        })),
+        ("due", json!({
+            "type": "string",
+            "description": "kanban add_card/update_card: due date yyyy-mm-dd, \
+                today, tomorrow or none."
+        })),
+        ("before", json!({
+            "type": "string",
+            "description": "kanban add_card/move_card: place the card before \
+                this card (id or title) of the target column; omit for the end."
+        })),
+        ("to_board", json!({
+            "type": "string",
+            "description": "kanban move_card: move the card to another board (id)."
+        })),
+        ("task", json!({
+            "type": "string",
+            "description": "gantt update_task/delete_task: task id or exact name."
+        })),
+        ("start", json!({
+            "type": "string",
+            "description": "gantt add_task/update_task: start date yyyy-mm-dd \
+                (default today)."
+        })),
+        ("end", json!({
+            "type": "string",
+            "description": "gantt add_task/update_task: end date yyyy-mm-dd, \
+                inclusive (default start + 2 days; update_task keeps the \
+                duration when only start is given)."
+        })),
+        ("after", json!({
+            "type": "string",
+            "description": "gantt add_task: make the new task depend on this \
+                task (id or name)."
+        })),
+        ("from", json!({
+            "type": "string",
+            "description": "gantt add_dep/delete_dep: predecessor task (id or name)."
+        })),
+        ("to", json!({
+            "type": "string",
+            "description": "gantt add_dep/delete_dep: successor task (id or name)."
+        })),
+    ];
+    let mut map = serde_json::Map::new();
+    for (k, v) in props {
+        map.insert(k.to_string(), v);
+    }
+    json!({
+        "type": "object",
+        "properties": map,
+        "required": ["action"],
+        "additionalProperties": false
+    })
 }

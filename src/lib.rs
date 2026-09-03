@@ -655,6 +655,8 @@ fn install_config_autosave(ctx: &AppCtx) {
                 autocompact_threshold_percent: g.autocompact_threshold_percent.get(),
             },
             tools_active: tools_active.get(),
+            // Загруженный конфиг уже прошёл `introduce_notes_tool`.
+            tools_notes_introduced: true,
             skills_active: skills_active.get(),
             audio_models: audio_models.get(),
             selected_audio_model: selected_audio_model.get(),

@@ -17,7 +17,8 @@ use tokio::process::Command;
 use crate::agent::schema::ChatToolCall;
 
 use super::catalog::{
-    KEY_AUTOSKILL, KEY_BASH, KEY_KB_SEARCH, KEY_PIPELINES, KEY_SUBAGENT, KEY_SYSTEM, KEY_WEB,
+    KEY_AUTOSKILL, KEY_BASH, KEY_KB_SEARCH, KEY_NOTES, KEY_PIPELINES, KEY_SUBAGENT, KEY_SYSTEM,
+    KEY_WEB,
 };
 
 /// Верхняя граница длины вывода одного инструмента (в байтах). Всё, что
@@ -111,7 +112,7 @@ pub fn normalize_args(raw: &str) -> String {
 /// пишет квалифицированное имя (`bash.bash`, `web.web`). Ключи каталога
 /// плоские, поэтому неизвестное имя с точкой пробуем как хвост.
 fn canonical_tool_name(name: &str) -> &str {
-    const KEYS: [&str; 7] = [
+    const KEYS: [&str; 8] = [
         KEY_BASH,
         KEY_KB_SEARCH,
         KEY_WEB,
@@ -119,6 +120,7 @@ fn canonical_tool_name(name: &str) -> &str {
         KEY_SUBAGENT,
         KEY_SYSTEM,
         KEY_PIPELINES,
+        KEY_NOTES,
     ];
     if KEYS.contains(&name) {
         return name;
@@ -144,6 +146,7 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
         KEY_SUBAGENT => super::subagent::run(args).await,
         KEY_SYSTEM => super::system::run(args).await,
         KEY_PIPELINES => super::pipelines::run(args).await,
+        KEY_NOTES => super::notes::run(args).await,
         other => Err(ToolError::Unknown(other.to_string())),
     };
 

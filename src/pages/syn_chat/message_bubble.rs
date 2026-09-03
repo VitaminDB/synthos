@@ -23,8 +23,9 @@ use crate::agent::tools::Tool;
 use crate::context::AppCtx;
 use crate::icons::{
     MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
-    MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
+    MI_EDIT_NOTE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
 };
+use crate::pages::notes::NotesCtx;
 use crate::pages::node_editor::run_controls;
 use crate::pages::settings::theme_data;
 use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
@@ -958,6 +959,9 @@ pub(super) fn tool_result_card_only(
     if tool_name == "pipelines" {
         card_children.push(Box::new(open_graph_link()));
     }
+    if tool_name == "notes" {
+        card_children.push(Box::new(open_notes_link(&msg.body)));
+    }
 
     DecoratedBox::new().class(card_class).child(
         Column::new()
@@ -1012,6 +1016,44 @@ fn open_graph_link() -> impl Widget {
             app.current_route.set("nodes".to_string());
         })
         .child(DecoratedBox::new().class("pipeline-link").child(link))
+}
+
+/// Ссылка «Открыть в заметках» под результатом tool `notes`: страница —
+/// из строки `page: <id>` результата (её печатает сам инструмент), без
+/// неё — просто режим заметок. Плитка проекта на рейле открывается, если
+/// была закрыта.
+fn open_notes_link(body: &str) -> impl Widget {
+    let page_id = notes_page_id(body);
+    let link = mgui! {
+        Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Icon::new(MI_EDIT_NOTE).class("pipeline-link-icon"),
+            Text::new(tr!("chat.msg.notes.open_page")).class("pipeline-link-text"),
+        ]
+    };
+    GestureDetector::new()
+        .on_click(move || {
+            let notes = use_context::<NotesCtx>();
+            notes.open_tile();
+            if let Some(id) = &page_id {
+                notes.activate(id);
+            }
+            crate::rail::navigate("notes");
+        })
+        .child(DecoratedBox::new().class("pipeline-link").child(link))
+}
+
+/// Первый `page: <12 hex>` в тексте результата инструмента `notes`.
+pub(crate) fn notes_page_id(body: &str) -> Option<String> {
+    let mut rest = body;
+    while let Some(pos) = rest.find("page: ") {
+        let tail = &rest[pos + 6..];
+        let id: String = tail.chars().take(12).collect();
+        if id.len() == 12 && id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(id);
+        }
+        rest = tail;
+    }
+    None
 }
 
 /// Живая карточка прогона пайплайна — рендерится под tool-call `pipelines`,

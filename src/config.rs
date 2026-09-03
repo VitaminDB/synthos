@@ -505,6 +505,13 @@ pub struct AppConfig {
     /// — старые конфиги без поля не теряют функциональность.
     #[serde(default = "default_tools_active")]
     pub tools_active: Vec<String>,
+    /// Инструмент `notes` появился позже стартового набора: конфиг со
+    /// своим списком `tools_active` его не содержит, и агент не видел бы
+    /// заметок, пока пользователь не найдёт чип. Флаг — «инструмент уже
+    /// предложен»: при первой загрузке без него `notes` дописывается в
+    /// активные один раз, дальше выбор пользователя не трогается.
+    #[serde(default)]
+    pub tools_notes_introduced: bool,
     /// Slug-id скилов, активных в правой панели (отображаются как
     /// «Активные» чипы рядом с tools_section). Сами скилы хранятся в
     /// `~/.config/synthos/skills/*.md` — здесь только подсветка.
@@ -1121,6 +1128,7 @@ pub fn default_tools_active() -> Vec<String> {
         "web_read".to_string(),
         "system".to_string(),
         "pipelines".to_string(),
+        "notes".to_string(),
     ]
 }
 
@@ -1137,6 +1145,7 @@ impl Default for AppConfig {
             window_opacity: default_window_opacity(),
             general: GeneralConfig::default(),
             tools_active: default_tools_active(),
+            tools_notes_introduced: true,
             skills_active: Vec::new(),
             audio_models: Vec::new(),
             selected_audio_model: None,
@@ -1325,6 +1334,18 @@ impl AppConfig {
     /// Загружает конфиг с диска. На любую ошибку — `eprintln!` + `Default`
     /// с попыткой тут же сохранить «чистый» конфиг, чтобы следующий запуск
     /// стартовал с валидного файла.
+    /// Один раз включить инструмент `notes` в конфиге, сохранённом до его
+    /// появления (см. `tools_notes_introduced`).
+    pub fn introduce_notes_tool(&mut self) {
+        if self.tools_notes_introduced {
+            return;
+        }
+        self.tools_notes_introduced = true;
+        if !self.tools_active.iter().any(|k| k == "notes") {
+            self.tools_active.push("notes".to_string());
+        }
+    }
+
     pub fn load() -> Self {
         let path = Self::path();
         match std::fs::read_to_string(&path) {
@@ -1334,6 +1355,7 @@ impl AppConfig {
                     for m in &mut cfg.audio_models {
                         m.migrate_legacy_dtype();
                     }
+                    cfg.introduce_notes_tool();
                     cfg
                 }
                 Err(e) => {
@@ -1389,6 +1411,24 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Старый конфиг со своим списком инструментов получает `notes` один
+    /// раз; выключенный пользователем после этого — не возвращается.
+    #[test]
+    fn notes_tool_is_introduced_once() {
+        let mut cfg: AppConfig =
+            serde_json::from_str(r#"{"tools_active":["bash","web"]}"#).expect("конфиг без флага");
+        assert!(!cfg.tools_notes_introduced);
+        cfg.introduce_notes_tool();
+        assert_eq!(cfg.tools_active, ["bash", "web", "notes"]);
+        assert!(cfg.tools_notes_introduced);
+        cfg.tools_active.retain(|k| k != "notes");
+        cfg.introduce_notes_tool();
+        assert_eq!(cfg.tools_active, ["bash", "web"], "выбор пользователя не трогается");
+        // Свежий конфиг: notes уже в стартовом наборе, флаг взведён.
+        assert!(AppConfig::default().tools_active.iter().any(|k| k == "notes"));
+        assert!(AppConfig::default().tools_notes_introduced);
+    }
 
     #[test]
     fn approval_unknown_key_falls_back_to_default() {

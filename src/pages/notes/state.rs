@@ -225,7 +225,7 @@ impl NotesCtx {
     }
 
     /// Уникальное среди соседей имя: «Название», «Название 2», …
-    fn unique_title(&self, parent: Option<&str>, base: &str) -> String {
+    pub fn unique_title(&self, parent: Option<&str>, base: &str) -> String {
         let tree = self.tree.get_untracked();
         let siblings: Vec<String> = match parent {
             None => tree.roots.iter().map(|n| n.title.clone()).collect(),
@@ -246,11 +246,25 @@ impl NotesCtx {
     /// Новая пустая страница у родителя (`None` — в корень); становится
     /// активной. Возвращает id.
     pub fn create_page(&self, parent: Option<&str>, base_title: &str) -> String {
+        self.insert_page(parent, None, base_title, true)
+    }
+
+    /// Новая пустая страница у родителя на позиции `index` (`None` — в
+    /// конец); название делается уникальным среди соседей. `activate` —
+    /// показать её сразу (UI); агент создаёт страницы тихо, не уводя
+    /// пользователя с того, что он читает. Возвращает id.
+    pub fn insert_page(
+        &self,
+        parent: Option<&str>,
+        index: Option<usize>,
+        base_title: &str,
+        activate: bool,
+    ) -> String {
         let title = self.unique_title(parent, base_title);
         let node = PageNode::new(title);
         let id = node.id.clone();
         self.edit_tree(|t| {
-            t.insert(parent, None, node);
+            t.insert(parent, index, node);
         });
         autosave::queue_bytes(&project::page_path(&id), Vec::new());
         if let Some(pid) = parent {
@@ -258,8 +272,60 @@ impl NotesCtx {
                 set.insert(pid.to_string());
             });
         }
-        self.activate(&id);
+        if activate {
+            self.activate(&id);
+        }
         id
+    }
+
+    /// Страницы с таким названием (без регистра), в порядке дерева.
+    pub fn find_by_title(&self, title: &str) -> Vec<String> {
+        let key = title.trim().to_lowercase();
+        self.tree
+            .get_untracked()
+            .all()
+            .into_iter()
+            .filter(|n| n.title.trim().to_lowercase() == key)
+            .map(|n| n.id.clone())
+            .collect()
+    }
+
+    /// Заменить markdown страницы целиком (агент, импорт). Модель ручки
+    /// заменяется с записью в undo, исходник в пуле обновляется на тот же
+    /// текст — иначе первый показ страницы перепарсил бы старый исходник
+    /// поверх правки; смонтированный редактор перестраивается по
+    /// `doc_epoch`, индекс связей обновляется сразу. `false` — страницы нет.
+    pub fn set_page_markdown(&self, id: &str, md: &str) -> bool {
+        let Some(page) = self.page(id) else { return false };
+        page.handle.replace_markdown(md);
+        let source = Arc::new(md.to_string());
+        self.pages.update(|v| {
+            if let Some(p) = v.iter_mut().find(|p| p.id == id) {
+                p.source = source;
+            }
+        });
+        self.reindex_page(id, md);
+        self.bump_doc_epoch();
+        true
+    }
+
+    /// Страницы, в которых врезан объект `kind:id`.
+    pub fn pages_referencing(&self, kind: &str, id: &str) -> Vec<String> {
+        self.tree
+            .get_untracked()
+            .all_ids()
+            .into_iter()
+            .filter(|pid| {
+                object_refs(&self.page_markdown(pid)).iter().any(|(k, oid)| k == kind && oid == id)
+            })
+            .collect()
+    }
+
+    /// Удалить объект (доску/диаграмму) из проекта: файл уходит ближайшим
+    /// коммитом, ручка — из пула. Врезки в страницах вызывающий убирает сам.
+    pub fn delete_object(&self, kind: &str, id: &str) {
+        autosave::queue_remove(&project::object_path(kind, id));
+        self.objects.update(|v| v.retain(|o| o.id() != id));
     }
 
     pub fn rename_page(&self, id: &str, title: &str) {
@@ -378,10 +444,15 @@ impl NotesCtx {
     }
 
     /// Копия страницы с поддеревом рядом с оригиналом: содержимое и объекты
-    /// клонируются с новыми id.
+    /// клонируются с новыми id. Копия становится активной.
     pub fn duplicate_page(&self, id: &str) {
+        self.duplicate_page_with(id, true);
+    }
+
+    /// То же, с выбором — показывать ли копию; возвращает id копии.
+    pub fn duplicate_page_with(&self, id: &str, activate: bool) -> Option<String> {
         let tree = self.tree.get_untracked();
-        let Some(node) = tree.find(id).cloned() else { return };
+        let node = tree.find(id).cloned()?;
         let parent = tree.parent_of(id);
         let idx = tree.index_in_parent(id).unwrap_or(0);
         drop(tree);
@@ -411,7 +482,10 @@ impl NotesCtx {
         self.edit_tree(|t| {
             t.insert(parent.as_deref(), Some(idx + 1), copy);
         });
-        self.activate(&new_id);
+        if activate {
+            self.activate(&new_id);
+        }
+        Some(new_id)
     }
 
     /// Перенос узла: к новому родителю (`None` — корень) на позицию

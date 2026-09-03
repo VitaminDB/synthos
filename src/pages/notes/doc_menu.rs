@@ -146,7 +146,7 @@ pub fn insert_object(ctx: NotesCtx, kind: &str) {
     if let Some(id) = ctx.create_object(kind) {
         ctx.doc_op(DocOp::InsertMarkdown(format!(
             "![[{kind}:{id}]]{{h={}}}",
-            super::embeds::DEFAULT_OBJECT_H as i64
+            super::embeds::default_object_h(kind) as i64
         )));
     }
 }

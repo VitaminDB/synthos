@@ -17,8 +17,23 @@ use crate::icons::*;
 use super::state::{LiveObject, NotesCtx};
 
 const MAX_DEPTH: usize = 2;
-/// Высота доски/диаграммы, пока её не растянули.
-pub const DEFAULT_OBJECT_H: f32 = 340.0;
+
+/// Высота врезки объекта по виду, пока её не растянули: доске нужно
+/// место под несколько карточек, диаграмме хватает трёх строк и шапки.
+pub fn default_object_h(kind: &str) -> f32 {
+    match kind {
+        "kanban" => 400.0,
+        "mindmap" => 420.0,
+        "calendar" => 480.0,
+        _ => 340.0,
+    }
+}
+
+/// Вид объекта по цели врезки (`kanban:<id>` → `kanban`).
+pub fn object_kind_of(target: &str) -> Option<&str> {
+    let (kind, _) = target.split_once(':')?;
+    is_sized_object(target).then_some(kind)
+}
 
 /// Цель врезки — объект-примитив со своей высотой.
 pub fn is_sized_object(target: &str) -> bool {
@@ -37,7 +52,7 @@ impl EmbedFactory for NotesEmbedFactory {
     fn build(&self, target: &str, ectx: &EmbedCtx) -> Option<Box<dyn Widget>> {
         let ctx = self.ctx;
         let target = target.trim();
-        let height = ectx.height.unwrap_or(DEFAULT_OBJECT_H);
+        let height = ectx.height.unwrap_or_else(|| default_object_h(object_kind_of(target).unwrap_or_default()));
         if let Some(id) = target.strip_prefix("kanban:") {
             let LiveObject::Kanban { handle, id: oid } = ctx.object("kanban", id.trim())? else { return None };
             return Some(sized(Box::new(super::kanban::view::view(super::kanban::env(ctx), oid, handle)), height));

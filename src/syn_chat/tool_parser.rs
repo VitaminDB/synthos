@@ -203,6 +203,11 @@ impl ToolCallParser {
                         name = %call.name,
                         "tool_call в XML-стиле вместо родного JSON"
                     );
+                    tracing::debug!(
+                        name = %call.name,
+                        tool_call_body = %self.inner.trim(),
+                        "тело XML-вызова"
+                    );
                 }
                 self.calls.push(call);
             }
@@ -318,8 +323,8 @@ fn parse_tool_call_json_qwen(body: &str) -> Option<RawToolCall> {
 fn normalize_arguments(v: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
     match v {
-        Value::String(s) => match serde_json::from_str::<Value>(s.trim()) {
-            Ok(inner @ Value::Object(_)) => normalize_arguments(inner),
+        Value::String(s) => match lenient_json(&s) {
+            Some(inner @ Value::Object(_)) => normalize_arguments(inner),
             _ => Value::String(s),
         },
         Value::Object(mut map) => {
@@ -446,8 +451,28 @@ fn cut_at_invoke_close(v: &str) -> &str {
 fn xml_param_value(raw: &str) -> serde_json::Value {
     let v = raw.strip_prefix('\n').unwrap_or(raw);
     let v = v.strip_suffix('\n').unwrap_or(v);
-    serde_json::from_str::<serde_json::Value>(v.trim())
-        .unwrap_or_else(|_| serde_json::Value::String(v.to_string()))
+    lenient_json(v).unwrap_or_else(|| serde_json::Value::String(v.to_string()))
+}
+
+/// JSON из текста, который модель могла слегка испортить: строгий разбор,
+/// затем первое целое значение с отброшенным хвостом (лишняя `}` в конце —
+/// `{"command":"…"}}` из живого прогона 03.09.2026), затем починка
+/// скобочного хвоста ([`crate::agent::json_repair`]). `None` — это не JSON.
+fn lenient_json(text: &str) -> Option<serde_json::Value> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+        return Some(v);
+    }
+    if t.starts_with('{') || t.starts_with('[') {
+        let mut stream = serde_json::Deserializer::from_str(t).into_iter::<serde_json::Value>();
+        if let Some(Ok(v)) = stream.next() {
+            return Some(v);
+        }
+    }
+    crate::agent::json_repair::parse_with_repair(t).map(|(v, _)| v)
 }
 
 /// `<function=NAME>` + `<parameter=KEY>VAL</parameter>`.
@@ -560,6 +585,24 @@ mod tests {
         p.feed("<tool_call>{\"name\":\"bash\",\"arguments\":{\"arguments\":\"\\n\"}}</tool_call>");
         let (calls, _) = p.finish();
         assert_eq!(calls[0].arguments_json, "{}");
+    }
+
+    /// Живой случай 03.09.2026 (qwen3.8-27b, temp 0.6): `arguments`
+    /// строкой, внутри которой лишняя закрывающая скобка.
+    #[test]
+    fn stringified_arguments_with_extra_brace_are_unwrapped() {
+        let raw = r#"{"arguments":"{\"command\":\"cd /tmp && echo \\\"---\\\" && wc -l a b\"}}"}"#;
+        let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let out = normalize_arguments(v);
+        assert_eq!(
+            out,
+            serde_json::json!({"command": "cd /tmp && echo \"---\" && wc -l a b"})
+        );
+
+        let mut p = ToolCallParser::new();
+        p.feed("<tool_call><function=bash><parameter=arguments>{\"command\":\"ls\"}}</parameter></function></tool_call>");
+        let (calls, _) = p.finish();
+        assert_eq!(calls[0].arguments_json, r#"{"command":"ls"}"#);
     }
 
     /// Параметры рядом с `name`, без обёртки `arguments`.

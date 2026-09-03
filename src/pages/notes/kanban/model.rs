@@ -270,7 +270,7 @@ pub struct KanbanStyle {
     pub show_counts: bool,
 }
 
-pub const DEFAULT_COLUMN_WIDTH: f32 = 260.0;
+pub const DEFAULT_COLUMN_WIDTH: f32 = 300.0;
 pub const MIN_COLUMN_WIDTH: f32 = 140.0;
 pub const MAX_COLUMN_WIDTH: f32 = 800.0;
 

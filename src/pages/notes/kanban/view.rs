@@ -557,7 +557,7 @@ fn field_width(lane_width: f32) -> f32 {
     (lane_width - 56.0).max(120.0)
 }
 
-/// Поля под карточкой, столбиком (в колонку шириной 260 в ряд они не
+/// Поля под карточкой, столбиком (в колонку шириной 300 в ряд они не
 /// влезают): приоритет, срок, метки + «удалить».
 fn card_fields(handle: &KanbanHandle, card: &KanbanCard, lane_width: f32) -> impl Widget {
     let h_del = handle.clone();

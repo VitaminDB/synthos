@@ -63,7 +63,7 @@ impl EmbedFactory for Factory {
         let body = view(self.env(), id.to_string(), handle);
         Some(Box::new(
             DecoratedBox::new()
-                .style("height", StyleValue::px(ectx.height.unwrap_or(340.0)))
+                .style("height", StyleValue::px(ectx.height.unwrap_or(crate::pages::notes::embeds::default_object_h("kanban"))))
                 .child(crate::components::workspace_frame::expand(Box::new(body))),
         ))
     }

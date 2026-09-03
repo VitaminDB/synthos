@@ -1812,7 +1812,7 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
 /// достаётся самой врезке).
 fn embed_object(ctx: NotesCtx, pid: &str, kind: &str, id: &str, v: &Json) -> Result<(InsertPos, Vec<usize>), String> {
     let geom = parse_geom(v)?;
-    let h = geom.h.unwrap_or(embeds::DEFAULT_OBJECT_H);
+    let h = geom.h.unwrap_or(embeds::default_object_h(kind));
     let embed = format!("![[{kind}:{id}]]{{h={}}}", fnum(h));
     let md = match str_field(v, "title") {
         Some(t) => format!("### {t}\n\n{embed}"),

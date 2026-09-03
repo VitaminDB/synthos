@@ -172,6 +172,9 @@ fn run() -> std::result::Result<(), String> {
 
     // Контексты — как в `run_desktop`, но без окна и без страниц.
     let (_theme, app_ctx) = synthos::build_context();
+    // Тексты ошибок и подписи проходят через `tr!` — без каталога в ленте
+    // остаются ключи вида `chat.session.error.stopped_suffix`.
+    synthos::i18n::install(app_ctx.general);
     app_ctx.tools.allow_all.set(true);
     app_ctx.tools.active.set(tools);
     app_ctx.general.agent_max_turns.set(turns);
@@ -215,16 +218,31 @@ fn run() -> std::result::Result<(), String> {
         session::send_message(prompt.clone());
         drain();
         let t0 = Instant::now();
-        let mut printed = from;
+        // Лента не append-only: пустой плейсхолдер ассистента заменяется
+        // пузырём вызова, текст дописывается стримом. Поэтому помним, что
+        // печатали, и перепечатываем изменившиеся строки.
+        let mut shown: Vec<String> = Vec::new();
         let mut last_tick = Instant::now();
         let mut aborted = false;
+        let sync_print = |msgs: &[ChatMsg], shown: &mut Vec<String>| {
+            for (i, m) in msgs.iter().enumerate().skip(from) {
+                let line = describe(i, m);
+                let k = i - from;
+                if k < shown.len() {
+                    if shown[k] != line {
+                        println!("{line}   ← обновлено");
+                        shown[k] = line;
+                    }
+                } else {
+                    println!("{line}");
+                    shown.push(line);
+                }
+            }
+        };
         loop {
             drain();
             let msgs = chat.messages.get_untracked();
-            while printed < msgs.len() {
-                println!("{}", describe(printed, &msgs[printed]));
-                printed += 1;
-            }
+            sync_print(&msgs, &mut shown);
             if !chat.pending.get_untracked() {
                 break;
             }
@@ -252,10 +270,7 @@ fn run() -> std::result::Result<(), String> {
         }
         drain();
         let msgs = chat.messages.get_untracked();
-        while printed < msgs.len() {
-            println!("{}", describe(printed, &msgs[printed]));
-            printed += 1;
-        }
+        sync_print(&msgs, &mut shown);
         let v = verdict(&msgs, from);
         let err = chat.error.get_untracked();
         println!(

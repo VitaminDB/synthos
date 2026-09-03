@@ -35,6 +35,7 @@ pub mod index;
 pub mod kanban;
 pub mod links;
 pub mod media;
+pub mod mindmap;
 pub mod project;
 pub mod right_panel;
 pub mod state;

@@ -1062,6 +1062,7 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             match ctx.object(kind, oid) {
                 Some(LiveObject::Kanban { handle, .. }) => out.push_str(&board_text(oid, &handle, false)),
                 Some(LiveObject::Gantt { handle, .. }) => out.push_str(&chart_text(oid, &handle)),
+                Some(LiveObject::Mindmap { handle, .. }) => out.push_str(&map_text(oid, &handle)),
                 None => out.push_str(&format!("{kind}:{oid} · (file missing)\n")),
             }
         }
@@ -1893,6 +1894,28 @@ fn chart_text(id: &str, handle: &GanttHandle) -> String {
     for d in &doc.deps {
         let name = |id: &str| doc.tasks.iter().find(|t| t.id == id).map(|t| t.name.clone()).unwrap_or_default();
         out.push_str(&format!("  dep {} \"{}\" → {} \"{}\"\n", d.from, name(&d.from), d.to, name(&d.to)));
+    }
+    out
+}
+
+/// Текст интеллект-карты: шапка, дерево узлов с id, кросс-ссылки.
+fn map_text(id: &str, handle: &crate::pages::notes::mindmap::MindmapHandle) -> String {
+    let doc = handle.lock();
+    let mut out = format!(
+        "mindmap:{id} · nodes: {} · links: {} · direction: {} · curve: {}\n",
+        doc.nodes.len(),
+        doc.links.len(),
+        doc.layout.direction.key(),
+        doc.layout.curve.key()
+    );
+    for line in doc.tree_text().lines() {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    for l in &doc.links {
+        let text = |id: &str| doc.node(id).map(|n| n.text.clone()).unwrap_or_default();
+        out.push_str(&format!("  link {} \"{}\" → {} \"{}\"{}\n", l.from, text(&l.from), l.to, text(&l.to), if l.label.is_empty() { String::new() } else { format!(" · \"{}\"", l.label) }));
     }
     out
 }

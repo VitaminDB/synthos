@@ -174,7 +174,7 @@ pub fn lex_links(content: &str) -> Vec<String> {
 /// Ничто из этого не ссылка на страницу: без этой проверки каждая фигура
 /// висела бы в графе битой ссылкой.
 pub fn is_object_target(target: &str) -> bool {
-    ["kanban:", "gantt:", "shape:", "base:", "canvas:"].iter().any(|p| target.starts_with(p))
+    ["kanban:", "gantt:", "mindmap:", "calendar:", "shape:", "base:", "canvas:"].iter().any(|p| target.starts_with(p))
 }
 
 #[cfg(test)]

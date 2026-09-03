@@ -37,7 +37,41 @@ pub fn object_kind_of(target: &str) -> Option<&str> {
 
 /// Цель врезки — объект-примитив со своей высотой.
 pub fn is_sized_object(target: &str) -> bool {
-    target.starts_with("kanban:") || target.starts_with("gantt:")
+    target.starts_with("kanban:") || target.starts_with("gantt:") || target.starts_with("mindmap:")
+}
+
+/// Окружение интеллект-карты: ссылка узла открывает страницу, «в список»
+/// заменяет врезку карты вложенным списком на её странице.
+pub fn mindmap_env(ctx: NotesCtx) -> super::mindmap::view::MapEnv {
+    super::mindmap::view::MapEnv {
+        open_page: Arc::new(move |id| {
+            ctx.activate(id);
+            crate::rail::navigate("notes");
+        }),
+        to_list: Arc::new(move |id| mindmap_to_list(ctx, id)),
+    }
+}
+
+/// Карта → вложенный список на месте врезки (на всех страницах, где она
+/// врезана); объект удаляется из бандла.
+pub fn mindmap_to_list(ctx: NotesCtx, id: &str) {
+    use syngui::widgets::input::document_editor::{parse_document, serialize_document, BlockKind};
+    let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", id) else { return };
+    let outline = handle.lock().to_outline();
+    let target = format!("mindmap:{id}");
+    for pid in ctx.pages_referencing("mindmap", id) {
+        let mut model = parse_document(&ctx.page_markdown(&pid));
+        let Some(pos) = model.blocks.iter().position(|b| matches!(&b.kind, BlockKind::Embed { target: t } if t.trim() == target)) else {
+            continue;
+        };
+        model.blocks.remove(pos);
+        let fresh = parse_document(&outline).blocks;
+        let tail = model.blocks.split_off(pos);
+        model.blocks.extend(fresh);
+        model.blocks.extend(tail);
+        ctx.set_page_markdown(&pid, &serialize_document(&model));
+    }
+    ctx.delete_object("mindmap", id);
 }
 
 pub struct NotesEmbedFactory {
@@ -60,6 +94,10 @@ impl EmbedFactory for NotesEmbedFactory {
         if let Some(id) = target.strip_prefix("gantt:") {
             let LiveObject::Gantt { handle, .. } = ctx.object("gantt", id.trim())? else { return None };
             return Some(sized(Box::new(super::gantt::view::view(handle)), height));
+        }
+        if let Some(id) = target.strip_prefix("mindmap:") {
+            let LiveObject::Mindmap { handle, id: oid } = ctx.object("mindmap", id.trim())? else { return None };
+            return Some(sized(Box::new(super::mindmap::view::view(mindmap_env(ctx), oid, handle)), height));
         }
         let id = ctx.index.get_untracked().resolve(target)?;
         if ectx.depth >= MAX_DEPTH {

@@ -61,9 +61,10 @@ pub fn shape_icon(kind: ShapeKind) -> &'static str {
 }
 
 /// Объекты-примитивы: id, иконка, ключ подписи.
-const OBJECTS: [(&str, &str, &str); 2] = [
+const OBJECTS: [(&str, &str, &str); 3] = [
     ("kanban", MI_VIEW_KANBAN, "notes.block.kanban"),
     ("gantt", MI_VIEW_TIMELINE, "notes.block.gantt"),
+    ("mindmap", MI_SCHEMA, "notes.block.mindmap"),
 ];
 
 /// Пункты подменю «Примитивы» с общим префиксом (вставка / превратить в).
@@ -76,12 +77,41 @@ fn shape_items(prefix: &str) -> Vec<MenuItem> {
         .collect()
 }
 
-/// Пункты вставки доски и диаграммы.
+/// Пункты вставки доски, диаграммы и интеллект-карты (у карты — подменю:
+/// пустая либо из текущего блока-списка).
 fn object_items() -> Vec<MenuItem> {
     OBJECTS
         .iter()
-        .map(|(id, icon, key)| MenuItem::new(format!("ins_object_{id}"), syngui::i18n::tr(key)).icon(*icon))
+        .map(|(id, icon, key)| {
+            let item = MenuItem::new(format!("ins_object_{id}"), syngui::i18n::tr(key)).icon(*icon);
+            if *id == "mindmap" {
+                item.children(vec![
+                    MenuItem::new("ins_object_mindmap", tr!("notes.mindmap.empty_map")).icon(MI_SCHEMA),
+                    MenuItem::new("ins_mindmap_from_block", tr!("notes.mindmap.from_block")).icon(MI_FORMAT_LIST_BULLETED),
+                ])
+            } else {
+                item
+            }
+        })
         .collect()
+}
+
+/// Интеллект-карта из текущего блока: заголовок/список → узлы; блок
+/// заменяется врезкой карты.
+pub fn insert_mindmap_from_block(ctx: NotesCtx) {
+    let Some(page) = ctx.active.get_untracked().and_then(|id| ctx.page(&id)) else { return };
+    let Some(block) = page.handle.selected().get_untracked() else {
+        insert_object(ctx, "mindmap");
+        return;
+    };
+    let md = page.handle.block_markdown(block).unwrap_or_default();
+    let doc = super::mindmap::model::MindmapDoc::from_outline(&md, &tr!("notes.mindmap.root"));
+    let id = ctx.create_mindmap(doc);
+    ctx.doc_op(DocOp::InsertMarkdown(format!(
+        "![[mindmap:{id}]]{{h={}}}",
+        super::embeds::default_object_h("mindmap") as i64
+    )));
+    ctx.doc_op(DocOp::DeleteBlock(block));
 }
 
 fn shape_of(id: &str) -> Option<ShapeKind> {
@@ -106,6 +136,7 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::Divider, tr!("notes.block.divider"), "divider hr разделитель"),
         SlashItem::new(SlashAction::Custom("kanban".into()), tr!("notes.block.kanban"), "kanban board канбан доска задачи"),
         SlashItem::new(SlashAction::Custom("gantt".into()), tr!("notes.block.gantt"), "gantt timeline гант диаграмма план сроки"),
+        SlashItem::new(SlashAction::Custom("mindmap".into()), tr!("notes.block.mindmap"), "mindmap mind map карта идей интеллект-карта"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Rect), tr!("notes.shape.rect"), "rect shape прямоугольник фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Ellipse), tr!("notes.shape.ellipse"), "ellipse circle овал круг фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Triangle), tr!("notes.shape.triangle"), "triangle треугольник фигура"),
@@ -269,6 +300,10 @@ pub fn handle(ctx: NotesCtx, id: &str) {
     }
     if let Some(name) = id.strip_prefix("turn_shape_").and_then(shape_of) {
         ctx.doc_op(DocOp::TurnInto(SlashAction::Shape(name)));
+        return;
+    }
+    if id == "ins_mindmap_from_block" {
+        insert_mindmap_from_block(ctx);
         return;
     }
     if let Some(kind) = id.strip_prefix("ins_object_") {

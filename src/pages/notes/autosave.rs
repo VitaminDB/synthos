@@ -214,10 +214,7 @@ pub fn install_notes_autosave() {
         }
         // Доски и диаграммы.
         for o in ctx.objects.get().iter() {
-            let rev = match o {
-                LiveObject::Kanban { handle, .. } => handle.revision.get(),
-                LiveObject::Gantt { handle, .. } => handle.revision.get(),
-            };
+            let rev = o.revision();
             let path = o.bundle_path();
             if rev > saved_rev(&path) {
                 enqueue(&path, SaveSource::Object(o.clone()), rev, None, false);

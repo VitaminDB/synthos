@@ -22,6 +22,8 @@ use super::gantt::GanttHandle;
 use super::index::VaultIndex;
 use super::kanban::model::KanbanDoc;
 use super::kanban::KanbanHandle;
+use super::mindmap::model::MindmapDoc;
+use super::mindmap::MindmapHandle;
 use super::project::{self, PageGrid, PageLayout, PageNode, ProjectTree};
 
 /// Загруженная страница: исходник для виджета (fingerprint стабилен между
@@ -45,19 +47,20 @@ impl LivePage {
 }
 
 /// Виды объектов-примитивов (`![[<kind>:<id>]]`).
-pub const OBJECT_KINDS: [&str; 2] = ["kanban", "gantt"];
+pub const OBJECT_KINDS: [&str; 3] = ["kanban", "gantt", "mindmap"];
 
 /// Загруженный объект-врезка.
 #[derive(Clone)]
 pub enum LiveObject {
     Kanban { id: String, handle: KanbanHandle },
     Gantt { id: String, handle: GanttHandle },
+    Mindmap { id: String, handle: MindmapHandle },
 }
 
 impl LiveObject {
     pub fn id(&self) -> &str {
         match self {
-            LiveObject::Kanban { id, .. } | LiveObject::Gantt { id, .. } => id,
+            LiveObject::Kanban { id, .. } | LiveObject::Gantt { id, .. } | LiveObject::Mindmap { id, .. } => id,
         }
     }
 
@@ -65,6 +68,7 @@ impl LiveObject {
         match self {
             LiveObject::Kanban { .. } => "kanban",
             LiveObject::Gantt { .. } => "gantt",
+            LiveObject::Mindmap { .. } => "mindmap",
         }
     }
 
@@ -73,6 +77,16 @@ impl LiveObject {
         match self {
             LiveObject::Kanban { handle, .. } => handle.serialize(),
             LiveObject::Gantt { handle, .. } => handle.serialize(),
+            LiveObject::Mindmap { handle, .. } => handle.serialize(),
+        }
+    }
+
+    /// Ревизия документа объекта (автосейв).
+    pub fn revision(&self) -> u64 {
+        match self {
+            LiveObject::Kanban { handle, .. } => handle.revision.get(),
+            LiveObject::Gantt { handle, .. } => handle.revision.get(),
+            LiveObject::Mindmap { handle, .. } => handle.revision.get(),
         }
     }
 
@@ -585,6 +599,10 @@ impl NotesCtx {
                 id: id.to_string(),
                 handle: GanttHandle::new(GanttDoc::parse(&content).ok()?),
             },
+            "mindmap" => LiveObject::Mindmap {
+                id: id.to_string(),
+                handle: MindmapHandle::new(MindmapDoc::parse(&content).ok()?),
+            },
             _ => return None,
         };
         autosave::mark_saved(&path, 0);
@@ -610,13 +628,30 @@ impl NotesCtx {
                 let content = doc.serialize();
                 (LiveObject::Gantt { id: id.clone(), handle: GanttHandle::new(doc) }, content)
             }
+            "mindmap" => {
+                let doc = MindmapDoc::template(&tr!("notes.mindmap.root"));
+                let content = doc.serialize();
+                (LiveObject::Mindmap { id: id.clone(), handle: MindmapHandle::new(doc) }, content)
+            }
             _ => return None,
         };
-        let path = project::object_path(kind, &id);
+        self.register_object(kind, &id, obj, content);
+        Some(id)
+    }
+
+    /// Интеллект-карта из готового документа (из списка страницы, от агента).
+    pub fn create_mindmap(&self, doc: MindmapDoc) -> String {
+        let id = project::new_id();
+        let content = doc.serialize();
+        self.register_object("mindmap", &id, LiveObject::Mindmap { id: id.clone(), handle: MindmapHandle::new(doc) }, content);
+        id
+    }
+
+    fn register_object(&self, kind: &str, id: &str, obj: LiveObject, content: String) {
+        let path = project::object_path(kind, id);
         autosave::mark_saved(&path, 0);
         autosave::queue_bytes(&path, content.into_bytes());
         self.objects.update(|v| v.push(obj));
-        Some(id)
     }
 
     // ─── Индекс ───────────────────────────────────────────────────────────

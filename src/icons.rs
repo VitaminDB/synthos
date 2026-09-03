@@ -205,6 +205,12 @@ pub const MI_MERGE_TYPE: &str          = "\u{E252}";
 pub const MI_HUB: &str                 = "\u{E9F4}";
 /// «account_tree» — альтернативная иконка для узлового представления.
 pub const MI_ACCOUNT_TREE: &str        = "\u{E97A}";
+/// «schema» — интеллект-карта.
+pub const MI_SCHEMA: &str              = "\u{E4FD}";
+/// «subdirectory_arrow_right» — соседний узел карты.
+pub const MI_SUBDIRECTORY_ARROW_RIGHT: &str = "\u{E5DA}";
+/// «link» — ссылка узла на страницу.
+pub const MI_LINK: &str                = "\u{E157}";
 /// «zoom_in» / «zoom_out» / «fit_screen» — toolbar редактора нод.
 pub const MI_ZOOM_IN: &str             = "\u{E8FF}";
 pub const MI_ZOOM_OUT: &str            = "\u{E900}";

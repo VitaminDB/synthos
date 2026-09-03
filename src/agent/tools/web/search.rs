@@ -164,6 +164,9 @@ async fn try_bing(
     .await
     .map_err(|e| SearchError::Network(e.to_string()))?;
 
+    if detect_bing_no_results(&html) {
+        return Ok(EndpointOutcome::Empty);
+    }
     let mut hits = parse_bing(&html, max_results);
     hits = dedup_by_origin(hits);
     let hits = renumber(hits, max_results);
@@ -172,6 +175,16 @@ async fn try_bing(
     } else {
         Ok(EndpointOutcome::Hits(hits))
     }
+}
+
+/// Bing без результатов не отдаёт пустую страницу: над плашкой «There are
+/// no results for …» (`li.b_no`) он выкладывает брендовые заглушки — на
+/// «Redmi 9C unlock bootloader» это «Xiaomi Global» и «101 Healthy Breakfast
+/// Recipes» (живой прогон 03.09.2026, выходной IP в Казахстане). Парсер
+/// карточек их принимает за выдачу, и модель ищет дальше по кругу; честное
+/// «нет результатов» ей полезнее.
+fn detect_bing_no_results(html: &str) -> bool {
+    html.contains("class=\"b_no\"") || html.contains("There are no results for")
 }
 
 fn build_bing_url(query: &str, lang: &str, max_results: usize) -> String {
@@ -576,6 +589,14 @@ mod tests {
         assert_eq!(hits[0].snippet, "View Xiaomi Redmi Series.");
         assert_eq!(hits[1].url, "https://xdaforums.com/t/redmi-9c.123/");
         assert_eq!(hits[1].rank, 2);
+    }
+
+    #[test]
+    fn bing_no_results_page_is_detected() {
+        let html = r#"<ol id="b_results"><li class="b_no"><h1>There are no results for <strong>foo</strong></h1></li>
+            <li class="b_algo"><h2><a href="https://www.mi.com/global/">Xiaomi Global</a></h2></li></ol>"#;
+        assert!(detect_bing_no_results(html));
+        assert!(!detect_bing_no_results(r#"<ol id="b_results"><li class="b_algo"><h2><a href="https://a.b/">A</a></h2></li></ol>"#));
     }
 
     #[test]

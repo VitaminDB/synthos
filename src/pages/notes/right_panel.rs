@@ -13,7 +13,7 @@
 use syngui::prelude::*;
 use syngui::widgets::input::{SpinBox, Toggle};
 use syngui::widgets::navigation::{Tab, TabBar};
-use syngui::widgets::input::document_editor::{BlockProps, DocOp, ShapeKind, TableOp};
+use syngui::widgets::input::document_editor::{BlockProps, DocOp, DocumentEditor, ShapeKind, TableOp};
 use syngui::widgets::{ColorPicker, ColorValue, Dropdown, DropdownItem, GestureDetector, ToolButton};
 
 use crate::icons::*;
@@ -24,6 +24,8 @@ use super::doc_menu;
 use super::kanban;
 use super::kanban::model::{MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use super::kanban::KanbanHandle;
+use super::mindmap::model::{MindNode, MindmapDoc};
+use super::mindmap::MindmapHandle;
 use super::project::{PageGrid, PageLayout};
 use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
@@ -152,6 +154,7 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     let kind_label = match props.embed.as_deref() {
         Some(t) if t.starts_with("kanban:") => tr!("notes.block.kanban"),
         Some(t) if t.starts_with("gantt:") => tr!("notes.block.gantt"),
+        Some(t) if t.starts_with("mindmap:") => tr!("notes.block.mindmap"),
         _ => blocks::kind_label(props.kind, props.level),
     };
     let mut col = Column::new()
@@ -212,6 +215,12 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("kanban:")) {
         if let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", oid.trim()) {
             col = col.child(kanban_props(handle));
+        }
+    }
+    // Интеллект-карта: выбранный узел и оформление карты.
+    if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("mindmap:")) {
+        if let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", oid.trim()) {
+            col = col.child(mindmap_props(ctx, handle));
         }
     }
 
@@ -576,13 +585,14 @@ fn swatches(
 fn segmented(
     items: &'static [(&'static str, &'static str)],
     current: &str,
-    on_pick: impl Fn(&str) + Send + Sync + Copy + 'static,
+    on_pick: impl Fn(&str) + Send + Sync + Clone + 'static,
 ) -> impl Widget {
     let current = current.to_string();
     let mut row = Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center);
     for (icon, value) in items {
         let selected = current == *value;
         let v = *value;
+        let on_pick = on_pick.clone();
         row = row.child(
             GestureDetector::new()
                 .cursor(syngui::input::CursorIcon::Pointer)
@@ -607,6 +617,323 @@ fn table_button(
     ToolButton::new(icon)
         .tooltip(tooltip)
         .on_click(move || ctx.doc_op(DocOp::Table { block, op }))
+}
+
+/// Кнопка точного цвета: попап `ColorPicker` рядом со свотчами.
+fn color_picker(current: Option<&str>, fallback: (u8, u8, u8), on_pick: impl Fn(String) + Send + Sync + 'static) -> impl Widget {
+    let initial = current
+        .map(|h| ColorValue::from_color(syngui::core::Color::from_hex(h)))
+        .unwrap_or_else(|| ColorValue::new(fallback.0, fallback.1, fallback.2));
+    ColorPicker::new().color(initial).width(96.0).on_change(move |c| on_pick(c.to_hex()))
+}
+
+/// Свойства интеллект-карты: выбранный узел и оформление карты.
+fn mindmap_props(ctx: NotesCtx, handle: MindmapHandle) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = handle.structure_rev.get();
+        let selected = handle.selected.get();
+        let doc = handle.lock().clone();
+        let mut col = Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-props");
+        if let Some(node) = selected.as_deref().and_then(|id| doc.node(id)).cloned() {
+            col = col.child(mindmap_node_props(ctx, &handle, &doc, node));
+        }
+        col = col.child(mindmap_map_props(&handle, &doc));
+        vec![Box::new(col)]
+    })
+}
+
+fn mindmap_node_props(ctx: NotesCtx, handle: &MindmapHandle, doc: &MindmapDoc, node: MindNode) -> impl Widget {
+    use super::mindmap::model::NodeShape;
+    let id = node.id.clone();
+    let is_root = node.parent.is_none();
+
+    let h_text = handle.clone();
+    let id_text = id.clone();
+    let text = TextField::with_text(node.text.clone())
+        .submit_on_focus_lost(true)
+        .on_submit(move |t| h_text.set_text(&id_text, t))
+        .class("notes-props-field");
+
+    let (editor, source) = handle.note_editor(&id);
+    let note = DecoratedBox::new()
+        .class("notes-mindmap-note")
+        .child(
+            DocumentEditor::new()
+                .markdown((*source).clone())
+                .handle(&editor)
+                .plain(true)
+                .placeholder(tr!("notes.props.mindmap.note"))
+                .class("notes-mindmap-note-editor"),
+        );
+
+    let h_color = handle.clone();
+    let id_color = id.clone();
+    let h_pick = handle.clone();
+    let id_pick = id.clone();
+    let color_row = Row::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(swatches(COLOR_PRESETS, (!node.color.is_empty()).then_some(node.color.as_str()), move |c| {
+            h_color.set_color(&id_color, c)
+        }))
+        .child(color_picker((!node.color.is_empty()).then_some(node.color.as_str()), (79, 140, 255), move |hex| {
+            h_pick.set_color(&id_pick, Some(hex))
+        }));
+
+    let h_shape = handle.clone();
+    let id_shape = id.clone();
+    let shape = Dropdown::new()
+        .width(132.0)
+        .items(
+            NodeShape::ALL
+                .iter()
+                .map(|s| DropdownItem::new(s.key(), syngui::i18n::tr(&format!("notes.mindmap.shape.{}", s.key()))))
+                .collect(),
+        )
+        .selected(node.shape.key())
+        .on_change(move |v| {
+            if let Some(s) = NodeShape::parse(v) {
+                h_shape.set_shape(&id_shape, s);
+            }
+        })
+        .class("notes-props-field");
+
+    let h_icon = handle.clone();
+    let id_icon = id.clone();
+    let icon = TextField::with_text(node.icon.clone())
+        .width(80.0)
+        .submit_on_focus_lost(true)
+        .on_submit(move |t| h_icon.set_icon(&id_icon, t))
+        .class("notes-props-field");
+
+    let h_link = handle.clone();
+    let id_link = id.clone();
+    let mut pages = vec![DropdownItem::new("", tr!("notes.props.mindmap.no_link"))];
+    for n in ctx.tree.get_untracked().all() {
+        pages.push(DropdownItem::new(n.id.clone(), n.title.clone()));
+    }
+    let link = Dropdown::new()
+        .width(160.0)
+        .items(pages)
+        .selected(node.link.clone().unwrap_or_default())
+        .on_change(move |v| h_link.set_link(&id_link, (!v.is_empty()).then(|| v.to_string())))
+        .class("notes-props-field");
+
+    let h_collapse = handle.clone();
+    let id_collapse = id.clone();
+    let collapsed = switch_row(tr!("notes.props.mindmap.collapsed"), node.collapsed, move |on| {
+        h_collapse.set_collapsed(&id_collapse, on)
+    });
+
+    let h_reset = handle.clone();
+    let id_reset = id.clone();
+    let h_del = handle.clone();
+    let id_del = id.clone();
+    let mut actions = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            ToolButton::new(MI_AUTORENEW)
+                .text(tr!("notes.mindmap.reset_offset"))
+                .on_click(move || h_reset.reset_offset(&id_reset)),
+        );
+    if !is_root {
+        actions = actions.child(
+            ToolButton::new(MI_DELETE).text(tr!("notes.mindmap.delete")).on_click(move || {
+                h_del.delete(&id_del);
+            }),
+        );
+    }
+
+    let _ = doc;
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.mindmap.node")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.mindmap.text"), text))
+        .child(note)
+        .child(field_row(tr!("notes.props.color"), color_row))
+        .child(field_row(tr!("notes.props.mindmap.shape"), shape))
+        .child(field_row(tr!("notes.props.mindmap.icon"), icon))
+        .child(field_row(tr!("notes.props.mindmap.link"), link))
+        .child(collapsed)
+        .child(actions)
+}
+
+fn mindmap_map_props(handle: &MindmapHandle, doc: &MindmapDoc) -> impl Widget {
+    use super::mindmap::model::{palette_by_key, Curve, Direction, PALETTES};
+    let layout = doc.layout.clone();
+    let style = doc.style.clone();
+
+    let h = handle.clone();
+    let direction = Dropdown::new()
+        .width(132.0)
+        .items(Direction::ALL.iter().map(|d| DropdownItem::new(d.key(), super::mindmap::view::direction_label(*d))).collect())
+        .selected(layout.direction.key())
+        .on_change(move |v| {
+            if let Some(d) = Direction::parse(v) {
+                h.set_direction(d);
+            }
+        })
+        .class("notes-props-field");
+
+    let h = handle.clone();
+    let curve = Dropdown::new()
+        .width(132.0)
+        .items(
+            Curve::ALL
+                .iter()
+                .map(|c| DropdownItem::new(c.key(), syngui::i18n::tr(&format!("notes.mindmap.curve.{}", c.key()))))
+                .collect(),
+        )
+        .selected(layout.curve.key())
+        .on_change(move |v| {
+            if let Some(c) = Curve::parse(v) {
+                h.set_curve(c);
+            }
+        })
+        .class("notes-props-field");
+
+    let spin = |value: f32, lo: f64, hi: f64, step: f64, on: Box<dyn Fn(f32) + Send + Sync>| {
+        SpinBox::new()
+            .range(lo, hi)
+            .step(step)
+            .width(96.0)
+            .value(value as f64)
+            .on_change(move |v| on(v as f32))
+            .class("notes-props-field")
+    };
+    let h = handle.clone();
+    let h_gap = spin(layout.h_gap, 8.0, 400.0, 4.0, Box::new(move |v| h.set_layout(|l| l.h_gap = v)));
+    let h = handle.clone();
+    let v_gap = spin(layout.v_gap, 0.0, 200.0, 2.0, Box::new(move |v| h.set_layout(|l| l.v_gap = v)));
+
+    // Палитра: пресет либо «своя», плюс её цвета для наглядности.
+    let current_palette = PALETTES
+        .iter()
+        .find(|(_, p)| p.iter().map(|s| s.to_string()).collect::<Vec<_>>() == style.palette)
+        .map(|(k, _)| *k)
+        .unwrap_or("custom");
+    let mut palette_items: Vec<DropdownItem> = PALETTES
+        .iter()
+        .map(|(k, _)| DropdownItem::new(*k, syngui::i18n::tr(&format!("notes.mindmap.palette.{k}"))))
+        .collect();
+    if current_palette == "custom" {
+        palette_items.push(DropdownItem::new("custom", "…"));
+    }
+    let h = handle.clone();
+    let palette = Dropdown::new()
+        .width(132.0)
+        .items(palette_items)
+        .selected(current_palette)
+        .on_change(move |v| {
+            if let Some(p) = palette_by_key(v) {
+                let colors: Vec<String> = p.iter().map(|s| s.to_string()).collect();
+                h.set_style(move |s| s.palette = colors);
+            }
+        })
+        .class("notes-props-field");
+    let mut palette_row = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for c in &style.palette {
+        palette_row = palette_row.child(
+            DecoratedBox::new().class("notes-props-swatch").style("background-color", syngui::core::Color::from_hex(c)),
+        );
+    }
+
+    let tint_row = |current: String, on: Box<dyn Fn(Option<String>) + Send + Sync>| {
+        let on = std::sync::Arc::new(on);
+        let on_sw = on.clone();
+        let on_pk = on.clone();
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(swatches(TINT_PRESETS, (!current.is_empty()).then_some(current.as_str()), move |c| on_sw(c)))
+            .child(color_picker((!current.is_empty()).then_some(current.as_str()), (36, 49, 73), move |hex| on_pk(Some(hex))))
+    };
+    let color_row = |current: String, on: Box<dyn Fn(Option<String>) + Send + Sync>| {
+        let on = std::sync::Arc::new(on);
+        let on_sw = on.clone();
+        let on_pk = on.clone();
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(swatches(COLOR_PRESETS, (!current.is_empty()).then_some(current.as_str()), move |c| on_sw(c)))
+            .child(color_picker((!current.is_empty()).then_some(current.as_str()), (79, 140, 255), move |hex| on_pk(Some(hex))))
+    };
+
+    let h = handle.clone();
+    let node_fill = tint_row(style.node_fill.clone(), Box::new(move |c| h.set_style(|s| s.node_fill = c.unwrap_or_default())));
+    let h = handle.clone();
+    let node_stroke = color_row(style.node_stroke.clone(), Box::new(move |c| h.set_style(|s| s.node_stroke = c.unwrap_or_default())));
+    let h = handle.clone();
+    let text_color = color_row(style.text_color.clone(), Box::new(move |c| h.set_style(|s| s.text_color = c.unwrap_or_default())));
+    let h = handle.clone();
+    let line_color = color_row(style.line_color.clone(), Box::new(move |c| h.set_style(|s| s.line_color = c.unwrap_or_default())));
+    let h = handle.clone();
+    let bg = tint_row(style.bg.clone(), Box::new(move |c| h.set_style(|s| s.bg = c.unwrap_or_default())));
+
+    let h = handle.clone();
+    let font_size = spin(style.font_size, 8.0, 40.0, 1.0, Box::new(move |v| h.set_style(|s| s.font_size = v)));
+    let h = handle.clone();
+    let weight = segmented(
+        &[(MI_ARTICLE, "normal"), (MI_FORMAT_BOLD, "bold")],
+        if style.weight == "bold" { "bold" } else { "normal" },
+        move |v| {
+            let v = v.to_string();
+            h.set_style(move |s| s.weight = if v == "bold" { v } else { String::new() });
+        },
+    );
+    let h = handle.clone();
+    let radius = spin(style.radius, 0.0, 40.0, 1.0, Box::new(move |v| h.set_style(|s| s.radius = v)));
+    let h = handle.clone();
+    let padding = spin(style.padding, 2.0, 30.0, 1.0, Box::new(move |v| h.set_style(|s| s.padding = v)));
+    let h = handle.clone();
+    let line_width = SpinBox::new()
+        .range(0.5, 8.0)
+        .step(0.5)
+        .decimal_places(1)
+        .width(96.0)
+        .value(style.line_width as f64)
+        .on_change(move |v| h.set_style(|s| s.line_width = v as f32))
+        .class("notes-props-field");
+    let h = handle.clone();
+    let line_dash = spin(style.line_dash, 0.0, 30.0, 1.0, Box::new(move |v| h.set_style(|s| s.line_dash = v)));
+    let h = handle.clone();
+    let max_w = spin(style.max_node_w, 80.0, 800.0, 20.0, Box::new(move |v| h.set_style(|s| s.max_node_w = v)));
+    let h = handle.clone();
+    let show_icons = switch_row(tr!("notes.props.mindmap.show_icons"), style.show_icons, move |on| {
+        h.set_style(|s| s.show_icons = on)
+    });
+    let h = handle.clone();
+    let reset = ToolButton::new(MI_AUTORENEW).text(tr!("notes.mindmap.reset_layout")).on_click(move || h.reset_offsets());
+
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.mindmap.map")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.mindmap.direction"), direction))
+        .child(field_row(tr!("notes.props.mindmap.curve"), curve))
+        .child(field_row(tr!("notes.props.mindmap.h_gap"), h_gap))
+        .child(field_row(tr!("notes.props.mindmap.v_gap"), v_gap))
+        .child(field_row(tr!("notes.props.mindmap.palette"), palette))
+        .child(palette_row)
+        .child(field_row(tr!("notes.props.mindmap.node_fill"), node_fill))
+        .child(field_row(tr!("notes.props.mindmap.node_stroke"), node_stroke))
+        .child(field_row(tr!("notes.props.mindmap.text_color"), text_color))
+        .child(field_row(tr!("notes.props.size"), font_size))
+        .child(field_row(tr!("notes.props.weight"), weight))
+        .child(field_row(tr!("notes.props.mindmap.radius"), radius))
+        .child(field_row(tr!("notes.props.mindmap.padding"), padding))
+        .child(field_row(tr!("notes.props.mindmap.line_color"), line_color))
+        .child(field_row(tr!("notes.props.mindmap.line_width"), line_width))
+        .child(field_row(tr!("notes.props.mindmap.line_dash"), line_dash))
+        .child(field_row(tr!("notes.props.bg"), bg))
+        .child(show_icons)
+        .child(field_row(tr!("notes.props.mindmap.max_w"), max_w))
+        .child(reset)
 }
 
 /// Цвета текста и подложки: пусто — «как в теме».

@@ -99,7 +99,11 @@ const REPEAT_HINT_AT: usize = 3;
 /// `\n\n\n`, `<invoke name=bash">` без кавычки). Проза при этом оставалась
 /// осмысленной, ломался только синтаксис — в ленте это выглядело как
 /// `bash {}` три раза подряд и стоп по guard'у.
-const ANTI_LOOP_TEMPERATURE: f32 = 0.6;
+///
+/// Дефолт сэмплинга теперь тоже 0.6, поэтому порог выше: иначе режим ничего
+/// не менял бы, и модель, которая дважды проигнорировала подсказку guard'а
+/// (Muse-Glimmer, 03.09), просто останавливалась третьим повтором.
+const ANTI_LOOP_TEMPERATURE: f32 = 0.85;
 /// Сколько полных периодов чередования «A, B, A, B…» считаем предупреждением
 /// (аналог [`REPEAT_WARN_AT`] для петли из двух вызовов) и остановкой.
 /// Guard «тот же вызов подряд» такую петлю не видит: 28.08.2026 агент
@@ -875,7 +879,8 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         max_turns,
         ctx.system_prompt.get_untracked(),
     ));
-    let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt);
+    let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt, channel);
     let caps = snapshot_media_caps(&app_ctx, &model);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
@@ -1218,8 +1223,9 @@ async fn rebuild_history(
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<HistoryItem>>();
     let ctx_main = ctx.clone();
     let sp = system_prompt.to_string();
+    let channel = ChannelIds::detect(&model.tokenizer).is_some();
     run_on_main_thread(move || {
-        let _ = tx.send(build_history(&ctx_main, &sp));
+        let _ = tx.send(build_history(&ctx_main, &sp, channel));
     });
     let items = rx.await.ok()?;
     let (history, _media) = prepare_history(&items, model, caps, ctx);
@@ -2721,7 +2727,12 @@ fn tool_turn_text<'a>(prose: &str, calls: impl Iterator<Item = (&'a str, &'a str
     body
 }
 
-fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
+/// `channel` — канальный шаблон (Muse Glimmer): реплики с вызовами
+/// собираются в ATEM-блок (`channel_parser::rebuild_turn_text`), как и в
+/// ходе. Пока сюда шёл `<tool_call>`-JSON, модель со второго сообщения
+/// копировала его как обычный текст, и инструменты больше не вызывались
+/// (живой прогон 03.09.2026).
+fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<HistoryItem> {
     let msgs = ctx.messages.get_untracked();
 
     let mut sys = system_prompt.trim().to_string();
@@ -2786,15 +2797,28 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str) -> Vec<HistoryItem> {
                     }
                     _ => String::new(),
                 };
-                let body = tool_turn_text(
-                    &prose,
-                    m.tool_calls.iter().flatten().map(|c| {
-                        (
-                            c.function.name.as_deref().unwrap_or_default(),
-                            c.function.arguments.as_deref().unwrap_or("null"),
-                        )
-                    }),
-                );
+                let body = if channel {
+                    let calls: Vec<RawToolCall> = m
+                        .tool_calls
+                        .iter()
+                        .flatten()
+                        .map(|c| RawToolCall {
+                            name: c.function.name.clone().unwrap_or_default(),
+                            arguments_json: c.function.arguments.clone().unwrap_or_else(|| "{}".into()),
+                        })
+                        .collect();
+                    channel_parser::rebuild_turn_text(&prose, &calls)
+                } else {
+                    tool_turn_text(
+                        &prose,
+                        m.tool_calls.iter().flatten().map(|c| {
+                            (
+                                c.function.name.as_deref().unwrap_or_default(),
+                                c.function.arguments.as_deref().unwrap_or("null"),
+                            )
+                        }),
+                    )
+                };
                 if body.is_empty() {
                     continue;
                 }

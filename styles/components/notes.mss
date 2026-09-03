@@ -631,3 +631,44 @@ document-editor {
 .notes-props-delete {
     font-size: 12px;
 }
+
+/* ── Интеллект-карта ──────────────────────────────────────────── */
+.notes-mindmap-toolbar {
+    padding: 6px 8px;
+    border-bottom-width: 1px;
+    border-color: var(--border-soft);
+}
+.notes-mindmap-direction {
+    font-size: 12px;
+}
+.notes-mindmap-viewport {
+    background-color: var(--bg-chat);
+}
+/* Цвета холста: текст, приглушённые линии/обводки, акцент (корень,
+ * выбор), фон без своего цвета в стиле карты. */
+.notes-mindmap-canvas {
+    color: var(--text);
+    border-color: var(--text-muted);
+    accent-color: var(--primary);
+    background-color: var(--bg-chat);
+}
+.notes-mindmap-node-editor {
+    font-size: 13px;
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--primary);
+    padding: 6px 8px;
+}
+.notes-mindmap-note {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-search);
+    padding: 4px 6px;
+    height: 110px;
+}
+.notes-mindmap-note-editor {
+    font-size: 12px;
+}

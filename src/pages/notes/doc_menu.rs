@@ -7,13 +7,17 @@
 //! очередью [`DocOp`] через ручку страницы (`NotesCtx::doc_op`): правка
 //! проходит через историю undo и ставит каретку в новый блок.
 //!
-//! Примитивы (прямоугольник … двойная стрелка — блоки `![[shape:<вид>]]`,
-//! настраиваются в панели свойств) живут своим подменю, иначе список не
-//! влезал бы на экран; канбан-доска и диаграмма Ганта — объекты проекта
-//! `![[kanban:<id>]]` / `![[gantt:<id>]]` (см. [`super::kanban`],
-//! [`super::gantt`]) — стоят в меню вставки прямо над ним; медиа
+//! Подменю «Вставить» и «Превратить в» разбиты на категории-подменю —
+//! плоским списком из двадцати с лишним пунктов меню не влезало на экран:
+//! «Текст» (абзац, заголовки), «Списки» (маркированный, нумерованный,
+//! чек-лист, раскрывающийся), «Блоки» (цитата, выноска, код, таблица,
+//! разделитель), «Объекты» (канбан-доска и диаграмма Ганта — объекты
+//! проекта `![[kanban:<id>]]` / `![[gantt:<id>]]`, см. [`super::kanban`],
+//! [`super::gantt`]), «Примитивы» (прямоугольник … двойная стрелка — блоки
+//! `![[shape:<вид>]]`, настраиваются в панели свойств) и «Медиа»
 //! («Картинка…», «SVG-файл…», «SVG из буфера», «Файл…» — вложения бандла,
-//! см. [`super::media`]) — ниже.
+//! см. [`super::media`]). «Превратить в» — те же категории без объектов и
+//! медиа (в них блок не превращается).
 
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{DocOp, ShapeKind, SlashAction, SlashItem};
@@ -147,54 +151,84 @@ pub fn insert_object(ctx: NotesCtx, kind: &str) {
     }
 }
 
-fn block_items(prefix: &str) -> Vec<MenuItem> {
+/// Категория — пункт с подменю.
+fn category(id: &str, label: String, icon: &str, children: Vec<MenuItem>) -> MenuItem {
+    MenuItem::new(id, label).icon(icon).children(children)
+}
+
+/// «Текст»: абзац и заголовки.
+fn text_items(prefix: &str) -> Vec<MenuItem> {
     vec![
         MenuItem::new(format!("{prefix}text"), tr!("notes.block.text")).icon(MI_ARTICLE),
         MenuItem::new(format!("{prefix}h1"), tr!("notes.block.h1")).icon(MI_FORMAT_BOLD),
         MenuItem::new(format!("{prefix}h2"), tr!("notes.block.h2")).icon(MI_FORMAT_BOLD),
         MenuItem::new(format!("{prefix}h3"), tr!("notes.block.h3")).icon(MI_FORMAT_BOLD),
-        MenuItem::separator(),
+    ]
+}
+
+/// «Списки»: маркированный, нумерованный, чек-лист, раскрывающийся блок.
+fn list_items(prefix: &str) -> Vec<MenuItem> {
+    vec![
         MenuItem::new(format!("{prefix}bullet"), tr!("notes.block.bullet")).icon(MI_FORMAT_LIST_BULLETED),
         MenuItem::new(format!("{prefix}numbered"), tr!("notes.block.numbered")).icon(MI_FORMAT_LIST_NUMBERED),
         MenuItem::new(format!("{prefix}todo"), tr!("notes.block.todo")).icon(MI_CHECK),
         MenuItem::new(format!("{prefix}toggle"), tr!("notes.block.toggle")).icon(MI_EXPAND_MORE),
-        MenuItem::separator(),
+    ]
+}
+
+/// «Блоки»: цитата, выноска, код; при вставке — ещё таблица и разделитель
+/// (в них текстовый блок не превращается).
+fn block_items(prefix: &str, with_layout: bool) -> Vec<MenuItem> {
+    let mut items = vec![
         MenuItem::new(format!("{prefix}quote"), tr!("notes.block.quote")).icon(MI_WRAP_TEXT),
         MenuItem::new(format!("{prefix}callout"), tr!("notes.block.callout")).icon(MI_CAMPAIGN),
         MenuItem::new(format!("{prefix}code"), tr!("notes.block.code")).icon(MI_CODE),
+    ];
+    if with_layout {
+        items.push(MenuItem::new(format!("{prefix}table"), tr!("notes.block.table")).icon(MI_GRID_ON));
+        items.push(MenuItem::new(format!("{prefix}divider"), tr!("notes.block.divider")).icon(MI_HORIZONTAL_RULE));
+    }
+    items
+}
+
+/// «Медиа»: вложения бандла.
+fn media_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::new("ins_image", tr!("notes.menu.image")).icon(MI_IMAGE_ICON),
+        MenuItem::new("ins_svg", tr!("notes.menu.svg")).icon(MI_BRUSH),
+        MenuItem::new("ins_svg_clip", tr!("notes.menu.svg_clipboard")).icon(MI_CODE),
+        MenuItem::new("ins_file", tr!("notes.menu.file")).icon(MI_ATTACH_FILE),
     ]
 }
 
 fn items() -> Vec<MenuItem> {
-    let mut insert = block_items("ins_");
-    insert.push(MenuItem::new("ins_table", tr!("notes.block.table")).icon(MI_GRID_ON));
-    insert.push(MenuItem::new("ins_divider", tr!("notes.block.divider")).icon(MI_HORIZONTAL_RULE));
-    insert.push(MenuItem::separator());
-    // Доска и диаграмма — объекты, не примитивы: свои пункты над подменю.
-    insert.extend(object_items());
-    insert.push(MenuItem::separator());
-    // Примитивы — своим разделом: их много, плоским списком меню
-    // растянулось бы на весь экран.
-    insert.push(
-        MenuItem::new("ins_shapes", tr!("notes.menu.shapes"))
-            .icon(MI_CATEGORY)
-            .children(shape_items("ins_shape_")),
-    );
-    insert.push(MenuItem::new("ins_image", tr!("notes.menu.image")).icon(MI_IMAGE_ICON));
-    insert.push(MenuItem::new("ins_svg", tr!("notes.menu.svg")).icon(MI_BRUSH));
-    insert.push(MenuItem::new("ins_svg_clip", tr!("notes.menu.svg_clipboard")).icon(MI_CODE));
-    insert.push(MenuItem::new("ins_file", tr!("notes.menu.file")).icon(MI_ATTACH_FILE));
-    let mut turn = block_items("turn_");
-    turn.push(MenuItem::separator());
-    turn.push(
-        MenuItem::new("turn_shapes", tr!("notes.menu.shapes"))
-            .icon(MI_CATEGORY)
-            .children(shape_items("turn_shape_")),
-    );
+    let insert = vec![
+        category("ins_cat_text", tr!("notes.menu.cat.text"), MI_ARTICLE, text_items("ins_")),
+        category("ins_cat_lists", tr!("notes.menu.cat.lists"), MI_FORMAT_LIST_BULLETED, list_items("ins_")),
+        category("ins_cat_blocks", tr!("notes.menu.cat.blocks"), MI_DASHBOARD_CUSTOMIZE, block_items("ins_", true)),
+        category("ins_cat_objects", tr!("notes.menu.cat.objects"), MI_VIEW_KANBAN, object_items()),
+        category("ins_shapes", tr!("notes.menu.shapes"), MI_CATEGORY, shape_items("ins_shape_")),
+        category("ins_cat_media", tr!("notes.menu.cat.media"), MI_IMAGE_ICON, media_items()),
+    ];
+    let turn = vec![
+        category("turn_cat_text", tr!("notes.menu.cat.text"), MI_ARTICLE, text_items("turn_")),
+        category("turn_cat_lists", tr!("notes.menu.cat.lists"), MI_FORMAT_LIST_BULLETED, list_items("turn_")),
+        category("turn_cat_blocks", tr!("notes.menu.cat.blocks"), MI_DASHBOARD_CUSTOMIZE, block_items("turn_", false)),
+        category("turn_shapes", tr!("notes.menu.shapes"), MI_CATEGORY, shape_items("turn_shape_")),
+    ];
     vec![
         MenuItem::new("insert", tr!("notes.menu.insert")).icon(MI_ADD).children(insert),
         MenuItem::new("turn", tr!("notes.menu.turn_into")).icon(MI_AUTORENEW).children(turn),
         MenuItem::separator(),
+    ]
+    .into_iter()
+    .chain(block_action_items())
+    .collect()
+}
+
+/// Действия над блоком — общие для меню документа и строки панели «Блоки».
+pub fn block_action_items() -> Vec<MenuItem> {
+    vec![
         MenuItem::new("dup", tr!("notes.menu.duplicate")).icon(MI_CONTENT_COPY),
         MenuItem::new("up", tr!("notes.menu.move_up")).icon(MI_ARROW_UPWARD),
         MenuItem::new("down", tr!("notes.menu.move_down")).icon(MI_ARROW_DOWNWARD),

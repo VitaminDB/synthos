@@ -7,12 +7,18 @@
 //! ним работает панель «Свойства».
 //!
 //! Источник — [`DocumentEditorHandle::outline`]; выбор общий с редактором
-//! через сигнал `handle.selected()`.
+//! через сигнал `handle.selected()`: строка текущего блока подсвечена, как
+//! активная страница в «Содержимом». Правый клик по строке — те же действия
+//! над блоком, что в меню документа (дублировать, сдвинуть, удалить):
+//! блок сначала делается текущим (`DocOp::Select`), потом идёт действие —
+//! очередь операций применяется по порядку; удаление — адресное
+//! (`DocOp::DeleteBlock`), каретку ради него никуда не двигаем.
 
 use syngui::input::CursorIcon;
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{BlockOutline, DocOp};
+use syngui::widgets::overlay::context_menu::ContextMenu;
 use syngui::widgets::GestureDetector;
 
 use crate::icons::*;
@@ -139,11 +145,30 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
     if b.pinned {
         line = line.child(Icon::new(MI_PUSH_PIN).class("notes-block-pin"));
     }
+    let body = GestureDetector::new()
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || ctx.doc_op(DocOp::Select(id)))
+        .child(DecoratedBox::new().class(class).child(line));
     Box::new(
-        GestureDetector::new()
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || ctx.doc_op(DocOp::Select(id)))
-            .child(DecoratedBox::new().class(class).child(line)),
+        ContextMenu::new()
+            .items(super::doc_menu::block_action_items())
+            .on_select(move |action| match action {
+                "dup" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Duplicate);
+                }
+                "up" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Move { down: false });
+                }
+                "down" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Move { down: true });
+                }
+                "del" => ctx.doc_op(DocOp::DeleteBlock(id)),
+                _ => {}
+            })
+            .child(body),
     )
 }
 

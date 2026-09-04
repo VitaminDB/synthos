@@ -23,19 +23,36 @@
     background-color: var(--surface-hover);
 }
 
-/* Группа, в которой хотя бы один результат — ошибка. Тот же тон, что у
- * `.tool-result-card-error` в `tool_messages.mss` — пользователь сразу
- * видит, что внутри есть проблема, не разворачивая. */
+/* Цепочка, которая упала целиком: ни одного успешного вызова. Тот же тон,
+ * что у `.tool-result-card-error` в `tool_messages.mss` — пользователь сразу
+ * видит, что внутри всё плохо, не разворачивая. */
 .tool-group-card-with-error {
     border-color: var(--error);
     background-color: rgba(229, 83, 83, 0.05);
 }
 
+/* Смешанный исход (часть вызовов прошла, часть упала): заливку не трогаем —
+ * одна ошибка из семи не делает цепочку сломанной. Хватает приглушённой
+ * рамки, подробности — в счётчиках шапки. */
+.tool-group-card-mixed {
+    border-color: rgba(229, 83, 83, 0.35);
+}
+
 /* ───────────────────────── Header ───────────────────────── */
+
+/* Мягкая плашка под иконкой инструмента — тот же приём, что у
+ * `.tool-result-avatar`: шапка цепочки читается как заголовок карточки. */
+.tool-group-icon-wrap {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    background-color: var(--primary-soft);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
 
 .tool-group-icon {
     color: var(--primary);
-    font-size: 18px;
+    font-size: 16px;
 }
 
 .tool-group-name {
@@ -44,20 +61,39 @@
     color: var(--text);
 }
 
-/* «Пилюля» со счётчиком вызовов — visual-balance с иконкой инструмента,
- * чтобы при беглом взгляде сразу считать N. */
+/* «Пилюли» с исходом цепочки: сколько вызовов прошло (галочка) и сколько
+ * упало. Цвета — те же, что у статус-иконок одиночных result-карточек в
+ * `tool_messages.mss`, чтобы свёрнутая группа читалась как их сумма. */
 .tool-group-count {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--primary);
-    background-color: var(--primary-soft);
     border-radius: 999px;
     padding: 2px 8px;
 }
 
-.tool-group-status-error {
+.tool-group-count-icon {
+    font-size: 14px;
+}
+
+.tool-group-count-text {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.tool-group-count-ok {
+    background-color: rgba(34, 197, 94, 0.12);
+}
+
+.tool-group-count-ok .tool-group-count-icon,
+.tool-group-count-ok .tool-group-count-text {
+    color: var(--presence-online);
+}
+
+.tool-group-count-error {
+    background-color: rgba(229, 83, 83, 0.12);
+}
+
+.tool-group-count-error .tool-group-count-icon,
+.tool-group-count-error .tool-group-count-text {
     color: var(--error);
-    font-size: 16px;
 }
 
 .tool-group-chevron {
@@ -72,8 +108,34 @@
 
 /* ───────────────────────── Body (раскрытое содержимое) ───────────────────────── */
 
+/* Раскрытая цепочка — лента шагов вдоль вертикальной направляющей: она
+ * связывает вызовы в одну работу, вместо стопки самостоятельных карточек. */
 .tool-group-children {
-    /* Просто контейнер для выравнивания; визуальные акценты на самих
-     * вложенных карточках (.tool-call-card / .tool-result-card). */
-    padding-top: 4px;
+    padding-top: 6px;
+    padding-left: 12px;
+    margin-left: 2px;
+    border-left-width: 2px;
+    border-left-color: var(--border);
+}
+
+/* Внутри цепочки вложенные карточки теряют собственную рамку и фон: 14
+ * бордюров подряд (7 вызовов × call+result) — это шум, а не структура.
+ * Границы группы держит сама карточка группы. */
+.tool-group-children .tool-call-card,
+.tool-group-children .tool-result-card {
+    /* `:hover` внутри потомкового селектора движок MSS применяет как
+     * обычное правило (состояние теряется), поэтому подсветки шага здесь
+     * нет — hover-состояние остаётся за самими `.tool-call-card:hover`. */
+    background-color: transparent;
+    border-width: 0;
+    border-radius: 10px;
+    padding: 6px 8px;
+    /* 90% от ширины группы дало бы рваный правый край внутри и без того
+     * ограниченной карточки. */
+    max-width: 100%;
+}
+
+/* Упавший шаг остаётся видимым и без рамки — по заливке. */
+.tool-group-children .tool-result-card-error {
+    background-color: rgba(229, 83, 83, 0.07);
 }

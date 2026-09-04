@@ -16,7 +16,7 @@ use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::{AnimatedSize, AnimationAxis, Reactive};
 
 use crate::agent::tools::Tool;
-use crate::icons::{MI_DELETE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_REPORT, MI_TERMINAL};
+use crate::icons::{MI_CHECK, MI_DELETE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_REPORT, MI_TERMINAL};
 use crate::syn_chat::session;
 use crate::syn_chat::state::{ChatMsg, ChatMsgKind, SynChatCtx};
 
@@ -32,10 +32,23 @@ pub struct ToolGroup {
     pub count: usize,
     /// Ключ инструмента (`web`, `bash`, `kb_search`, …).
     pub tool_name: String,
-    /// `true`, если хотя бы один результат в группе — ошибка.
-    pub has_error: bool,
+    /// Сколько результатов в группе — ошибки (`0` — вся цепочка прошла).
+    pub err_count: usize,
     /// Снимки сообщений группы: `(msg_idx, ChatMsg)`. Длина — `count * 2`.
     pub items: Vec<(usize, ChatMsg)>,
+}
+
+/// Пилюля-счётчик в шапке: иконка статуса и число вызовов с таким исходом.
+fn count_pill(icon: &'static str, n: usize, class: &str) -> impl Widget {
+    DecoratedBox::new().class(class).child(
+        Row::new()
+            .gap(4.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .children(vec![
+                Box::new(Icon::new(icon).class("tool-group-count-icon")) as Box<dyn Widget>,
+                Box::new(Text::new(format!("{n}")).class("tool-group-count-text")),
+            ]),
+    )
 }
 
 /// Рендер группы: Row(avatar, meta-column) — тот же layout, что у обычных
@@ -45,14 +58,19 @@ pub fn view(group: ToolGroup) -> impl Widget {
         start_idx,
         count,
         tool_name,
-        has_error,
+        err_count,
         items,
     } = group;
+    let ok_count = count.saturating_sub(err_count);
 
-    let card_class = if has_error {
+    // Красная карточка — только когда упала вся цепочка. Одна ошибка из семи
+    // — это не «сломанная цепочка», её показывает счётчик, а не заливка.
+    let card_class = if err_count == 0 {
+        "tool-group-card"
+    } else if ok_count == 0 {
         "tool-group-card tool-group-card-with-error"
     } else {
-        "tool-group-card"
+        "tool-group-card tool-group-card-mixed"
     };
 
     let tool_icon = Tool::by_key(&tool_name)
@@ -75,15 +93,30 @@ pub fn view(group: ToolGroup) -> impl Widget {
     };
 
     let mut header_children: Vec<Box<dyn Widget>> = Vec::with_capacity(6);
-    header_children.push(Box::new(Icon::new(tool_icon).class("tool-group-icon")));
-    header_children.push(Box::new(Text::new(tool_label).class("tool-group-name")));
+    // Иконка инструмента — в мягкой плашке, как аватар у tool-result: шапка
+    // цепочки читается как заголовок карточки, а не как строчка текста.
     header_children.push(Box::new(
-        Text::new(format!("×{count}")).class("tool-group-count"),
+        DecoratedBox::new()
+            .class("tool-group-icon-wrap")
+            .child(Center::new().child(Icon::new(tool_icon).class("tool-group-icon"))),
     ));
-    if has_error {
-        header_children.push(Box::new(
-            Icon::new(MI_REPORT).class("tool-group-status-error"),
-        ));
+    header_children.push(Box::new(Text::new(tool_label).class("tool-group-name")));
+    // Итог цепочки — двумя счётчиками: сколько вызовов прошло и сколько
+    // упало. Пустая половина не рисуется, поэтому «всё хорошо» — это одна
+    // зелёная пилюля, а не пара с нулём.
+    if ok_count > 0 {
+        header_children.push(Box::new(count_pill(
+            MI_CHECK,
+            ok_count,
+            "tool-group-count tool-group-count-ok",
+        )));
+    }
+    if err_count > 0 {
+        header_children.push(Box::new(count_pill(
+            MI_REPORT,
+            err_count,
+            "tool-group-count tool-group-count-error",
+        )));
     }
     header_children.push(Box::new(DecoratedBox::new().class("grow")));
     header_children.push(

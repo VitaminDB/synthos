@@ -210,13 +210,13 @@ pub(super) fn build_lane(msgs: &[ChatMsg], tool_mode: &str) -> Vec<LaneEntry> {
             // Считаем сколько последовательных пар того же tool_name.
             let mut j = i;
             let mut pairs = 0usize;
-            let mut has_error = false;
+            let mut errors = 0usize;
             while let Some((n, err)) = pair_at(msgs, j) {
                 if n != name {
                     break;
                 }
                 pairs += 1;
-                has_error |= err;
+                errors += usize::from(err);
                 j += 2;
             }
             if pairs >= 2 {
@@ -226,7 +226,7 @@ pub(super) fn build_lane(msgs: &[ChatMsg], tool_mode: &str) -> Vec<LaneEntry> {
                     start_idx: i,
                     count: pairs,
                     tool_name: name.to_string(),
-                    has_error,
+                    err_count: errors,
                     items,
                 }));
                 i = j;
@@ -275,12 +275,13 @@ mod tests {
         ChatMsg::user("hi")
     }
 
-    fn classify(lane: &[LaneEntry]) -> Vec<(usize, Option<(String, usize, bool)>)> {
+    /// `(индекс, Some((инструмент, вызовов, из них с ошибкой)))`.
+    fn classify(lane: &[LaneEntry]) -> Vec<(usize, Option<(String, usize, usize)>)> {
         lane.iter()
             .map(|e| match e {
                 LaneEntry::Single(i) => (*i, None),
                 LaneEntry::Group(g) => {
-                    (g.start_idx, Some((g.tool_name.clone(), g.count, g.has_error)))
+                    (g.start_idx, Some((g.tool_name.clone(), g.count, g.err_count)))
                 }
             })
             .collect()
@@ -304,7 +305,7 @@ mod tests {
     fn two_consecutive_pairs_group() {
         let msgs = vec![call("web"), result("web", false), call("web"), result("web", false)];
         let lane = build_lane(&msgs, "minimal");
-        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 2, false)))]);
+        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 2, 0)))]);
     }
 
     #[test]
@@ -318,7 +319,7 @@ mod tests {
         assert_eq!(
             classify(&lane),
             vec![
-                (0, Some(("web".to_string(), 2, false))),
+                (0, Some(("web".to_string(), 2, 0))),
                 (4, None),
                 (5, None),
             ]
@@ -335,19 +336,33 @@ mod tests {
         let lane = build_lane(&msgs, "minimal");
         assert_eq!(
             classify(&lane),
-            vec![(0, Some(("web".to_string(), 2, false))), (4, None)]
+            vec![(0, Some(("web".to_string(), 2, 0))), (4, None)]
         );
     }
 
     #[test]
-    fn has_error_propagates_when_any_result_is_error() {
+    fn err_count_counts_only_failed_results() {
         let msgs = vec![
             call("web"), result("web", false),
             call("web"), result("web", true),
             call("web"), result("web", false),
         ];
         let lane = build_lane(&msgs, "minimal");
-        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 3, true)))]);
+        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 3, 1)))]);
+    }
+
+    #[test]
+    fn err_count_zero_when_all_succeed_and_full_when_all_fail() {
+        let ok = vec![
+            call("web"), result("web", false),
+            call("web"), result("web", false),
+        ];
+        assert_eq!(classify(&build_lane(&ok, "minimal")), vec![(0, Some(("web".to_string(), 2, 0)))]);
+        let bad = vec![
+            call("web"), result("web", true),
+            call("web"), result("web", true),
+        ];
+        assert_eq!(classify(&build_lane(&bad, "minimal")), vec![(0, Some(("web".to_string(), 2, 2)))]);
     }
 
     #[test]
@@ -361,7 +376,7 @@ mod tests {
         let lane = build_lane(&msgs, "minimal");
         assert_eq!(
             classify(&lane),
-            vec![(0, None), (1, Some(("web".to_string(), 2, false))), (5, None)]
+            vec![(0, None), (1, Some(("web".to_string(), 2, 0))), (5, None)]
         );
     }
 

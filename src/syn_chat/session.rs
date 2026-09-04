@@ -371,6 +371,83 @@ const KV_RESERVE_WARM_MB: usize = 1280;
 /// Прогреты ли ленивые кэши ядер текущей модели (см. [`KV_RESERVE_COLD_MB`]).
 static KERNEL_CACHES_WARM: AtomicBool = AtomicBool::new(false);
 
+/// Сколько VRAM нужно ходу под KV: кольцо на `tokens` плюс постоянные
+/// ring-окна sliding-слоёв плюс запас под активации и кэши ядер.
+fn context_need_mb(model: &LoadedSynModel, tokens: usize) -> usize {
+    let per_token = model.model.kv_bytes_per_token();
+    let fixed = model.model.kv_fixed_bytes(tokens);
+    (tokens * per_token + fixed) / (1024 * 1024) + kv_reserve_mb()
+}
+
+/// Подогнать резидентность блоков под нужный контекст: если ход в память не
+/// помещается, часть блоков уезжает на хост и стримится во время forward'а,
+/// освобождая VRAM под KV. Когда контекст снова короткий и памяти с запасом —
+/// блоки возвращаются на карту.
+///
+/// Плата за оффлоад — скорость (каждый нерезидентный блок едет по PCIe на
+/// каждом forward'е, CUDA-графы выключаются), поэтому включается он только
+/// когда иначе ход не проходит, и снимается при первой возможности.
+fn fit_blocks_for_context(model: &LoadedSynModel, tokens: usize) {
+    let Some((block_bytes, total)) = model.model.block_offload_shape() else {
+        return; // архитектура со своим оффлоадом (MoE) — не наше дело
+    };
+    if block_bytes == 0 || total == 0 {
+        return;
+    }
+    let Some(resident) = model.model.resident_blocks() else {
+        return;
+    };
+    let block_mb = block_bytes / (1024 * 1024);
+    if block_mb == 0 {
+        return;
+    }
+    let need_mb = context_need_mb(model, tokens);
+    let free_mb = crate::syn_chat::model_registry::vram_available_mb();
+    if need_mb > free_mb {
+        // Не хватает: выселяем столько блоков, сколько нужно, плюс один — на
+        // сам стриминг (на карте живут текущий и префетченный).
+        let missing = need_mb - free_mb;
+        let evict = missing.div_ceil(block_mb) + 1;
+        let want = resident.saturating_sub(evict);
+        if want < resident {
+            let got = model
+                .model
+                .set_block_residency(want)
+                .unwrap_or(resident);
+            let (freed, _) = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+            log::info!(
+                "[syn_chat] оффлоад блоков: {resident} → {got} из {total} на карте                  (не хватало {missing} MB под контекст {tokens} ток, блок {block_mb} MB,                  трим вернул {freed} MB); остальные стримятся с хоста"
+            );
+        }
+        return;
+    }
+    // Памяти хватает — возвращаем блоки. Гистерезис в два блока, чтобы не
+    // гонять их туда-сюда на каждом ходу; но если запаса хватает, доводим до
+    // полной резидентности: последний стримящийся блок стоит и CUDA-графов,
+    // и заметной части скорости (04.09.2026: 51 из 52 на карте — 14 ток/с
+    // против 22 при полной резидентности).
+    if resident < total {
+        let spare = (free_mb - need_mb) / block_mb;
+        if spare >= 2 {
+            // Если до полной резидентности не хватает меньше блока — всё
+            // равно дотягиваем: последний стримящийся блок отнимает больше
+            // (нет CUDA-графов, треть скорости), чем стоит запас под него, а
+            // если ход всё же не влезет, ретрай по OOM отработает честно.
+            let want = if resident + spare + 1 >= total {
+                total
+            } else {
+                resident + spare
+            };
+            let got = model.model.set_block_residency(want).unwrap_or(resident);
+            if got > resident {
+                log::info!(
+                    "[syn_chat] блоки вернулись на карту: {resident} → {got} из {total}                      (свободно {free_mb} MB, ходу нужно {need_mb} MB)"
+                );
+            }
+        }
+    }
+}
+
 fn kv_reserve_mb() -> usize {
     if KERNEL_CACHES_WARM.load(Ordering::Relaxed) {
         KV_RESERVE_WARM_MB
@@ -1528,6 +1605,11 @@ async fn run_agent_loop(
         // доходят, поэтому ни инициализатор, ни `mut` не нужны.
         let turn_decode_s: f64;
         let turn_result = loop {
+            // Контекст важнее скорости: если ход в память не помещается,
+            // часть блоков уезжает на хост и стримится, освобождая VRAM под
+            // KV. Считаем по тому, что ходу реально нужно — промпт плюс
+            // бюджет ответа.
+            fit_blocks_for_context(&model, prompt_ids.len() + answer_budget + 128);
             let session_held_mb = kv_slot
                 .as_ref()
                 .map(|s| {

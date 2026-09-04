@@ -389,9 +389,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "enum": ["list", "search", "read", "create", "update", "move",
                      "delete", "duplicate", "open", "attach", "blocks", "shape",
-                     "kanban", "gantt"],
-            "description": "What to do. blocks, shape, kanban and gantt take the \
-                sub-operation in op."
+                     "kanban", "gantt", "mindmap", "calendar"],
+            "description": "What to do. blocks, shape, kanban, gantt, mindmap and \
+                calendar take the sub-operation in op."
         })),
         ("page", json!({
             "type": "string",
@@ -404,7 +404,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "create: page title (made unique among siblings). \
                 update: new title. kanban/gantt op=create: optional heading \
-                above the object. kanban add_card/update_card: card title."
+                above the object. kanban add_card/update_card: card title. \
+                mindmap op=create/from_list: text of the root node."
         })),
         ("content", json!({
             "type": "string",
@@ -492,7 +493,12 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "blocks: list | read | insert | set_markdown | delete | \
                 move | set_attrs | pin | unpin. shape: create | update | delete | \
-                connect. kanban: create | read | set_style | add_column | \
+                connect. mindmap: create | read | add_node | update_node | \
+                move_node | delete_node | add_link | delete_link | set_layout | \
+                set_style | from_list | delete. calendar: create | read | set_view | \
+                set_style | add_event | update_event | move_event | delete_event | \
+                complete | list_events | add_calendar | update_calendar | \
+                delete_calendar | delete. kanban: create | read | set_style | add_column | \
                 update_column | delete_column | add_card | update_card | \
                 move_card | delete_card | delete. gantt: create | read | \
                 add_task | update_task | delete_task | add_dep | delete_dep | \
@@ -649,10 +655,183 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "number",
             "description": "gantt set_zoom: px per day (5..90, default 26)."
         })),
+        ("map", json!({
+            "type": "string",
+            "description": "mindmap: map id (mindmap:<id> from list/read). Omit \
+                when the page (or the whole project) has exactly one map."
+        })),
+        ("node", json!({
+            "type": "string",
+            "description": "mindmap: node id or its exact text; \"root\" is the \
+                central node. Ids are in mindmap op=read."
+        })),
+        ("outline", json!({
+            "type": "string",
+            "description": "mindmap op=create: markdown to build the map from — a \
+                heading or first paragraph becomes the root, nested bullets become \
+                nodes (`- [x]` gives a ✓ icon)."
+        })),
+        ("text", json!({
+            "type": "string",
+            "description": "mindmap add_node/update_node: node text."
+        })),
+        ("note", json!({
+            "type": "string",
+            "description": "mindmap: node note (markdown). calendar: event note."
+        })),
+        ("link", json!({
+            "type": "string",
+            "description": "mindmap node / calendar event: page it points to (id \
+                or title); \"none\" clears it."
+        })),
+        ("shape", json!({
+            "type": "string",
+            "description": "mindmap update_node: node shape — auto | rect | rounded \
+                | pill | ellipse | text."
+        })),
+        ("collapsed", json!({
+            "type": "boolean",
+            "description": "mindmap update_node: hide the node's children."
+        })),
+        ("dx", json!({
+            "type": "number",
+            "description": "mindmap update_node: manual x offset of the node's \
+                subtree from the automatic layout (px)."
+        })),
+        ("dy", json!({
+            "type": "number",
+            "description": "mindmap update_node: manual y offset (px)."
+        })),
+        ("direction", json!({
+            "type": "string",
+            "description": "mindmap create/set_layout: right | left | both | down | radial."
+        })),
+        ("curve", json!({
+            "type": "string",
+            "description": "mindmap set_layout: connector shape — bezier | straight | elbow."
+        })),
+        ("h_gap", json!({
+            "type": "number",
+            "description": "mindmap set_layout: gap between levels px (8..400, default 48)."
+        })),
+        ("v_gap", json!({
+            "type": "number",
+            "description": "mindmap set_layout: gap between sibling nodes px (0..200, default 14)."
+        })),
+        ("label", json!({
+            "type": "string",
+            "description": "mindmap add_link: caption of the cross link."
+        })),
+        ("reset", json!({
+            "type": "boolean",
+            "description": "mindmap set_layout: drop every manual node offset."
+        })),
+        ("style", json!({
+            "type": "object",
+            "additionalProperties": true,
+            "description": "mindmap set_style: palette (preset name theme|rainbow|\
+                pastel|mono or a list of #rrggbb), node_fill, node_stroke, \
+                text_color, line_color, bg, font_size, weight, radius, padding, \
+                line_width, line_dash, show_icons, max_node_w. calendar set_style: \
+                preset (theme|light|contrast|pastel), event_style (chip|dot|bar), \
+                first_weekday (0=Mon), show_week_numbers, hour_from, hour_to, \
+                slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
+                cell_bg, grid_color, text_color, show_kanban_due, show_gantt."
+        })),
+        ("heading", json!({
+            "type": "string",
+            "description": "calendar op=create: optional heading placed above the \
+                widget on the page."
+        })),
+        ("view", json!({
+            "type": "string",
+            "description": "calendar create/set_view: year | month | week | day \
+                (day is a schedule)."
+        })),
+        ("anchor", json!({
+            "type": "string",
+            "description": "calendar create/set_view: date the view is centred on \
+                (yyyy-mm-dd, today, tomorrow)."
+        })),
+        ("calendars", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "calendar set_view: named calendars the widget shows \
+                (ids or names); empty means all."
+        })),
+        ("event", json!({
+            "type": "string",
+            "description": "calendar update_event/move_event/delete_event/complete: \
+                event id or exact title (add \"on\" to disambiguate by date)."
+        })),
+        ("on", json!({
+            "type": "string",
+            "description": "calendar: the date of the event you mean when several \
+                share a title (yyyy-mm-dd)."
+        })),
+        ("date", json!({
+            "type": "string",
+            "description": "calendar add_event/update_event/move_event: date \
+                yyyy-mm-dd, today or tomorrow."
+        })),
+        ("end_date", json!({
+            "type": "string",
+            "description": "calendar: last day of a multi-day event; \"none\" clears it."
+        })),
+        ("start_time", json!({
+            "type": "string",
+            "description": "calendar: start time HH:MM in local time; \"none\" makes \
+                the event all-day."
+        })),
+        ("end_time", json!({
+            "type": "string",
+            "description": "calendar: end time HH:MM (defaults to start + 1 hour)."
+        })),
+        ("all_day", json!({
+            "type": "boolean",
+            "description": "calendar: the event takes the whole day (drops the times)."
+        })),
+        ("done", json!({
+            "type": "boolean",
+            "description": "calendar complete/update_event: mark the event done."
+        })),
+        ("repeat", json!({
+            "type": "string",
+            "description": "calendar: none | daily | weekly | monthly | yearly."
+        })),
+        ("until", json!({
+            "type": "string",
+            "description": "calendar: last date of the repetition (yyyy-mm-dd); \
+                \"none\" repeats forever."
+        })),
+        ("from", json!({
+            "type": "string",
+            "description": "gantt add_dep/delete_dep: predecessor task (id or name). \
+                mindmap add_link/delete_link: source node. calendar read/list_events: \
+                first date of the range (yyyy-mm-dd)."
+        })),
+        ("to", json!({
+            "type": "string",
+            "description": "gantt add_dep/delete_dep: successor task (id or name). \
+                mindmap add_link/delete_link: target node. calendar read/list_events: \
+                last date of the range (yyyy-mm-dd)."
+        })),
+        ("include_external", json!({
+            "type": "boolean",
+            "description": "calendar read/list_events: also list board card due \
+                dates and Gantt tasks of the project (read-only layer)."
+        })),
         ("board", json!({
             "type": "string",
             "description": "kanban: board id (kanban:<id> from list/read). Omit \
                 when the page (or the whole project) has exactly one board."
+        })),
+        ("calendar", json!({
+            "type": "string",
+            "description": "calendar: widget id (calendar:<id> from list/read) for \
+                read/set_view/set_style/delete, or the named calendar (id or name) \
+                for add_event, update_calendar and delete_calendar. Events live in \
+                one project-wide store, the widget only picks the view and filter."
         })),
         ("chart", json!({
             "type": "string",
@@ -674,12 +853,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("name", json!({
             "type": "string",
             "description": "kanban add_column/update_column: column name. \
-                gantt add_task/update_task: task name."
+                gantt add_task/update_task: task name. calendar add_calendar/\
+                update_calendar: calendar name."
         })),
         ("color", json!({
             "type": "string",
-            "description": "Column or task color: #rrggbb or gray | orange | \
-                green | blue | purple | red | teal; \"none\" clears it."
+            "description": "Color of a column, task, calendar, event or mind-map \
+                node: #rrggbb or gray | orange | green | blue | purple | red | \
+                teal; \"none\" clears it."
         })),
         ("width", json!({
             "type": "number",
@@ -740,14 +921,6 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 task (id or name). Elsewhere (blocks insert/move, shape create, \
                 attach, update mode=append, kanban/gantt op=create): insert \
                 after this block (index or find:<text>)."
-        })),
-        ("from", json!({
-            "type": "string",
-            "description": "gantt add_dep/delete_dep: predecessor task (id or name)."
-        })),
-        ("to", json!({
-            "type": "string",
-            "description": "gantt add_dep/delete_dep: successor task (id or name)."
         })),
     ];
     let mut map = serde_json::Map::new();

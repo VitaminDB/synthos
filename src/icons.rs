@@ -239,6 +239,14 @@ pub const MI_VIEW_SIDEBAR: &str        = "\u{F114}";
 pub const MI_VIEW_KANBAN: &str         = "\u{EB7F}";
 pub const MI_VIEW_TIMELINE: &str       = "\u{EB85}";
 pub const MI_TODAY: &str               = "\u{E8DF}";
+/// Календарь: год / месяц / неделя / день.
+pub const MI_DATE_RANGE: &str          = "\u{E916}";
+pub const MI_CALENDAR_MONTH: &str      = "\u{EBCC}";
+pub const MI_CALENDAR_VIEW_WEEK: &str  = "\u{EFE8}";
+pub const MI_CALENDAR_VIEW_DAY: &str   = "\u{E936}";
+/// Чекбокс события календаря.
+pub const MI_CHECK_BOX: &str           = "\u{E834}";
+pub const MI_CHECK_BOX_OUTLINE_BLANK: &str = "\u{E835}";
 /// «horizontal_rule» — пункт «Разделитель» в меню «+» рейла.
 pub const MI_HORIZONTAL_RULE: &str     = "\u{F108}";
 /// «dashboard_customize» — открыть окно шаблонов из шапки нод.

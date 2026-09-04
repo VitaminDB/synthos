@@ -176,7 +176,8 @@ pub fn build(env: &PromptEnv) -> String {
             s.push_str(
                 "\nNotes (`notes`) — the user's notebook in the app: a tree of \
                  markdown pages (each page is a free canvas) with shapes, \
-                 arrows, kanban boards and Gantt charts embedded in them.\n\
+                 arrows, kanban boards, Gantt charts, mind maps and calendars \
+                 embedded in them.\n\
                  - Start with list (page tree, ids, the boards/charts on each \
                  page) or search; read a page before editing it — update \
                  with content and mode=replace overwrites the whole page.\n\
@@ -213,6 +214,23 @@ pub fn build(env: &PromptEnv) -> String {
                  - Charts: gantt op=create, add_task with start/end \
                  yyyy-mm-dd (after=<task> adds a dependency), update_task, \
                  add_dep, set_zoom.\n\
+                 - Mind maps: mindmap op=create on a page (outline=<markdown \
+                 list> builds the whole map at once — a heading is the root, \
+                 nested bullets are nodes), then add_node (parent=<node|root>), \
+                 update_node (text, note, link=<page>, color, shape, icon, \
+                 collapsed), move_node, add_link for cross links, set_layout \
+                 (direction right|left|both|down|radial, curve, gaps) and \
+                 set_style. from_list turns an existing list block into a map.\n\
+                 - Calendar: events live in one project-wide store, a \
+                 calendar:<id> widget on a page is just a view (year | month | \
+                 week | day) over them. calendar op=add_event with title and \
+                 date yyyy-mm-dd (start_time/end_time HH:MM local, all_day, \
+                 repeat daily|weekly|monthly|yearly + until, calendar=<name>, \
+                 note, link=<page>); list_events from/to reads a range; \
+                 update_event / move_event / complete / delete_event by id or \
+                 title; add_calendar makes a named colour category; op=create \
+                 puts a widget on a page, set_view and set_style change it. \
+                 Deleting a widget keeps the events.\n\
                  - Changes are saved automatically and show up in the UI at \
                  once; open shows a page to the user. Don't ask to confirm \
                  routine edits the user already requested.\n",
@@ -343,6 +361,8 @@ mod tests {
         assert!(s.contains("kanban op=create"), "{s}");
         assert!(s.contains("shape op=connect"), "{s}");
         assert!(s.contains("blocks op=pin"), "{s}");
+        assert!(s.contains("mindmap op=create"), "{s}");
+        assert!(s.contains("calendar op=add_event"), "{s}");
     }
 
     #[test]

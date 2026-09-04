@@ -128,6 +128,9 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
     } else if b.kind == "embed" && b.label.starts_with("mindmap:") {
         icon = MI_SCHEMA;
         tr!("notes.block.mindmap")
+    } else if b.kind == "embed" && b.label.starts_with("calendar:") {
+        icon = MI_CALENDAR_MONTH;
+        tr!("notes.block.calendar")
     } else if b.label.trim().is_empty() {
         kind_label(b.kind, b.level)
     } else {

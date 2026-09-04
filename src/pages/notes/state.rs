@@ -17,6 +17,8 @@ use syngui::widgets::input::document_editor::{DocGrid, DocLayout, DocOp, Documen
 use crate::config::{now_millis, AppConfig};
 
 use super::autosave;
+use super::calendar::model::{CalView, CalendarDoc, CalendarStore};
+use super::calendar::{CalendarHandle, CalendarStoreHandle};
 use super::gantt::model::GanttDoc;
 use super::gantt::GanttHandle;
 use super::index::VaultIndex;
@@ -47,7 +49,7 @@ impl LivePage {
 }
 
 /// Виды объектов-примитивов (`![[<kind>:<id>]]`).
-pub const OBJECT_KINDS: [&str; 3] = ["kanban", "gantt", "mindmap"];
+pub const OBJECT_KINDS: [&str; 4] = ["kanban", "gantt", "mindmap", "calendar"];
 
 /// Загруженный объект-врезка.
 #[derive(Clone)]
@@ -55,12 +57,16 @@ pub enum LiveObject {
     Kanban { id: String, handle: KanbanHandle },
     Gantt { id: String, handle: GanttHandle },
     Mindmap { id: String, handle: MindmapHandle },
+    Calendar { id: String, handle: CalendarHandle },
 }
 
 impl LiveObject {
     pub fn id(&self) -> &str {
         match self {
-            LiveObject::Kanban { id, .. } | LiveObject::Gantt { id, .. } | LiveObject::Mindmap { id, .. } => id,
+            LiveObject::Kanban { id, .. }
+            | LiveObject::Gantt { id, .. }
+            | LiveObject::Mindmap { id, .. }
+            | LiveObject::Calendar { id, .. } => id,
         }
     }
 
@@ -69,6 +75,7 @@ impl LiveObject {
             LiveObject::Kanban { .. } => "kanban",
             LiveObject::Gantt { .. } => "gantt",
             LiveObject::Mindmap { .. } => "mindmap",
+            LiveObject::Calendar { .. } => "calendar",
         }
     }
 
@@ -78,6 +85,7 @@ impl LiveObject {
             LiveObject::Kanban { handle, .. } => handle.serialize(),
             LiveObject::Gantt { handle, .. } => handle.serialize(),
             LiveObject::Mindmap { handle, .. } => handle.serialize(),
+            LiveObject::Calendar { handle, .. } => handle.serialize(),
         }
     }
 
@@ -87,6 +95,7 @@ impl LiveObject {
             LiveObject::Kanban { handle, .. } => handle.revision.get(),
             LiveObject::Gantt { handle, .. } => handle.revision.get(),
             LiveObject::Mindmap { handle, .. } => handle.revision.get(),
+            LiveObject::Calendar { handle, .. } => handle.revision.get(),
         }
     }
 
@@ -118,6 +127,8 @@ pub struct NotesCtx {
     pub show_graph: RwSignal<bool>,
     pub pages: RwSignal<Vec<LivePage>>,
     pub objects: RwSignal<Vec<LiveObject>>,
+    /// Единое хранилище событий календаря (лениво из `notes/calendar.json`).
+    pub calendar: RwSignal<Option<CalendarStoreHandle>>,
     pub right_tab: RwSignal<usize>,
     /// Вкладка левой панели: 0 — «Содержимое», 1 — «Блоки».
     pub left_tab: RwSignal<usize>,
@@ -191,6 +202,7 @@ impl NotesCtx {
             show_graph: use_signal(false),
             pages: use_signal(Vec::new()),
             objects: use_signal(Vec::new()),
+            calendar: use_signal(None),
             right_tab: use_signal(TAB_PROPS),
             left_tab: use_signal(TAB_PAGES),
             index: use_signal(Arc::new(index)),
@@ -603,6 +615,10 @@ impl NotesCtx {
                 id: id.to_string(),
                 handle: MindmapHandle::new(MindmapDoc::parse(&content).ok()?),
             },
+            "calendar" => LiveObject::Calendar {
+                id: id.to_string(),
+                handle: CalendarHandle::new(CalendarDoc::parse(&content).ok()?),
+            },
             _ => return None,
         };
         autosave::mark_saved(&path, 0);
@@ -633,10 +649,48 @@ impl NotesCtx {
                 let content = doc.serialize();
                 (LiveObject::Mindmap { id: id.clone(), handle: MindmapHandle::new(doc) }, content)
             }
+            "calendar" => {
+                let doc = CalendarDoc::template(CalView::Month, super::gantt::calendar::today_days());
+                let content = doc.serialize();
+                (LiveObject::Calendar { id: id.clone(), handle: CalendarHandle::new(doc) }, content)
+            }
             _ => return None,
         };
         self.register_object(kind, &id, obj, content);
         Some(id)
+    }
+
+    /// Виджет календаря с заданным видом.
+    pub fn create_calendar(&self, view: CalView) -> String {
+        let id = project::new_id();
+        let doc = CalendarDoc::template(view, super::gantt::calendar::today_days());
+        let content = doc.serialize();
+        self.register_object("calendar", &id, LiveObject::Calendar { id: id.clone(), handle: CalendarHandle::new(doc) }, content);
+        id
+    }
+
+    /// Хранилище событий проекта: из пула, из бандла либо новое (сразу
+    /// пишется).
+    pub fn calendar_store(&self) -> CalendarStoreHandle {
+        if let Some(s) = self.calendar.get_untracked() {
+            return s;
+        }
+        let path = self.project_path.get_untracked();
+        let store = match project::read_text(&path, project::CALENDAR_PATH).and_then(|t| CalendarStore::parse(&t).ok()) {
+            Some(s) => {
+                autosave::mark_saved(project::CALENDAR_PATH, 0);
+                s
+            }
+            None => {
+                let s = CalendarStore::template(&tr!("notes.calendar.default_name"));
+                autosave::mark_saved(project::CALENDAR_PATH, 0);
+                autosave::queue_bytes(project::CALENDAR_PATH, s.serialize().into_bytes());
+                s
+            }
+        };
+        let handle = CalendarStoreHandle::new(store);
+        self.calendar.set(Some(handle.clone()));
+        handle
     }
 
     /// Интеллект-карта из готового документа (из списка страницы, от агента).

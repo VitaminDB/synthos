@@ -22,8 +22,10 @@ use super::state::{LiveObject, NotesCtx};
 #[derive(Clone)]
 enum SaveSource {
     Doc(DocumentEditorHandle),
-    /// Доска/диаграмма: ручка сериализуется без сигналов.
+    /// Доска/диаграмма/карта/календарь: ручка сериализуется без сигналов.
     Object(LiveObject),
+    /// Хранилище событий календаря.
+    Calendar(super::calendar::CalendarStoreHandle),
     Tree(Arc<ProjectTree>),
     Bytes(Arc<Vec<u8>>),
     Remove,
@@ -34,6 +36,7 @@ impl SaveSource {
         match self {
             SaveSource::Doc(h) => WriteOp::Put { path: path.into(), bytes: h.serialize().into_bytes() },
             SaveSource::Object(o) => WriteOp::Put { path: path.into(), bytes: o.serialize().into_bytes() },
+            SaveSource::Calendar(c) => WriteOp::Put { path: path.into(), bytes: c.serialize().into_bytes() },
             SaveSource::Tree(t) => WriteOp::Put { path: path.into(), bytes: t.serialize().into_bytes() },
             SaveSource::Bytes(b) => WriteOp::Put { path: path.into(), bytes: (**b).clone() },
             SaveSource::Remove => WriteOp::Remove { path: path.into() },
@@ -210,6 +213,13 @@ pub fn install_notes_autosave() {
             let path = project::page_path(&p.id);
             if rev > saved_rev(&path) {
                 enqueue(&path, SaveSource::Doc(p.handle.clone()), rev, Some(p.id.clone()), false);
+            }
+        }
+        // Хранилище событий календаря.
+        if let Some(store) = ctx.calendar.get() {
+            let rev = store.revision.get();
+            if rev > saved_rev(project::CALENDAR_PATH) {
+                enqueue(project::CALENDAR_PATH, SaveSource::Calendar(store.clone()), rev, None, false);
             }
         }
         // Доски и диаграммы.

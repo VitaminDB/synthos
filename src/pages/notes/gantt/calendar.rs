@@ -29,7 +29,13 @@ pub fn weekday_of(days: i64) -> i64 {
     (days + 3).rem_euclid(7)
 }
 
+/// Локальный день (смещение зоны — `agent::time::local_offset_secs`).
 pub fn today_days() -> i64 {
+    crate::agent::time::local_today_days()
+}
+
+#[allow(dead_code)]
+fn today_days_utc() -> i64 {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

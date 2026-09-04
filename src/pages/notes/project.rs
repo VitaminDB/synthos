@@ -9,6 +9,9 @@
 //! notes/pages/<id>.md           markdown страницы
 //! notes/objects/<id>.kanban.json канбан-доска (блок `![[kanban:<id>]]` в странице)
 //! notes/objects/<id>.gantt.json  диаграмма Ганта (блок `![[gantt:<id>]]`)
+//! notes/objects/<id>.mindmap.json интеллект-карта (блок `![[mindmap:<id>]]`)
+//! notes/objects/<id>.calendar.json виджет календаря (блок `![[calendar:<id>]]`)
+//! notes/calendar.json           единое хранилище событий календаря
 //! notes/assets/<sha256>.<ext>   вложения (`asset:<sha256>.<ext>` в md)
 //! ```
 //!
@@ -28,6 +31,8 @@ use synaptix_bundle::{Bundle, BundleBuilder, BundleEditor, FileTag};
 pub const TREE_PATH: &str = "notes/tree.json";
 pub const PAGES_DIR: &str = "notes/pages";
 pub const OBJECTS_DIR: &str = "notes/objects";
+/// Единое хранилище событий календаря проекта.
+pub const CALENDAR_PATH: &str = "notes/calendar.json";
 pub const ASSETS_DIR: &str = "notes/assets";
 /// `BundleMeta.purpose` — по нему проект отличается от модельных бандлов.
 pub const BUNDLE_PURPOSE: &str = "notes";

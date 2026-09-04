@@ -37,7 +37,10 @@ pub fn object_kind_of(target: &str) -> Option<&str> {
 
 /// Цель врезки — объект-примитив со своей высотой.
 pub fn is_sized_object(target: &str) -> bool {
-    target.starts_with("kanban:") || target.starts_with("gantt:") || target.starts_with("mindmap:")
+    target.starts_with("kanban:")
+        || target.starts_with("gantt:")
+        || target.starts_with("mindmap:")
+        || target.starts_with("calendar:")
 }
 
 /// Окружение интеллект-карты: ссылка узла открывает страницу, «в список»
@@ -50,6 +53,54 @@ pub fn mindmap_env(ctx: NotesCtx) -> super::mindmap::view::MapEnv {
         }),
         to_list: Arc::new(move |id| mindmap_to_list(ctx, id)),
     }
+}
+
+/// Окружение календаря: хранилище событий проекта, слой сроков досок и
+/// задач Ганта (read-only), открытие страницы.
+pub fn calendar_env(ctx: NotesCtx) -> super::calendar::CalendarEnv {
+    super::calendar::CalendarEnv {
+        store: ctx.calendar_store(),
+        external: Arc::new(move |from, to| external_items(ctx, from, to)),
+        open_page: Arc::new(move |id| {
+            ctx.activate(id);
+            crate::rail::navigate("notes");
+        }),
+    }
+}
+
+/// Сроки карточек досок и задачи Ганта всех страниц в диапазоне дней.
+fn external_items(ctx: NotesCtx, from: i64, to: i64) -> Vec<super::calendar::ExternalItem> {
+    use super::calendar::ExternalItem;
+    use super::gantt::calendar::parse_days;
+    let mut out = Vec::new();
+    for pid in ctx.tree.get_untracked().all_ids() {
+        for (kind, oid) in super::state::object_refs(&ctx.page_markdown(&pid)) {
+            match (kind.as_str(), ctx.object(&kind, &oid)) {
+                ("kanban", Some(LiveObject::Kanban { handle, .. })) => {
+                    let doc = handle.lock();
+                    for c in &doc.cards {
+                        let Some(day) = c.due.as_deref().and_then(parse_days) else { continue };
+                        if day < from || day > to {
+                            continue;
+                        }
+                        let color = doc.columns.iter().find(|col| col.id == c.column).map(|col| col.color.clone()).unwrap_or_default();
+                        out.push(ExternalItem { day, end_day: day, title: c.title.clone(), color, page: pid.clone() });
+                    }
+                }
+                ("gantt", Some(LiveObject::Gantt { handle, .. })) => {
+                    for t in &handle.lock().tasks {
+                        let Some((s, e)) = t.span_days() else { continue };
+                        if e < from || s > to {
+                            continue;
+                        }
+                        out.push(ExternalItem { day: s, end_day: e, title: t.name.clone(), color: t.color.clone(), page: pid.clone() });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// Карта → вложенный список на месте врезки (на всех страницах, где она
@@ -98,6 +149,10 @@ impl EmbedFactory for NotesEmbedFactory {
         if let Some(id) = target.strip_prefix("mindmap:") {
             let LiveObject::Mindmap { handle, id: oid } = ctx.object("mindmap", id.trim())? else { return None };
             return Some(sized(Box::new(super::mindmap::view::view(mindmap_env(ctx), oid, handle)), height));
+        }
+        if let Some(id) = target.strip_prefix("calendar:") {
+            let LiveObject::Calendar { handle, id: oid } = ctx.object("calendar", id.trim())? else { return None };
+            return Some(sized(Box::new(super::calendar::view::view(calendar_env(ctx), oid, handle)), height));
         }
         let id = ctx.index.get_untracked().resolve(target)?;
         if ectx.depth >= MAX_DEPTH {

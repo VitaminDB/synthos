@@ -26,6 +26,7 @@ use syngui::widgets::{MenuItem, PopupAnchor, PopupMenu};
 use crate::context::AppCtx;
 use crate::icons::*;
 
+use super::calendar::model::CalView;
 use super::media::{self, PickKind};
 use super::state::NotesCtx;
 
@@ -61,10 +62,19 @@ pub fn shape_icon(kind: ShapeKind) -> &'static str {
 }
 
 /// Объекты-примитивы: id, иконка, ключ подписи.
-const OBJECTS: [(&str, &str, &str); 3] = [
+const OBJECTS: [(&str, &str, &str); 4] = [
     ("kanban", MI_VIEW_KANBAN, "notes.block.kanban"),
     ("gantt", MI_VIEW_TIMELINE, "notes.block.gantt"),
     ("mindmap", MI_SCHEMA, "notes.block.mindmap"),
+    ("calendar", MI_CALENDAR_MONTH, "notes.block.calendar"),
+];
+
+/// Виды календаря для подменю вставки: id пункта, вид, иконка, ключ.
+const CALENDAR_VIEWS: [(&str, CalView, &str, &str); 4] = [
+    ("ins_calendar_year", CalView::Year, MI_DATE_RANGE, "notes.calendar.view.year"),
+    ("ins_calendar_month", CalView::Month, MI_CALENDAR_MONTH, "notes.calendar.view.month"),
+    ("ins_calendar_week", CalView::Week, MI_CALENDAR_VIEW_WEEK, "notes.calendar.view.week"),
+    ("ins_calendar_day", CalView::Day, MI_CALENDAR_VIEW_DAY, "notes.calendar.view.day"),
 ];
 
 /// Пункты подменю «Примитивы» с общим префиксом (вставка / превратить в).
@@ -89,11 +99,27 @@ fn object_items() -> Vec<MenuItem> {
                     MenuItem::new("ins_object_mindmap", tr!("notes.mindmap.empty_map")).icon(MI_SCHEMA),
                     MenuItem::new("ins_mindmap_from_block", tr!("notes.mindmap.from_block")).icon(MI_FORMAT_LIST_BULLETED),
                 ])
+            } else if *id == "calendar" {
+                item.children(
+                    CALENDAR_VIEWS
+                        .iter()
+                        .map(|(mid, _, icon, key)| MenuItem::new(*mid, syngui::i18n::tr(key)).icon(*icon))
+                        .collect(),
+                )
             } else {
                 item
             }
         })
         .collect()
+}
+
+/// Виджет календаря заданного вида — врезка в место каретки.
+pub fn insert_calendar(ctx: NotesCtx, view: CalView) {
+    let id = ctx.create_calendar(view);
+    ctx.doc_op(DocOp::InsertMarkdown(format!(
+        "![[calendar:{id}]]{{h={}}}",
+        super::embeds::default_object_h("calendar") as i64
+    )));
 }
 
 /// Интеллект-карта из текущего блока: заголовок/список → узлы; блок
@@ -137,6 +163,10 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::Custom("kanban".into()), tr!("notes.block.kanban"), "kanban board канбан доска задачи"),
         SlashItem::new(SlashAction::Custom("gantt".into()), tr!("notes.block.gantt"), "gantt timeline гант диаграмма план сроки"),
         SlashItem::new(SlashAction::Custom("mindmap".into()), tr!("notes.block.mindmap"), "mindmap mind map карта идей интеллект-карта"),
+        SlashItem::new(SlashAction::Custom("calendar-month".into()), tr!("notes.calendar.insert.month"), "calendar month календарь месяц события"),
+        SlashItem::new(SlashAction::Custom("calendar-week".into()), tr!("notes.calendar.insert.week"), "calendar week календарь неделя расписание"),
+        SlashItem::new(SlashAction::Custom("calendar-day".into()), tr!("notes.calendar.insert.day"), "calendar day календарь день расписание"),
+        SlashItem::new(SlashAction::Custom("calendar-year".into()), tr!("notes.calendar.insert.year"), "calendar year календарь год"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Rect), tr!("notes.shape.rect"), "rect shape прямоугольник фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Ellipse), tr!("notes.shape.ellipse"), "ellipse circle овал круг фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Triangle), tr!("notes.shape.triangle"), "triangle треугольник фигура"),
@@ -159,6 +189,10 @@ pub fn slash_custom(ctx: NotesCtx) -> impl Fn(&str) + Send + Sync + 'static {
         "image" => media::pick_and_insert(ctx, PickKind::Image),
         "svg" => media::pick_and_insert(ctx, PickKind::Svg),
         "file" => media::pick_and_insert(ctx, PickKind::File),
+        "calendar-year" => insert_calendar(ctx, CalView::Year),
+        "calendar-month" | "calendar" => insert_calendar(ctx, CalView::Month),
+        "calendar-week" => insert_calendar(ctx, CalView::Week),
+        "calendar-day" => insert_calendar(ctx, CalView::Day),
         _ => insert_object(ctx, id),
     }
 }
@@ -304,6 +338,10 @@ pub fn handle(ctx: NotesCtx, id: &str) {
     }
     if id == "ins_mindmap_from_block" {
         insert_mindmap_from_block(ctx);
+        return;
+    }
+    if let Some((_, view, _, _)) = CALENDAR_VIEWS.iter().find(|(mid, _, _, _)| *mid == id) {
+        insert_calendar(ctx, *view);
         return;
     }
     if let Some(kind) = id.strip_prefix("ins_object_") {

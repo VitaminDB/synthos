@@ -64,6 +64,12 @@ use crate::pages::notes::gantt::model::GanttDoc;
 use crate::pages::notes::gantt::GanttHandle;
 use crate::pages::notes::kanban::model::{item_id, parse_tags, DropSpot, KanbanCard, KanbanColumn, Priority, PALETTE};
 use crate::pages::notes::kanban::KanbanHandle;
+use crate::pages::notes::calendar::model::{
+    fmt_hm, parse_hm, CalEvent, CalView, CalendarStore, CalendarStyle, EventStyle, Repeat,
+};
+use crate::pages::notes::calendar::{CalendarHandle, CalendarStoreHandle};
+use crate::pages::notes::mindmap::model::{Curve, Direction, MindmapDoc, NodeShape};
+use crate::pages::notes::mindmap::MindmapHandle;
 use crate::pages::notes::project::{PageGrid, PageLayout};
 use crate::pages::notes::state::{object_refs, LiveObject, NotesCtx};
 use crate::pages::notes::{embeds, media};
@@ -106,9 +112,11 @@ pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String>
         "gantt" => gantt_impl(ctx, v),
         "blocks" => blocks_impl(ctx, v),
         "shape" => shape_impl(ctx, v),
+        "mindmap" => mindmap_impl(ctx, v),
+        "calendar" => calendar_impl(ctx, v),
         other => Err(format!(
             "unknown action \"{other}\" (list | search | read | create | update | move | delete | \
-             duplicate | open | attach | blocks | shape | kanban | gantt)"
+             duplicate | open | attach | blocks | shape | kanban | gantt | mindmap | calendar)"
         )),
     }
 }
@@ -286,7 +294,12 @@ fn all_objects(ctx: NotesCtx, kind: &str) -> Vec<(String, String)> {
 /// Объект `kind` по полю `key` (id объекта либо страница с единственным
 /// таким объектом); без поля — по `page`, а без неё — единственный в проекте.
 fn resolve_object(ctx: NotesCtx, v: &Json, kind: &str, key: &str) -> Result<LiveObject, String> {
-    let noun = if kind == "kanban" { "board" } else { "chart" };
+    let noun = match kind {
+        "kanban" => "board",
+        "gantt" => "chart",
+        "mindmap" => "map",
+        _ => "calendar",
+    };
     let candidates: Vec<(String, String)> = match str_field(v, key) {
         Some(s) => {
             let s = s.strip_prefix(&format!("{kind}:")).unwrap_or(s).trim();
@@ -333,6 +346,20 @@ fn kanban_handle(ctx: NotesCtx, v: &Json) -> Result<(String, KanbanHandle), Stri
     match resolve_object(ctx, v, "kanban", "board")? {
         LiveObject::Kanban { id, handle } => Ok((id, handle)),
         _ => Err("not a kanban board".to_string()),
+    }
+}
+
+fn mindmap_handle(ctx: NotesCtx, v: &Json) -> Result<(String, MindmapHandle), String> {
+    match resolve_object(ctx, v, "mindmap", "map")? {
+        LiveObject::Mindmap { id, handle } => Ok((id, handle)),
+        _ => Err("not a mind map".to_string()),
+    }
+}
+
+fn calendar_handle(ctx: NotesCtx, v: &Json) -> Result<(String, CalendarHandle), String> {
+    match resolve_object(ctx, v, "calendar", "calendar")? {
+        LiveObject::Calendar { id, handle } => Ok((id, handle)),
+        _ => Err("not a calendar widget".to_string()),
     }
 }
 
@@ -1063,6 +1090,7 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 Some(LiveObject::Kanban { handle, .. }) => out.push_str(&board_text(oid, &handle, false)),
                 Some(LiveObject::Gantt { handle, .. }) => out.push_str(&chart_text(oid, &handle)),
                 Some(LiveObject::Mindmap { handle, .. }) => out.push_str(&map_text(oid, &handle)),
+                Some(LiveObject::Calendar { handle, .. }) => out.push_str(&calendar_widget_text(oid, &handle)),
                 None => out.push_str(&format!("{kind}:{oid} · (file missing)\n")),
             }
         }
@@ -1817,10 +1845,23 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
 /// с высотой по умолчанию; позиция и геометрия — из аргументов (геометрия
 /// достаётся самой врезке).
 fn embed_object(ctx: NotesCtx, pid: &str, kind: &str, id: &str, v: &Json) -> Result<(InsertPos, Vec<usize>), String> {
+    embed_object_with(ctx, pid, kind, id, v, str_field(v, "title"))
+}
+
+/// То же, но заголовок над врезкой задаётся явно: у карты `title` — текст
+/// корневого узла, а не подпись блока.
+fn embed_object_with(
+    ctx: NotesCtx,
+    pid: &str,
+    kind: &str,
+    id: &str,
+    v: &Json,
+    heading: Option<&str>,
+) -> Result<(InsertPos, Vec<usize>), String> {
     let geom = parse_geom(v)?;
-    let h = geom.h.unwrap_or(embeds::default_object_h(kind));
+    let h = geom.h.unwrap_or_else(|| embeds::default_object_h(kind));
     let embed = format!("![[{kind}:{id}]]{{h={}}}", fnum(h));
-    let md = match str_field(v, "title") {
+    let md = match heading {
         Some(t) => format!("### {t}\n\n{embed}"),
         None => embed,
     };
@@ -1918,6 +1959,17 @@ fn map_text(id: &str, handle: &crate::pages::notes::mindmap::MindmapHandle) -> S
         out.push_str(&format!("  link {} \"{}\" → {} \"{}\"{}\n", l.from, text(&l.from), l.to, text(&l.to), if l.label.is_empty() { String::new() } else { format!(" · \"{}\"", l.label) }));
     }
     out
+}
+
+/// Строка виджета календаря: вид, якорь, фильтр календарей.
+fn calendar_widget_text(id: &str, handle: &crate::pages::notes::calendar::CalendarHandle) -> String {
+    let doc = handle.lock();
+    format!(
+        "calendar:{id} · view: {} · anchor: {} · calendars: {}\n",
+        doc.view.key(),
+        doc.anchor,
+        if doc.calendars.is_empty() { "all".to_string() } else { doc.calendars.join(", ") }
+    )
 }
 
 fn parse_date_field(v: &Json, key: &str) -> Result<Option<i64>, String> {
@@ -2430,6 +2482,949 @@ fn shape_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Mindmap
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Узел карты по id либо тексту (единственное совпадение); `root` — корень.
+fn resolve_node(handle: &MindmapHandle, s: &str) -> Result<String, String> {
+    let doc = handle.lock();
+    let t = s.trim();
+    if t.eq_ignore_ascii_case("root") {
+        return Ok(doc.root_id());
+    }
+    if doc.node(t).is_some() {
+        return Ok(t.to_string());
+    }
+    let key = t.to_lowercase();
+    let hits: Vec<&str> = doc.nodes.iter().filter(|n| n.text.trim().to_lowercase() == key).map(|n| n.id.as_str()).collect();
+    match hits.len() {
+        1 => Ok(hits[0].to_string()),
+        0 => Err(format!("node \"{s}\" not found — ids and texts are in mindmap op=read")),
+        n => Err(format!("{n} nodes are named \"{s}\" — use the id: {}", hits.join(", "))),
+    }
+}
+
+/// Стиль карты из аргумента `style` (объект); возвращает описание изменений.
+fn apply_map_style(handle: &MindmapHandle, v: &Json) -> Result<Vec<String>, String> {
+    let Some(raw) = v.get("style") else { return Ok(Vec::new()) };
+    let pairs = style_pairs(raw)?;
+    let mut changes = Vec::new();
+    let mut err = None;
+    handle.set_style(|s| {
+        for (k, val) in &pairs {
+            let key = k.trim().to_ascii_lowercase();
+            let num = || val.trim().parse::<f32>().ok();
+            match key.as_str() {
+                "palette" => {
+                    let colors: Vec<String> = val
+                        .split([',', ' '])
+                        .map(str::trim)
+                        .filter(|c| !c.is_empty())
+                        .map(|c| parse_hex_color(c, false).unwrap_or_else(|_| c.to_string()))
+                        .collect();
+                    let colors = if colors.len() == 1 {
+                        match crate::pages::notes::mindmap::model::palette_by_key(&colors[0].to_lowercase()) {
+                            Some(p) => p.iter().map(|x| x.to_string()).collect(),
+                            None => colors,
+                        }
+                    } else {
+                        colors
+                    };
+                    if !colors.is_empty() {
+                        s.palette = colors;
+                        changes.push("palette".to_string());
+                    }
+                }
+                "node_fill" | "node_stroke" | "text_color" | "line_color" | "bg" => {
+                    let color = if val.trim().is_empty() || val.eq_ignore_ascii_case("none") {
+                        String::new()
+                    } else {
+                        match parse_hex_color(val, true) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                err = Some(e);
+                                return;
+                            }
+                        }
+                    };
+                    match key.as_str() {
+                        "node_fill" => s.node_fill = color,
+                        "node_stroke" => s.node_stroke = color,
+                        "text_color" => s.text_color = color,
+                        "line_color" => s.line_color = color,
+                        _ => s.bg = color,
+                    }
+                    changes.push(key.clone());
+                }
+                "font_size" | "radius" | "padding" | "line_width" | "line_dash" | "max_node_w" => {
+                    let Some(n) = num() else {
+                        err = Some(format!("bad \"{key}\" \"{val}\" — a number"));
+                        return;
+                    };
+                    match key.as_str() {
+                        "font_size" => s.font_size = n,
+                        "radius" => s.radius = n,
+                        "padding" => s.padding = n,
+                        "line_width" => s.line_width = n,
+                        "line_dash" => s.line_dash = n,
+                        _ => s.max_node_w = n,
+                    }
+                    changes.push(format!("{key}={}", fnum(n)));
+                }
+                "weight" => {
+                    s.weight = if val.eq_ignore_ascii_case("bold") { "bold".to_string() } else { String::new() };
+                    changes.push("weight".to_string());
+                }
+                "show_icons" => {
+                    s.show_icons = matches!(val.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on");
+                    changes.push("show_icons".to_string());
+                }
+                other => {
+                    err = Some(format!(
+                        "unknown style key \"{other}\" — palette, node_fill, node_stroke, text_color, line_color, bg, \
+                         font_size, weight, radius, padding, line_width, line_dash, show_icons, max_node_w"
+                    ));
+                }
+            }
+        }
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(changes),
+    }
+}
+
+/// Пары ключ-значение из объекта либо строки `k=v …`.
+fn style_pairs(raw: &Json) -> Result<Vec<(String, String)>, String> {
+    match raw {
+        Json::Object(map) => Ok(map
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    Json::Null => String::new(),
+                    Json::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect()),
+        Json::String(s) => {
+            let t = s.trim();
+            if let Ok(Json::Object(map)) = serde_json::from_str::<Json>(t) {
+                return style_pairs(&Json::Object(map));
+            }
+            let braced = if t.starts_with('{') { t.to_string() } else { format!("{{{t}}}") };
+            let parsed = parse_attr_block(&braced).ok_or_else(|| format!("can't parse style \"{t}\" — pass an object"))?;
+            Ok(parsed.0.into_iter().collect())
+        }
+        _ => Err("\"style\" must be an object {key: value}".to_string()),
+    }
+}
+
+/// Поля узла из аргументов; возвращает описание изменений.
+fn apply_node_fields(ctx: NotesCtx, handle: &MindmapHandle, id: &str, v: &Json) -> Result<Vec<String>, String> {
+    let mut changes = Vec::new();
+    if let Some(t) = raw_string(v, "text") {
+        handle.set_text(id, &t);
+        changes.push("text".to_string());
+    }
+    if let Some(n) = raw_string(v, "note") {
+        handle.set_note(id, &n);
+        changes.push("note".to_string());
+    }
+    if let Some(l) = raw_string(v, "link") {
+        let page = if l.trim().is_empty() || l.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            Some(resolve_page_ref(ctx, &l)?)
+        };
+        handle.set_link(id, page);
+        changes.push("link".to_string());
+    }
+    if let Some(c) = raw_string(v, "color") {
+        let color = if c.trim().is_empty() || c.eq_ignore_ascii_case("none") { None } else { Some(parse_hex_color(&c, false)?) };
+        handle.set_color(id, color);
+        changes.push("color".to_string());
+    }
+    if let Some(sh) = str_field(v, "shape") {
+        let shape = NodeShape::parse(sh)
+            .ok_or_else(|| format!("bad shape \"{sh}\" (auto | rect | rounded | pill | ellipse | text)"))?;
+        handle.set_shape(id, shape);
+        changes.push(format!("shape {}", shape.key()));
+    }
+    if let Some(i) = raw_string(v, "icon") {
+        handle.set_icon(id, &i);
+        changes.push("icon".to_string());
+    }
+    if let Some(c) = bool_field(v, "collapsed") {
+        handle.set_collapsed(id, c);
+        changes.push(format!("collapsed {c}"));
+    }
+    let (dx, dy) = (f32_field(v, "dx"), f32_field(v, "dy"));
+    if dx.is_some() || dy.is_some() {
+        let (cur_dx, cur_dy) = handle.lock().node(id).map(|n| (n.dx, n.dy)).unwrap_or((0.0, 0.0));
+        handle.offset(id, dx.unwrap_or(cur_dx) - cur_dx, dy.unwrap_or(cur_dy) - cur_dy);
+        changes.push("offset".to_string());
+    }
+    Ok(changes)
+}
+
+fn mindmap_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let op = str_field(v, "op").ok_or(
+        "missing \"op\" (create | read | add_node | update_node | move_node | delete_node | \
+         add_link | delete_link | set_layout | set_style | from_list | delete)",
+    )?;
+    match op {
+        "create" => {
+            let pid = page_arg(ctx, v, "page")?;
+            let root = str_field(v, "title").unwrap_or(&tr!("notes.mindmap.root")).to_string();
+            let doc = match raw_string(v, "outline").filter(|o| !o.trim().is_empty()) {
+                Some(outline) => MindmapDoc::from_outline(&outline, &root),
+                None => MindmapDoc::template(&root),
+            };
+            let mut doc = doc;
+            if let Some(d) = str_field(v, "direction") {
+                doc.layout.direction =
+                    Direction::parse(d).ok_or_else(|| format!("bad direction \"{d}\" (right | left | both | down | radial)"))?;
+            }
+            let id = ctx.create_mindmap(doc);
+            let (pos, idx) = embed_object_with(ctx, &pid, "mindmap", &id, v, None)?;
+            let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", &id) else {
+                return Err("map vanished".to_string());
+            };
+            Ok(format!(
+                "created mind map {} ({})\n{}{}\n",
+                pos_text(pos),
+                indices_text(&idx),
+                map_text(&id, &handle),
+                page_line(ctx, &pid)
+            ))
+        }
+        "read" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            Ok(format!("{}{}\n", map_text(&id, &handle), object_page_line(ctx, "mindmap", &id)))
+        }
+        "add_node" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let parent = match str_field(v, "parent") {
+                Some(p) => resolve_node(&handle, p)?,
+                None => handle.lock().root_id(),
+            };
+            let text = str_field(v, "text").unwrap_or("").to_string();
+            let index = usize_field(v, "index");
+            let mut node = None;
+            handle.edit(|d| node = d.add_node(&parent, &text, index));
+            let node = node.ok_or("parent vanished")?;
+            handle.editing.set(None);
+            apply_node_fields(ctx, &handle, &node, v)?;
+            Ok(format!("added node {node} \"{text}\"\n{}", map_text(&id, &handle)))
+        }
+        "update_node" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let node = resolve_node(&handle, str_field(v, "node").ok_or("missing \"node\"")?)?;
+            let changes = apply_node_fields(ctx, &handle, &node, v)?;
+            if changes.is_empty() {
+                return Err("nothing to update: pass text, note, link, color, shape, icon, collapsed, dx or dy".to_string());
+            }
+            Ok(format!("updated node {node}: {}\n{}", changes.join(", "), map_text(&id, &handle)))
+        }
+        "move_node" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let node = resolve_node(&handle, str_field(v, "node").ok_or("missing \"node\"")?)?;
+            let parent = resolve_node(&handle, str_field(v, "parent").ok_or("missing \"parent\"")?)?;
+            if !handle.reparent(&node, &parent, usize_field(v, "index")) {
+                return Err("move failed: the root can't be moved and a node can't go into its own subtree".to_string());
+            }
+            Ok(format!("moved node {node} under {parent}\n{}", map_text(&id, &handle)))
+        }
+        "delete_node" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let node = resolve_node(&handle, str_field(v, "node").ok_or("missing \"node\"")?)?;
+            let n = handle.delete(&node);
+            if n == 0 {
+                return Err("the root node can't be deleted — delete the whole map with op=delete".to_string());
+            }
+            Ok(format!("deleted {n} node{}\n{}", if n == 1 { "" } else { "s" }, map_text(&id, &handle)))
+        }
+        "add_link" | "delete_link" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let from = resolve_node(&handle, str_field(v, "from").ok_or("missing \"from\"")?)?;
+            let to = resolve_node(&handle, str_field(v, "to").ok_or("missing \"to\"")?)?;
+            let ok = if op == "add_link" {
+                handle.add_link(&from, &to, str_field(v, "label").unwrap_or(""))
+            } else {
+                handle.delete_link(&from, &to)
+            };
+            if !ok {
+                return Err(if op == "add_link" {
+                    "link not added: the nodes are the same or the link already exists".to_string()
+                } else {
+                    "no such link".to_string()
+                });
+            }
+            Ok(format!("{op} {from} → {to}\n{}", map_text(&id, &handle)))
+        }
+        "set_layout" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let mut changes = Vec::new();
+            let direction = match str_field(v, "direction") {
+                Some(d) => Some(Direction::parse(d).ok_or_else(|| format!("bad direction \"{d}\" (right | left | both | down | radial)"))?),
+                None => None,
+            };
+            let curve = match str_field(v, "curve") {
+                Some(c) => Some(Curve::parse(c).ok_or_else(|| format!("bad curve \"{c}\" (bezier | straight | elbow)"))?),
+                None => None,
+            };
+            let h_gap = f32_field(v, "h_gap");
+            let v_gap = f32_field(v, "v_gap");
+            if let Some(d) = direction {
+                changes.push(format!("direction {}", d.key()));
+            }
+            if let Some(c) = curve {
+                changes.push(format!("curve {}", c.key()));
+            }
+            if let Some(g) = h_gap {
+                changes.push(format!("h_gap {}", fnum(g)));
+            }
+            if let Some(g) = v_gap {
+                changes.push(format!("v_gap {}", fnum(g)));
+            }
+            if !changes.is_empty() {
+                handle.set_layout(|l| {
+                    if let Some(d) = direction {
+                        l.direction = d;
+                    }
+                    if let Some(c) = curve {
+                        l.curve = c;
+                    }
+                    if let Some(g) = h_gap {
+                        l.h_gap = g;
+                    }
+                    if let Some(g) = v_gap {
+                        l.v_gap = g;
+                    }
+                });
+            }
+            if bool_field(v, "reset").unwrap_or(false) {
+                handle.reset_offsets();
+                changes.push("offsets reset".to_string());
+            }
+            if changes.is_empty() {
+                return Err("nothing to change: pass direction, curve, h_gap, v_gap or reset".to_string());
+            }
+            Ok(format!("layout: {}\n{}", changes.join(", "), map_text(&id, &handle)))
+        }
+        "set_style" => {
+            let (id, handle) = mindmap_handle(ctx, v)?;
+            let changes = apply_map_style(&handle, v)?;
+            if changes.is_empty() {
+                return Err("nothing to change: pass style with palette, colors, font_size, radius, padding, lines or show_icons".to_string());
+            }
+            Ok(format!("style: {}\n{}", changes.join(", "), map_text(&id, &handle)))
+        }
+        "from_list" => {
+            let pid = page_arg(ctx, v, "page")?;
+            let mut model = load_model(ctx, &pid);
+            let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\" (list or heading to convert)")?)?;
+            let md = block_markdown(&model.blocks[i]);
+            let root = str_field(v, "title").unwrap_or(&tr!("notes.mindmap.root")).to_string();
+            let doc = MindmapDoc::from_outline(&md, &root);
+            let nodes = doc.nodes.len();
+            let id = ctx.create_mindmap(doc);
+            let geom = model.blocks[i].attrs.clone();
+            let embed = format!("![[mindmap:{id}]]{{h={}}}", fnum(embeds::default_object_h("mindmap")));
+            let idx = replace_block(&mut model, i, &embed)?;
+            // Врезка встаёт на место блока и наследует его координаты.
+            for (k, val) in geom.0.iter() {
+                if free::is_geom_key(k) && model.blocks[idx[0]].attrs.get(k).is_none() {
+                    model.blocks[idx[0]].attrs.set(k.clone(), val.clone());
+                }
+            }
+            store_model(ctx, &pid, &model)?;
+            let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", &id) else {
+                return Err("map vanished".to_string());
+            };
+            Ok(format!(
+                "block #{i} → mind map with {nodes} nodes\n{}{}\n",
+                map_text(&id, &handle),
+                page_line(ctx, &pid)
+            ))
+        }
+        "delete" => {
+            let (id, _) = mindmap_handle(ctx, v)?;
+            delete_object(ctx, "mindmap", &id)
+        }
+        other => Err(format!(
+            "unknown mindmap op \"{other}\" (create | read | add_node | update_node | move_node | \
+             delete_node | add_link | delete_link | set_layout | set_style | from_list | delete)"
+        )),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Calendar
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Дата из поля: `yyyy-mm-dd`, `today`, `tomorrow`.
+fn day_arg(v: &Json, key: &str) -> Result<Option<i64>, String> {
+    parse_date_field(v, key)
+}
+
+/// Время из поля `HH:MM`.
+fn time_arg(v: &Json, key: &str) -> Result<Option<u32>, String> {
+    match raw_string(v, key) {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() || s.eq_ignore_ascii_case("none") => Ok(Some(u32::MAX)),
+        Some(s) => parse_hm(&s).map(Some).ok_or_else(|| format!("bad \"{key}\" \"{s}\" (HH:MM, local time)")),
+    }
+}
+
+/// Календарь по id либо названию.
+fn resolve_calendar(store: &CalendarStore, s: &str) -> Result<String, String> {
+    let t = s.trim();
+    if store.calendar(t).is_some() {
+        return Ok(t.to_string());
+    }
+    let key = t.to_lowercase();
+    let hits: Vec<&str> = store.calendars.iter().filter(|c| c.name.trim().to_lowercase() == key).map(|c| c.id.as_str()).collect();
+    match hits.len() {
+        1 => Ok(hits[0].to_string()),
+        0 => Err(format!(
+            "calendar \"{s}\" not found — calendars: {}",
+            store.calendars.iter().map(|c| format!("\"{}\" ({})", c.name, c.id)).collect::<Vec<_>>().join(", ")
+        )),
+        n => Err(format!("{n} calendars are named \"{s}\" — use the id", )),
+    }
+}
+
+/// Событие по id либо названию (с необязательным уточнением по дате).
+fn resolve_event(store: &CalendarStore, s: &str, on: Option<i64>) -> Result<String, String> {
+    let t = s.trim();
+    if store.event(t).is_some() {
+        return Ok(t.to_string());
+    }
+    let key = t.to_lowercase();
+    let hits: Vec<&CalEvent> = store
+        .events
+        .iter()
+        .filter(|e| e.title.trim().to_lowercase() == key)
+        .filter(|e| on.is_none_or(|d| e.day() == Some(d)))
+        .collect();
+    match hits.len() {
+        1 => Ok(hits[0].id.clone()),
+        0 => Err(format!("event \"{s}\" not found — ids and titles are in calendar op=list_events")),
+        n => Err(format!(
+            "{n} events are titled \"{s}\" — pass the id or a date: {}",
+            hits.iter().map(|e| format!("{} ({})", e.id, e.date)).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+fn event_line(store: &CalendarStore, e: &CalEvent) -> String {
+    let mut s = format!("{} \"{}\" · {}", e.id, e.title, e.date);
+    if let Some(end) = &e.end_date {
+        s.push_str(&format!(" → {end}"));
+    }
+    match e.time_span() {
+        Some((from, to)) => s.push_str(&format!(" · {}–{}", fmt_hm(from), fmt_hm(to))),
+        None => s.push_str(" · all day"),
+    }
+    if let Some(c) = store.calendar(&e.calendar) {
+        s.push_str(&format!(" · calendar \"{}\"", c.name));
+    }
+    if e.repeat != Repeat::None {
+        s.push_str(&format!(" · repeat {}", e.repeat.key()));
+        if let Some(u) = &e.until {
+            s.push_str(&format!(" until {u}"));
+        }
+    }
+    if e.done {
+        s.push_str(" · done");
+    }
+    if !e.color.is_empty() {
+        s.push_str(&format!(" · color {}", e.color));
+    }
+    if let Some(l) = &e.link {
+        s.push_str(&format!(" · page {l}"));
+    }
+    if !e.note.trim().is_empty() {
+        s.push_str(&format!(" · note {} chars", e.note.chars().count()));
+    }
+    s
+}
+
+/// Текст хранилища: календари + события диапазона (по вхождениям).
+fn calendar_text(store: &CalendarStore, from: i64, to: i64, filter: &[String], external: &[String]) -> String {
+    let mut out = format!(
+        "calendars: {}\n",
+        store.calendars.iter().map(|c| format!("{} \"{}\" {}", c.id, c.name, if c.color.is_empty() { "theme" } else { c.color.as_str() })).collect::<Vec<_>>().join(", ")
+    );
+    out.push_str(&format!("--- Events {} … {} ---\n", days_to_iso(from), days_to_iso(to)));
+    let occ = store.occurrences(from, to, filter);
+    let mut seen: Vec<&str> = Vec::new();
+    for o in &occ {
+        if seen.contains(&o.event.as_str()) {
+            continue;
+        }
+        seen.push(&o.event);
+        if let Some(e) = store.event(&o.event) {
+            out.push_str(&format!("  {}\n", event_line(store, e)));
+        }
+    }
+    if seen.is_empty() {
+        out.push_str("  (no events in this range)\n");
+    }
+    for line in external {
+        out.push_str(&format!("  external: {line}\n"));
+    }
+    out
+}
+
+/// Стиль виджета календаря из аргумента `style`.
+fn apply_calendar_style(handle: &CalendarHandle, v: &Json) -> Result<Vec<String>, String> {
+    let Some(raw) = v.get("style") else { return Ok(Vec::new()) };
+    let pairs = style_pairs(raw)?;
+    let mut changes = Vec::new();
+    let mut err = None;
+    handle.set_style(|s| {
+        for (k, val) in &pairs {
+            let key = k.trim().to_ascii_lowercase();
+            let flag = || matches!(val.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "on");
+            match key.as_str() {
+                "preset" => {
+                    if !CalendarStyle::PRESETS.contains(&val.trim()) {
+                        err = Some(format!("bad preset \"{val}\" (theme | light | contrast | pastel)"));
+                        return;
+                    }
+                    s.apply_preset(val.trim());
+                    changes.push(format!("preset {}", val.trim()));
+                }
+                "event_style" => match EventStyle::parse(val) {
+                    Some(e) => {
+                        s.event_style = e;
+                        changes.push(format!("event_style {}", e.key()));
+                    }
+                    None => err = Some(format!("bad event_style \"{val}\" (chip | dot | bar)")),
+                },
+                "weekend_tint" | "today_color" | "header_bg" | "cell_bg" | "grid_color" | "text_color" => {
+                    let color = if val.trim().is_empty() || val.eq_ignore_ascii_case("none") {
+                        String::new()
+                    } else {
+                        match parse_hex_color(val, true) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                err = Some(e);
+                                return;
+                            }
+                        }
+                    };
+                    match key.as_str() {
+                        "weekend_tint" => s.weekend_tint = color,
+                        "today_color" => s.today_color = color,
+                        "header_bg" => s.header_bg = color,
+                        "cell_bg" => s.cell_bg = color,
+                        "grid_color" => s.grid_color = color,
+                        _ => s.text_color = color,
+                    }
+                    s.preset.clear();
+                    changes.push(key.clone());
+                }
+                "first_weekday" | "hour_from" | "hour_to" | "slot_min" => {
+                    let Ok(n) = val.trim().parse::<u32>() else {
+                        err = Some(format!("bad \"{key}\" \"{val}\" — a whole number"));
+                        return;
+                    };
+                    match key.as_str() {
+                        "first_weekday" => s.first_weekday = n,
+                        "hour_from" => s.hour_from = n,
+                        "hour_to" => s.hour_to = n,
+                        _ => s.slot_min = n,
+                    }
+                    changes.push(format!("{key}={n}"));
+                }
+                "font_size" => match val.trim().parse::<f32>() {
+                    Ok(n) => {
+                        s.font_size = n;
+                        changes.push(format!("font_size={}", fnum(n)));
+                    }
+                    Err(_) => err = Some(format!("bad \"font_size\" \"{val}\" — a number")),
+                },
+                "show_week_numbers" => {
+                    s.show_week_numbers = flag();
+                    changes.push(key.clone());
+                }
+                "compact" => {
+                    s.compact = flag();
+                    changes.push(key.clone());
+                }
+                "show_kanban_due" => {
+                    s.show_kanban_due = flag();
+                    changes.push(key.clone());
+                }
+                "show_gantt" => {
+                    s.show_gantt = flag();
+                    changes.push(key.clone());
+                }
+                other => {
+                    err = Some(format!(
+                        "unknown style key \"{other}\" — preset, event_style, first_weekday, show_week_numbers, \
+                         hour_from, hour_to, slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
+                         cell_bg, grid_color, text_color, show_kanban_due, show_gantt"
+                    ));
+                }
+            }
+        }
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(changes),
+    }
+}
+
+/// Поля события из аргументов (используют add_event и update_event).
+fn apply_event_fields(ctx: NotesCtx, store: &CalendarStore, e: &mut CalEvent, v: &Json) -> Result<Vec<String>, String> {
+    let mut changes = Vec::new();
+    if let Some(t) = str_field(v, "title") {
+        e.title = t.to_string();
+        changes.push("title".to_string());
+    }
+    if let Some(d) = day_arg(v, "date")? {
+        // Многодневное событие переезжает целиком: конечная дата сдвигается
+        // на ту же дельту, если её не задали явно.
+        if v.get("end_date").is_none() {
+            if let (Some(old), Some(end)) = (e.day(), e.end_date.as_deref().and_then(parse_days)) {
+                e.end_date = Some(days_to_iso(end + (d - old)));
+            }
+        }
+        e.date = days_to_iso(d);
+        changes.push("date".to_string());
+    }
+    if let Some(raw) = raw_string(v, "end_date") {
+        e.end_date = if raw.trim().is_empty() || raw.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            let d = day_arg(&serde_json::json!({ "end_date": raw }), "end_date")?.ok_or("bad \"end_date\"")?;
+            Some(days_to_iso(d))
+        };
+        changes.push("end_date".to_string());
+    }
+    if let Some(s) = time_arg(v, "start_time")? {
+        if s == u32::MAX {
+            e.start = None;
+            e.end = None;
+            e.all_day = true;
+        } else {
+            let dur = match (e.start, e.end) {
+                (Some(a), Some(b)) if b > a => b - a,
+                _ => 60,
+            };
+            e.start = Some(s);
+            e.end = Some((s + dur).min(24 * 60));
+            e.all_day = false;
+        }
+        changes.push("start_time".to_string());
+    }
+    if let Some(t) = time_arg(v, "end_time")? {
+        if t != u32::MAX {
+            e.end = Some(t.max(e.start.unwrap_or(0) + 5).min(24 * 60));
+            e.all_day = false;
+            changes.push("end_time".to_string());
+        }
+    }
+    if let Some(a) = bool_field(v, "all_day") {
+        e.all_day = a;
+        if a {
+            e.start = None;
+            e.end = None;
+        } else if e.start.is_none() {
+            e.start = Some(9 * 60);
+            e.end = Some(10 * 60);
+        }
+        changes.push("all_day".to_string());
+    }
+    if let Some(c) = str_field(v, "calendar") {
+        e.calendar = resolve_calendar(store, c)?;
+        changes.push("calendar".to_string());
+    }
+    if let Some(c) = raw_string(v, "color") {
+        e.color = if c.trim().is_empty() || c.eq_ignore_ascii_case("none") { String::new() } else { parse_hex_color(&c, false)? };
+        changes.push("color".to_string());
+    }
+    if let Some(n) = raw_string(v, "note") {
+        e.note = n;
+        changes.push("note".to_string());
+    }
+    if let Some(d) = bool_field(v, "done") {
+        e.done = d;
+        changes.push("done".to_string());
+    }
+    if let Some(r) = str_field(v, "repeat") {
+        e.repeat = Repeat::parse(r).ok_or_else(|| format!("bad repeat \"{r}\" (none | daily | weekly | monthly | yearly)"))?;
+        changes.push("repeat".to_string());
+    }
+    if let Some(raw) = raw_string(v, "until") {
+        e.until = if raw.trim().is_empty() || raw.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            let d = day_arg(&serde_json::json!({ "until": raw }), "until")?.ok_or("bad \"until\"")?;
+            Some(days_to_iso(d))
+        };
+        changes.push("until".to_string());
+    }
+    if let Some(l) = raw_string(v, "link") {
+        e.link = if l.trim().is_empty() || l.eq_ignore_ascii_case("none") { None } else { Some(resolve_page_ref(ctx, &l)?) };
+        changes.push("link".to_string());
+    }
+    Ok(changes)
+}
+
+/// Хранилище событий проекта плюс диапазон по умолчанию (вид виджета,
+/// иначе месяц вокруг сегодня).
+fn calendar_range(ctx: NotesCtx, v: &Json) -> Result<(CalendarStoreHandle, i64, i64, Vec<String>), String> {
+    let store = ctx.calendar_store();
+    let widget = calendar_handle(ctx, v).ok();
+    let (view, anchor, filter, first) = match &widget {
+        Some((_, h)) => {
+            let d = h.lock();
+            (d.view, d.anchor_days(), d.calendars.clone(), d.style.first_weekday)
+        }
+        None => (CalView::Month, today_days(), Vec::new(), 0),
+    };
+    let (mut from, mut to) = crate::pages::notes::calendar::model::range_of(view, anchor, first);
+    if let Some(f) = day_arg(v, "from")? {
+        from = f;
+        to = to.max(f);
+    }
+    if let Some(t) = day_arg(v, "to")? {
+        to = t;
+    }
+    if to < from {
+        std::mem::swap(&mut from, &mut to);
+    }
+    let filter = match str_field(v, "calendar") {
+        Some(c) => vec![resolve_calendar(&store.lock(), c)?],
+        None => filter,
+    };
+    Ok((store, from, to, filter))
+}
+
+fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let op = str_field(v, "op").ok_or(
+        "missing \"op\" (create | read | set_view | set_style | add_event | update_event | move_event | \
+         delete_event | complete | list_events | add_calendar | update_calendar | delete_calendar | delete)",
+    )?;
+    match op {
+        "create" => {
+            let pid = page_arg(ctx, v, "page")?;
+            let view = match str_field(v, "view") {
+                Some(s) => CalView::parse(s).ok_or_else(|| format!("bad view \"{s}\" (year | month | week | day)"))?,
+                None => CalView::Month,
+            };
+            let id = ctx.create_calendar(view);
+            let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", &id) else {
+                return Err("calendar vanished".to_string());
+            };
+            if let Some(a) = day_arg(v, "anchor")? {
+                handle.set_anchor(a);
+            }
+            let (pos, idx) = embed_object_with(ctx, &pid, "calendar", &id, v, str_field(v, "heading"))?;
+            Ok(format!(
+                "created calendar:{id} ({} view) {} ({})\n{}\n",
+                view.key(),
+                pos_text(pos),
+                indices_text(&idx),
+                page_line(ctx, &pid)
+            ))
+        }
+        "read" | "list_events" => {
+            let (store, from, to, filter) = calendar_range(ctx, v)?;
+            let mut out = String::new();
+            if op == "read" {
+                if let Ok((id, handle)) = calendar_handle(ctx, v) {
+                    let d = handle.lock();
+                    out.push_str(&format!(
+                        "calendar:{id} · view: {} · anchor: {} · calendars: {} · first weekday: {} · hours {}–{} · slot {} min · events as {}{}{}\n",
+                        d.view.key(),
+                        d.anchor,
+                        if d.calendars.is_empty() { "all".to_string() } else { d.calendars.join(", ") },
+                        d.style.first_weekday,
+                        d.style.hour_from,
+                        d.style.hour_to,
+                        d.style.slot_min,
+                        d.style.event_style.key(),
+                        if d.style.show_kanban_due { " · board due dates" } else { "" },
+                        if d.style.show_gantt { " · gantt tasks" } else { "" }
+                    ));
+                    drop(d);
+                    out.push_str(&object_page_line(ctx, "calendar", &id));
+                    out.push('\n');
+                }
+            }
+            let external = if bool_field(v, "include_external").unwrap_or(false) {
+                let mut items = Vec::new();
+                for it in (embeds::calendar_env(ctx).external)(from, to) {
+                    items.push(format!(
+                        "{} \"{}\"{} · page {}",
+                        days_to_iso(it.day),
+                        it.title,
+                        if it.end_day != it.day { format!(" → {}", days_to_iso(it.end_day)) } else { String::new() },
+                        it.page
+                    ));
+                }
+                items
+            } else {
+                Vec::new()
+            };
+            out.push_str(&calendar_text(&store.lock(), from, to, &filter, &external));
+            Ok(out)
+        }
+        "set_view" => {
+            let (id, handle) = calendar_handle(ctx, v)?;
+            let mut changes = Vec::new();
+            if let Some(s) = str_field(v, "view") {
+                let view = CalView::parse(s).ok_or_else(|| format!("bad view \"{s}\" (year | month | week | day)"))?;
+                handle.set_view(view);
+                changes.push(format!("view {}", view.key()));
+            }
+            if let Some(a) = day_arg(v, "anchor")? {
+                handle.set_anchor(a);
+                changes.push(format!("anchor {}", days_to_iso(a)));
+            }
+            if let Some(list) = list_field(v, "calendars") {
+                let store = ctx.calendar_store();
+                let store = store.lock();
+                let ids: Result<Vec<String>, String> = list.iter().map(|c| resolve_calendar(&store, c)).collect();
+                drop(store);
+                let ids = ids?;
+                handle.set_calendars(ids.clone());
+                changes.push(format!("calendars {}", if ids.is_empty() { "all".to_string() } else { ids.join(", ") }));
+            }
+            if changes.is_empty() {
+                return Err("nothing to change: pass view, anchor or calendars".to_string());
+            }
+            Ok(format!("{}\n{}", changes.join(", "), calendar_widget_text(&id, &handle)))
+        }
+        "set_style" => {
+            let (id, handle) = calendar_handle(ctx, v)?;
+            let changes = apply_calendar_style(&handle, v)?;
+            if changes.is_empty() {
+                return Err("nothing to change: pass style with preset, event_style, hours, colors or layers".to_string());
+            }
+            Ok(format!("style: {}\n{}", changes.join(", "), calendar_widget_text(&id, &handle)))
+        }
+        "add_event" => {
+            let store = ctx.calendar_store();
+            let title = str_field(v, "title").ok_or("missing \"title\"")?.to_string();
+            let day = day_arg(v, "date")?.unwrap_or_else(today_days);
+            let snapshot = store.lock().clone();
+            let calendar = match str_field(v, "calendar") {
+                Some(c) => resolve_calendar(&snapshot, c)?,
+                None => snapshot.calendars.first().map(|c| c.id.clone()).unwrap_or_default(),
+            };
+            let mut event = CalEvent::new(&calendar, &title, day);
+            apply_event_fields(ctx, &snapshot, &mut event, v)?;
+            let id = store.add_event(event);
+            let s = store.lock();
+            let e = s.event(&id).ok_or("event vanished")?;
+            Ok(format!("added event {}\n", event_line(&s, e)))
+        }
+        "update_event" | "move_event" | "complete" | "delete_event" => {
+            let store = ctx.calendar_store();
+            let snapshot = store.lock().clone();
+            let on = day_arg(v, "on")?;
+            let id = resolve_event(&snapshot, str_field(v, "event").ok_or("missing \"event\"")?, on)?;
+            if op == "delete_event" {
+                let title = snapshot.event(&id).map(|e| e.title.clone()).unwrap_or_default();
+                store.remove_event(&id);
+                return Ok(format!("deleted event \"{title}\" ({id})\n"));
+            }
+            if op == "complete" {
+                let done = bool_field(v, "done").unwrap_or(true);
+                store.update_event(&id, |e| e.done = done);
+                let s = store.lock();
+                return Ok(format!("event {}\n", event_line(&s, s.event(&id).ok_or("event vanished")?)));
+            }
+            let mut event = snapshot.event(&id).cloned().ok_or("event vanished")?;
+            let mut changes = apply_event_fields(ctx, &snapshot, &mut event, v)?;
+            if op == "move_event" && changes.is_empty() {
+                return Err("nothing to move: pass date and/or start_time".to_string());
+            }
+            if changes.is_empty() {
+                return Err(
+                    "nothing to update: pass title, date, end_date, start_time, end_time, all_day, calendar, \
+                     color, note, done, repeat, until or link"
+                        .to_string(),
+                );
+            }
+            store.update_event(&id, |e| {
+                let keep = e.id.clone();
+                *e = event;
+                e.id = keep;
+            });
+            changes.dedup();
+            let s = store.lock();
+            Ok(format!("updated {}: {}\n", changes.join(", "), event_line(&s, s.event(&id).ok_or("event vanished")?)))
+        }
+        "add_calendar" => {
+            let store = ctx.calendar_store();
+            let name = str_field(v, "name").ok_or("missing \"name\"")?;
+            let color = match str_field(v, "color") {
+                Some(c) => parse_hex_color(c, false)?,
+                None => String::new(),
+            };
+            let id = store.add_calendar(name, &color);
+            let s = store.lock();
+            Ok(format!("added calendar {id} \"{name}\"\n{}", calendar_text(&s, today_days(), today_days(), &[], &[])))
+        }
+        "update_calendar" => {
+            let store = ctx.calendar_store();
+            let snapshot = store.lock().clone();
+            let id = resolve_calendar(&snapshot, str_field(v, "calendar").ok_or("missing \"calendar\"")?)?;
+            let name = str_field(v, "name").map(str::to_string);
+            let color = match str_field(v, "color") {
+                Some(c) => Some(parse_hex_color(c, false)?),
+                None => None,
+            };
+            if name.is_none() && color.is_none() {
+                return Err("nothing to update: pass name or color".to_string());
+            }
+            store.edit(|s| {
+                if let Some(c) = s.calendars.iter_mut().find(|c| c.id == id) {
+                    if let Some(n) = &name {
+                        c.name = n.clone();
+                    }
+                    if let Some(col) = &color {
+                        c.color = col.clone();
+                    }
+                }
+            });
+            let s = store.lock();
+            Ok(format!("updated calendar {id}\n{}", calendar_text(&s, today_days(), today_days(), &[], &[])))
+        }
+        "delete_calendar" => {
+            let store = ctx.calendar_store();
+            let snapshot = store.lock().clone();
+            let id = resolve_calendar(&snapshot, str_field(v, "calendar").ok_or("missing \"calendar\"")?)?;
+            if !store.remove_calendar(&id) {
+                return Err("the last calendar can't be deleted".to_string());
+            }
+            let s = store.lock();
+            Ok(format!("deleted calendar {id} (its events moved to \"{}\")\n", s.calendars[0].name))
+        }
+        "delete" => {
+            let (id, _) = calendar_handle(ctx, v)?;
+            let out = delete_object(ctx, "calendar", &id)?;
+            Ok(format!("{out}the events stay in the project calendar\n"))
+        }
+        other => Err(format!(
+            "unknown calendar op \"{other}\" (create | read | set_view | set_style | add_event | update_event | \
+             move_event | delete_event | complete | list_events | add_calendar | update_calendar | \
+             delete_calendar | delete)"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2618,6 +3613,139 @@ mod tests {
         assert!(out.contains("zoom: 40 px/day"), "{out}");
         assert!(dispatch(ctx, "gantt", &serde_json::json!({"op": "set_zoom", "page": &page, "zoom": 500})).is_err());
         assert!(call(ctx, "gantt", serde_json::json!({"op": "show_today", "page": &page})).contains("today"));
+    }
+
+    /// Интеллект-карта через инструмент: создание из списка, узлы, перенос,
+    /// кросс-ссылки, раскладка, стиль, «из блока».
+    #[test]
+    fn mindmap_through_the_tool() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Идеи"})));
+        let out = call(
+            ctx,
+            "mindmap",
+            serde_json::json!({"op": "create", "page": &page, "title": "Проект", "outline": "# Проект\n\n- Идеи\n  - Первая\n- Сроки\n", "direction": "both"}),
+        );
+        assert!(out.contains("nodes: 4") && out.contains("direction: both"), "{out}");
+        assert!(out.contains("(#0)"), "карта — один блок, title идёт в корень: {out}");
+        assert!(out.contains("\"Проект\"") && out.contains("\"Первая\""), "{out}");
+        let (_, map) = object_refs(&ctx.page_markdown(&page)).into_iter().find(|(k, _)| k == "mindmap").unwrap();
+        let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", &map) else { panic!() };
+
+        // Узел: добавление под родителем по тексту, поля, свёрнутость.
+        let out = call(ctx, "mindmap", serde_json::json!({"op": "add_node", "map": &map, "parent": "Сроки", "text": "Дедлайн", "color": "red", "icon": "🔥"}));
+        assert!(out.contains("Дедлайн") && out.contains("icon 🔥"), "{out}");
+        call(ctx, "mindmap", serde_json::json!({"op": "update_node", "page": &page, "node": "Дедлайн", "note": "- [ ] проверить", "link": "Идеи", "shape": "pill", "collapsed": true}));
+        {
+            let doc = handle.lock();
+            let n = doc.nodes.iter().find(|n| n.text == "Дедлайн").unwrap();
+            assert_eq!(n.link.as_deref(), Some(page.as_str()));
+            assert_eq!(n.shape.key(), "pill");
+            assert!(n.collapsed && n.note.contains("проверить"));
+            assert_eq!(n.color, PALETTE[5]);
+        }
+        // Перенос: в своё поддерево нельзя, корень не переносится.
+        assert!(dispatch(ctx, "mindmap", &serde_json::json!({"op": "move_node", "map": &map, "node": "root", "parent": "Идеи"})).is_err());
+        assert!(dispatch(ctx, "mindmap", &serde_json::json!({"op": "move_node", "map": &map, "node": "Идеи", "parent": "Первая"})).is_err());
+        call(ctx, "mindmap", serde_json::json!({"op": "move_node", "map": &map, "node": "Дедлайн", "parent": "Идеи", "index": 0}));
+        {
+            // Один захват мьютекса на выражение: вложенный lock() — дедлок.
+            let doc = handle.lock();
+            let ideas = doc.nodes.iter().find(|n| n.text == "Идеи").unwrap().id.clone();
+            assert_eq!(doc.children_of(&ideas)[0].text, "Дедлайн");
+        }
+
+        // Кросс-ссылка, раскладка, стиль.
+        let out = call(ctx, "mindmap", serde_json::json!({"op": "add_link", "map": &map, "from": "Первая", "to": "Сроки", "label": "см."}));
+        assert!(out.contains("link") && out.contains("\"см.\""), "{out}");
+        assert!(dispatch(ctx, "mindmap", &serde_json::json!({"op": "add_link", "map": &map, "from": "Первая", "to": "Сроки"})).is_err());
+        call(ctx, "mindmap", serde_json::json!({"op": "set_layout", "map": &map, "direction": "down", "curve": "elbow", "h_gap": 60}));
+        let l = handle.layout();
+        assert_eq!((l.direction.key(), l.curve.key(), l.h_gap), ("down", "elbow", 60.0));
+        call(ctx, "mindmap", serde_json::json!({"op": "set_style", "map": &map, "style": {"palette": "rainbow", "font_size": 15, "show_icons": false}}));
+        let st = handle.style();
+        assert_eq!((st.font_size, st.show_icons, st.palette[0].as_str()), (15.0, false, "#FF5A5F"));
+        assert!(dispatch(ctx, "mindmap", &serde_json::json!({"op": "set_style", "map": &map, "style": {"nope": 1}})).is_err());
+
+        // Удаление узла с поддеревом и карта из блока страницы.
+        let out = call(ctx, "mindmap", serde_json::json!({"op": "delete_node", "map": &map, "node": "Идеи"}));
+        assert!(out.contains("deleted 3 nodes"), "перенесённый «Дедлайн» уходит с поддеревом: {out}");
+        call(ctx, "update", serde_json::json!({"page": &page, "content": "- Альфа\n  - А1\n- Бета\n", "mode": "append"}));
+        let idx = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        let block = idx.lines().find(|l| l.contains("bullet")).unwrap()[1..2].to_string();
+        let out = call(ctx, "mindmap", serde_json::json!({"op": "from_list", "page": &page, "block": &block, "title": "Список"}));
+        // Каждый пункт верхнего уровня — свой блок: берётся «Альфа» с «А1».
+        assert!(out.contains("mind map with 3 nodes") && out.contains("\"А1\""), "{out}");
+        assert_eq!(object_refs(&ctx.page_markdown(&page)).iter().filter(|(k, _)| k == "mindmap").count(), 2);
+
+        let out = call(ctx, "mindmap", serde_json::json!({"op": "delete", "map": &map}));
+        assert!(out.contains("embeds removed from 1 page"), "{out}");
+        assert!(!ctx.page_markdown(&page).contains(&format!("mindmap:{map}")));
+    }
+
+    /// Календарь: события в общем хранилище, повторы, диапазон, виджет.
+    #[test]
+    fn calendar_through_the_tool() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "План"})));
+        let out = call(ctx, "calendar", serde_json::json!({"op": "create", "page": &page, "view": "week", "anchor": "2026-09-03"}));
+        assert!(out.contains("(week view)"), "{out}");
+        let (_, widget) = object_refs(&ctx.page_markdown(&page)).into_iter().find(|(k, _)| k == "calendar").unwrap();
+
+        // Событие со временем и повтором; список за диапазон.
+        let out = call(
+            ctx,
+            "calendar",
+            serde_json::json!({"op": "add_event", "title": "Стендап", "date": "2026-09-01", "start_time": "09:30", "end_time": "10:00", "repeat": "weekly", "until": "2026-09-30", "color": "blue"}),
+        );
+        assert!(out.contains("09:30–10:00") && out.contains("repeat weekly until 2026-09-30"), "{out}");
+        call(ctx, "calendar", serde_json::json!({"op": "add_event", "title": "Отпуск", "date": "2026-09-10", "end_date": "2026-09-12"}));
+        let out = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-01", "to": "2026-09-30"}));
+        assert!(out.contains("Стендап") && out.contains("Отпуск") && out.contains("2026-09-10 → 2026-09-12"), "{out}");
+        let narrow = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-11", "to": "2026-09-11"}));
+        assert!(narrow.contains("Отпуск") && !narrow.contains("Стендап"), "{narrow}");
+
+        // Календари: свой, фильтр виджета, переезд событий при удалении.
+        let work = call(ctx, "calendar", serde_json::json!({"op": "add_calendar", "name": "Работа", "color": "green"}));
+        assert!(work.contains("Работа"), "{work}");
+        call(ctx, "calendar", serde_json::json!({"op": "update_event", "event": "Стендап", "calendar": "Работа"}));
+        let store = ctx.calendar_store();
+        assert_eq!(store.lock().calendars.len(), 2);
+        call(ctx, "calendar", serde_json::json!({"op": "set_view", "calendar": &widget, "view": "month", "calendars": ["Работа"]}));
+        {
+            let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", &widget) else { panic!() };
+            let d = handle.lock();
+            assert_eq!(d.view.key(), "month");
+            assert_eq!(d.calendars.len(), 1);
+        }
+        // Перенос, «сделано», удаление.
+        call(ctx, "calendar", serde_json::json!({"op": "move_event", "event": "Отпуск", "date": "2026-09-17"}));
+        {
+            let s = store.lock();
+            let e = s.events.iter().find(|e| e.title == "Отпуск").unwrap();
+            assert_eq!((e.date.as_str(), e.end_date.as_deref()), ("2026-09-17", Some("2026-09-19")), "многодневность сохраняется");
+        }
+        let out = call(ctx, "calendar", serde_json::json!({"op": "complete", "event": "Отпуск"}));
+        assert!(out.contains("done"), "{out}");
+        assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "move_event", "event": "Отпуск"})).is_err());
+        call(ctx, "calendar", serde_json::json!({"op": "delete_event", "event": "Отпуск"}));
+        assert_eq!(store.lock().events.len(), 1);
+
+        // Стиль виджета и слои; удаление виджета не трогает события.
+        call(ctx, "calendar", serde_json::json!({"op": "set_style", "calendar": &widget, "style": {"preset": "light", "hour_from": 7, "hour_to": 22, "slot_min": 15, "show_kanban_due": true}}));
+        {
+            let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", &widget) else { panic!() };
+            let st = handle.style();
+            assert_eq!((st.hour_from, st.hour_to, st.slot_min, st.show_kanban_due), (7, 22, 15, true));
+            assert_eq!(st.preset, "light");
+        }
+        assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "set_style", "calendar": &widget, "style": {"nope": 1}})).is_err());
+        let first = store.lock().calendars[0].id.clone();
+        assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "delete_calendar", "calendar": &first})).is_ok());
+        assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "delete_calendar", "calendar": "Работа"})).is_err(), "последний календарь");
+        let out = call(ctx, "calendar", serde_json::json!({"op": "delete", "calendar": &widget}));
+        assert!(out.contains("the events stay"), "{out}");
+        assert_eq!(store.lock().events.len(), 1, "события остаются в проекте");
     }
 
     /// Каждый ключ, который читает инструмент, обязан быть в схеме — иначе

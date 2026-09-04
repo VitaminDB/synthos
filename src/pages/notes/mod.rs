@@ -24,6 +24,7 @@ use crate::icons::*;
 
 pub mod autosave;
 pub mod blocks;
+pub mod calendar;
 pub mod contents;
 pub mod doc_menu;
 pub mod editor_pane;

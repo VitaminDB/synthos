@@ -672,3 +672,76 @@ document-editor {
 .notes-mindmap-note-editor {
     font-size: 12px;
 }
+
+/* ── Календарь ────────────────────────────────────────────────── */
+.notes-calendar-toolbar {
+    padding: 6px 8px;
+    border-bottom-width: 1px;
+    border-color: var(--border-soft);
+}
+.notes-calendar-view-btn.selected {
+    background-color: var(--surface-hover);
+    color: var(--primary);
+}
+.notes-calendar-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    padding: 0px 6px;
+}
+.notes-calendar-scroll {
+    background-color: var(--bg-chat);
+}
+/* Цвета сеток: текст, линии, акцент («сегодня», выбор), фон. */
+.notes-calendar-grid {
+    color: var(--text);
+    border-color: var(--border-soft);
+    accent-color: var(--primary);
+    background-color: var(--bg-chat);
+}
+.notes-calendar-popup {
+    background-color: var(--bg-shell);
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: var(--border);
+    padding: 12px;
+}
+.notes-calendar-popup-title {
+    font-size: 14px;
+    font-weight: 600;
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 8px 10px;
+}
+.notes-calendar-popup-label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.notes-calendar-note {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-search);
+    padding: 4px 6px;
+    height: 80px;
+}
+.notes-calendar-note-editor {
+    font-size: 12px;
+}
+.notes-calendar-chip {
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    padding: 2px 8px;
+    color: var(--text-muted);
+}
+.notes-calendar-chip.selected {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+.notes-calendar-chip-text {
+    font-size: 11px;
+}

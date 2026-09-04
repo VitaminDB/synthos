@@ -25,31 +25,56 @@ pub fn unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Смещение локальной таймзоны в секундах. Источник — `localtime_r` из
-/// libc (читает `/etc/localtime` и `TZ`, как и всё остальное на машине).
-/// Переменная `TZ_OFFSET_MIN` осталась как ручной override; если ничего не
-/// вышло — UTC, это безопасный дефолт, а не ошибка в логе.
-fn local_offset_secs() -> i64 {
-    if let Some(m) = std::env::var("TZ_OFFSET_MIN")
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-    {
+/// Переопределение смещения для тестов: `i64::MIN` — не задано.
+static OFFSET_OVERRIDE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
+
+/// Подменить локальное смещение (секунды) — только для тестов; `None`
+/// возвращает системное.
+pub fn override_offset_secs(secs: Option<i64>) {
+    OFFSET_OVERRIDE.store(secs.unwrap_or(i64::MIN), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Смещение локального времени от UTC в секундах: переопределение из
+/// тестов, переменная `TZ_OFFSET_MIN` (минуты), иначе системная зона через
+/// `localtime_r`; если и её нет — UTC.
+pub fn local_offset_secs() -> i64 {
+    let o = OFFSET_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+    if o != i64::MIN {
+        return o;
+    }
+    if let Some(m) = std::env::var("TZ_OFFSET_MIN").ok().and_then(|s| s.parse::<i64>().ok()) {
         return m * 60;
     }
-    #[cfg(unix)]
-    {
+    system_offset_secs().unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn system_offset_secs() -> Option<i64> {
+    // SAFETY: localtime_r пишет в переданную структуру и не хранит указатели.
+    unsafe {
         let t: libc::time_t = unix_secs() as libc::time_t;
-        // SAFETY: `tm` — plain-data структура, обнулённая инициализация для
-        // неё корректна; `localtime_r` пишет только в переданный `tm` и
-        // reentrant, указатели живут до конца вызова.
-        unsafe {
-            let mut tm: libc::tm = std::mem::zeroed();
-            if !libc::localtime_r(&t, &mut tm).is_null() {
-                return tm.tm_gmtoff as i64;
-            }
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&t, &mut tm).is_null() {
+            return None;
         }
+        Some(tm.tm_gmtoff as i64)
     }
-    0
+}
+
+#[cfg(not(unix))]
+fn system_offset_secs() -> Option<i64> {
+    None
+}
+
+/// Локальное «сейчас»: дни от эпохи и минуты с полуночи.
+pub fn local_now() -> (i64, u32) {
+    let secs = unix_secs() as i64 + local_offset_secs();
+    (secs.div_euclid(86_400), (secs.rem_euclid(86_400) / 60) as u32)
+}
+
+/// Локальный сегодняшний день в днях от эпохи.
+pub fn local_today_days() -> i64 {
+    local_now().0
 }
 
 /// Формат «HH:MM» текущего времени.
@@ -98,6 +123,18 @@ mod tests {
         assert_eq!(format_hm(60), "00:01");
         assert_eq!(format_hm(3600 + 60), "01:01");
         assert_eq!(format_hm(23 * 3600 + 59 * 60), "23:59");
+    }
+
+    #[test]
+    fn local_offset_override_and_now() {
+        override_offset_secs(Some(5 * 3600));
+        assert_eq!(local_offset_secs(), 5 * 3600);
+        let (days, minutes) = local_now();
+        assert!(minutes < 24 * 60);
+        assert_eq!(days, (unix_secs() as i64 + 5 * 3600).div_euclid(86_400));
+        override_offset_secs(None);
+        // Системное смещение — в пределах суток.
+        assert!(local_offset_secs().abs() <= 14 * 3600);
     }
 
     #[test]

@@ -24,6 +24,8 @@ use super::doc_menu;
 use super::kanban;
 use super::kanban::model::{MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use super::kanban::KanbanHandle;
+use super::calendar::model::{CalView, EventStyle, CalendarStyle};
+use super::calendar::CalendarHandle;
 use super::mindmap::model::{MindNode, MindmapDoc};
 use super::mindmap::MindmapHandle;
 use super::project::{PageGrid, PageLayout};
@@ -155,6 +157,7 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
         Some(t) if t.starts_with("kanban:") => tr!("notes.block.kanban"),
         Some(t) if t.starts_with("gantt:") => tr!("notes.block.gantt"),
         Some(t) if t.starts_with("mindmap:") => tr!("notes.block.mindmap"),
+        Some(t) if t.starts_with("calendar:") => tr!("notes.block.calendar"),
         _ => blocks::kind_label(props.kind, props.level),
     };
     let mut col = Column::new()
@@ -221,6 +224,12 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("mindmap:")) {
         if let Some(LiveObject::Mindmap { handle, .. }) = ctx.object("mindmap", oid.trim()) {
             col = col.child(mindmap_props(ctx, handle));
+        }
+    }
+    // Календарь: событие, вид, стиль, календари проекта.
+    if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("calendar:")) {
+        if let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", oid.trim()) {
+            col = col.child(calendar_props(ctx, handle));
         }
     }
 
@@ -934,6 +943,336 @@ fn mindmap_map_props(handle: &MindmapHandle, doc: &MindmapDoc) -> impl Widget {
         .child(show_icons)
         .child(field_row(tr!("notes.props.mindmap.max_w"), max_w))
         .child(reset)
+}
+
+/// Свойства календаря: выбранное событие, вид, стиль, календари проекта.
+fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
+    let store = ctx.calendar_store();
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = handle.structure_rev.get();
+        let _ = store.revision.get();
+        let selected = handle.selected.get();
+        let doc = handle.lock().clone();
+        let data = store.lock().clone();
+        let mut col = Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-props");
+        if let Some(e) = selected.as_deref().and_then(|id| data.event(id)).cloned() {
+            col = col.child(calendar_event_props(&store, &handle, &data, e));
+        }
+        col = col.child(calendar_view_props(&handle, &doc, &data));
+        col = col.child(calendar_style_props(&handle, &doc.style));
+        col = col.child(calendar_list_props(&store, &data));
+        vec![Box::new(col)]
+    })
+}
+
+fn calendar_event_props(
+    store: &super::calendar::CalendarStoreHandle,
+    handle: &CalendarHandle,
+    data: &super::calendar::model::CalendarStore,
+    e: super::calendar::model::CalEvent,
+) -> impl Widget {
+    use syngui::widgets::input::{DatePicker, Date};
+    let id = e.id.clone();
+    let s = store.clone();
+    let id_t = id.clone();
+    let title = TextField::with_text(e.title.clone())
+        .submit_on_focus_lost(true)
+        .on_submit(move |t| {
+            let t = t.to_string();
+            s.update_event(&id_t, move |e| e.title = t);
+        })
+        .class("notes-props-field");
+    let s = store.clone();
+    let id_d = id.clone();
+    let date = DatePicker::new()
+        .width(140.0)
+        .selected(
+            super::gantt::calendar::parse_days(&e.date)
+                .map(|d| {
+                    let (y, m, dd) = super::gantt::calendar::civil_from_days(d);
+                    Date::new(y as i32, m, dd)
+                })
+                .unwrap_or_else(Date::today),
+        )
+        .on_change(move |d| {
+            if let Some(d) = d {
+                let day = super::gantt::calendar::days_from_civil(d.year as i64, d.month, d.day);
+                s.move_event(&id_d, day, None);
+            }
+        });
+    let s = store.clone();
+    let id_done = id.clone();
+    let done = switch_row(tr!("notes.calendar.event.done"), e.done, move |on| {
+        s.update_event(&id_done, move |e| e.done = on);
+    });
+    let s = store.clone();
+    let id_c = id.clone();
+    let calendar = Dropdown::new()
+        .width(160.0)
+        .items(data.calendars.iter().map(|c| DropdownItem::new(c.id.clone(), c.name.clone())).collect())
+        .selected(e.calendar.clone())
+        .on_change(move |v| {
+            let v = v.to_string();
+            s.update_event(&id_c, move |e| e.calendar = v);
+        })
+        .class("notes-props-field");
+    let s = store.clone();
+    let id_col = id.clone();
+    let color = swatches(COLOR_PRESETS, (!e.color.is_empty()).then_some(e.color.as_str()), move |c| {
+        let c = c.unwrap_or_default();
+        s.update_event(&id_col, move |e| e.color = c);
+    });
+    let h_open = handle.clone();
+    let e_open = e.clone();
+    let s_del = store.clone();
+    let h_del = handle.clone();
+    let id_del = id.clone();
+    let actions = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(ToolButton::new(MI_EDIT).text(tr!("app.edit")).on_click(move || {
+            h_open.open_edit(e_open.clone(), syngui::core::Rect::new(syngui::core::Point::new(0.0, 40.0), syngui::core::Size::new(1.0, 1.0)))
+        }))
+        .child(ToolButton::new(MI_DELETE).text(tr!("notes.calendar.event.delete")).on_click(move || {
+            s_del.remove_event(&id_del);
+            h_del.select(None);
+        }));
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.calendar.event")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.mindmap.text"), title))
+        .child(field_row(tr!("notes.calendar.event.date"), date))
+        .child(done)
+        .child(field_row(tr!("notes.calendar.event.calendar"), calendar))
+        .child(field_row(tr!("notes.props.color"), color))
+        .child(actions)
+}
+
+fn calendar_view_props(
+    handle: &CalendarHandle,
+    doc: &super::calendar::model::CalendarDoc,
+    data: &super::calendar::model::CalendarStore,
+) -> impl Widget {
+    use syngui::widgets::input::{DatePicker, Date};
+    let style = doc.style.clone();
+    let h = handle.clone();
+    let view = Dropdown::new()
+        .width(132.0)
+        .items(CalView::ALL.iter().map(|v| DropdownItem::new(v.key(), syngui::i18n::tr(&format!("notes.calendar.view.{}", v.key())))).collect())
+        .selected(doc.view.key())
+        .on_change(move |v| {
+            if let Some(v) = CalView::parse(v) {
+                h.set_view(v);
+            }
+        })
+        .class("notes-props-field");
+    let h = handle.clone();
+    let (y, m, d) = super::gantt::calendar::civil_from_days(doc.anchor_days());
+    let anchor = DatePicker::new().width(140.0).selected(Date::new(y as i32, m, d)).on_change(move |dt| {
+        if let Some(dt) = dt {
+            h.set_anchor(super::gantt::calendar::days_from_civil(dt.year as i64, dt.month, dt.day));
+        }
+    });
+    let locale = super::calendar::view::locale();
+    let h = handle.clone();
+    let first = Dropdown::new()
+        .width(132.0)
+        .items([0u32, 5, 6].iter().map(|wd| DropdownItem::new(wd.to_string(), locale.weekday_short(*wd).to_string())).collect())
+        .selected(style.first_weekday.to_string())
+        .on_change(move |v| {
+            if let Ok(wd) = v.parse::<u32>() {
+                h.set_style(move |s| s.first_weekday = wd);
+            }
+        })
+        .class("notes-props-field");
+    let h = handle.clone();
+    let week_numbers = switch_row(tr!("notes.props.calendar.week_numbers"), style.show_week_numbers, move |on| h.set_style(|s| s.show_week_numbers = on));
+    let h1 = handle.clone();
+    let h2 = handle.clone();
+    let hours = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(
+            SpinBox::new().range(0.0, 23.0).step(1.0).width(72.0).value(style.hour_from as f64).on_change(move |v| h1.set_style(|s| s.hour_from = v as u32)).class("notes-props-field"),
+        )
+        .child(Text::new("–").class("notes-props-hint"))
+        .child(
+            SpinBox::new().range(1.0, 24.0).step(1.0).width(72.0).value(style.hour_to as f64).on_change(move |v| h2.set_style(|s| s.hour_to = v as u32)).class("notes-props-field"),
+        );
+    let h = handle.clone();
+    let slot = Dropdown::new()
+        .width(96.0)
+        .items([5u32, 10, 15, 20, 30, 60].iter().map(|m| DropdownItem::new(m.to_string(), m.to_string())).collect())
+        .selected(style.slot_min.to_string())
+        .on_change(move |v| {
+            if let Ok(m) = v.parse::<u32>() {
+                h.set_style(move |s| s.slot_min = m);
+            }
+        })
+        .class("notes-props-field");
+    let h = handle.clone();
+    let compact = switch_row(tr!("notes.props.calendar.compact"), style.compact, move |on| h.set_style(|s| s.compact = on));
+    let h = handle.clone();
+    let kanban = switch_row(tr!("notes.props.calendar.show_kanban"), style.show_kanban_due, move |on| h.set_style(|s| s.show_kanban_due = on));
+    let h = handle.clone();
+    let gantt = switch_row(tr!("notes.props.calendar.show_gantt"), style.show_gantt, move |on| h.set_style(|s| s.show_gantt = on));
+
+    // Фильтр календарей: чипы-переключатели; пустой фильтр = все.
+    let all: Vec<String> = data.calendars.iter().map(|c| c.id.clone()).collect();
+    let mut chips = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for c in &data.calendars {
+        let visible = doc.calendars.is_empty() || doc.calendars.contains(&c.id);
+        let h = handle.clone();
+        let id = c.id.clone();
+        let all = all.clone();
+        let mut chip = DecoratedBox::new().class(if visible { "notes-calendar-chip selected" } else { "notes-calendar-chip" });
+        if visible && !c.color.is_empty() {
+            chip = chip.style("border-color", syngui::core::Color::from_hex(&c.color));
+        }
+        chips = chips.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || h.toggle_calendar(&id, &all))
+                .child(chip.child(Text::new(c.name.clone()).max_lines(1).class("notes-calendar-chip-text"))),
+        );
+    }
+
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.calendar.view")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.calendar.view"), view))
+        .child(field_row(tr!("notes.props.calendar.anchor"), anchor))
+        .child(field_row(tr!("notes.props.calendar.calendars"), chips))
+        .child(field_row(tr!("notes.props.calendar.first_weekday"), first))
+        .child(week_numbers)
+        .child(field_row(tr!("notes.props.calendar.hours"), hours))
+        .child(field_row(tr!("notes.props.calendar.slot"), slot))
+        .child(compact)
+        .child(kanban)
+        .child(gantt)
+}
+
+fn calendar_style_props(handle: &CalendarHandle, style: &CalendarStyle) -> impl Widget {
+    let h = handle.clone();
+    let preset = Dropdown::new()
+        .width(132.0)
+        .items(CalendarStyle::PRESETS.iter().map(|p| DropdownItem::new(*p, syngui::i18n::tr(&format!("notes.calendar.preset.{p}")))).collect())
+        .selected(if style.preset.is_empty() { "theme".to_string() } else { style.preset.clone() })
+        .on_change(move |v| {
+            let v = v.to_string();
+            h.set_style(move |s| s.apply_preset(&v));
+        })
+        .class("notes-props-field");
+    let h = handle.clone();
+    let event_style = Dropdown::new()
+        .width(132.0)
+        .items(EventStyle::ALL.iter().map(|e| DropdownItem::new(e.key(), syngui::i18n::tr(&format!("notes.calendar.event_style.{}", e.key())))).collect())
+        .selected(style.event_style.key())
+        .on_change(move |v| {
+            if let Some(e) = EventStyle::parse(v) {
+                h.set_style(move |s| s.event_style = e);
+            }
+        })
+        .class("notes-props-field");
+    let h = handle.clone();
+    let font = SpinBox::new()
+        .range(8.0, 24.0)
+        .step(1.0)
+        .width(96.0)
+        .value(style.font_size as f64)
+        .on_change(move |v| h.set_style(|s| s.font_size = v as f32))
+        .class("notes-props-field");
+    let color_row = |current: String, presets: &'static [&'static str], fallback: (u8, u8, u8), on: Box<dyn Fn(String) + Send + Sync>| {
+        let on = std::sync::Arc::new(on);
+        let on_sw = on.clone();
+        let on_pk = on.clone();
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(swatches(presets, (!current.is_empty()).then_some(current.as_str()), move |c| on_sw(c.unwrap_or_default())))
+            .child(color_picker((!current.is_empty()).then_some(current.as_str()), fallback, move |hex| on_pk(hex)))
+    };
+    let h = handle.clone();
+    let today = color_row(style.today_color.clone(), COLOR_PRESETS, (79, 140, 255), Box::new(move |c| h.set_style(|s| { s.today_color = c; s.preset.clear(); })));
+    let h = handle.clone();
+    let header = color_row(style.header_bg.clone(), TINT_PRESETS, (36, 49, 73), Box::new(move |c| h.set_style(|s| { s.header_bg = c; s.preset.clear(); })));
+    let h = handle.clone();
+    let cell = color_row(style.cell_bg.clone(), TINT_PRESETS, (36, 49, 73), Box::new(move |c| h.set_style(|s| { s.cell_bg = c; s.preset.clear(); })));
+    let h = handle.clone();
+    let grid = color_row(style.grid_color.clone(), COLOR_PRESETS, (139, 149, 166), Box::new(move |c| h.set_style(|s| { s.grid_color = c; s.preset.clear(); })));
+    let h = handle.clone();
+    let weekend = color_row(style.weekend_tint.clone(), TINT_PRESETS, (36, 49, 73), Box::new(move |c| h.set_style(|s| { s.weekend_tint = c; s.preset.clear(); })));
+    let h = handle.clone();
+    let text = color_row(style.text_color.clone(), COLOR_PRESETS, (230, 232, 238), Box::new(move |c| h.set_style(|s| { s.text_color = c; s.preset.clear(); })));
+    Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.calendar.style")).class("notes-links-section"))
+        .child(field_row(tr!("notes.props.calendar.preset"), preset))
+        .child(field_row(tr!("notes.props.calendar.event_style"), event_style))
+        .child(field_row(tr!("notes.props.size"), font))
+        .child(field_row(tr!("notes.props.calendar.today_color"), today))
+        .child(field_row(tr!("notes.props.calendar.header_bg"), header))
+        .child(field_row(tr!("notes.props.calendar.cell_bg"), cell))
+        .child(field_row(tr!("notes.props.calendar.grid_color"), grid))
+        .child(field_row(tr!("notes.props.calendar.weekend"), weekend))
+        .child(field_row(tr!("notes.props.calendar.text_color"), text))
+}
+
+fn calendar_list_props(store: &super::calendar::CalendarStoreHandle, data: &super::calendar::model::CalendarStore) -> impl Widget {
+    let mut col = Column::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.calendar.list")).class("notes-links-section"));
+    let removable = data.calendars.len() > 1;
+    for c in &data.calendars {
+        let s = store.clone();
+        let id_name = c.id.clone();
+        let name = TextField::with_text(c.name.clone())
+            .submit_on_focus_lost(true)
+            .on_submit(move |t| {
+                let t = t.trim().to_string();
+                if !t.is_empty() {
+                    s.edit(|st| {
+                        if let Some(cal) = st.calendars.iter_mut().find(|c| c.id == id_name) {
+                            cal.name = t.clone();
+                        }
+                    });
+                }
+            })
+            .class("notes-props-field");
+        let s = store.clone();
+        let id_color = c.id.clone();
+        let color = swatches(COLOR_PRESETS, (!c.color.is_empty()).then_some(c.color.as_str()), move |v| {
+            let v = v.unwrap_or_default();
+            s.edit(|st| {
+                if let Some(cal) = st.calendars.iter_mut().find(|c| c.id == id_color) {
+                    cal.color = v.clone();
+                }
+            });
+        });
+        let mut row = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).child(DecoratedBox::new().class("grow").child(name));
+        if removable {
+            let s = store.clone();
+            let id_del = c.id.clone();
+            row = row.child(ToolButton::new(MI_CLOSE).on_click(move || {
+                s.remove_calendar(&id_del);
+            }));
+        }
+        col = col.child(row).child(color);
+    }
+    let s = store.clone();
+    col = col.child(
+        ToolButton::new(MI_ADD).text(tr!("notes.props.calendar.add_calendar")).on_click(move || {
+            s.add_calendar(&tr!("notes.props.calendar.new_calendar"), "");
+        }),
+    );
+    col
 }
 
 /// Цвета текста и подложки: пусто — «как в теме».

@@ -195,7 +195,9 @@ fn double_click_starts_editing() {
     let (mut w, handle) = map_with(&["Идея"]);
     let canvas = w.canvas();
     let g = geometry(&handle.lock());
-    let idea = handle.lock().children_of(&handle.root_id())[0].id.clone();
+    // Вложенный lock() в одном выражении — дедлок: сперва id корня.
+    let root = handle.root_id();
+    let idea = handle.lock().children_of(&root)[0].id.clone();
     let at = center_of(canvas, g.rect_of(&idea).unwrap());
     w.click(at);
     w.click(at);
@@ -207,14 +209,16 @@ fn dragging_a_node_onto_another_reparents_it() {
     let (mut w, handle) = map_with(&["А", "Б"]);
     let canvas = w.canvas();
     let g = geometry(&handle.lock());
-    let kids: Vec<String> = handle.lock().children_of(&handle.root_id()).iter().map(|n| n.id.clone()).collect();
+    let root = handle.root_id();
+    let kids: Vec<String> = handle.lock().children_of(&root).iter().map(|n| n.id.clone()).collect();
     let (a, b) = (kids[0].clone(), kids[1].clone());
     let from = center_of(canvas, g.rect_of(&b).unwrap());
     let to = center_of(canvas, g.rect_of(&a).unwrap());
     w.drag(from, to);
     let doc = handle.lock();
     assert_eq!(doc.node(&b).unwrap().parent.as_deref(), Some(a.as_str()), "Б стал ребёнком А");
-    assert_eq!(doc.children_of(&doc.root_id()).len(), 1);
+    let root_id = doc.root_id();
+    assert_eq!(doc.children_of(&root_id).len(), 1);
 }
 
 #[test]
@@ -222,7 +226,8 @@ fn dragging_a_node_into_empty_space_offsets_its_subtree() {
     let (mut w, handle) = map_with(&["А", "Б"]);
     let canvas = w.canvas();
     let g = geometry(&handle.lock());
-    let a = handle.lock().children_of(&handle.root_id())[0].id.clone();
+    let root = handle.root_id();
+    let a = handle.lock().children_of(&root)[0].id.clone();
     let r = g.rect_of(&a).unwrap();
     let from = center_of(canvas, r);
     // Далеко вправо-вниз, где узлов нет.

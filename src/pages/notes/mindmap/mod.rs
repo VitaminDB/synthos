@@ -132,15 +132,18 @@ impl MindmapHandle {
 
     /// Соседний узел после `sibling` (у корня — дочерний).
     pub fn add_sibling(&self, sibling: &str, text: &str) -> Option<String> {
-        let (parent, index) = {
+        // Решение принимается под мьютексом, действие — уже без него:
+        // вызов `add_child`/`edit` с живым guard'ом — дедлок (mutex не
+        // реентрантный), а у корня это ровно тот случай.
+        let spot = {
             let d = self.lock();
-            match d.node(sibling).and_then(|n| n.parent.clone()) {
-                Some(p) => {
-                    let idx = d.children_of(&p).iter().position(|n| n.id == sibling).map(|i| i + 1);
-                    (p, idx)
-                }
-                None => return self.add_child(Some(sibling), text),
-            }
+            d.node(sibling).and_then(|n| n.parent.clone()).map(|p| {
+                let idx = d.children_of(&p).iter().position(|n| n.id == sibling).map(|i| i + 1);
+                (p, idx)
+            })
+        };
+        let Some((parent, index)) = spot else {
+            return self.add_child(Some(sibling), text);
         };
         let mut id = None;
         self.edit(|d| id = d.add_node(&parent, text, index));

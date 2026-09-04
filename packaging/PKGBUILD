@@ -1,7 +1,7 @@
 # Maintainer: Alexeyev Vitaly
 pkgname=synthos
 pkgver=0.1.0
-pkgrel=178
+pkgrel=179
 pkgdesc="Synthos — локальная AI-студия: node-редактор (video/audio/music/image) + чат, редактор кода, голосовой ввод"
 license=("MIT" "Apache-2.0")
 arch=("x86_64")
@@ -45,6 +45,14 @@ build() {
     # Здесь только проверяем что бинарь существует.
     if [ ! -x "$WORKSPACE_ROOT/target/release/synthos" ]; then
         error "target/release/synthos не найден — запустите 'cargo build --release -p synthos' перед makepkg"
+        return 1
+    fi
+
+    # pkgrel зашивается в бинарь на этапе компиляции (build.rs → SYNTHOS_PKGREL,
+    # его показывает пилюля в титлбаре). Если pkgrel подняли уже после сборки,
+    # пакет N уедет с бинарём, который показывает N-1 — ловим это по mtime.
+    if [ "$startdir/PKGBUILD" -nt "$WORKSPACE_ROOT/target/release/synthos" ]; then
+        error "PKGBUILD новее бинаря — pkgrel подняли после сборки; пересоберите 'cargo build --release -p synthos'"
         return 1
     fi
 }

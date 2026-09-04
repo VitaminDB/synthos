@@ -118,6 +118,35 @@ const ALTERNATION_WINDOW: usize = 2 * ALTERNATION_STOP_AT;
 /// трижды не собравшая вызов, не соберёт его и на десятый раз — а бюджет
 /// ходов при этом сгорает молча.
 const INVALID_ARGS_STOP_AT: usize = 3;
+/// Сколько раз один и тот же вызов может вернуть тот же результат, прежде
+/// чем guard перестанет его исполнять (и, [`STAGNANT_STOP_AT`], остановит
+/// ход).
+///
+/// Считаем по результату, а не по числу вызовов: «правка файла → та же
+/// команда сборки» законна ровно до тех пор, пока сборка отвечает по-разному.
+/// Как только один и тот же вызов третий раз подряд отдаёт тот же вывод —
+/// между вызовами не изменилось ничего, что модель могла бы заметить, и
+/// продолжение петли гарантировано. Изменчивые части вывода (идентификаторы,
+/// числа) при сравнении не учитываются: 04.09.2026 агент 21 раз создал
+/// страницу «Туду — канбан» с одним и тем же телом, и каждый ответ отличался
+/// только новым id и номером в названии-дубликате.
+const STAGNANT_WARN_AT: usize = 2;
+/// Порог остановки хода (см. [`STAGNANT_WARN_AT`]).
+const STAGNANT_STOP_AT: usize = 3;
+/// Сколько исполнений одного и того же вызова за ход останавливают его
+/// независимо от результатов. Крайний предохранитель на случай, когда вывод
+/// формально меняется каждый раз (счётчик, время, новый id), а работы в этом
+/// нет: восьми одинаковых вызовов на одно сообщение пользователя не требует
+/// ни один законный сценарий.
+const TOTAL_STOP_AT: usize = 8;
+/// Сколько периодов чередования по «форме» вызова (см. [`call_shape`])
+/// переводят ход в анти-loop сэмплинг.
+///
+/// Порог выше, чем у чередования точных ключей, и срабатывание мягче — только
+/// температура, без блокировки вызова: одинаковая форма бывает и у честной
+/// пакетной работы («создать страницу → доску на ней» для каждой из десяти
+/// сфер), останавливать такое нельзя.
+const SHAPE_ALTERNATION_ANTI_LOOP_AT: usize = 3;
 /// Сколько символов результата инструмента уходит в промпт модели.
 ///
 /// В UI пузырь остаётся полным, обрезается только копия для истории:
@@ -1374,6 +1403,12 @@ struct RepeatState {
     /// Последние [`ALTERNATION_WINDOW`] ключей вызовов — для детекта
     /// чередования (см. [`alternation_periods`]).
     recent: std::collections::VecDeque<String>,
+    /// То же окно, но по формам вызовов (см. [`call_shape`]): ловит петлю,
+    /// в которой значения аргументов каждый раз новые.
+    recent_shapes: std::collections::VecDeque<String>,
+    /// По каждому вызову: отпечаток его последнего результата и сколько раз
+    /// подряд этот результат повторился (см. [`STAGNANT_WARN_AT`]).
+    outcomes: HashMap<String, (u64, usize)>,
 }
 
 /// Сколько полных периодов «A, B, A, B…» (A ≠ B) лежит в хвосте `keys`.
@@ -1403,6 +1438,26 @@ fn remember_call(recent: &mut std::collections::VecDeque<String>, key: &str) {
     recent.push_back(key.to_string());
 }
 
+/// Учесть результат исполненного вызова: вернуть, сколько раз подряд этот
+/// вызов отдаёт один и тот же вывод (0 — вывод только что изменился).
+fn note_outcome(outcomes: &mut HashMap<String, (u64, usize)>, key: &str, content: &str) -> usize {
+    let fp = outcome_fingerprint(content);
+    match outcomes.get_mut(key) {
+        Some(prev) if prev.0 == fp => {
+            prev.1 += 1;
+            prev.1
+        }
+        Some(prev) => {
+            *prev = (fp, 0);
+            0
+        }
+        None => {
+            outcomes.insert(key.to_string(), (fp, 0));
+            0
+        }
+    }
+}
+
 fn seen_calls_in_current_turn(ctx: &SynChatCtx) -> RepeatState {
     repeat_state_from(&ctx.messages.get_untracked())
 }
@@ -1415,20 +1470,35 @@ fn repeat_state_from(msgs: &[ChatMsg]) -> RepeatState {
         .map(|i| i + 1)
         .unwrap_or(0);
     let mut st = RepeatState::default();
+    // Какой вызов ждёт своего результата: guard считает стагнацию по выводу,
+    // а в ленте вывод лежит отдельным сообщением со ссылкой на id вызова.
+    let mut awaiting: HashMap<String, String> = HashMap::new();
     for m in msgs.iter().skip(from) {
-        if m.compacted_iter.is_some() || !matches!(m.kind, ChatMsgKind::ToolCall { .. }) {
+        if m.compacted_iter.is_some() {
             continue;
         }
-        for c in m.tool_calls.iter().flatten() {
-            let key = call_key(c);
-            *st.totals.entry(key.clone()).or_insert(0) += 1;
-            st.consecutive = if st.last.as_deref() == Some(key.as_str()) {
-                st.consecutive + 1
-            } else {
-                1
-            };
-            remember_call(&mut st.recent, &key);
-            st.last = Some(key);
+        match &m.kind {
+            ChatMsgKind::ToolCall { .. } => {
+                for c in m.tool_calls.iter().flatten() {
+                    let key = call_key(c);
+                    *st.totals.entry(key.clone()).or_insert(0) += 1;
+                    st.consecutive = if st.last.as_deref() == Some(key.as_str()) {
+                        st.consecutive + 1
+                    } else {
+                        1
+                    };
+                    remember_call(&mut st.recent, &key);
+                    remember_call(&mut st.recent_shapes, &call_shape(c));
+                    awaiting.insert(c.id.clone(), key.clone());
+                    st.last = Some(key);
+                }
+            }
+            ChatMsgKind::ToolResult { tool_call_id, .. } => {
+                if let Some(key) = awaiting.remove(tool_call_id) {
+                    note_outcome(&mut st.outcomes, &key, &m.body);
+                }
+            }
+            _ => {}
         }
     }
     st
@@ -1480,6 +1550,8 @@ async fn run_agent_loop(
                 last: last_call_key,
                 consecutive: consecutive_repeats,
                 recent: mut recent_keys,
+                mut recent_shapes,
+                outcomes: mut call_outcomes,
             },
     } = settings;
     let model_cap = model.model.config().max_seq_len;
@@ -1540,7 +1612,9 @@ async fn run_agent_loop(
     // переживают «Прервать» и «Продолжить» — иначе кнопка просто
     // перезапускала бы ту же петлю с чистого листа.
     let mut anti_loop = consecutive_repeats >= REPEAT_WARN_AT
-        || alternation_periods(&recent_keys) >= ALTERNATION_WARN_AT;
+        || alternation_periods(&recent_keys) >= ALTERNATION_WARN_AT
+        || alternation_periods(&recent_shapes) >= SHAPE_ALTERNATION_ANTI_LOOP_AT
+        || call_outcomes.values().any(|(_, n)| *n >= STAGNANT_WARN_AT);
     let mut last_call: Option<String> = last_call_key;
     let mut consecutive = consecutive_repeats;
     // Сколько вызовов подряд не прошли разбор аргументов (см.
@@ -2084,23 +2158,49 @@ async fn run_agent_loop(
                 1
             };
             remember_call(&mut recent_keys, &key);
+            remember_call(&mut recent_shapes, &call_shape(chat_call));
             let periods = alternation_periods(&recent_keys);
-            last_call = Some(key);
+            let shape_periods = alternation_periods(&recent_shapes);
+            // Сколько раз подряд этот же вызов уже вернул тот же результат.
+            let stagnant = call_outcomes.get(&key).map(|(_, n)| *n).unwrap_or(0);
+            last_call = Some(key.clone());
             // Новый вызов — петля разорвана, возвращаем сэмплинг пользователя.
-            if consecutive < REPEAT_WARN_AT && periods < ALTERNATION_WARN_AT {
+            if consecutive < REPEAT_WARN_AT
+                && periods < ALTERNATION_WARN_AT
+                && shape_periods < SHAPE_ALTERNATION_ANTI_LOOP_AT
+                && stagnant == 0
+                && total < REPEAT_HINT_AT
+            {
                 anti_loop = false;
             }
-            if consecutive >= REPEAT_STOP_AT || periods >= ALTERNATION_STOP_AT {
+            if consecutive >= REPEAT_STOP_AT
+                || periods >= ALTERNATION_STOP_AT
+                || stagnant >= STAGNANT_STOP_AT
+                || total >= TOTAL_STOP_AT
+            {
                 let text = if consecutive >= REPEAT_STOP_AT {
                     format!(
                         "Остановлено: инструмент `{}` вызван с теми же аргументами \
                          {consecutive}-й раз подряд — агент ходит по кругу.",
                         tool_name(chat_call)
                     )
-                } else {
+                } else if periods >= ALTERNATION_STOP_AT {
                     format!(
                         "Остановлено: агент {periods} раза подряд чередует одни и те же \
                          два вызова (последний — `{}`) — ходит по кругу.",
+                        tool_name(chat_call)
+                    )
+                } else if stagnant >= STAGNANT_STOP_AT {
+                    format!(
+                        "Остановлено: `{}` с этими аргументами {stagnant} раза подряд \
+                         вернул один и тот же результат — между вызовами не меняется \
+                         ничего, агент ходит по кругу.",
+                        tool_name(chat_call)
+                    )
+                } else {
+                    format!(
+                        "Остановлено: `{}` с этими аргументами вызван {total}-й раз за \
+                         ход — агент ходит по кругу.",
                         tool_name(chat_call)
                     )
                 };
@@ -2110,7 +2210,10 @@ async fn run_agent_loop(
                 stop_reason = Some(text);
                 break 'agent;
             }
-            if consecutive >= REPEAT_WARN_AT || periods >= ALTERNATION_WARN_AT {
+            if consecutive >= REPEAT_WARN_AT
+                || periods >= ALTERNATION_WARN_AT
+                || stagnant >= STAGNANT_WARN_AT
+            {
                 let text = if consecutive >= REPEAT_WARN_AT {
                     format!(
                         "Вызов `{}` с этими аргументами только что выполнялся — между \
@@ -2121,7 +2224,7 @@ async fn run_agent_loop(
                          известно.",
                         tool_name(chat_call)
                     )
-                } else {
+                } else if periods >= ALTERNATION_WARN_AT {
                     format!(
                         "Вызов `{}` с этими аргументами уже чередуется с предыдущим \
                          второй раз подряд — результаты обоих выше и не меняются, \
@@ -2130,16 +2233,39 @@ async fn run_agent_loop(
                          текстовый ответ по тому, что уже известно.",
                         tool_name(chat_call)
                     )
+                } else {
+                    format!(
+                        "Вызов `{}` с этими аргументами уже {} раза вернул один и тот же \
+                         результат (он выше) — повторно он не исполнен. Если нужного \
+                         эффекта нет, дело не в повторе: перечитай результат, проверь \
+                         текущее состояние другим действием и смени подход — либо дай \
+                         текстовый ответ по тому, что уже известно.",
+                        tool_name(chat_call),
+                        stagnant + 1
+                    )
                 };
                 log::warn!(
                     "[syn_chat] guard повторов: `{}` {}, вызов пропущен",
                     tool_name(chat_call),
-                    if consecutive >= REPEAT_WARN_AT { "повторён" } else { "чередуется" }
+                    if consecutive >= REPEAT_WARN_AT {
+                        "повторён"
+                    } else if periods >= ALTERNATION_WARN_AT {
+                        "чередуется"
+                    } else {
+                        "возвращает тот же результат"
+                    }
                 );
                 anti_loop = true;
                 push_tool_result(&chat_id, chat_call, text.clone(), true);
                 history.push(Message::tool_named(tool_name(chat_call), text));
                 continue;
+            }
+            // Вызов исполняем, но петля уже просматривается: тот же вызов
+            // не в первый раз за ход, либо агент по кругу делает одно и то
+            // же над новыми объектами. Greedy-декод из такого не выходит —
+            // поднимаем температуру, не трогая сам вызов.
+            if total >= REPEAT_HINT_AT || shape_periods >= SHAPE_ALTERNATION_ANTI_LOOP_AT {
+                anti_loop = true;
             }
 
             let decision = crate::agent::tool_flow::await_decision_on_tool_call(
@@ -2213,6 +2339,7 @@ async fn run_agent_loop(
                         anyhow::bail!(tr!("chat.session.error.reload_failed", reason = reason));
                     }
                 }
+                note_outcome(&mut call_outcomes, &key, &res.content);
                 let mut for_history = clip_for_history(&res.content, &tool_name(chat_call));
                 for_history.push_str(&note);
                 history.push(Message::tool_named(tool_name(chat_call), for_history));
@@ -2248,6 +2375,9 @@ async fn run_agent_loop(
             // полем `model_note`, а не в тело: так история, собранная из
             // ленты на следующем сообщении, совпадает с историей хода.
             let mut note = String::new();
+            // Результат учтён — со следующего вызова guard знает, изменилось
+            // ли что-нибудь (см. [`STAGNANT_WARN_AT`]).
+            note_outcome(&mut call_outcomes, &key, &outcome.content);
             if total >= REPEAT_HINT_AT {
                 // Не подряд — исполняем (после правки файла та же команда
                 // сборки законна), но если результат не меняется, модель
@@ -2565,6 +2695,76 @@ fn call_key(call: &ChatToolCall) -> String {
         .map(|v| v.to_string())
         .unwrap_or_else(|_| args.to_string());
     format!("{}\u{1f}{}", tool_name(call), canonical)
+}
+
+/// «Форма» вызова: инструмент, дискриминанты действия (`action`, `op`, …) и
+/// набор имён аргументов — без их значений.
+///
+/// Guard точных ключей видит петлю, только когда она повторяется байт в байт.
+/// Половина реальных петель так не выглядит: агент создаёт страницу, кладёт на
+/// неё доску, создаёт следующую страницу, кладёт доску на неё — второй вызов
+/// каждый раз адресует свежий id, и `alternation_periods` по точным ключам
+/// обрывается на первом же периоде. По форме такая пара совпадает.
+fn call_shape(call: &ChatToolCall) -> String {
+    let args = call.function.arguments.as_deref().unwrap_or("").trim();
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(args) else {
+        // Аргументы не разобрались — формы у вызова нет, остаётся точный ключ.
+        return call_key(call);
+    };
+    let mut shape = tool_name(call);
+    for disc in ["action", "op", "mode", "kind", "type"] {
+        if let Some(v) = map.get(disc).and_then(|v| v.as_str()) {
+            shape.push('\u{1f}');
+            shape.push_str(disc);
+            shape.push('=');
+            shape.push_str(v);
+        }
+    }
+    let mut names: Vec<&str> = map.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    shape.push('\u{1f}');
+    shape.push_str(&names.join(","));
+    shape
+}
+
+/// Отпечаток результата инструмента: хеш вывода, из которого выброшены
+/// изменчивые части — числа и hex-идентификаторы.
+///
+/// Без этого «created … page: 7836e7842679 · "Туду — канбан 2"» и
+/// «created … page: 84b0fe985a42 · "Туду — канбан 3"» — разные строки, хотя
+/// произошло в них одно и то же. Слова с буквами вне hex-алфавита не трогаем:
+/// `E0308` обязан отличаться от `E0277`, иначе две разные ошибки сборки
+/// схлопнутся в одну и guard остановит агента, который на самом деле движется.
+fn outcome_fingerprint(out: &str) -> u64 {
+    fn is_hex_id(w: &str) -> bool {
+        w.len() >= 6
+            && w.bytes().any(|b| b.is_ascii_digit())
+            && w.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+    let mut norm = String::with_capacity(out.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, norm: &mut String| {
+        if !word.is_empty() {
+            if word.bytes().all(|b| b.is_ascii_digit()) || is_hex_id(word) {
+                norm.push('#');
+            } else {
+                norm.push_str(word);
+            }
+            word.clear();
+        }
+    };
+    for c in out.chars() {
+        if c.is_ascii_alphanumeric() {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut norm);
+            norm.push(c);
+        }
+    }
+    flush(&mut word, &mut norm);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&norm, &mut h);
+    std::hash::Hasher::finish(&h)
 }
 
 /// Предел копии для промпта по инструменту. `None` — не обрезать.
@@ -3296,6 +3496,129 @@ mod tests {
         // Правка между двумя сборками — это не петля: подряд идущих нет.
         assert_eq!(st.consecutive, 1);
         assert_eq!(st.totals[&call_key(&call("bash", r#"{"command":"build"}"#))], 2);
+    }
+
+    fn call_with_id(id: &str, name: &str, args: &str) -> ChatToolCall {
+        let mut c = call(name, args);
+        c.id = id.to_string();
+        c
+    }
+
+    /// Аргументы одного вызова из петли 04.09.2026 (чат «LifeBalance»).
+    const LOOP_CREATE: &str = r#"{"action":"create","title":"Туду — канбан","parent":"root","icon":"K","layout":"free","content":"board"}"#;
+
+    fn loop_kanban(page: &str) -> String {
+        format!(r#"{{"action":"kanban","op":"create","page":"{page}","columns":["a","b"]}}"#)
+    }
+
+    #[test]
+    fn call_shape_ignores_argument_values() {
+        // Один и тот же вызов над разными объектами — одна форма.
+        assert_eq!(
+            call_shape(&call("notes", &loop_kanban("a2ffdb012dfe"))),
+            call_shape(&call("notes", &loop_kanban("7836e7842679")))
+        );
+    }
+
+    #[test]
+    fn call_shape_separates_actions_and_argument_sets() {
+        // Разное действие того же инструмента — разные формы.
+        assert_ne!(
+            call_shape(&call("notes", r#"{"action":"create","title":"x"}"#)),
+            call_shape(&call("notes", r#"{"action":"update","title":"x"}"#))
+        );
+        // Разный набор аргументов — тоже: `read` страницы и `read` доски
+        // делают разное.
+        assert_ne!(
+            call_shape(&call("notes", r#"{"action":"read","page":"a"}"#)),
+            call_shape(&call("notes", r#"{"action":"read","board":"a"}"#))
+        );
+    }
+
+    #[test]
+    fn shape_alternation_sees_a_loop_over_fresh_objects() {
+        // Ровно петля из чата «LifeBalance»: «создать страницу → положить на
+        // неё доску», и так до конца бюджета ходов. Второй вызов каждый раз
+        // адресует свежий id, поэтому по точным ключам петли не видно.
+        let pages = ["a2ffdb012dfe", "7836e7842679", "84b0fe985a42"];
+        let mut keys = std::collections::VecDeque::new();
+        let mut shapes = std::collections::VecDeque::new();
+        for page in pages {
+            for c in [call("notes", LOOP_CREATE), call("notes", &loop_kanban(page))] {
+                remember_call(&mut keys, &call_key(&c));
+                remember_call(&mut shapes, &call_shape(&c));
+            }
+        }
+        assert!(
+            alternation_periods(&keys) < ALTERNATION_WARN_AT,
+            "guard точных ключей эту петлю и не видел — тест ловит регресс наоборот"
+        );
+        assert!(alternation_periods(&shapes) >= SHAPE_ALTERNATION_ANTI_LOOP_AT);
+    }
+
+    #[test]
+    fn outcome_fingerprint_ignores_ids_and_counters() {
+        // Два ответа `create` из петли: разный id страницы и разный номер в
+        // названии-дубликате — произошло при этом одно и то же.
+        let a = "created\ncontent: 35 words\npage: 7836e7842679 · \"Туду — канбан 2\"\n";
+        let b = "created\ncontent: 35 words\npage: 84b0fe985a42 · \"Туду — канбан 3\"\n";
+        assert_eq!(outcome_fingerprint(a), outcome_fingerprint(b));
+    }
+
+    #[test]
+    fn outcome_fingerprint_keeps_meaningful_differences() {
+        // Коды ошибок сборки схлопывать нельзя: агент, у которого E0308
+        // сменилась на E0277, движется — останавливать его guard не должен.
+        assert_ne!(
+            outcome_fingerprint("error[E0308]: mismatched types"),
+            outcome_fingerprint("error[E0277]: trait not satisfied")
+        );
+        assert_ne!(
+            outcome_fingerprint("compiled with 0 errors"),
+            outcome_fingerprint("compiled with warnings")
+        );
+    }
+
+    #[test]
+    fn note_outcome_counts_repeats_and_resets_on_change() {
+        let mut outcomes = HashMap::new();
+        assert_eq!(note_outcome(&mut outcomes, "k", "created page: aaaa11"), 0);
+        assert_eq!(note_outcome(&mut outcomes, "k", "created page: bbbb22"), 1);
+        assert_eq!(note_outcome(&mut outcomes, "k", "created page: cccc33"), 2);
+        // Вывод изменился по существу — счётчик стагнации обнуляется.
+        assert_eq!(note_outcome(&mut outcomes, "k", "error: no such page"), 0);
+    }
+
+    #[test]
+    fn repeat_state_tracks_stagnation_from_ledger() {
+        // «Продолжить» после петли обязано видеть, что вызов уже дважды отдал
+        // тот же результат, — иначе кнопка запускает её заново.
+        let msgs = vec![
+            ChatMsg::user("u"),
+            ChatMsg::tool_call("notes", LOOP_CREATE, vec![call_with_id("c1", "notes", LOOP_CREATE)]),
+            ChatMsg::tool_result("c1", "notes", "created\npage: 7836e7842679 · \"Туду 2\"", false),
+            ChatMsg::tool_call("notes", LOOP_CREATE, vec![call_with_id("c2", "notes", LOOP_CREATE)]),
+            ChatMsg::tool_result("c2", "notes", "created\npage: 84b0fe985a42 · \"Туду 3\"", false),
+        ];
+        let st = repeat_state_from(&msgs);
+        let key = call_key(&call("notes", LOOP_CREATE));
+        assert_eq!(st.outcomes[&key].1, 1, "второй вызов отдал тот же результат");
+    }
+
+    #[test]
+    fn repeat_state_keeps_stagnation_at_zero_when_output_changes() {
+        // Правка → сборка → правка → сборка: вывод сборки меняется, и это не
+        // петля, сколько бы раз команда ни повторялась.
+        let build = r#"{"command":"cargo check"}"#;
+        let msgs = vec![
+            ChatMsg::user("u"),
+            ChatMsg::tool_call("bash", build, vec![call_with_id("b1", "bash", build)]),
+            ChatMsg::tool_result("b1", "bash", "error[E0308]: mismatched types", false),
+            ChatMsg::tool_call("bash", build, vec![call_with_id("b2", "bash", build)]),
+            ChatMsg::tool_result("b2", "bash", "error[E0277]: trait bound", false),
+        ];
+        let st = repeat_state_from(&msgs);
+        assert_eq!(st.outcomes[&call_key(&call("bash", build))].1, 0);
     }
 
     #[test]

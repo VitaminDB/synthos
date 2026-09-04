@@ -1125,12 +1125,38 @@ fn parse_parent(ctx: NotesCtx, v: &Json) -> Result<Option<String>, String> {
     }
 }
 
+/// id страницы-соседа с точно таким же названием — то самое совпадение, из-за
+/// которого `insert_page` переименует новую страницу в «Название 2».
+fn sibling_with_title(ctx: NotesCtx, parent: Option<&str>, title: &str) -> Option<String> {
+    let tree = ctx.tree.get_untracked();
+    let siblings = match parent {
+        None => tree.roots.clone(),
+        Some(pid) => tree.find(pid).map(|n| n.children.clone()).unwrap_or_default(),
+    };
+    siblings.into_iter().find(|n| n.title == title).map(|n| n.id)
+}
+
 fn create_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let title = str_field(v, "title").map(str::to_string).unwrap_or_else(|| tr!("notes.untitled"));
     let parent = parse_parent(ctx, v)?;
     let index = usize_field(v, "index");
+    // Дубликат названия среди соседей ловим ДО вставки: `insert_page` тихо
+    // переименует новую страницу («Туду — канбан 2»), и «created» в ответе
+    // выглядит как полный успех. Агент, который не увидел свою же прошлую
+    // страницу, на этом зацикливается — 04.09.2026 так родился 21 дубликат
+    // подряд. Страницу всё равно создаём (одноимённые страницы законны:
+    // «Журнал» в каждой сфере), но о совпадении говорим прямо.
+    let clash = sibling_with_title(ctx, parent.as_deref(), &title);
     let id = ctx.insert_page(parent.as_deref(), index, &title, false);
     let mut out = String::from("created\n");
+    if let Some(existing) = clash {
+        out.push_str(&format!(
+            "note: a sibling page \"{title}\" already exists (page: {existing}), so this new one \
+             was named \"{}\". If you meant that existing page, do not create it again — use \
+             update/open on {existing}.\n",
+            ctx.title_of(&id)
+        ));
+    }
     if let Some(icon) = str_field(v, "icon") {
         ctx.set_icon(&id, Some(icon.to_string()));
     }
@@ -3450,6 +3476,28 @@ mod tests {
     fn page_id(out: &str) -> String {
         let line = out.lines().find(|l| l.starts_with("page: ")).expect("page line");
         line[6..18].to_string()
+    }
+
+    /// Повторный `create` с тем же названием обязан сказать, что страница
+    /// уже есть: молчаливое переименование в «… 2» выглядит как успех, и
+    /// агент, не увидевший свою же прошлую страницу, зацикливается.
+    #[test]
+    fn create_reports_a_title_clash() {
+        let ctx = ctx();
+        let first = call(ctx, "create", serde_json::json!({"title": "Туду — канбан"}));
+        assert!(!first.contains("already exists"), "первой странице ругаться не на что: {first}");
+        let second = call(ctx, "create", serde_json::json!({"title": "Туду — канбан"}));
+        assert!(second.contains("already exists"), "{second}");
+        assert!(second.contains(&page_id(&first)), "нужен id существующей страницы: {second}");
+        assert!(second.contains("Туду — канбан 2"), "{second}");
+        // Одноимённые страницы у разных родителей законны — там не ругаемся.
+        let parent = page_id(&call(ctx, "create", serde_json::json!({"title": "Работа"})));
+        let child = call(
+            ctx,
+            "create",
+            serde_json::json!({"title": "Туду — канбан", "parent": parent}),
+        );
+        assert!(!child.contains("already exists"), "{child}");
     }
 
     /// Агент видит страницу без служебного хвоста, а после его правки

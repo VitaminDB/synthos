@@ -1991,7 +1991,20 @@ async fn run_agent_loop(
             } else {
                 0.0
             };
-            let raw_calls = parser.finish();
+            // Имя приводим к ключу каталога сразу на выходе парсера: дальше
+            // оно идёт и в историю (`<atem:invoke name=…>` следующего
+            // промпта), и в guard, и в политику подтверждений, и в UI.
+            // Канальный шаблон Muse разрешает модели `notes.action` — если
+            // это имя доживёт до истории, модель увидит его в своём же
+            // прошлом ходу и повторит.
+            let raw_calls: Vec<RawToolCall> = parser
+                .finish()
+                .into_iter()
+                .map(|mut c| {
+                    c.name = crate::agent::tools::executor::canonical_tool_name(&c.name).to_string();
+                    c
+                })
+                .collect();
             reused_total = reused_total.max(reused as u32);
             if let Some(slot) = kv_slot.as_mut() {
                 if reused == 0 && !slot.last_prompt.is_empty() {

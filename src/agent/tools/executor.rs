@@ -49,7 +49,7 @@ fn output_limit(tool: &str) -> usize {
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("Unknown tool: {0}")]
+    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, subagent, system, pipelines, notes")]
     Unknown(String),
     #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
@@ -110,30 +110,36 @@ pub fn normalize_args(raw: &str) -> String {
     }
 }
 
+/// Все ключи каталога — для канонизации имени вызова и для подсказки в
+/// тексте ошибки о неизвестном инструменте.
+pub(crate) const TOOL_KEYS: [&str; 8] = [
+    KEY_BASH,
+    KEY_KB_SEARCH,
+    KEY_WEB,
+    KEY_AUTOSKILL,
+    KEY_SUBAGENT,
+    KEY_SYSTEM,
+    KEY_PIPELINES,
+    KEY_NOTES,
+];
+
 /// Приводит имя вызова к ключу каталога.
 ///
 /// Канальные шаблоны (Muse Glimmer) объявляют инструменты пространствами
-/// имён — `# Valid recipients: "self", "bash.*", "user"` — и модель иногда
-/// пишет квалифицированное имя (`bash.bash`, `web.web`). Ключи каталога
-/// плоские, поэтому неизвестное имя с точкой пробуем как хвост.
-fn canonical_tool_name(name: &str) -> &str {
-    const KEYS: [&str; 8] = [
-        KEY_BASH,
-        KEY_KB_SEARCH,
-        KEY_WEB,
-        KEY_AUTOSKILL,
-        KEY_SUBAGENT,
-        KEY_SYSTEM,
-        KEY_PIPELINES,
-        KEY_NOTES,
-    ];
-    if KEYS.contains(&name) {
+/// имён — chat-шаблон рендерит `# Valid recipients: "self", "notes.*",
+/// "bash.*", "user".`, то есть сам разрешает модели любой суффикс внутри
+/// пространства. Она этим пользуется: `to=notes.action`, `to=bash.run`,
+/// а иногда пишет и `bash.bash` или harmony-стиль `functions.web`. Ключи
+/// каталога плоские, поэтому ключом считаем первый сегмент имени, который
+/// в каталоге есть, — 04.09.2026 `notes.action` уходил в «Unknown tool», и
+/// ход умирал на трёх одинаковых вызовах подряд.
+pub(crate) fn canonical_tool_name(name: &str) -> &str {
+    if TOOL_KEYS.contains(&name) {
         return name;
     }
-    match name.rsplit_once('.') {
-        Some((_, tail)) if KEYS.contains(&tail) => tail,
-        _ => name,
-    }
+    name.split('.')
+        .find(|seg| TOOL_KEYS.contains(seg))
+        .unwrap_or(name)
 }
 
 pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
@@ -248,6 +254,11 @@ mod tests {
     fn qualified_tool_name_resolves_to_catalog_key() {
         assert_eq!(canonical_tool_name("bash"), "bash");
         assert_eq!(canonical_tool_name("bash.bash"), "bash");
+        // Шаблон Muse объявляет пространство `notes.*` — модель дописывает
+        // в имя действие; ключ каталога сидит в голове, а не в хвосте.
+        assert_eq!(canonical_tool_name("notes.action"), "notes");
+        assert_eq!(canonical_tool_name("bash.run"), "bash");
+        assert_eq!(canonical_tool_name("functions.notes.create"), "notes");
         assert_eq!(canonical_tool_name("tools.web"), "web");
         // Незнакомое имя остаётся как есть — ошибку про него отдаст execute.
         assert_eq!(canonical_tool_name("weather.today"), "weather.today");

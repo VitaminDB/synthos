@@ -682,7 +682,16 @@ fn generate_subagent_turn(
         push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
         let vram_free = crate::syn_chat::model_registry::vram_available_mb() as u32;
         telemetry::patch(run_id, move |r| r.stats.vram_free_mb = vram_free);
-        let calls = parser.finish();
+        // Имя вызова — к ключу каталога (канальный шаблон разрешает модели
+        // `notes.action`, см. `executor::canonical_tool_name`).
+        let calls: Vec<RawToolCall> = parser
+            .finish()
+            .into_iter()
+            .map(|mut c| {
+                c.name = crate::agent::tools::executor::canonical_tool_name(&c.name).to_string();
+                c
+            })
+            .collect();
         return Ok(SubagentTurn {
             raw_text,
             clean_text,

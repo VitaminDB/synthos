@@ -3,7 +3,6 @@
 //! Все функции — для вызова с main thread (`use_context::<SynChatCtx>()`).
 
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::Ordering;
 
 use syngui::prelude::*;
 

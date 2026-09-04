@@ -221,7 +221,7 @@ chat.session.error.model_path_unknown = "모델 경로를 알 수 없음"
 chat.session.error.stopped_suffix = " 생성이 중지되었습니다. 기록은 그대로입니다. 작업을 구체화하거나 \"계속\"을 누르세요."
 chat.session.error.turn_cap_reached = "에이전트 턴 한도 {max_turns}에 도달해 중지됨 — 모델이 계속 도구를 호출하고 있었습니다. \"계속\"을 눌러 턴을 더 부여하세요"
 chat.session.error.empty_answer = "모델이 답변 없이 턴을 마쳤습니다 — 예산이 모두 추론에 쓰였습니다. \"계속\"을 눌러 한 턴을 더 주세요"
-chat.session.error.busy_other_chat A generation is running in another chat ({chat}) — wait for it to finish or stop it there.
+chat.session.error.busy_other_chat = "A generation is running in another chat ({chat}) — wait for it to finish or stop it there."
 chat.session.error.attachment_rejected = "첨부 파일이 모델에 전송되지 않음: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "노드 {node_id}(LTX Checkpoint): \"{name}\" — LTX 단계는 distilled 스케줄(stage1 8스텝 + stage2 3스텝)로 실행되며, 비distilled 체크포인트를 사용하면 영상이 흐려집니다. ltx-2.3-22b-distilled-1.1.syn을 사용하세요."
 chat.pipeline.error.no_active_chat = "활성화된 채팅 없음"

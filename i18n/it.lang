@@ -221,7 +221,7 @@ chat.session.error.model_path_unknown = "percorso del modello sconosciuto"
 chat.session.error.stopped_suffix = " Generazione interrotta, la cronologia è intatta. Chiarisci il compito oppure premi «Continua»."
 chat.session.error.turn_cap_reached = "interrotto al limite di {max_turns} turni dell'agente — il modello ha continuato a chiamare strumenti per tutto il tempo. Premi «Continua» per concedergli altri turni"
 chat.session.error.empty_answer = "il modello ha concluso il turno senza risposta — l'intero budget è finito nel ragionamento. Premi «Continua» per concedergli un altro turno"
-chat.session.error.busy_other_chat A generation is running in another chat ({chat}) — wait for it to finish or stop it there.
+chat.session.error.busy_other_chat = "A generation is running in another chat ({chat}) — wait for it to finish or stop it there."
 chat.session.error.attachment_rejected = "Allegato non inviato al modello: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "nodo {node_id} (LTX Checkpoint): «{name}» — le fasi di LTX seguono la pianificazione distilled (8 passi stage1 + 3 stage2), e un checkpoint non distillato produce video sfocati con questa pianificazione. Usa ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "nessuna chat attiva"

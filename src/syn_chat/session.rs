@@ -486,10 +486,15 @@ impl RingPlan {
         let want = prompt_tokens.min(cap) + answer_tokens + 128;
         let ring_tokens = want.div_ceil(RING_GRANULARITY) * RING_GRANULARITY;
         let ring_tokens = ring_tokens.min(hard_cap).max(1);
+        // Ёмкость сессии берём с запасом: пересоздание кэша стирает префикс,
+        // и на моделях, где бюджет позволяет лишь пару шагов (Muse-30B: 2 ГБ
+        // свободных), каждый рост промпта стоил полного префилла. Запас —
+        // вдвое от нужного ходу, но не больше того, что честно влезает.
         let session_ctx = want
             .div_ceil(SESSION_CTX_STEP)
             .max(1)
             .saturating_mul(SESSION_CTX_STEP)
+            .max(want.saturating_mul(2))
             .min(hard_cap)
             .max(ring_tokens);
         let prompt_capped = prompt_tokens.min(ring_tokens.saturating_sub(1));
@@ -572,6 +577,19 @@ pub fn send_message(text: String) {
         return;
     };
     if ctx.pending.get_untracked() {
+        return;
+    }
+    // Одна карта на все чаты: вторую генерацию параллельно первой не
+    // запускаем — иначе оба хода делят VRAM и падают по OOM.
+    if let Some(busy) = ctx.generating_chat.get_untracked() {
+        let title = ctx
+            .chats
+            .get_untracked()
+            .iter()
+            .find(|m| m.id == busy)
+            .map(|m| m.title.clone())
+            .unwrap_or_default();
+        ctx.error.set(Some(tr!("chat.session.error.busy_other_chat", chat = title)));
         return;
     }
     if ctx.attach_busy.get_untracked() > 0 {
@@ -791,6 +809,85 @@ fn reset_index_keyed_ui(ctx: &SynChatCtx) {
     ctx.compaction_open.set(HashMap::new());
 }
 
+/// Снять хвостовой пустой пузырь ассистента: он выглядит как «повисло».
+fn pop_empty_assistant(m: &mut Vec<ChatMsg>) {
+    if m.last()
+        .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
+        .unwrap_or(false)
+    {
+        m.pop();
+    }
+}
+
+/// Правка ленты чата, которому принадлежит генерация.
+///
+/// Активный чат правим в UI, фоновый — прямо в файле: с 04.09.2026
+/// переключение чата не обрывает ход, и его сообщения не должны попадать в
+/// чужую ленту. Файл — та же лента, которую `registry::select` прочитает при
+/// возврате, так что накопленное за время отсутствия не теряется.
+pub(crate) fn ledger_update<F>(chat_id: &Option<String>, f: F)
+where
+    F: FnOnce(&mut Vec<ChatMsg>) + Send + 'static,
+{
+    let owner = chat_id.clone();
+    run_on_main_thread(move || {
+        let ctx = use_context::<SynChatCtx>();
+        if ctx.active_chat_id.get_untracked() == owner {
+            ctx.messages.update(f);
+            return;
+        }
+        let Some(id) = owner else { return };
+        let Some(mut stored) = crate::syn_chat::storage::load(&id) else { return };
+        f(&mut stored.messages);
+        crate::syn_chat::storage::save(&stored);
+    });
+}
+
+/// Перелить накопленный за ход текст в ленту: открытый чат берёт его из
+/// живых стрим-сигналов, фоновый — из копии воркера (стрим туда не шёл).
+pub(crate) fn commit_turn_text(chat_id: &Option<String>, body: String, thinking: String) {
+    let owner = chat_id.clone();
+    run_on_main_thread(move || {
+        let ctx = use_context::<SynChatCtx>();
+        if ctx.active_chat_id.get_untracked() == owner {
+            ctx.commit_streaming_tail();
+            return;
+        }
+        if body.trim().is_empty() && thinking.trim().is_empty() {
+            return;
+        }
+        let Some(id) = owner else { return };
+        let Some(mut stored) = crate::syn_chat::storage::load(&id) else { return };
+        if let Some(last) = stored
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == ChatMsgRole::Assistant)
+        {
+            last.body.push_str(&body);
+            last.thinking.push_str(&thinking);
+        }
+        crate::syn_chat::storage::save(&stored);
+    });
+}
+
+/// Выполнить действие над контекстом, только если чат генерации открыт.
+///
+/// Живой стрим, плашки ошибок и `pending` принадлежат открытому чату: пока
+/// ход доигрывает в фоне, показывать их в другом чате нельзя.
+pub(crate) fn if_active<F>(chat_id: &Option<String>, f: F)
+where
+    F: FnOnce(&SynChatCtx) + Send + 'static,
+{
+    let owner = chat_id.clone();
+    run_on_main_thread(move || {
+        let ctx = use_context::<SynChatCtx>();
+        if ctx.active_chat_id.get_untracked() == owner {
+            f(&ctx);
+        }
+    });
+}
+
 /// Прерывает текущую генерацию. Worker увидит несовпадение abort-счётчика
 /// в callback'е и вернёт false.
 pub fn abort_current() {
@@ -898,6 +995,9 @@ pub fn continue_last() {
 /// локальном tokio current_thread runtime.
 fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     let app_ctx = use_context::<AppCtx>();
+    // Владелец хода: он переживёт переключение чатов, и по нему воркер решает,
+    // писать ли в открытую ленту или прямо в файл своего чата.
+    ctx.generating_chat.set(ctx.active_chat_id.get_untracked());
 
     // Карточки субагентов прошлого хода к новому вопросу отношения не
     // имеют — панель «Детали» начинает с чистого листа.
@@ -926,6 +1026,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         .autocompact_threshold_percent
         .get_untracked();
     let ctx_for_worker = ctx.clone();
+    let chat_for_worker = chat_id.clone();
     let abort = ctx.abort.clone();
 
     // 3. Worker — обычный std::thread, не tokio: synaptix CUDA блокирует.
@@ -939,8 +1040,15 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             Ok(rt) => rt,
             Err(e) => {
                 eprintln!("[syn_chat] не удалось создать tokio runtime: {e:#}");
-                let ctx = ctx_for_worker.clone();
+                let owner = chat_for_worker.clone();
                 run_on_main_thread(move || {
+                    let ctx = use_context::<SynChatCtx>();
+                    if ctx.generating_chat.get_untracked() == owner {
+                        ctx.generating_chat.set(None);
+                    }
+                    if ctx.active_chat_id.get_untracked() != owner {
+                        return;
+                    }
                     ctx.error.set(Some(tr!("chat.session.error.tokio_runtime", error = format!("{e:#}"))));
                     ctx.commit_streaming_tail();
                     ctx.pending.set(false);
@@ -999,33 +1107,39 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         });
         if let Err(e) = result {
             eprintln!("[syn_chat] agent-loop error: {e:#}");
-            let ctx = ctx_for_worker.clone();
-            run_on_main_thread(move || {
-                ctx.error.set(Some(format!("{e:#}")));
-            });
+            if_active(&chat_for_worker, move |c| c.error.set(Some(format!("{e:#}"))));
         }
-        // Финализация (всегда, даже при abort/error).
-        let ctx = ctx_for_worker;
+        // Финализация (всегда, даже при abort/error). Хвост стрима открытого
+        // чата добираем здесь; фоновый ход перелил свой текст сам.
+        if_active(&chat_for_worker, |c| c.commit_streaming_tail());
+        // Прерывание посреди хода оставляло в ленте пустой
+        // assistant-пузырь: в UI он выглядит как «повисло», а на
+        // следующем сообщении уезжает в промпт пустой assistant-репликой
+        // (`build_history` отбрасывал его, только пока он последний).
+        ledger_update(&chat_for_worker, |m| {
+            if m.last()
+                .map(|x| {
+                    x.role == ChatMsgRole::Assistant
+                        && matches!(x.kind, ChatMsgKind::Text)
+                        && x.body.is_empty()
+                        && x.thinking.is_empty()
+                })
+                .unwrap_or(false)
+            {
+                m.pop();
+            }
+        });
+        let owner = chat_for_worker;
         run_on_main_thread(move || {
-            ctx.commit_streaming_tail();
-            // Прерывание посреди хода оставляло в ленте пустой
-            // assistant-пузырь: в UI он выглядит как «повисло», а на
-            // следующем сообщении уезжает в промпт пустой assistant-репликой
-            // (`build_history` отбрасывал его, только пока он последний).
-            ctx.messages.update(|m| {
-                if m.last()
-                    .map(|x| {
-                        x.role == ChatMsgRole::Assistant
-                            && matches!(x.kind, ChatMsgKind::Text)
-                            && x.body.is_empty()
-                            && x.thinking.is_empty()
-                    })
-                    .unwrap_or(false)
-                {
-                    m.pop();
-                }
-            });
-            ctx.pending.set(false);
+            let ctx = use_context::<SynChatCtx>();
+            // Ход мог доигрывать в фоне: «идёт генерация» гасим глобально, а
+            // `pending` — только если открыт тот самый чат.
+            if ctx.generating_chat.get_untracked() == owner {
+                ctx.generating_chat.set(None);
+            }
+            if ctx.active_chat_id.get_untracked() == owner {
+                ctx.pending.set(false);
+            }
         });
     });
 }
@@ -1404,6 +1518,12 @@ async fn run_agent_loop(
         // ── План KV-ринга и запуск с ретраем по OOM.
         let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
         let mut oom_attempt = 0usize;
+        // Префикс-KV на этом ходу. Гаснет после OOM: кэш сессии — самый
+        // крупный кусок, который ход может отдать, и пересоздавать его тут же
+        // бессмысленно (ровно это и делал ретрай до 04.09.2026: сбрасывал
+        // 416 МБ, `ensure_kv_slot` немедленно брал их обратно, и все три
+        // попытки падали на той же аллокации).
+        let mut prefix_kv_turn = prefix_kv_on;
         // Пишется удавшейся попыткой хода; ретраи по OOM до присваивания не
         // доходят, поэтому ни инициализатор, ни `mut` не нужны.
         let turn_decode_s: f64;
@@ -1508,11 +1628,11 @@ async fn run_agent_loop(
             // после хода, а замыкание живёт только внутри стрима.
             let gen_before = total_gen_tokens;
             let abort_for_cb = abort.clone();
-            let ctx_for_cb = ctx.clone();
+            let chat_for_cb = chat_id.clone();
             let on_token = |id: u32, delta: &str| {
                 // Abort: сбросить накопленные буферы и выйти.
                 if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
-                    flush_streaming(&ctx_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
+                    flush_streaming(&chat_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
                     return false;
                 }
                 if ttft_ms.is_none() {
@@ -1532,7 +1652,7 @@ async fn run_agent_loop(
                 if now.duration_since(last_flush) >= flush_interval {
                     last_flush = now;
                     flush_streaming(
-                        &ctx_for_cb,
+                        &chat_for_cb,
                         &mut buf_body,
                         &mut buf_think,
                         &mut buf_tool,
@@ -1563,7 +1683,7 @@ async fn run_agent_loop(
                     on_token,
                 )
             } else {
-                let session = if prefix_kv_on {
+                let session = if prefix_kv_turn {
                     ensure_kv_slot(
                         &mut kv_slot,
                         &model,
@@ -1590,7 +1710,7 @@ async fn run_agent_loop(
 
             // Финальный flush — гарантированно сбрасываем хвост буферов.
             flush_streaming(
-                &ctx,
+                &chat_id,
                 &mut buf_body,
                 &mut buf_think,
                 &mut buf_tool,
@@ -1618,7 +1738,9 @@ async fn run_agent_loop(
 
             if let Err(e) = stream_res {
                 let oom = is_oom_error(&e);
-                let has_session = kv_slot.is_some();
+                // Сессия как резерв считается только если ход ею пользовался:
+                // после первого OOM префикс-KV на этом ходу уже выключен.
+                let has_session = prefix_kv_turn && kv_slot.is_some();
                 let retryable = oom
                     && tokens_this_turn == 0
                     && oom_attempt < MAX_OOM_RETRIES
@@ -1647,11 +1769,10 @@ async fn run_agent_loop(
                             oom_attempt,
                             MAX_OOM_RETRIES,
                         );
-                        let ctx_clear = ctx.clone();
-                        run_on_main_thread(move || {
-                            ctx_clear.streaming_body.set(String::new());
-                            ctx_clear.streaming_thinking.set(String::new());
-                            ctx_clear.streaming_tool.set(String::new());
+                        if_active(&chat_id, |c| {
+                            c.streaming_body.set(String::new());
+                            c.streaming_thinking.set(String::new());
+                            c.streaming_tool.set(String::new());
                         });
                         continue;
                     }
@@ -1660,9 +1781,9 @@ async fn run_agent_loop(
                         // пуле активаций, и пока он жив, forward'у может не
                         // хватать места под рабочие буферы (наблюдали OOM на
                         // alloc в 8 MB при живой сессии на 3.9 GB). Сбрасываем
-                        // и переигрываем ход: ensure_kv_slot пересоздаст кэш
-                        // под честный бюджет, а не выйдет — ход пройдёт на
-                        // обычном ринге с полным префиллом.
+                        // и переигрываем ход БЕЗ него: полный префилл дороже
+                        // по времени, но дешевле по памяти, а пересоздание
+                        // кэша тут же вернуло бы ход в ту же аллокацию.
                         let held_mb = kv_slot
                             .as_ref()
                             .map(|s| {
@@ -1671,11 +1792,13 @@ async fn run_agent_loop(
                             })
                             .unwrap_or(0);
                         *kv_slot = None;
+                        prefix_kv_turn = false;
                         let (freed, _) =
                             crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
                         log::warn!(
                             "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{}: \
-                             сброшен кэш префикс-KV ({held_mb} MB, трим вернул {freed} MB)",
+                             сброшен кэш префикс-KV ({held_mb} MB, трим вернул {freed} MB), \
+                             ход доигрывается без префикс-KV",
                             plan.ring_tokens,
                             plan.ring_mb(),
                             oom_attempt,
@@ -1693,11 +1816,10 @@ async fn run_agent_loop(
                             answer_budget
                         );
                     }
-                    let ctx_clear = ctx.clone();
-                    run_on_main_thread(move || {
-                        ctx_clear.streaming_body.set(String::new());
-                        ctx_clear.streaming_thinking.set(String::new());
-                        ctx_clear.streaming_tool.set(String::new());
+                    if_active(&chat_id, |c| {
+                        c.streaming_body.set(String::new());
+                        c.streaming_thinking.set(String::new());
+                        c.streaming_tool.set(String::new());
                     });
                     continue;
                 }
@@ -1737,7 +1859,6 @@ async fn run_agent_loop(
             // Статистика панели — по КАЖДОМУ ходу, а не только по первому:
             // после tool-вызовов промпт вырастает в разы, и старое значение
             // (промпт первого хода) выглядело как «токенов мало, а OOM».
-            let ctx_stat = ctx.clone();
             let stat = TurnStats {
                 prompt_tokens: prompt_ids.len() as u32,
                 reused_tokens: reused as u32,
@@ -1749,7 +1870,7 @@ async fn run_agent_loop(
                 ctx_budget: plan.by_mem as u32,
                 vram_free_mb: vram_after as u32,
             };
-            run_on_main_thread(move || stat.apply(&ctx_stat));
+            if_active(&chat_id, move |c| stat.apply(c));
 
             break (
                 clean_text,
@@ -1796,8 +1917,10 @@ async fn run_agent_loop(
                 pending_note = Some(EMPTY_TURN_NOTE);
                 continue;
             }
-            // Обычный текстовый ответ. commit_streaming_tail сделает
-            // финализацию в send_message wrapper'е.
+            // Обычный текстовый ответ — конец хода. Открытый чат доберёт
+            // хвост стрима в финализации, фоновому его взять неоткуда:
+            // стрим туда не шёл, текст есть только у воркера.
+            commit_turn_text(&chat_id, clean_text.clone(), think_text.clone());
             empty_answer = false;
             answered = true;
             break;
@@ -1805,8 +1928,7 @@ async fn run_agent_loop(
 
         // Tool-calls: коммитим накопленный текст в leading-bubble, дальше
         // создаём отдельные tool_call/tool_result bubble'ы.
-        let ctx_commit = ctx.clone();
-        run_on_main_thread(move || ctx_commit.commit_streaming_tail());
+        commit_turn_text(&chat_id, clean_text.clone(), think_text.clone());
 
         // History: реплика ассистента с вызовами в каноническом виде — том
         // же, что `build_history` соберёт из ленты на следующем сообщении.
@@ -1849,19 +1971,16 @@ async fn run_agent_loop(
                 .first()
                 .and_then(|c| c.function.arguments.as_deref()),
         );
-        let ctx_call = ctx.clone();
-        run_on_main_thread(move || {
-            ctx_call.messages.update(|m| {
-                // Удаляем хвост пустого assistant-placeholder'а (создан в
-                // send_message); вместо него ставим tool_call bubble.
-                if m.last()
-                    .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
-                    .unwrap_or(false)
-                {
-                    m.pop();
-                }
-                m.push(ChatMsg::tool_call(name_for_ui, args_pretty, calls_for_ui));
-            });
+        ledger_update(&chat_id, move |m| {
+            // Удаляем хвост пустого assistant-placeholder'а (создан в
+            // send_message); вместо него ставим tool_call bubble.
+            if m.last()
+                .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
+                .unwrap_or(false)
+            {
+                m.pop();
+            }
+            m.push(ChatMsg::tool_call(name_for_ui, args_pretty, calls_for_ui));
         });
 
         // Выполняем каждый tool: guard повторов → confirm → execute → push.
@@ -1904,7 +2023,7 @@ async fn run_agent_loop(
                     )
                 };
                 log::warn!("[syn_chat] guard повторов: {text}");
-                push_tool_result(&ctx, chat_call, text.clone(), true);
+                push_tool_result(&chat_id, chat_call, text.clone(), true);
                 history.push(Message::tool_named(tool_name(chat_call), text.clone()));
                 stop_reason = Some(text);
                 break 'agent;
@@ -1936,7 +2055,7 @@ async fn run_agent_loop(
                     if consecutive >= REPEAT_WARN_AT { "повторён" } else { "чередуется" }
                 );
                 anti_loop = true;
-                push_tool_result(&ctx, chat_call, text.clone(), true);
+                push_tool_result(&chat_id, chat_call, text.clone(), true);
                 history.push(Message::tool_named(tool_name(chat_call), text));
                 continue;
             }
@@ -1950,7 +2069,7 @@ async fn run_agent_loop(
             match decision {
                 ToolDecision::Cancel => {
                     push_tool_result(
-                        &ctx,
+                        &chat_id,
                         chat_call,
                         tr!("chat.session.tool.cancelled"),
                         true,
@@ -1991,7 +2110,7 @@ async fn run_agent_loop(
                     String::new()
                 };
                 push_tool_result_with(
-                    &ctx,
+                    &chat_id,
                     chat_call,
                     res.content.clone(),
                     res.error,
@@ -2065,7 +2184,7 @@ async fn run_agent_loop(
                 note.push_str(&system_prompt::budget_note(turns_left));
             }
             push_tool_result_with(
-                &ctx,
+                &chat_id,
                 chat_call,
                 outcome.content.clone(),
                 outcome.error,
@@ -2143,45 +2262,33 @@ async fn run_agent_loop(
 
         // Готовим placeholder для следующего turn (UI bubble — пустой
         // assistant, который заполнится stream'ом).
-        let ctx_ph = ctx.clone();
-        run_on_main_thread(move || {
-            ctx_ph.messages.update(|m| {
-                m.push(ChatMsg::assistant_empty());
-            });
-            ctx_ph.streaming_body.set(String::new());
-            ctx_ph.streaming_thinking.set(String::new());
-            ctx_ph.streaming_tool.set(String::new());
+        ledger_update(&chat_id, |m| m.push(ChatMsg::assistant_empty()));
+        if_active(&chat_id, |c| {
+            c.streaming_body.set(String::new());
+            c.streaming_thinking.set(String::new());
+            c.streaming_tool.set(String::new());
         });
     }
 
     if let Some(reason) = stop_reason {
-        let ctx_stop = ctx.clone();
-        run_on_main_thread(move || {
-            // Плейсхолдер этого хода уже заменён tool_call-пузырём, чистить
-            // нечего — но кнопка «Продолжить» нужна: пользователь может дать
-            // агенту ещё попытку, уже с заметками guard'а в контексте.
-            ctx_stop.turn_cap_reached.set(true);
-            ctx_stop.error.set(Some(format!(
+        // Плейсхолдер этого хода уже заменён tool_call-пузырём, чистить
+        // нечего — но кнопка «Продолжить» нужна: пользователь может дать
+        // агенту ещё попытку, уже с заметками guard'а в контексте.
+        if_active(&chat_id, move |c| {
+            c.turn_cap_reached.set(true);
+            c.error.set(Some(format!(
                 "{reason}{}",
                 tr!("chat.session.error.stopped_suffix")
             )));
         });
     } else if empty_answer {
-        let ctx_empty = ctx.clone();
-        run_on_main_thread(move || {
-            // Пустой пузырь этого хода убираем — он выглядит как «повисло».
-            ctx_empty.messages.update(|m| {
-                if m.last()
-                    .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
-                    .unwrap_or(false)
-                {
-                    m.pop();
-                }
-            });
-            // «Продолжить» отдаёт агенту ещё ход с целой историей — ровно то,
-            // что здесь нужно.
-            ctx_empty.turn_cap_reached.set(true);
-            ctx_empty.error.set(Some(tr!("chat.session.error.empty_answer")));
+        // Пустой пузырь этого хода убираем — он выглядит как «повисло».
+        ledger_update(&chat_id, pop_empty_assistant);
+        // «Продолжить» отдаёт агенту ещё ход с целой историей — ровно то,
+        // что здесь нужно.
+        if_active(&chat_id, |c| {
+            c.turn_cap_reached.set(true);
+            c.error.set(Some(tr!("chat.session.error.empty_answer")));
         });
     } else if !answered {
         log::warn!(
@@ -2189,20 +2296,12 @@ async fn run_agent_loop(
              это время вызывала инструменты и ни разу не дала текстовый ответ. \
              Генерация остановлена, история цела — можно продолжить."
         );
-        let ctx_cap = ctx.clone();
-        run_on_main_thread(move || {
-            // Убираем пустой assistant-плейсхолдер последнего хода — иначе в
-            // ленте висит пустой пузырь, который выглядит как «повисло».
-            ctx_cap.messages.update(|m| {
-                if m.last()
-                    .map(|x| x.role == ChatMsgRole::Assistant && x.body.is_empty())
-                    .unwrap_or(false)
-                {
-                    m.pop();
-                }
-            });
-            ctx_cap.turn_cap_reached.set(true);
-            ctx_cap.error.set(Some(tr!(
+        // Убираем пустой assistant-плейсхолдер последнего хода — иначе в
+        // ленте висит пустой пузырь, который выглядит как «повисло».
+        ledger_update(&chat_id, pop_empty_assistant);
+        if_active(&chat_id, move |c| {
+            c.turn_cap_reached.set(true);
+            c.error.set(Some(tr!(
                 "chat.session.error.turn_cap_reached",
                 max_turns = max_turns
             )));
@@ -2218,8 +2317,7 @@ async fn run_agent_loop(
              активных инструментах — предлагаем «Продолжить»",
             tool_schemas.len()
         );
-        let ctx_idle = ctx.clone();
-        run_on_main_thread(move || ctx_idle.turn_cap_reached.set(true));
+        if_active(&chat_id, |c| c.turn_cap_reached.set(true));
     }
 
     // Финальная статистика.
@@ -2332,8 +2430,10 @@ struct LiveGen {
 /// Сбрасывает накопленные body/think/tool буферы в реактивные сигналы UI.
 /// Передавать `live = None` если статистику обновлять не надо (например,
 /// на abort-сбросе).
+/// Живой стрим — только в открытый чат: ход, ушедший в фон, догонит ленту
+/// целиком в [`commit_turn_text`], а рисовать его в чужом чате нельзя.
 fn flush_streaming(
-    ctx: &SynChatCtx,
+    chat_id: &Option<String>,
     buf_body: &mut String,
     buf_think: &mut String,
     buf_tool: &mut String,
@@ -2345,8 +2445,7 @@ fn flush_streaming(
     let b = std::mem::take(buf_body);
     let t = std::mem::take(buf_think);
     let tc = std::mem::take(buf_tool);
-    let ctx = ctx.clone();
-    run_on_main_thread(move || {
+    if_active(chat_id, move |ctx| {
         if !t.is_empty() {
             ctx.streaming_thinking.update(|s| s.push_str(&t));
         }
@@ -2609,7 +2708,7 @@ async fn reload_if_needed(
 }
 
 /// Пушит tool_result-бабл в ленту.
-fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, error: bool) {
+fn push_tool_result(ctx: &Option<String>, call: &ChatToolCall, content: String, error: bool) {
     push_tool_result_with(ctx, call, content, error, Vec::new(), String::new());
 }
 
@@ -2620,7 +2719,7 @@ fn push_tool_result(ctx: &SynChatCtx, call: &ChatToolCall, content: String, erro
 ///
 /// `model_note` — дописка к телу только для модели (см. `ChatMsg::model_note`).
 fn push_tool_result_with(
-    ctx: &SynChatCtx,
+    chat_id: &Option<String>,
     call: &ChatToolCall,
     content: String,
     error: bool,
@@ -2629,23 +2728,20 @@ fn push_tool_result_with(
 ) {
     let id = call.id.clone();
     let name = call.function.name.clone().unwrap_or_default();
-    let ctx = ctx.clone();
-    run_on_main_thread(move || {
-        ctx.messages.update(|m| {
-            let mut msg = ChatMsg::tool_result(id, name, content, error);
-            msg.model_note = model_note;
-            m.push(msg);
-            // Медиа — отдельным сообщением ленты, а не внутри карточки
-            // инструмента: результат прогона смотрят как результат, а не как
-            // приложение к техническому выводу (и карточка не схлопывается
-            // вместе с ним). В историю для модели это сообщение не идёт —
-            // она живёт отдельным списком.
-            if !attachments.is_empty() {
-                let mut media = ChatMsg::assistant_empty();
-                media.attachments = attachments;
-                m.push(media);
-            }
-        });
+    ledger_update(chat_id, move |m| {
+        let mut msg = ChatMsg::tool_result(id, name, content, error);
+        msg.model_note = model_note;
+        m.push(msg);
+        // Медиа — отдельным сообщением ленты, а не внутри карточки
+        // инструмента: результат прогона смотрят как результат, а не как
+        // приложение к техническому выводу (и карточка не схлопывается
+        // вместе с ним). В историю для модели это сообщение не идёт —
+        // она живёт отдельным списком.
+        if !attachments.is_empty() {
+            let mut media = ChatMsg::assistant_empty();
+            media.attachments = attachments;
+            m.push(media);
+        }
     });
 }
 

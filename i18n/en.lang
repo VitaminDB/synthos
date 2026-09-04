@@ -225,6 +225,7 @@ chat.session.error.model_path_unknown = "model path unknown"
 chat.session.error.stopped_suffix = " Generation stopped, history is intact. Clarify the task or press “Continue”."
 chat.session.error.turn_cap_reached = "stopped at the agent's turn limit of {max_turns} — the model kept calling tools the whole time. Press “Continue” to give it more turns"
 chat.session.error.empty_answer = "the model finished its turn without an answer — the whole budget went into reasoning. Press “Continue” to give it another turn"
+chat.session.error.busy_other_chat A generation is running in another chat ({chat}) — wait for it to finish or stop it there.
 chat.session.error.attachment_rejected = "Attachment not sent to the model: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "node {node_id} (LTX Checkpoint): “{name}” — LTX stages run on the distilled schedule (8 steps stage1 + 3 stage2), and a non-distilled checkpoint gives blurry video on it. Use ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "no active chat"

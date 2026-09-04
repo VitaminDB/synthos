@@ -20,7 +20,10 @@
 //! - `SYN_SMOKE_PARAMS` — JSON с полями `SamplingParams` поверх дефолтов
 //!   (например `{"temperature":0.0,"enable_thinking":false}`);
 //! - `SYN_SMOKE_TIMEOUT_S` — потолок на одно сообщение (по умолчанию 1800);
-//! - `SYN_SMOKE_OUT` — куда сохранить ленту (JSON, как `syn_chats/*.json`).
+//! - `SYN_SMOKE_OUT` — куда сохранить ленту (JSON, как `syn_chats/*.json`);
+//! - `SYN_SMOKE_SWITCH_AFTER_S` — через сколько секунд после старта первого
+//!   сообщения «уйти» в другой чат: проверка того, что ход доигрывает в фоне
+//!   и пишет в ленту своего чата, а не в открытую.
 //!
 //! Подтверждения инструментов выключены (`tools.allow_all`): раннер
 //! проверяет модель, а не диалоги.
@@ -164,6 +167,7 @@ fn run() -> std::result::Result<(), String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    let switch_after: u64 = env_or("SYN_SMOKE_SWITCH_AFTER_S", 0);
     let params: SamplingParams = match std::env::var("SYN_SMOKE_PARAMS") {
         Ok(json) => serde_json::from_str(&json).map_err(|e| format!("SYN_SMOKE_PARAMS: {e}"))?,
         Err(_) => SamplingParams::default(),
@@ -185,12 +189,31 @@ fn run() -> std::result::Result<(), String> {
     app_ctx.general.subagent_max_turns.set(sub_turns);
     provide_context(app_ctx.clone());
     let chat = SynChatCtx::new();
-    chat.active_chat_id
-        .set(Some(format!("smoke-{}", synthos::agent::time::unix_secs())));
-    chat.params.set(params);
+    let chat_id = format!("smoke-{}", synthos::agent::time::unix_secs());
+    chat.active_chat_id.set(Some(chat_id.clone()));
+    chat.params.set(params.clone());
+    // Файл чата нужен на диске: ход, ушедший в фон, пишет ленту прямо в него
+    // (`session::ledger_update`), а без файла правки было бы некуда класть.
+    synthos::syn_chat::storage::save(&synthos::agent::storage::StoredChat {
+        id: chat_id.clone(),
+        title: "agent_smoke".into(),
+        created_at: synthos::agent::time::unix_secs(),
+        updated_at: synthos::agent::time::unix_secs(),
+        model_name: bundle.file_stem().and_then(|s| s.to_str()).map(String::from),
+        messages: Vec::new(),
+        syn_params: Some(params),
+        archived: false,
+    });
     provide_context(chat.clone());
     let registry = SynModelRegistry::new();
     provide_context(registry);
+    // Контексты страниц: инструмент `notes` работает с деревом заметок, а
+    // `pipelines` — с рабочим столом графов. Без них вызов инструмента valит
+    // весь процесс на `use_context`.
+    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(
+        &synthos::config::AppConfig::load(),
+    ));
+    provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
 
     // Модель — той же политикой, что выбрала бы страница чата.
     let policy = synthos::config::resolve_model_profile(
@@ -223,6 +246,7 @@ fn run() -> std::result::Result<(), String> {
         session::send_message(prompt.clone());
         drain();
         let t0 = Instant::now();
+        let mut switched = false;
         // Лента не append-only: пустой плейсхолдер ассистента заменяется
         // пузырём вызова, текст дописывается стримом. Поэтому помним, что
         // печатали, и перепечатываем изменившиеся строки.
@@ -248,7 +272,9 @@ fn run() -> std::result::Result<(), String> {
             drain();
             let msgs = chat.messages.get_untracked();
             sync_print(&msgs, &mut shown);
-            if !chat.pending.get_untracked() {
+            // Ждём именно владельца хода: `pending` относится к открытому
+            // чату и гаснет, как только мы «ушли» в другой.
+            if chat.generating_chat.get_untracked().is_none() {
                 break;
             }
             if last_tick.elapsed() > Duration::from_secs(15) {
@@ -262,6 +288,17 @@ fn run() -> std::result::Result<(), String> {
                     chat.streaming_tool.get_untracked().chars().count()
                 );
             }
+            // Имитация «ушёл в другой чат»: активным становится посторонний
+            // id, лента опустошается. Ход обязан доиграть и записать всё в
+            // файл своего чата.
+            if switch_after > 0 && !switched && pi == 0 && t0.elapsed().as_secs() >= switch_after {
+                switched = true;
+                let own = chat.active_chat_id.get_untracked().unwrap_or_default();
+                println!("──── ушли из чата {own} в другой (проверка фоновой генерации)");
+                chat.active_chat_id.set(Some(format!("{own}-other")));
+                chat.messages.set(Vec::new());
+                chat.pending.set(false);
+            }
             if !aborted && t0.elapsed() > timeout {
                 eprintln!("agent_smoke: таймаут {timeout:?} — прерываем ход");
                 chat.abort.fetch_add(1, Ordering::Relaxed);
@@ -274,6 +311,26 @@ fn run() -> std::result::Result<(), String> {
             std::thread::sleep(Duration::from_millis(100));
         }
         drain();
+        if switched {
+            // Возвращаемся: лента чата читается с диска — ровно так же, как
+            // это делает `registry::select` в приложении.
+            let own = chat
+                .active_chat_id
+                .get_untracked()
+                .unwrap_or_default()
+                .trim_end_matches("-other")
+                .to_string();
+            let restored = synthos::syn_chat::storage::load(&own)
+                .map(|c| c.messages)
+                .unwrap_or_default();
+            println!(
+                "──── вернулись в чат {own}: в файле {} сообщений",
+                restored.len()
+            );
+            chat.active_chat_id.set(Some(own));
+            chat.messages.set(restored);
+            shown.clear();
+        }
         let msgs = chat.messages.get_untracked();
         sync_print(&msgs, &mut shown);
         let v = verdict(&msgs, from);

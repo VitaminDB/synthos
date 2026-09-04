@@ -221,6 +221,7 @@ chat.session.error.model_path_unknown = "caminho do modelo desconhecido"
 chat.session.error.stopped_suffix = " Geração interrompida, o histórico está intacto. Esclareça a tarefa ou pressione “Continuar”."
 chat.session.error.turn_cap_reached = "parado no limite de turnos do agente ({max_turns}) — o modelo ficou chamando ferramentas o tempo todo. Pressione “Continuar” para dar mais turnos a ele"
 chat.session.error.empty_answer = "o modelo terminou o turno sem dar resposta — todo o orçamento foi para o raciocínio. Pressione “Continuar” para dar mais um turno"
+chat.session.error.busy_other_chat A generation is running in another chat ({chat}) — wait for it to finish or stop it there.
 chat.session.error.attachment_rejected = "Anexo não enviado ao modelo: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "nó {node_id} (LTX Checkpoint): “{name}” — os estágios do LTX rodam no cronograma destilado (8 passos no estágio 1 + 3 no estágio 2), e um checkpoint não destilado gera um vídeo borrado nesse fluxo. Use ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "nenhuma conversa ativa"

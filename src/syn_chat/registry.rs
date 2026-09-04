@@ -101,11 +101,17 @@ pub fn create_new() -> String {
 /// к которому уже никто не обратится (а если вернуться назад — кэш всё
 /// равно пересоберётся полным префиллом, лениво он не восстанавливается).
 fn leave_current_chat() {
-    session::drop_kv_session();
+    let ctx = use_context::<SynChatCtx>();
+    // Кэш префикс-KV принадлежит чату, который сейчас считает: с 04.09.2026
+    // ход переживает переключение, и ронять его контекст на полпути нельзя —
+    // это стоило бы полного префилла на следующем же ходу.
+    if ctx.generating_chat.get_untracked().is_none() {
+        session::drop_kv_session();
+    }
     telemetry::reset();
     // Начатая правка названия принадлежит покидаемому чату — поле не
     // должно пережить переключение и открыться на новом.
-    use_context::<SynChatCtx>().renaming_chat.set(false);
+    ctx.renaming_chat.set(false);
 }
 
 pub fn select(id: &str) {
@@ -129,6 +135,7 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     if ctx.active_chat_id.get_untracked().as_deref() != Some(stored.id.as_str()) {
         leave_current_chat();
     }
+    let stored_id = stored.id.clone();
     ctx.active_chat_id.set(Some(stored.id.clone()));
     let title = stored.title.clone();
     let messages = stored.messages;
@@ -155,9 +162,13 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     ctx.error.set(None);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
-    // Сбрасываем любую идущую генерацию — она принадлежала прошлому чату.
-    ctx.abort.fetch_add(1, Ordering::Relaxed);
-    ctx.pending.set(false);
+    ctx.streaming_tool.set(String::new());
+    // Генерация прошлого чата продолжается в фоне: её сообщения пишутся
+    // прямо в файл своего чата (`session::ledger_update`), а сюда вернутся
+    // при следующем открытии. `pending` — про открытый чат: он «занят»
+    // только если считает именно он.
+    ctx.pending
+        .set(ctx.generating_chat.get_untracked().as_deref() == Some(stored_id.as_str()));
     ctx.loading.set(false);
 }
 

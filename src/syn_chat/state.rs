@@ -45,6 +45,14 @@ pub struct SynChatCtx {
     /// assistant-бабле; в ленту не коммитится — его заменяет настоящий
     /// tool_call-бабл, когда вызов дописан.
     pub streaming_tool: RwSignal<String>,
+    /// Чат, которому принадлежит идущая генерация. `None` — генерации нет.
+    ///
+    /// Ход переживает переключение чатов: воркер пишет в ленту своего чата
+    /// (активную — в UI, фоновую — прямо в файле), а `pending` относится к
+    /// тому чату, который открыт сейчас. По этому полю UI понимает, что при
+    /// возврате в чат генерация всё ещё идёт, а `send_message` — что вторую
+    /// параллельную генерацию запускать нельзя (одна карта на всех).
+    pub generating_chat: RwSignal<Option<String>>,
     /// Черновик ввода.
     pub input: RwSignal<String>,
     /// Вложения, прикреплённые к ещё не отправленному сообщению. Уезжают в
@@ -177,6 +185,7 @@ impl SynChatCtx {
             streaming_body: use_signal(String::new()),
             streaming_thinking: use_signal(String::new()),
             streaming_tool: use_signal(String::new()),
+            generating_chat: use_signal(None),
             input: use_signal(String::new()),
             pending_attachments: use_signal(Vec::new()),
             attach_busy: use_signal(0),

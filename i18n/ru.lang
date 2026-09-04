@@ -225,6 +225,7 @@ chat.session.error.model_path_unknown = "путь модели неизвест�
 chat.session.error.stopped_suffix = " Генерация остановлена, история цела. Уточните задачу или нажмите «Продолжить»."
 chat.session.error.turn_cap_reached = "остановлено на лимите {max_turns} ходов агента — модель всё время вызывала инструменты. Нажмите «Продолжить», чтобы дать ещё ходов"
 chat.session.error.empty_answer = "модель закончила ход, не дав ответа — весь бюджет ушёл в размышления. Нажмите «Продолжить», чтобы дать ещё ход"
+chat.session.error.busy_other_chat Идёт генерация в другом чате ({chat}) — дождитесь её окончания или прервите её там.
 chat.session.error.attachment_rejected = "Вложение не передано модели: {reason}"
 chat.pipeline.warning.ltx_non_distilled = "нода {node_id} (LTX Checkpoint): «{name}» — стадии LTX идут по distilled-расписанию (8 шагов stage1 + 3 stage2), и недистиллированный чекпойнт на нём даёт размытое видео. Возьми ltx-2.3-22b-distilled-1.1.syn."
 chat.pipeline.error.no_active_chat = "нет активного чата"

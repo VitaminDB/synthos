@@ -38,12 +38,14 @@ use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::channel_parser::{self, ChannelIds, ATEM_CLOSE};
 use crate::syn_chat::session::{
-    RingPlan, MAX_OOM_RETRIES, MIN_ANSWER_TOKENS, RING_ANSWER_TOKENS,
+    assistant_turn_message, RingPlan, StreamParser, MAX_OOM_RETRIES, MIN_ANSWER_TOKENS,
+    RING_ANSWER_TOKENS, TOOL_CALL_CLOSE,
 };
 use crate::syn_chat::state::{SynChatCtx, ThinkParser};
 use crate::syn_chat::telemetry::{self, RunKind, RunState};
-use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
+use crate::syn_chat::tool_parser::RawToolCall;
 
 use super::catalog::{KEY_AUTOSKILL, KEY_SUBAGENT};
 use super::descriptor::Tool;
@@ -398,7 +400,7 @@ async fn run_subagent_loop(
         gen_total += out.gen_tokens;
 
         if out.calls.is_empty() {
-            let text = strip_thinking(&out.raw_text);
+            let text = out.final_text();
             tracing::debug!(target: "subagent", id = %id, turn, "final text");
             return Ok(text);
         }
@@ -411,9 +413,15 @@ async fn run_subagent_loop(
             "tool_calls"
         );
 
-        // Ассистент-сообщение с полным сырым текстом (включая `<tool_call>`) —
-        // в локальную историю для следующего turn.
-        history.push(Message::assistant(out.raw_text.clone()));
+        // Реплика ассистента в локальную историю — в родном для шаблона
+        // виде (ATEM-блок у канальных моделей, `<tool_call>`-JSON у ChatML),
+        // как и в основном цикле. Сырой текст не годится: у канальных
+        // моделей в нём заголовки каналов, которые шаблон припишет заново.
+        history.push(if out.channel {
+            Message::assistant(channel_parser::rebuild_turn_text(&out.clean_text, &out.calls))
+        } else {
+            assistant_turn_message(&out.clean_text, &out.think_text, &out.calls)
+        });
 
         for (i, raw_call) in out.calls.iter().enumerate() {
             // Двойная защита от рекурсии: catalog уже исключает subagent из
@@ -482,10 +490,30 @@ async fn run_subagent_loop(
 struct SubagentTurn {
     /// Полный сырой текст ответа (с `<tool_call>`/`<think>` тегами как есть).
     raw_text: String,
+    /// Текст ответа без размышлений, tool-блоков и заголовков каналов — то,
+    /// что модель адресовала «пользователю» (здесь — родительскому агенту).
+    clean_text: String,
+    /// Размышления хода — в реплику локальной истории (см. `assistant_turn_message`).
+    think_text: String,
     /// Распознанные tool-вызовы этого turn'а.
     calls: Vec<RawToolCall>,
+    /// Модель с канальным шаблоном (Muse Glimmer).
+    channel: bool,
     /// Сколько токенов модель выдала за этот turn.
     gen_tokens: u32,
+}
+
+impl SubagentTurn {
+    /// Финальный текст для родителя. Пустой чистый текст при непустом сыром —
+    /// модель всё потратила на размышления; отдаём сырой без `<think>`.
+    fn final_text(&self) -> String {
+        let clean = self.clean_text.trim();
+        if clean.is_empty() {
+            strip_thinking(&self.raw_text)
+        } else {
+            clean.to_string()
+        }
+    }
 }
 
 /// Один turn нативной генерации субагента: prompt → generate_streaming →
@@ -563,19 +591,31 @@ fn generate_subagent_turn(
         });
 
         let mut runner = LlmGeneration::new(&model.model, opts);
-        crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
+        // Протокол хода — как в основном цикле: у канальных моделей (Muse
+        // Glimmer) стоп по EOS словаря и ATEM-закрытие, у ChatML — стопы
+        // Qwen3 и `</tool_call>`. До 03.09.2026 субагент знал только
+        // ChatML: ATEM-вызовы Muse не разбирались, и родителю уходил сырой
+        // текст с заголовками каналов вместо ответа.
+        let channel = ChannelIds::detect(&model.tokenizer).is_some();
+        if channel {
+            runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
+        } else {
+            crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
+        }
         if !tool_schemas.is_empty() {
-            runner.add_stop_sequence(crate::syn_chat::session::TOOL_CALL_CLOSE);
+            runner.add_stop_sequence(if channel { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
         }
 
-        let mut tool_parser = ToolCallParser::new();
+        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
         let mut raw_text = String::new();
+        let mut clean_text = String::new();
+        let mut think_text = String::new();
         let mut tokens_this_turn = 0usize;
         let mut ttft_ms: Option<u32> = None;
         let t_turn = Instant::now();
         let mut last_push = Instant::now();
         let abort_cb = abort.clone();
-        let stream_res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
+        let stream_res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |tok_id, delta| {
             if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
                 return false;
             }
@@ -586,7 +626,9 @@ fn generate_subagent_turn(
                 ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
             }
             raw_text.push_str(delta);
-            let _ = tool_parser.feed(delta);
+            let (body, thinking, _tool) = parser.feed(tok_id, delta);
+            clean_text.push_str(&body);
+            think_text.push_str(&thinking);
 
             let now = Instant::now();
             if now.duration_since(last_push) >= TELEMETRY_INTERVAL {
@@ -595,7 +637,7 @@ fn generate_subagent_turn(
             }
             // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
             // не дожидаясь, пока модель уйдёт писать прозу после блока.
-            if tool_parser.calls_count() > 0 && tool_parser.is_outside() {
+            if parser.tool_call_ready() {
                 return false;
             }
             true
@@ -640,10 +682,13 @@ fn generate_subagent_turn(
         push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
         let vram_free = crate::syn_chat::model_registry::vram_available_mb() as u32;
         telemetry::patch(run_id, move |r| r.stats.vram_free_mb = vram_free);
-        let (calls, _tail) = tool_parser.finish();
+        let calls = parser.finish();
         return Ok(SubagentTurn {
             raw_text,
+            clean_text,
+            think_text,
             calls,
+            channel,
             gen_tokens: tokens_this_turn as u32,
         });
     }
@@ -732,7 +777,7 @@ async fn force_final_summary_turn(
     )
     .map_err(|e| ToolError::Runtime(format!("subagent LLM error (final summary): {e:#}")))?;
 
-    let summary = strip_thinking(&out.raw_text);
+    let summary = out.final_text();
     if summary.is_empty() {
         tracing::warn!(target: "subagent", id = %id, "final summary empty");
         let limit = snap.max_turns;

@@ -143,6 +143,39 @@ struct KvSlot {
     session: LlmKvSession,
     model: std::path::PathBuf,
     chat: Option<String>,
+    /// Промпт последнего хода через эту сессию — только для диагностики:
+    /// когда следующий ход не переиспользовал ничего, журнал показывает,
+    /// на какой позиции промпты разошлись и что там стояло.
+    last_prompt: Vec<u32>,
+}
+
+/// Пишет в журнал первое расхождение между промптом прошлого хода и нового.
+/// Зовётся только когда префикс-KV не переиспользовал ни токена при живой
+/// сессии: из «0 из N» причина не видна, а расхождение на 3 токена от конца
+/// (заголовок реплики) и расхождение в системном промпте — разные проблемы.
+fn log_prefix_divergence(tokenizer: &LlmTokenizer, prev: &[u32], cur: &[u32]) {
+    let common = prev.iter().zip(cur.iter()).take_while(|(a, b)| a == b).count();
+    let decode = |ids: &[u32]| tokenizer.decode(ids).unwrap_or_default().replace('\n', "⏎");
+    if common == prev.len().min(cur.len()) {
+        log::info!(
+            "[syn_chat] префикс-KV: расхождения нет, промпт {} (было {} ток): {}",
+            if cur.len() < prev.len() { "короче кэша" } else { "продолжает прошлый" },
+            prev.len(),
+            "кэш не подошёл по другой причине (пересоздание, точка возврата не снята)"
+        );
+        return;
+    }
+    let lo = common.saturating_sub(24);
+    let hi_prev = (common + 12).min(prev.len());
+    let hi_cur = (common + 12).min(cur.len());
+    log::info!(
+        "[syn_chat] префикс-KV: промпт разошёлся с прошлым на позиции {common} из {} \
+         (прошлый {} ток): было «{}», стало «{}»",
+        cur.len(),
+        prev.len(),
+        decode(&prev[lo..hi_prev]),
+        decode(&cur[lo..hi_cur])
+    );
 }
 
 static KV_SLOT: std::sync::Mutex<Option<KvSlot>> = std::sync::Mutex::new(None);
@@ -230,6 +263,7 @@ fn ensure_kv_slot<'a>(
                     session,
                     model: model.path.clone(),
                     chat: chat.clone(),
+                    last_prompt: Vec::new(),
                 });
             }
             Ok(None) => {
@@ -1044,14 +1078,14 @@ pub fn schedule_tokenize() {
 ///   со своими адресатами (`to=self` / `to=user` / `to=<функция>`), а
 ///   разделители — спецтокены, невидимые в декодированном тексте
 ///   (см. [`crate::syn_chat::channel_parser`]).
-enum StreamParser {
+pub(crate) enum StreamParser {
     ChatML { think: ThinkParser, tools: ToolCallParser },
     Channel(ChannelParser),
 }
 
 impl StreamParser {
     /// Канальный разбор — если словарь модели знает `<|start|>`/`<|message|>`.
-    fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool) -> Self {
+    pub(crate) fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool) -> Self {
         match ChannelIds::detect(tokenizer) {
             Some(ids) => Self::Channel(ChannelParser::new(ids)),
             None => Self::ChatML {
@@ -1068,12 +1102,12 @@ impl StreamParser {
         }
     }
 
-    fn is_channel(&self) -> bool {
+    pub(crate) fn is_channel(&self) -> bool {
         matches!(self, Self::Channel(_))
     }
 
     /// Очередной токен → (текст ответа, размышления, live-текст tool-вызова).
-    fn feed(&mut self, id: u32, delta: &str) -> (String, String, String) {
+    pub(crate) fn feed(&mut self, id: u32, delta: &str) -> (String, String, String) {
         match self {
             Self::ChatML { think, tools } => {
                 let feed = tools.feed(delta);
@@ -1094,14 +1128,14 @@ impl StreamParser {
 
     /// Модель дописала tool-вызов — стрим можно рвать, не дожидаясь, пока
     /// она уйдёт писать прозу после блока.
-    fn tool_call_ready(&self) -> bool {
+    pub(crate) fn tool_call_ready(&self) -> bool {
         match self {
             Self::ChatML { tools, .. } => tools.calls_count() > 0 && tools.is_outside(),
             Self::Channel(p) => p.has_closed_call(),
         }
     }
 
-    fn finish(self) -> Vec<RawToolCall> {
+    pub(crate) fn finish(self) -> Vec<RawToolCall> {
         match self {
             Self::ChatML { tools, .. } => tools.finish().0,
             Self::Channel(p) => p.finish(),
@@ -1452,8 +1486,13 @@ async fn run_agent_loop(
             let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
             // Текст ответа за этот turn вне tool_call-блоков. Реплика для
             // истории собирается из него и разобранных вызовов
-            // (`tool_turn_text`) — сырой поток модели в историю не идёт.
+            // (`assistant_turn_message`) — сырой поток модели в историю не идёт.
             let mut clean_text: String = String::new();
+            // Размышления хода — уходят в реплику истории блоком `<think>`:
+            // шаблон Qwen3 рендерит их для реплик после последнего вопроса
+            // пользователя, и без них следующий промпт расходится с
+            // предыдущим на границе `<think>⏎` (см. `assistant_turn_message`).
+            let mut think_text: String = String::new();
             let mut buf_body = String::new();
             let mut buf_think = String::new();
             let mut buf_tool = String::new();
@@ -1483,6 +1522,7 @@ async fn run_agent_loop(
 
                 let (body, thinking, tool) = parser.feed(id, delta);
                 clean_text.push_str(&body);
+                think_text.push_str(&thinking);
                 buf_body.push_str(&body);
                 buf_think.push_str(&thinking);
                 buf_tool.push_str(&tool);
@@ -1675,6 +1715,12 @@ async fn run_agent_loop(
             };
             let raw_calls = parser.finish();
             reused_total = reused_total.max(reused as u32);
+            if let Some(slot) = kv_slot.as_mut() {
+                if reused == 0 && !slot.last_prompt.is_empty() {
+                    log_prefix_divergence(&model.tokenizer, &slot.last_prompt, &prompt_ids);
+                }
+                slot.last_prompt = prompt_ids.clone();
+            }
             log::info!(
                 "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), prefill {} ms \
                  (префикс-KV переиспользовал {} из {} ток промпта), tool_calls={}",
@@ -1707,6 +1753,7 @@ async fn run_agent_loop(
 
             break (
                 clean_text,
+                think_text,
                 raw_calls,
                 tokens_this_turn,
                 channel_mode,
@@ -1715,7 +1762,7 @@ async fn run_agent_loop(
                 plan.by_mem.min(plan.cap),
             );
         };
-        let (clean_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
+        let (clean_text, think_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
             turn_result;
 
         total_gen_tokens += tokens_this_turn;
@@ -1769,16 +1816,11 @@ async fn run_agent_loop(
         // диалога обнулялся на каждом сообщении. В канальном режиме сырой
         // текст содержит заголовки каналов, которые chat-шаблон припишет
         // заново, — там реплика пересобирается из тела и ATEM-блока вызовов.
-        history.push(Message::assistant(if channel_mode {
-            channel_parser::rebuild_turn_text(&clean_text, &raw_calls)
+        history.push(if channel_mode {
+            Message::assistant(channel_parser::rebuild_turn_text(&clean_text, &raw_calls))
         } else {
-            tool_turn_text(
-                &clean_text,
-                raw_calls
-                    .iter()
-                    .map(|c| (c.name.as_str(), c.arguments_json.as_str())),
-            )
-        }));
+            assistant_turn_message(&clean_text, &think_text, &raw_calls)
+        });
 
         tool_calls_made += raw_calls.len();
 
@@ -2666,6 +2708,10 @@ struct HistoryItem {
     /// `Some(имя)` — результат инструмента: в prompt уходит как `role=tool`
     /// (`Message::tool_named`), поле `role` при этом не используется.
     tool_name: Option<String>,
+    /// Размышления и вызовы реплики ассистента с инструментами
+    /// (см. [`assistant_turn_message`]); у остальных реплик пусты.
+    reasoning: String,
+    calls: Vec<RawToolCall>,
 }
 
 impl HistoryItem {
@@ -2703,28 +2749,26 @@ fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
 ///     не идут;
 ///   - summary autocompact-маркеров дописывается в начальное
 ///     system-сообщение, сами маркеры в историю не попадают.
-/// Реплика ассистента с вызовами инструментов в том виде, в каком её видит
-/// модель: текст до вызова, затем блоки `<tool_call>` в родном формате Qwen
-/// (`{"name": …, "arguments": …}` — порядок ключей и пробелы как в шаблоне
-/// чата, `serde_json::json!` без `preserve_order` ставил бы `arguments`
-/// первым). Одна функция на оба пути — ход агента и пересборку истории из
-/// ленты — иначе промпт следующего сообщения расходится с промптом хода и
-/// префикс-KV диалога обнуляется на каждом сообщении.
-fn tool_turn_text<'a>(prose: &str, calls: impl Iterator<Item = (&'a str, &'a str)>) -> String {
-    let mut body = prose.trim().to_string();
-    for (name, args_json) in calls {
-        let args: serde_json::Value =
-            serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
-        if !body.is_empty() {
-            body.push('\n');
-        }
-        body.push_str(&format!(
-            "<tool_call>\n{{\"name\": {}, \"arguments\": {}}}\n</tool_call>",
-            serde_json::Value::String(name.to_string()),
-            args
-        ));
-    }
-    body
+/// Реплика ассистента с вызовами для ChatML-шаблонов: текст, размышления и
+/// структурные вызовы — шаблон сам рендерит `<think>`-блок и вызовы в своём
+/// родном формате (у Qwen3.8 — `<function=…><parameter=…>`). Одна функция на
+/// оба пути (ход агента и пересборка из ленты), иначе промпт следующего
+/// сообщения расходится с промптом хода.
+///
+/// Размышления обязательны: промпт хода заканчивается `…assistant⏎<think>⏎`,
+/// и без `reasoning_content` шаблон рендерит `<think>⏎⏎</think>` — токен `⏎⏎`
+/// не равен `⏎`, префикс-KV Qwen4Exp (точка возврата на конце промпта) терял
+/// всё, гибрид — ходы, где граница попадала в хвост (04.09.2026).
+pub(crate) fn assistant_turn_message(prose: &str, thinking: &str, calls: &[RawToolCall]) -> Message {
+    let reasoning = thinking.trim_matches('\n');
+    Message::assistant_turn(
+        prose.trim(),
+        (!reasoning.trim().is_empty()).then(|| reasoning.to_string()),
+        calls
+            .iter()
+            .map(|c| (c.name.clone(), c.arguments_json.clone()))
+            .collect(),
+    )
 }
 
 /// `channel` — канальный шаблон (Muse Glimmer): реплики с вызовами
@@ -2756,21 +2800,27 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<Hi
             body: sys,
             attachments: Vec::new(),
             tool_name: None,
+            reasoning: String::new(),
+            calls: Vec::new(),
         });
     }
-    // Индекс в `out` текста ассистента, если он был последним добавленным
-    // элементом: текст перед вызовом инструмента лежит в ленте отдельным
-    // пузырём прямо перед ним, а в промпте это одна реплика (как в ходе).
-    let mut prose_before_call: Option<usize> = None;
+    // Текст и размышления ассистента перед вызовом инструмента лежат в
+    // ленте отдельным пузырём прямо перед ним, а в промпте это одна реплика
+    // (как в ходе): индекс пузыря в `out` (если текст был) и его thinking.
+    let mut prose_before_call: Option<(Option<usize>, String)> = None;
     for m in msgs.iter() {
         // Пустой assistant — это плейсхолдер под стрим (в том числе
         // оставшийся от прерванного хода). В промпт он не идёт никогда: не
         // только последний, иначе после «Прервать» в истории навсегда
-        // остаётся пустая реплика ассистента.
+        // остаётся пустая реплика ассистента. Но размышления из него — те же,
+        // что были у хода перед вызовом, — переносим в реплику вызова.
         if m.role == ChatMsgRole::Assistant
             && matches!(m.kind, ChatMsgKind::Text)
             && m.body.trim().is_empty()
         {
+            if !m.thinking.trim().is_empty() {
+                prose_before_call = Some((None, m.thinking.clone()));
+            }
             continue;
         }
         // Свернутые autocompact-сообщения не идут в prompt.
@@ -2782,52 +2832,70 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<Hi
                 if m.role == ChatMsgRole::System {
                     continue;
                 }
+                // Размышления ассистента шаблон Qwen3.x рендерит из
+                // `reasoning_content`; без них финальный ответ хода
+                // превращается в `<think>⏎⏎</think>`, и следующее сообщение
+                // пользователя начинает промпт, который расходится с
+                // предыдущим (префикс-KV обнуляется).
                 out.push(HistoryItem {
                     role: m.role,
                     body: m.body.clone(),
                     attachments: m.attachments.clone(),
                     tool_name: None,
+                    reasoning: if m.role == ChatMsgRole::Assistant {
+                        m.thinking.clone()
+                    } else {
+                        String::new()
+                    },
+                    calls: Vec::new(),
                 });
-                prose_before_call = (m.role == ChatMsgRole::Assistant).then_some(out.len() - 1);
+                prose_before_call = (m.role == ChatMsgRole::Assistant)
+                    .then(|| (Some(out.len() - 1), m.thinking.clone()));
             }
             ChatMsgKind::ToolCall { .. } => {
-                let prose = match prose_before_call.take() {
-                    Some(idx) if idx + 1 == out.len() => {
-                        out.pop().map(|i| i.body).unwrap_or_default()
+                let (prose, thinking) = match prose_before_call.take() {
+                    Some((Some(idx), th)) if idx + 1 == out.len() => {
+                        (out.pop().map(|i| i.body).unwrap_or_default(), th)
                     }
-                    _ => String::new(),
+                    Some((None, th)) => (String::new(), th),
+                    _ => (String::new(), String::new()),
                 };
-                let body = if channel {
-                    let calls: Vec<RawToolCall> = m
-                        .tool_calls
-                        .iter()
-                        .flatten()
-                        .map(|c| RawToolCall {
-                            name: c.function.name.clone().unwrap_or_default(),
-                            arguments_json: c.function.arguments.clone().unwrap_or_else(|| "{}".into()),
-                        })
-                        .collect();
-                    channel_parser::rebuild_turn_text(&prose, &calls)
+                let calls: Vec<RawToolCall> = m
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .map(|c| RawToolCall {
+                        name: c.function.name.clone().unwrap_or_default(),
+                        arguments_json: c.function.arguments.clone().unwrap_or_else(|| "{}".into()),
+                    })
+                    .collect();
+                if channel {
+                    // Канальный шаблон: ATEM-блок текстом, как в ходе.
+                    let body = channel_parser::rebuild_turn_text(&prose, &calls);
+                    if body.is_empty() {
+                        continue;
+                    }
+                    out.push(HistoryItem {
+                        role: ChatMsgRole::Assistant,
+                        body,
+                        attachments: Vec::new(),
+                        tool_name: None,
+                        reasoning: String::new(),
+                        calls: Vec::new(),
+                    });
                 } else {
-                    tool_turn_text(
-                        &prose,
-                        m.tool_calls.iter().flatten().map(|c| {
-                            (
-                                c.function.name.as_deref().unwrap_or_default(),
-                                c.function.arguments.as_deref().unwrap_or("null"),
-                            )
-                        }),
-                    )
-                };
-                if body.is_empty() {
-                    continue;
+                    if calls.is_empty() && prose.trim().is_empty() {
+                        continue;
+                    }
+                    out.push(HistoryItem {
+                        role: ChatMsgRole::Assistant,
+                        body: prose,
+                        attachments: Vec::new(),
+                        tool_name: None,
+                        reasoning: thinking,
+                        calls,
+                    });
                 }
-                out.push(HistoryItem {
-                    role: ChatMsgRole::Assistant,
-                    body,
-                    attachments: Vec::new(),
-                    tool_name: None,
-                });
             }
             ChatMsgKind::ToolResult { tool_name, .. } => {
                 // Та же обрезка, что у хода (`clip_for_history`), плюс
@@ -2840,6 +2908,8 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<Hi
                     body,
                     attachments: Vec::new(),
                     tool_name: Some(tool_name.clone()),
+                    reasoning: String::new(),
+                    calls: Vec::new(),
                 });
                 prose_before_call = None;
             }
@@ -2900,6 +2970,9 @@ fn prepare_history(
                 out.push(Message::user(prepared.text));
             }
             ChatMsgRole::User => out.push(Message::user(&item.body)),
+            ChatMsgRole::Assistant if !item.calls.is_empty() || !item.reasoning.is_empty() => {
+                out.push(assistant_turn_message(&item.body, &item.reasoning, &item.calls))
+            }
             ChatMsgRole::Assistant => out.push(Message::assistant(&item.body)),
             ChatMsgRole::System => out.push(Message::system(&item.body)),
         }

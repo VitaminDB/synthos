@@ -76,17 +76,28 @@ impl std::fmt::Display for SearchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Network(e) => write!(f, "DDG fetch: {e}"),
+            // Формулировка намеренно закрывает путь «переспрошу иначе»:
+            // когда поисковики режут выходной IP, любая переформулировка
+            // даёт то же самое, а агент сжигает на них весь бюджет ходов
+            // (20 ходов подряд, живой прогон 04.09.2026).
             Self::Challenge => write!(
                 f,
-                "DDG is demanding a captcha (anti-bot challenge) and the Bing \
-                 fallback returned no results. Wait, switch the exit IP (VPN), \
-                 or rephrase the query."
+                "Search is unavailable from this host: DuckDuckGo returns a \
+                 captcha and the Bing fallback gave nothing. Rephrasing will \
+                 NOT help — every search will fail the same way. Do not call \
+                 `web search` again in this conversation. Use `web read` with \
+                 a concrete URL if you know one, answer from your own \
+                 knowledge (say what you are unsure about), or ask the user \
+                 for a link."
             ),
             Self::Empty => write!(
                 f,
-                "The DDG html and lite endpoints and the Bing fallback returned \
-                 an empty SERP. The markup may have changed, or the query is \
-                 too narrow — try rephrasing it."
+                "No results from any search engine (DuckDuckGo html/lite, \
+                 Bing). This host's searches are likely being filtered, so \
+                 rephrasing usually does NOT help. Try `web read` with a \
+                 concrete URL, answer from your own knowledge (say what you \
+                 are unsure about), or ask the user for a link — do not \
+                 repeat the search with different wording more than once."
             ),
         }
     }
@@ -171,10 +182,49 @@ async fn try_bing(
     hits = dedup_by_origin(hits);
     let hits = renumber(hits, max_results);
     if hits.is_empty() {
-        Ok(EndpointOutcome::Empty)
-    } else {
-        Ok(EndpointOutcome::Hits(hits))
+        return Ok(EndpointOutcome::Empty);
     }
+    if !serp_matches_query(query, &hits) {
+        log::warn!(
+            "[web] Bing отдал выдачу не по запросу ({} карточек, первая: {:?}) — считаем пустой",
+            hits.len(),
+            hits.first().map(|h| h.title.as_str()).unwrap_or("")
+        );
+        return Ok(EndpointOutcome::Empty);
+    }
+    Ok(EndpointOutcome::Hits(hits))
+}
+
+/// Похожа ли выдача на ответ именно на этот запрос. Bing, заподозрив бота,
+/// без всякого маркера отдаёт чужую кешированную выдачу: на «postmarketOS
+/// Redmi 9C» — «10 лучших отелей Пунта-Каны» (04.09.2026). Требуем, чтобы в
+/// заголовках, сниппетах и URL встречались хотя бы два разных слова запроса
+/// (не меньше половины слов запроса, если их больше трёх): брендовая
+/// заглушка «Xiaomi Global — official site» на «Xiaomi unlock bootloader
+/// official guide» совпадает лишь по двум словам из пяти и тоже отсеивается.
+fn serp_matches_query(query: &str, hits: &[SerpHit]) -> bool {
+    let words: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !matches!(w.as_str(), "site" | "the" | "and" | "for" | "how" | "или" | "как" | "что"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if words.is_empty() {
+        return true;
+    }
+    let haystack: String = hits
+        .iter()
+        .map(|h| format!("{} {} {}", h.title, h.snippet, h.url))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let matched = words.iter().filter(|w| haystack.contains(w.as_str())).count();
+    // Половина слов запроса, но не меньше двух (и не больше, чем слов есть):
+    // по одному-двум общим словам («xiaomi», «official») заглушка проходит.
+    let needed = words.len().div_ceil(2).max(2).min(words.len());
+    matched >= needed
 }
 
 /// Bing без результатов не отдаёт пустую страницу: над плашкой «There are
@@ -600,6 +650,24 @@ mod tests {
     }
 
     #[test]
+    fn bing_junk_serp_is_rejected_by_relevance() {
+        let junk = vec![
+            SerpHit { rank: 1, title: "LOS 10 MEJORES hoteles de lujo en Punta Cana".into(), url: "https://www.tripadvisor.es/x".into(), snippet: String::new() },
+            SerpHit { rank: 2, title: "Xiaomi Global".into(), url: "https://www.mi.com/global/".into(), snippet: "Official site".into() },
+        ];
+        assert!(!serp_matches_query("postmarketOS Redmi 9C Helio G35 support", &junk));
+        assert!(!serp_matches_query("Xiaomi unlock bootloader official guide", &junk));
+        let good = vec![SerpHit {
+            rank: 1,
+            title: "How to unlock the bootloader on Redmi 9C".into(),
+            url: "https://xdaforums.com/t/redmi-9c-unlock".into(),
+            snippet: "Mi Unlock tool, 168 hours wait".into(),
+        }];
+        assert!(serp_matches_query("Redmi 9C unlock bootloader", &good));
+        assert!(serp_matches_query("redmi", &good));
+    }
+
+    #[test]
     fn bing_url_carries_query_lang_and_count() {
         let u = build_bing_url("redmi 9c", "ru", 10);
         assert!(u.starts_with("https://www.bing.com/search?q=redmi%209c"), "{u}");
@@ -786,8 +854,14 @@ mod tests {
         // Сообщения должны быть осмысленными — этим текстом envelope
         // подсвечивает причину пользователю.
         assert!(SearchError::Network("conn".into()).to_string().contains("DDG fetch"));
-        assert!(SearchError::Challenge.to_string().contains("captcha"));
-        assert!(SearchError::Empty.to_string().contains("empty SERP"));
+        // Обе «пустые» ветки обязаны отговаривать от переформулировки:
+        // на отфильтрованном выходном IP она только жжёт бюджет ходов.
+        let challenge = SearchError::Challenge.to_string();
+        assert!(challenge.contains("captcha"), "{challenge}");
+        assert!(challenge.contains("NOT help"), "{challenge}");
+        let empty = SearchError::Empty.to_string();
+        assert!(empty.contains("No results"), "{empty}");
+        assert!(empty.contains("does NOT help"), "{empty}");
     }
 
     #[test]

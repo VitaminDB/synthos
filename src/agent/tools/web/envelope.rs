@@ -49,9 +49,10 @@ pub fn format_search_envelope(query: &str, lang: &str, engine: &str, hits: &[Ser
     if hits.is_empty() {
         out.push_str("--- error ---\n");
         out.push_str(
-            "The search engine returned no results. Possible reasons: the \
-             SERP parser is outdated, the query is too narrow, a temporary \
-             engine error. Try rephrasing the query.\n",
+            "The search engine returned no results. Rephrasing usually does \
+             not help when searches are filtered for this host: prefer `web \
+             read` with a concrete URL, your own knowledge, or ask the user \
+             for a link.\n",
         );
         return out;
     }

@@ -12,6 +12,9 @@
 //!
 //! Переменные окружения:
 //! - `SYN_SMOKE_TURNS` — бюджет ходов агента на сообщение (по умолчанию 24);
+//! - `SYN_SMOKE_SUB_TURNS` — бюджет ходов субагента (по умолчанию столько же:
+//!   у него свой лимит из конфига, и без этого один вызов субагента тянет
+//!   прогон на десятки минут);
 //! - `SYN_SMOKE_TOOLS` — активные инструменты через запятую
 //!   (по умолчанию `bash,web,subagent`);
 //! - `SYN_SMOKE_PARAMS` — JSON с полями `SamplingParams` поверх дефолтов
@@ -153,6 +156,7 @@ fn run() -> std::result::Result<(), String> {
     }
     let prompts: Vec<String> = args[2..].to_vec();
     let turns: u32 = env_or("SYN_SMOKE_TURNS", 24);
+    let sub_turns: u32 = env_or("SYN_SMOKE_SUB_TURNS", turns);
     let timeout = Duration::from_secs(env_or("SYN_SMOKE_TIMEOUT_S", 1800));
     let tools: Vec<String> = std::env::var("SYN_SMOKE_TOOLS")
         .unwrap_or_else(|_| "bash,web,subagent".to_string())
@@ -165,7 +169,7 @@ fn run() -> std::result::Result<(), String> {
         Err(_) => SamplingParams::default(),
     };
     eprintln!(
-        "agent_smoke: bundle={} turns={turns} tools={tools:?} params={}",
+        "agent_smoke: bundle={} turns={turns} sub_turns={sub_turns} tools={tools:?} params={}",
         bundle.display(),
         serde_json::to_string(&params).unwrap_or_default()
     );
@@ -178,6 +182,7 @@ fn run() -> std::result::Result<(), String> {
     app_ctx.tools.allow_all.set(true);
     app_ctx.tools.active.set(tools);
     app_ctx.general.agent_max_turns.set(turns);
+    app_ctx.general.subagent_max_turns.set(sub_turns);
     provide_context(app_ctx.clone());
     let chat = SynChatCtx::new();
     chat.active_chat_id

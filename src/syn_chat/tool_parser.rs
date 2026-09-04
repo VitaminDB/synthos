@@ -434,6 +434,15 @@ fn parse_xml_params_attr(mut cursor: &str) -> serde_json::Map<String, serde_json
     args
 }
 
+/// То же для tag-in-name стиля: хвост до `</function>` / `</tool_call>`.
+fn cut_at_function_close(v: &str) -> &str {
+    let end = v
+        .find("</function")
+        .or_else(|| v.find("</tool_call"))
+        .unwrap_or(v.len());
+    &v[..end]
+}
+
 /// Хвост значения до `</invoke>` / `</function_calls>` — на случай, когда
 /// `</parameter>` модель не дописала.
 fn cut_at_invoke_close(v: &str) -> &str {
@@ -503,12 +512,23 @@ fn parse_xml_function_eq_style(body: &str) -> Option<RawToolCall> {
         let Some(key_end) = after_p.find('>') else { break };
         let key = after_p[..key_end].trim().to_string();
         let value_start = key_end + 1;
-        let Some(value_end_rel) = after_p[value_start..].find("</parameter>") else { break };
-        let raw_val = &after_p[value_start..value_start + value_end_rel];
+        // Без `</parameter>` (модель оборвала блок сразу после значения —
+        // flash-next 04.09.2026: `<parameter=arguments>{…}}` и конец) берём
+        // хвост до закрытия функции: вызов с целым аргументом лучше пустого.
+        let (raw_val, next) = match after_p[value_start..].find("</parameter>") {
+            Some(rel) => (
+                &after_p[value_start..value_start + rel],
+                &after_p[value_start + rel + "</parameter>".len()..],
+            ),
+            None => (cut_at_function_close(&after_p[value_start..]), ""),
+        };
         if !key.is_empty() {
             args.insert(key, xml_param_value(raw_val));
         }
-        cursor = &after_p[value_start + value_end_rel + "</parameter>".len()..];
+        if next.is_empty() {
+            break;
+        }
+        cursor = next;
     }
 
     let arguments_json =
@@ -603,6 +623,23 @@ mod tests {
         p.feed("<tool_call><function=bash><parameter=arguments>{\"command\":\"ls\"}}</parameter></function></tool_call>");
         let (calls, _) = p.finish();
         assert_eq!(calls[0].arguments_json, r#"{"command":"ls"}"#);
+    }
+
+    /// flash-next 04.09.2026: `<function=web><parameter=arguments>{…}}` и
+    /// конец потока — ни `</parameter>`, ни `</function>`.
+    #[test]
+    fn function_style_without_closing_parameter_keeps_value() {
+        let mut p = ToolCallParser::new();
+        p.feed("<tool_call><function=web>\n<parameter=arguments>\n{\"action\":\"search\",\"query\":\"redmi\",\"max_results\":10}}\n");
+        let (calls, _) = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web");
+        // Порядок ключей — как их написала модель (serde_json собран с
+        // `preserve_order`), это же уходит в шаблон.
+        assert_eq!(
+            calls[0].arguments_json,
+            r#"{"action":"search","query":"redmi","max_results":10}"#
+        );
     }
 
     /// Параметры рядом с `name`, без обёртки `arguments`.

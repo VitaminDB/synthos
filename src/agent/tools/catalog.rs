@@ -297,7 +297,9 @@ pub(super) fn build_all() -> Vec<Tool> {
                 tree with ids and the boards/charts on each page), search \
                 (titles + text), read (page markdown, layout, its \
                 boards/charts with card ids, links; blocks=true lists blocks \
-                with coordinates), create / update / move / delete / \
+                with coordinates; pages=[…], depth=all or page=\"all\" read \
+                many pages, a whole subtree or the whole project in ONE \
+                call), create / update / move / delete / \
                 duplicate (pages; update also sets grid/snap and inserts \
                 content at a position), open (show a page to the user), \
                 attach (file or chat attachment → media block), blocks \
@@ -311,7 +313,11 @@ pub(super) fn build_all() -> Vec<Tool> {
                 add_card | update_card | move_card | delete_card | delete), \
                 gantt (op=create | read | add_task | update_task | \
                 delete_task | add_dep | delete_dep | set_zoom | show_today | \
-                delete). Workflow: list → read the page → edit. Prefer \
+                delete). Workflow: list → read the pages you need in one \
+                call (pages=[…] / depth=all, blocks op=read block=all for \
+                every block of a page) → edit. Reading one page or one \
+                block per call is the slow way and wastes the user's time. \
+                Prefer \
                 update with find/replace, mode=append or blocks ops over \
                 rewriting a whole page. Pages are addressed by id (12 hex) \
                 or exact title; blocks by index from blocks op=list; boards \
@@ -421,7 +427,24 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "Page: id (12 hex, from list) or exact title; \
                 for duplicate titles use \"Parent / Title\" or the id. \
                 Required by read, update, move, delete, duplicate, attach \
-                and by kanban/gantt op=create."
+                and by kanban/gantt op=create. read also takes \"all\" — \
+                every page of the project in one reply."
+        })),
+        ("pages", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "read: several pages in ONE call (ids or titles) — \
+                always prefer this over one call per page. \"all\" as the \
+                only item reads the whole project. Everything that fits in \
+                one reply comes back; the pages that did not fit are listed \
+                at the end by id."
+        })),
+        ("depth", json!({
+            "type": "string",
+            "description": "read: how many levels of sub-pages to include \
+                along with each requested page — \"0\" (default) the page \
+                alone, \"1\" its children, \"all\" the whole subtree in one \
+                reply. Use it instead of walking the tree page by page."
         })),
         ("title", json!({
             "type": "string",
@@ -513,7 +536,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("limit", json!({
             "type": "integer",
-            "description": "search: max pages to return (default 20)."
+            "description": "search: max pages to return (default 20). read \
+                with pages/depth: max pages to include (all of them by \
+                default, as many as fit in one reply)."
         })),
         ("path", json!({
             "type": "string",
@@ -555,13 +580,18 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "boolean",
             "description": "read: also list the page blocks with index, kind, \
                 canvas coordinates (x y w h; ~ = estimated height) and \
-                attributes — needed before blocks/shape ops."
+                attributes — needed before blocks/shape ops. Works together \
+                with pages/depth, so one call can bring back a whole \
+                subtree with its geometry."
         })),
         ("block", json!({
             "type": "string",
             "description": "blocks/shape: the block — its index from blocks \
                 op=list (\"3\") or find:<text> that occurs in exactly one block. \
-                Re-list after inserting or deleting blocks: indices shift."
+                Re-list after inserting or deleting blocks: indices shift. \
+                blocks op=read also takes several at once: \"0,2,5-7\" or \
+                \"all\" (every block of the page with its markdown and \
+                attributes) — never read blocks one call at a time."
         })),
         ("md", json!({
             "type": "string",

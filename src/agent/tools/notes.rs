@@ -8,9 +8,12 @@
 //! возвращает прежний текст.
 //!
 //! Действия:
-//! - `list` — дерево страниц (id, название, объекты на странице);
+//! - `list` — дерево страниц (id, название, объём, объекты на странице);
 //!   `search` — поиск по названиям и тексту; `read` — страница целиком
-//!   (markdown, доски и диаграммы на ней, связи).
+//!   (markdown, доски и диаграммы на ней, связи) или сразу пачка:
+//!   `pages` (список), `depth` (подстраницы), `page="all"` (весь проект)
+//!   — сколько влезает в [`READ_BUDGET`], остальное перечислено по id.
+//!   `blocks op=read` так же берёт `all` / «0,2,5-7» / массив.
 //! - `create` / `update` / `move` / `delete` / `duplicate` — страницы.
 //!   `update` умеет переименовать, сменить иконку и раскладку, заменить
 //!   текст целиком (`content`, `mode=replace|append|prepend`) и точечно
@@ -75,7 +78,7 @@ use crate::pages::notes::state::{object_refs, LiveObject, NotesCtx};
 use crate::pages::notes::{embeds, media};
 use crate::syn_chat::attach::blobs;
 
-use super::executor::ToolError;
+use super::executor::{ToolError, MAX_OUTPUT_BYTES};
 
 /// Главный entrypoint из `executor::execute`.
 pub async fn run(args_json: &str) -> Result<String, ToolError> {
@@ -1155,20 +1158,22 @@ fn list_impl(ctx: NotesCtx) -> Result<String, String> {
         .map(|id| format!("{id} \"{}\"", ctx.title_of(&id)))
         .unwrap_or_else(|| "none".to_string());
     out.push_str(&format!("pages: {} · active: {active}\n", tree.all().len()));
-    out.push_str("--- Pages (indent = nesting; objects embedded in the page after ·) ---\n");
+    out.push_str("--- Pages (indent = nesting; size in words; objects embedded in the page after ·) ---\n");
     if tree.is_empty() {
         out.push_str("(no pages yet — notes create makes one)\n");
     } else {
         fn walk(ctx: NotesCtx, nodes: &[crate::pages::notes::project::PageNode], depth: usize, out: &mut String) {
             for n in nodes {
                 let icon = n.icon.as_deref().filter(|i| !i.is_empty()).map(|i| format!(" {i}")).unwrap_or_default();
+                let md = ctx.page_markdown(&n.id);
                 let objects: Vec<String> =
-                    object_refs(&ctx.page_markdown(&n.id)).iter().map(|(k, id)| format!(" · {k}:{id}")).collect();
+                    object_refs(&md).iter().map(|(k, id)| format!(" · {k}:{id}")).collect();
                 out.push_str(&format!(
-                    "{}{} \"{}\"{icon}{}\n",
+                    "{}{} \"{}\"{icon} · {} words{}\n",
                     "  ".repeat(depth),
                     n.id,
                     n.title,
+                    count_words(&plain_markdown(&md)),
                     objects.concat()
                 ));
                 walk(ctx, &n.children, depth + 1, out);
@@ -1178,7 +1183,9 @@ fn list_impl(ctx: NotesCtx) -> Result<String, String> {
     }
     out.push_str(
         "---\nread {page} shows the markdown, boards and charts on the page and its links; \
-         update {page, content | find+replace | mode=append} edits it; \
+         read {pages: [\"id\", \"id\"]} or {page, depth=all} or {page=\"all\"} brings back \
+         several pages, a whole subtree or the whole project in ONE call — use it instead of \
+         reading page by page; update {page, content | find+replace | mode=append} edits it; \
          kanban / gantt {op=create, page} add a board or chart.\n",
     );
     Ok(out)
@@ -1224,14 +1231,156 @@ fn search_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     Ok(out)
 }
 
-fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
-    let id = page_arg(ctx, v, "page")?;
+/// Бюджет одного ответа массового чтения в байтах. Исполнитель режет вывод
+/// инструмента на [`MAX_OUTPUT_BYTES`] молча и посреди строки — пачка
+/// страниц (или блоков) обрывается сама, на границе страницы, и в ответе
+/// перечислено, что осталось дочитать.
+const READ_BUDGET: usize = MAX_OUTPUT_BYTES - 8 * 1024;
+
+/// «Весь проект» в `page`/`pages` — но только если так не называется
+/// настоящая страница.
+fn is_all_pages(ctx: NotesCtx, s: &str) -> bool {
+    let t = s.trim();
+    matches!(t.to_ascii_lowercase().as_str(), "all" | "*" | "project" | "everything")
+        && ctx.tree.get_untracked().find(t).is_none()
+        && ctx.find_by_title(t).is_empty()
+}
+
+/// Одна ссылка на страницу либо несколько через запятую/перенос строки:
+/// целая строка важнее — в названии страницы запятая законна.
+fn resolve_many(ctx: NotesCtx, raw: &str) -> Result<Vec<String>, String> {
+    let whole = resolve_page_ref(ctx, raw);
+    if let Ok(id) = whole {
+        return Ok(vec![id]);
+    }
+    let parts: Vec<&str> = raw.split([',', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect();
+    if parts.len() < 2 {
+        return whole.map(|id| vec![id]);
+    }
+    parts.into_iter().map(|p| resolve_page_ref(ctx, p)).collect()
+}
+
+/// `depth` — сколько уровней подстраниц добрать к каждой запрошенной
+/// странице: число, `true` либо «all» (всё поддерево).
+fn depth_arg(v: &Json) -> Result<usize, String> {
+    let level = |i: i64| if i < 0 { usize::MAX } else { i as usize };
+    match v.get("depth") {
+        None | Some(Json::Null) => Ok(0),
+        Some(Json::Bool(b)) => Ok(if *b { usize::MAX } else { 0 }),
+        Some(Json::Number(n)) => n.as_i64().map(level).ok_or_else(|| "\"depth\" must be a whole number".to_string()),
+        Some(Json::String(s)) => {
+            let t = s.trim().to_ascii_lowercase();
+            if t.is_empty() {
+                return Ok(0);
+            }
+            if matches!(t.as_str(), "all" | "*" | "full" | "tree" | "subtree" | "max" | "true") {
+                return Ok(usize::MAX);
+            }
+            t.parse::<i64>()
+                .map(level)
+                .map_err(|_| format!("unknown \"depth\" \"{s}\" (a number of levels or \"all\")"))
+        }
+        Some(other) => Err(format!("\"depth\" must be a number or \"all\", got {other}")),
+    }
+}
+
+/// Страница и её потомки до глубины `depth` (DFS, как в дереве).
+fn subtree_within(tree: &crate::pages::notes::project::ProjectTree, id: &str, depth: usize, out: &mut Vec<String>) {
+    fn walk(n: &crate::pages::notes::project::PageNode, left: usize, out: &mut Vec<String>) {
+        out.push(n.id.clone());
+        if left == 0 {
+            return;
+        }
+        for c in &n.children {
+            walk(c, left - 1, out);
+        }
+    }
+    if let Some(n) = tree.find(id) {
+        walk(n, depth, out);
+    }
+}
+
+/// Что читать: `page` и/или `pages` (массив либо строка через запятую),
+/// плюс подстраницы по `depth`; `page="all"` — весь проект. Порядок — как
+/// в дереве, повторы убираются, `limit` режет хвост.
+fn read_targets(ctx: NotesCtx, v: &Json) -> Result<Vec<String>, String> {
+    let mut raws: Vec<String> = Vec::new();
+    match v.get("pages") {
+        None | Some(Json::Null) => {}
+        Some(Json::Array(a)) => {
+            for e in a {
+                match e {
+                    Json::String(s) if !s.trim().is_empty() => raws.push(s.trim().to_string()),
+                    Json::Number(n) => raws.push(n.to_string()),
+                    other => return Err(format!("\"pages\" takes page ids or titles, got {other}")),
+                }
+            }
+        }
+        Some(Json::String(s)) if !s.trim().is_empty() => raws.push(s.trim().to_string()),
+        Some(Json::String(_)) => {}
+        Some(other) => {
+            return Err(format!("\"pages\" must be an array of pages or a comma-separated string, got {other}"))
+        }
+    }
+    if let Some(s) = str_field(v, "page") {
+        raws.push(s.to_string());
+    }
+    if raws.is_empty() {
+        return Err("missing \"page\" (page id or title; \"pages\" takes several at once, \
+                    page=\"all\" the whole project)"
+            .to_string());
+    }
     let tree = ctx.tree.get_untracked();
-    let node = tree.find(&id).ok_or("page vanished")?;
-    let raw = ctx.page_markdown(&id);
+    let mut roots: Vec<String> = Vec::new();
+    let mut all = false;
+    for raw in &raws {
+        if is_all_pages(ctx, raw) {
+            all = true;
+            continue;
+        }
+        for id in resolve_many(ctx, raw)? {
+            if !roots.contains(&id) {
+                roots.push(id);
+            }
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    if all {
+        out = tree.all_ids();
+    } else {
+        let depth = depth_arg(v)?;
+        for id in &roots {
+            let mut sub = Vec::new();
+            subtree_within(&tree, id, depth, &mut sub);
+            for s in sub {
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("no pages to read — the project has none yet (notes create makes one)".to_string());
+    }
+    if out.len() > 1 {
+        if let Some(limit) = usize_field(v, "limit") {
+            out.truncate(limit.max(1));
+        }
+    }
+    Ok(out)
+}
+
+/// Одна страница целиком: markdown, её блоки (по запросу), доски,
+/// диаграммы, карты и календари на ней, ссылки.
+fn page_text(ctx: NotesCtx, id: &str, with_blocks: bool) -> String {
+    let tree = ctx.tree.get_untracked();
+    let Some(node) = tree.find(id) else {
+        return format!("page: {id} · (gone from the tree — see notes list)\n");
+    };
+    let raw = ctx.page_markdown(id);
     let md = plain_markdown(&raw);
     let mut out = String::new();
-    out.push_str(&page_line(ctx, &id));
+    out.push_str(&page_line(ctx, id));
     out.push('\n');
     out.push_str(&format!(
         "icon: {} · {} · {} words · children: {}\n",
@@ -1249,7 +1398,7 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             out.push('\n');
         }
     }
-    if bool_field(v, "blocks").unwrap_or(false) {
+    if with_blocks {
         out.push_str("--- Blocks (index · kind · canvas x y w h, ~ = estimated · attributes) ---\n");
         out.push_str(&blocks_text(&parse_document(&raw)));
     }
@@ -1267,8 +1416,8 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
     }
     let index = ctx.index.get_untracked();
-    let outgoing = index.outgoing_of(&id);
-    let backlinks = index.backlinks_of(&id);
+    let outgoing = index.outgoing_of(id);
+    let backlinks = index.backlinks_of(id);
     if !outgoing.is_empty() || !backlinks.is_empty() {
         out.push_str("--- Links ---\n");
         let fmt = |ids: &[String]| {
@@ -1280,6 +1429,77 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         if !backlinks.is_empty() {
             out.push_str(&format!("backlinks: {}\n", fmt(&backlinks)));
         }
+    }
+    out
+}
+
+/// `read` — одна страница или сразу пачка (`pages`, `depth`, `page="all"`).
+/// Чтение по одной странице за вызов у локальной модели стоит целого хода
+/// с полным префиллом, поэтому дерево целиком отдаётся одним ответом,
+/// сколько влезает в [`READ_BUDGET`].
+fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let ids = read_targets(ctx, v)?;
+    let with_blocks = bool_field(v, "blocks").unwrap_or(false);
+    if ids.len() == 1 {
+        let mut out = page_text(ctx, &ids[0], with_blocks);
+        // Подстраницы называем сразу: иначе модель обходит дерево по
+        // странице за ход, а это полный префилл на каждую.
+        let kids = ctx.tree.get_untracked().find(&ids[0]).map(|n| n.children.clone()).unwrap_or_default();
+        if !kids.is_empty() {
+            out.push_str(&format!(
+                "--- Sub-pages ({}) — read the whole subtree in ONE call with depth=all ---\n",
+                kids.len()
+            ));
+            for k in &kids {
+                out.push_str(&format!(
+                    "{} \"{}\" · {} words · children: {}\n",
+                    k.id,
+                    k.title,
+                    count_words(&plain_markdown(&ctx.page_markdown(&k.id))),
+                    k.children.len()
+                ));
+            }
+        }
+        return Ok(out);
+    }
+    let total = ids.len();
+    let mut body = String::new();
+    let mut done = 0usize;
+    let mut words = 0usize;
+    for (n, id) in ids.iter().enumerate() {
+        let text = page_text(ctx, id, with_blocks);
+        if !body.is_empty() && body.len() + text.len() > READ_BUDGET {
+            break;
+        }
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        body.push_str(&format!("=== page {}/{} ===\n", n + 1, total));
+        body.push_str(&text);
+        if !text.ends_with('\n') {
+            body.push('\n');
+        }
+        words += count_words(&plain_markdown(&ctx.page_markdown(id)));
+        done += 1;
+    }
+    let mut out = String::new();
+    if done == total {
+        out.push_str(&format!("--- {total} pages · {words} words · all of them in this reply ---\n"));
+    } else {
+        out.push_str(&format!(
+            "--- {done} of {total} pages · {words} words · the rest did not fit in one reply ---\n"
+        ));
+    }
+    out.push_str(&body);
+    if done < total {
+        let rest: Vec<String> =
+            ids[done..].iter().map(|id| format!("{id} \"{}\"", ctx.title_of(id))).collect();
+        out.push_str(&format!(
+            "--- Not read ({}) ---\n{}\nRead them with one more call: pages=[\"{}\", …].\n",
+            total - done,
+            rest.join("\n"),
+            ids[done]
+        ));
     }
     Ok(out)
 }
@@ -2347,6 +2567,89 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
 // Blocks
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Блок целиком: строка списка, markdown и атрибуты — тело `blocks op=read`.
+fn block_read_text(i: usize, b: &DocBlock) -> String {
+    let mut out = format!("{}\n--- Markdown ---\n{}", block_line(i, b), block_markdown(b));
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !b.attrs.is_empty() {
+        out.push_str(&format!("--- Attributes ---\n{}\n", serialize_attrs(&b.attrs)));
+    }
+    out
+}
+
+/// Ссылки сразу на несколько блоков для `op=read`: `all`, список индексов
+/// и диапазонов («0,2,5-7»), массив ссылок либо одна ссылка (индекс или
+/// `find:<текст>`) — как в остальных операциях.
+fn resolve_block_list(model: &DocModel, v: &Json) -> Result<Vec<usize>, String> {
+    let n = model.blocks.len();
+    let check = |i: usize| -> Result<usize, String> {
+        (i < n).then_some(i).ok_or_else(|| {
+            format!("block #{i} does not exist — the page has {n} blocks (blocks op=list)")
+        })
+    };
+    let mut out: Vec<usize> = Vec::new();
+    match v.get("block").or_else(|| v.get("blocks")) {
+        Some(Json::Array(a)) => {
+            for e in a {
+                let s = match e {
+                    Json::String(s) => s.trim().to_string(),
+                    Json::Number(num) => num.to_string(),
+                    other => return Err(format!("\"block\" list takes indices or find:<text>, got {other}")),
+                };
+                out.push(resolve_block(model, &s)?);
+            }
+        }
+        Some(Json::Number(num)) => out.push(resolve_block(model, &num.to_string())?),
+        Some(Json::String(raw)) => {
+            let t = raw.trim();
+            let t = t.strip_prefix("block:").unwrap_or(t).trim();
+            let numeric = !t.is_empty()
+                && t.chars().all(|c| c.is_ascii_digit() || matches!(c, ',' | '-' | '#' | ' '))
+                && (t.contains(',') || t.contains('-'));
+            if matches!(t.to_ascii_lowercase().as_str(), "all" | "*" | "every") {
+                out.extend(0..n);
+            } else if numeric {
+                for part in t.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                    let num = |s: &str| -> Result<usize, String> {
+                        s.trim()
+                            .trim_start_matches('#')
+                            .parse::<usize>()
+                            .map_err(|_| format!("bad block index \"{part}\" (\"0,2,5-7\" or \"all\")"))
+                    };
+                    match part.split_once('-') {
+                        Some((a, b)) => {
+                            let (a, b) = (num(a)?, num(b)?);
+                            if a > b {
+                                return Err(format!("bad block range \"{part}\" — it starts after it ends"));
+                            }
+                            for i in a..=b {
+                                out.push(check(i)?);
+                            }
+                        }
+                        None => out.push(check(num(part)?)?),
+                    }
+                }
+            } else {
+                out.push(resolve_block(model, t)?);
+            }
+        }
+        _ => {
+            return Err("missing \"block\" (index from blocks op=list, find:<text>, a list like \
+                        \"0,2,5-7\" or \"all\" for the whole page)"
+                .to_string())
+        }
+    }
+    let mut uniq: Vec<usize> = Vec::with_capacity(out.len());
+    for i in out {
+        if !uniq.contains(&i) {
+            uniq.push(i);
+        }
+    }
+    Ok(uniq)
+}
+
 fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let op = str_field(v, "op")
         .ok_or("missing \"op\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin)")?;
@@ -2358,12 +2661,34 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     match op {
         "list" => Ok(format!("{}{}\n", blocks_text(&model), page_line(ctx, &id))),
         "read" => {
-            let i = block_arg(&model)?;
-            let b = &model.blocks[i];
-            let mut out = format!("{}\n--- Markdown ---\n{}", block_line(i, b), block_markdown(b));
-            if !b.attrs.is_empty() {
-                out.push_str(&format!("--- Attributes ---\n{}\n", serialize_attrs(&b.attrs)));
+            let idx = resolve_block_list(&model, v)?;
+            if idx.is_empty() {
+                return Ok(format!("(no blocks)\n{}\n", page_line(ctx, &id)));
             }
+            if idx.len() == 1 {
+                return Ok(block_read_text(idx[0], &model.blocks[idx[0]]));
+            }
+            let mut body = String::new();
+            let mut done = 0usize;
+            for &i in &idx {
+                let text = block_read_text(i, &model.blocks[i]);
+                if !body.is_empty() && body.len() + text.len() > READ_BUDGET {
+                    break;
+                }
+                body.push_str(&text);
+                body.push('\n');
+                done += 1;
+            }
+            let mut out = if done == idx.len() {
+                format!("--- {} blocks ---\n", idx.len())
+            } else {
+                format!("--- {done} of {} blocks · the rest did not fit in one reply ---\n", idx.len())
+            };
+            out.push_str(&body);
+            if done < idx.len() {
+                out.push_str(&format!("--- Not read: {} ---\n", indices_text(&idx[done..])));
+            }
+            out.push_str(&format!("{}\n", page_line(ctx, &id)));
             Ok(out)
         }
         "insert" => {
@@ -4295,5 +4620,78 @@ mod tests {
         assert!(!ctx.page_markdown(&page).contains("kanban:"));
         assert!(ctx.page_markdown(&page).contains("### Доска"), "заголовок над доской остаётся");
         assert!(dispatch(ctx, "kanban", &serde_json::json!({"op": "read", "page": &page})).is_err());
+    }
+
+    /// Массовое чтение: страница с подстраницами, список страниц и весь
+    /// проект — одним вызовом. По странице за ход локальная модель платит
+    /// полным префиллом за каждую подстраницу.
+    #[test]
+    fn read_takes_many_pages_at_once() {
+        let ctx = ctx();
+        let root = page_id(&call(ctx, "create", serde_json::json!({"title": "Проект", "content": "Корень\n"})));
+        let a = page_id(&call(
+            ctx,
+            "create",
+            serde_json::json!({"title": "Раздел А", "parent": &root, "content": "Текст А\n"}),
+        ));
+        let b = page_id(&call(
+            ctx,
+            "create",
+            serde_json::json!({"title": "Раздел Б", "parent": &root, "content": "Текст Б\n"}),
+        ));
+        call(ctx, "create", serde_json::json!({"title": "Подраздел", "parent": &a, "content": "Глубокий текст\n"}));
+
+        // Одна страница — прежний формат, без шапки пачки и без соседей.
+        let one = call(ctx, "read", serde_json::json!({"page": &root}));
+        assert!(one.starts_with("page: "), "{one}");
+        assert!(!one.contains("Текст А"), "{one}");
+
+        // Поддерево целиком.
+        assert!(one.contains("--- Sub-pages (2)"), "одиночное чтение называет подстраницы: {one}");
+
+        let tree = call(ctx, "read", serde_json::json!({"page": &root, "depth": "all"}));
+        assert!(tree.starts_with("--- 4 pages"), "{tree}");
+        for t in ["Корень", "Текст А", "Текст Б", "Глубокий текст"] {
+            assert!(tree.contains(t), "нет «{t}»: {tree}");
+        }
+
+        // Один уровень — дети без внуков.
+        let level1 = call(ctx, "read", serde_json::json!({"page": &root, "depth": 1}));
+        assert!(level1.contains("Текст А") && !level1.contains("Глубокий текст"), "{level1}");
+
+        // Явный список страниц и весь проект.
+        let pair = call(ctx, "read", serde_json::json!({"pages": [&a, &b]}));
+        assert!(pair.contains("Текст А") && pair.contains("Текст Б") && !pair.contains("Корень"), "{pair}");
+        let all = call(ctx, "read", serde_json::json!({"page": "all"}));
+        assert!(all.contains("=== page 4/4 ==="), "{all}");
+        let two = call(ctx, "read", serde_json::json!({"page": "all", "limit": 2}));
+        assert!(two.starts_with("--- 2 pages"), "{two}");
+    }
+
+    /// Блоки страницы читаются пачкой: `all`, список и диапазон; одиночная
+    /// ссылка отвечает как прежде.
+    #[test]
+    fn blocks_read_takes_a_list_and_the_whole_page() {
+        let ctx = ctx();
+        let page = page_id(&call(
+            ctx,
+            "create",
+            serde_json::json!({"title": "Холст-чтение", "content": "# Схема\n\nПервый\n\nВторой\n\nТретий\n"}),
+        ));
+        let all = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "all"}));
+        assert!(all.starts_with("--- 4 blocks ---"), "{all}");
+        assert!(all.contains("# Схема") && all.contains("Первый") && all.contains("Третий"), "{all}");
+
+        let some = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "1,3"}));
+        assert!(some.starts_with("--- 2 blocks ---"), "{some}");
+        assert!(some.contains("Первый") && some.contains("Третий") && !some.contains("Второй"), "{some}");
+
+        let range = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "2-3"}));
+        assert!(range.contains("Второй") && range.contains("Третий") && !range.contains("Первый"), "{range}");
+
+        // Одиночная ссылка (индекс или find:) — прежний ответ без шапки.
+        let single = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "find:Второй"}));
+        assert!(single.starts_with("#2 paragraph"), "{single}");
+        assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "read", "page": &page, "block": "9"})).is_err());
     }
 }

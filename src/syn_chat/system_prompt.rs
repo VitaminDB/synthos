@@ -181,6 +181,14 @@ pub fn build(env: &PromptEnv) -> String {
                  - Start with list (page tree, ids, the boards/charts on each \
                  page) or search; read a page before editing it — update \
                  with content and mode=replace overwrites the whole page.\n\
+                 - Read in bulk, not page by page: read takes pages=[…] \
+                 (several pages at once), depth=all (the page with its \
+                 whole subtree) and page=\"all\" (the entire project), and \
+                 blocks op=read block=all returns every block of a page \
+                 with its markdown and attributes. One call brings back \
+                 everything that fits in a reply and lists by id whatever \
+                 did not — a call per page or per block only wastes the \
+                 user's time.\n\
                  - Address pages by id (12 hex) or exact title; an ambiguous \
                  title is an error — use the id. Boards and charts: by id \
                  from list/read, or implicitly when the page has one. \
@@ -363,6 +371,7 @@ mod tests {
         assert!(s.contains("blocks op=pin"), "{s}");
         assert!(s.contains("mindmap op=create"), "{s}");
         assert!(s.contains("calendar op=add_event"), "{s}");
+        assert!(s.contains("depth=all"), "{s}");
     }
 
     #[test]

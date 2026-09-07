@@ -1352,6 +1352,13 @@ impl AppConfig {
     /// ровно старый дефолт, — значения, изменённые пользователем, остаются.
     /// Параметры уже существующих чатов (per-chat override) не трогаем.
     pub fn migrate_sampling_defaults(&mut self) {
+        // Потолок ответа до 07.09.2026 — 131072 (= `max_seq_len`): он уходил
+        // в план KV каждого хода и занимал память под ринг впустую.
+        // Нетронутый дефолт переводим на новый, изменённое пользователем
+        // значение не трогаем.
+        if self.syn_chat_defaults.max_new_tokens == SamplingParams::LEGACY_MAX_NEW_TOKENS {
+            self.syn_chat_defaults.max_new_tokens = SamplingParams::default().max_new_tokens;
+        }
         if self.syn_chat_defaults == SamplingParams::legacy_v1() {
             self.syn_chat_defaults = SamplingParams::default();
         }

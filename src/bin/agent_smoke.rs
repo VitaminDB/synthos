@@ -8,17 +8,21 @@
 //! нужны живая модель, живой сэмплинг и несколько сообщений подряд.
 //!
 //! Запуск (из каталога проекта — он же рабочий каталог `bash`):
-//! `agent_smoke <bundle.syn> <prompt> [prompt2 …]`
+//! `agent_smoke <bundle.syn> <prompt> [prompt2 …]`; промпт вида `@путь`
+//! читается из файла — аргумент командной строки ограничен 128 КБ, а
+//! промпт на 65k токенов в него не помещается.
 //!
 //! Переменные окружения:
 //! - `SYN_SMOKE_TURNS` — бюджет ходов агента на сообщение (по умолчанию 24);
 //! - `SYN_SMOKE_SUB_TURNS` — бюджет ходов субагента (по умолчанию столько же:
 //!   у него свой лимит из конфига, и без этого один вызов субагента тянет
 //!   прогон на десятки минут);
-//! - `SYN_SMOKE_TOOLS` — активные инструменты через запятую
-//!   (по умолчанию `bash,web,subagent`);
-//! - `SYN_SMOKE_PARAMS` — JSON с полями `SamplingParams` поверх дефолтов
-//!   (например `{"temperature":0.0,"enable_thinking":false}`);
+//! - `SYN_SMOKE_TOOLS` — активные инструменты через запятую (пустая строка —
+//!   без инструментов); без переменной — `tools_active` из конфига, как в GUI;
+//! - `SYN_SMOKE_PARAMS` — JSON с полями `SamplingParams` поверх
+//!   `syn_chat_defaults` из конфига (например
+//!   `{"temperature":0.0,"enable_thinking":false}`); без переменной — ровно
+//!   параметры, с которыми модель запускает страница чата;
 //! - `SYN_SMOKE_TIMEOUT_S` — потолок на одно сообщение (по умолчанию 1800);
 //! - `SYN_SMOKE_OUT` — куда сохранить ленту (JSON, как `syn_chats/*.json`);
 //! - `SYN_SMOKE_SWITCH_AFTER_S` — через сколько секунд после старта первого
@@ -157,20 +161,38 @@ fn run() -> std::result::Result<(), String> {
     if !bundle.exists() {
         return Err(format!("нет бандла: {}", bundle.display()));
     }
-    let prompts: Vec<String> = args[2..].to_vec();
+    let mut prompts: Vec<String> = Vec::with_capacity(args.len() - 2);
+    for a in &args[2..] {
+        prompts.push(match a.strip_prefix('@') {
+            Some(path) => std::fs::read_to_string(path)
+                .map_err(|e| format!("промпт из файла {path}: {e}"))?,
+            None => a.clone(),
+        });
+    }
     let turns: u32 = env_or("SYN_SMOKE_TURNS", 24);
     let sub_turns: u32 = env_or("SYN_SMOKE_SUB_TURNS", turns);
     let timeout = Duration::from_secs(env_or("SYN_SMOKE_TIMEOUT_S", 1800));
-    let tools: Vec<String> = std::env::var("SYN_SMOKE_TOOLS")
-        .unwrap_or_else(|_| "bash,web,subagent".to_string())
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    // Конфиг — тот же, что читает GUI (`$HOME/.config/synthos/config.json`):
+    // прогон обязан идти на параметрах и инструментах приложения, иначе
+    // «на тестах работало» ничего не говорит о чате.
+    let cfg = synthos::config::AppConfig::load();
+    let tools: Vec<String> = match std::env::var("SYN_SMOKE_TOOLS") {
+        Ok(list) => list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Err(_) => cfg.tools_active.clone(),
+    };
     let switch_after: u64 = env_or("SYN_SMOKE_SWITCH_AFTER_S", 0);
     let params: SamplingParams = match std::env::var("SYN_SMOKE_PARAMS") {
-        Ok(json) => serde_json::from_str(&json).map_err(|e| format!("SYN_SMOKE_PARAMS: {e}"))?,
-        Err(_) => SamplingParams::default(),
+        Ok(json) => {
+            let mut base = serde_json::to_value(&cfg.syn_chat_defaults).map_err(|e| e.to_string())?;
+            let over: serde_json::Value =
+                serde_json::from_str(&json).map_err(|e| format!("SYN_SMOKE_PARAMS: {e}"))?;
+            match (base.as_object_mut(), over.as_object()) {
+                (Some(b), Some(o)) => b.extend(o.iter().map(|(k, v)| (k.clone(), v.clone()))),
+                _ => return Err("SYN_SMOKE_PARAMS: ожидался JSON-объект".into()),
+            }
+            serde_json::from_value(base).map_err(|e| format!("SYN_SMOKE_PARAMS: {e}"))?
+        }
+        Err(_) => cfg.syn_chat_defaults.clone(),
     };
     eprintln!(
         "agent_smoke: bundle={} turns={turns} sub_turns={sub_turns} tools={tools:?} params={}",
@@ -210,9 +232,7 @@ fn run() -> std::result::Result<(), String> {
     // Контексты страниц: инструмент `notes` работает с деревом заметок, а
     // `pipelines` — с рабочим столом графов. Без них вызов инструмента valит
     // весь процесс на `use_context`.
-    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(
-        &synthos::config::AppConfig::load(),
-    ));
+    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&cfg));
     provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
 
     // Модель — той же политикой, что выбрала бы страница чата.

@@ -395,20 +395,37 @@ pub async fn maybe_autocompact(
     snapshot: u64,
     threshold_percent: u32,
 ) {
-    let Some((prompt_tokens, budget)) = read_ctx_usage_on_main().await else {
+    let Some((prompt_tokens, budget, max_seq_len)) = read_ctx_usage_on_main().await else {
         return;
     };
     if prompt_tokens == 0 {
         return;
     }
-    // Лимит = что раньше кончится: окно модели или честный VRAM-бюджет
-    // последнего хода (`RingPlan.by_mem`; 0 — ход ещё не считался).
+    // Лимит = что раньше кончится: окно модели, `max_seq_len` из настроек
+    // или VRAM-бюджет последнего хода (`RingPlan.by_mem`; 0 — ход ещё не
+    // считался). Бюджет — с учётом оффлоада: блоки, которые ещё на карте,
+    // `fit_blocks_for_context` отправит на хост и освободит VRAM под KV, так
+    // что ход на таком контексте пройдёт — медленнее, но пройдёт. Без этой
+    // поправки сжатие срабатывало там, где ход прекрасно работал
+    // (07.09.2026: 77k токенов при «лимите» 87k свернулись в сводку на 594
+    // токена, и модель дальше отвечала на вопросы по документу выдумкой).
     let model_cap = model.model.config().max_seq_len.saturating_sub(1) as u32;
-    let effective = if budget == 0 {
-        model_cap
-    } else {
-        budget.min(model_cap)
-    };
+    let offloadable_tokens: u32 = model
+        .model
+        .block_offload_shape()
+        .map(|(block_bytes, total)| {
+            let resident = model.model.resident_blocks().unwrap_or(total);
+            let kv = model.model.kv_bytes_per_token().max(1) as u64;
+            (resident as u64 * block_bytes as u64 / kv).min(u32::MAX as u64) as u32
+        })
+        .unwrap_or(0);
+    let mut effective = model_cap;
+    if max_seq_len > 0 {
+        effective = effective.min(max_seq_len);
+    }
+    if budget > 0 {
+        effective = effective.min(budget.saturating_add(offloadable_tokens));
+    }
     if effective == 0 {
         return;
     }
@@ -634,13 +651,15 @@ async fn read_compact_plan_on_main(
 
 /// Читает на main-потоке промпт последнего хода и VRAM-бюджет контекста
 /// (сигналы таба «Детали», обновляются `TurnStats::apply` на каждом ходу).
-async fn read_ctx_usage_on_main() -> Option<(u32, u32)> {
+/// `(промпт последнего хода, бюджет VRAM в токенах, max_seq_len из настроек)`.
+async fn read_ctx_usage_on_main() -> Option<(u32, u32, u32)> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
         let _ = tx.send((
             ctx.last_prompt_tokens.get_untracked(),
             ctx.ctx_budget_tokens.get_untracked(),
+            ctx.params.get_untracked().max_seq_len,
         ));
     });
     rx.await.ok()

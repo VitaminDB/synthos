@@ -48,7 +48,11 @@ impl Default for SamplingParams {
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
             seed: -1,
-            max_new_tokens: 131072,
+            // 16384, а не «сколько влезет»: бюджет ответа входит в план KV
+            // каждого хода (см. `session::RING_ANSWER_TOKENS`), и потолок в
+            // 131072 лишь занимал память под ринг. 16k токенов хватает и на
+            // большой файл — 4096 модели бывало мало (пользователь, 07.09.2026).
+            max_new_tokens: 16384,
             max_seq_len: 131072,
             enable_thinking: true,
         }
@@ -77,6 +81,10 @@ fn entropy_seed() -> u64 {
 }
 
 impl SamplingParams {
+    /// Потолок ответа по умолчанию до 07.09.2026 — см.
+    /// [`crate::config::AppConfig::migrate_sampling_defaults`].
+    pub const LEGACY_MAX_NEW_TOKENS: u32 = 131072;
+
     /// Дефолты до 03.09.2026 (0.7 / 0.9 / 40 / repeat 1.05). Нужны только
     /// [`crate::config::AppConfig::migrate_sampling_defaults`]: конфиг с ровно
     /// этим набором переводится на новые дефолты, изменённый пользователем —

@@ -315,7 +315,30 @@ pub(super) fn build_all() -> Vec<Tool> {
                 update with find/replace, mode=append or blocks ops over \
                 rewriting a whole page. Pages are addressed by id (12 hex) \
                 or exact title; blocks by index from blocks op=list; boards \
-                and charts by id, or implicitly when the page has one.",
+                and charts by id, or implicitly when the page has one. \
+                LAYOUT. A new page is a free canvas, but as long as none of \
+                its blocks is pinned they flow in one centred column and \
+                the page reads as a plain document — keep it that way and \
+                pass no coordinates unless the user asked for a canvas. \
+                The moment anything is pinned (a shape, a board, a chart, \
+                blocks op=pin, insert with x/y) nothing arranges the rest \
+                for you: EVERY block must then carry x, y and w (plus h for \
+                shapes, media, boards, charts, mind maps and calendars), \
+                otherwise the unplaced ones are drawn in the flow column ON \
+                TOP of the pinned blocks and the page turns into a pile. \
+                create layout=free with content, and update layout=free on \
+                a flow page, pin the blocks in a column where the flow had \
+                them; content added later carries no geometry, so after \
+                such an edit on a page with pinned blocks run blocks \
+                op=arrange once (stacks every unplaced block below the \
+                pinned ones) or pin them one by one (blocks op=pin x y w). \
+                Plan the layout before writing it — e.g. one column at x=40 \
+                with y growing by the block's height + 24, objects below \
+                the text — and check the result with read blocks=true, \
+                where h=~ marks a height the editor estimated; a reply line \
+                starting with !! free layout lists blocks still unplaced on \
+                a page with pinned ones, and !! overlaps names blocks whose \
+                frames intersect.",
             schema: notes_schema(),
         },
         Tool {
@@ -416,7 +439,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 embeds, ![[shape:rect]]{fill=#4F8CFF} shapes (rect | ellipse | \
                 triangle | diamond | line | arrow | arrow2 | curve | curve-arrow | \
                 curve-arrow2), heading/callout attributes {color=… bg=… \
-                align=center size=22}."
+                align=center size=22}. Content carries no geometry: on a \
+                free-layout page its blocks land in the flow column until you \
+                pin them (blocks op=pin x y w)."
         })),
         ("mode", json!({
             "type": "string",
@@ -459,8 +484,27 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("layout", json!({
             "type": "string",
             "enum": ["free", "flow"],
-            "description": "create/update: free canvas (blocks keep their \
-                coordinates) or a plain document flow."
+            "description": "create/update: free (default for new pages) — a \
+                canvas where every block keeps its own x y w h; until \
+                something is pinned the blocks flow in one centred column \
+                like a document, but a block left without x/y next to \
+                pinned ones is drawn over them. flow — a plain document \
+                column, coordinates are ignored. Passing layout=free \
+                explicitly on create (with content) or on a flow page pins \
+                the blocks in one column where the flow had them, so the \
+                picture does not change."
+        })),
+        ("gap", json!({
+            "type": "number",
+            "description": "blocks op=arrange: spacing between stacked blocks \
+                in px (0..400, default 24)."
+        })),
+        ("only", json!({
+            "type": "string",
+            "enum": ["flow", "all"],
+            "description": "blocks op=arrange: flow (default) — stack only \
+                blocks without coordinates below the pinned ones; all — \
+                re-stack every block of the page in document order."
         })),
         ("query", json!({
             "type": "string",
@@ -492,7 +536,10 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("op", json!({
             "type": "string",
             "description": "blocks: list | read | insert | set_markdown | delete | \
-                move | set_attrs | pin | unpin. shape: create | update | delete | \
+                move | set_attrs | pin | unpin | arrange (stack blocks in a \
+                column on a free page: unplaced ones by default, only=all for \
+                every block; x y start the column, w sets the width, gap the \
+                spacing). shape: create | update | delete | \
                 connect. mindmap: create | read | add_node | update_node | \
                 move_node | delete_node | add_link | delete_link | set_layout | \
                 set_style | from_list | delete. calendar: create | read | set_view | \
@@ -528,21 +575,30 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "Canvas x of the block's top-left corner in px (with \
                 y): blocks insert/move/pin, shape create/update (frame \
                 shapes), update mode=append, attach, kanban/gantt op=create. \
-                The page origin is the top-left; a block without x/y flows \
-                in the column."
+                The page origin is the top-left; a block without x/y flows in \
+                the column, so on a free-layout page always pass x, y and w \
+                together — an unplaced block ends up over the canvas. Where \
+                the placed content ends is in read blocks=true (x y w h per \
+                block, h=~ estimated)."
         })),
         ("y", json!({
             "type": "number",
-            "description": "Canvas y of the block's top-left corner in px (with x)."
+            "description": "Canvas y of the block's top-left corner in px (with \
+                x). Leave a gap of ~24 px below the previous block's height so \
+                blocks don't overlap."
         })),
         ("w", json!({
             "type": "number",
-            "description": "Block width in px (≥ 40; default 520 for text)."
+            "description": "Block width in px (≥ 40; 520 if omitted). Always \
+                pass it on a free-layout page — it is what the block's height \
+                is estimated from."
         })),
         ("h", json!({
             "type": "number",
-            "description": "Block height in px (≥ 20): shapes, images, boards, \
-                charts. Text blocks size themselves."
+            "description": "Block height in px (≥ 20). Required on a \
+                free-layout page for shapes, images, boards, charts, mind maps \
+                and calendars — without it they get a default 200 px and can \
+                sit on top of the next block. Text blocks size themselves."
         })),
         ("attrs", json!({
             "type": "object",

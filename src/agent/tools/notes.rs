@@ -217,9 +217,58 @@ fn path_of(ctx: NotesCtx, id: &str) -> String {
 }
 
 /// Строка «page: <id> · "Название" · path: …» — единый заголовок в ответах;
-/// по ней же ссылка «Открыть в заметках» в чате находит страницу.
+/// по ней же ссылка «Открыть в заметках» в чате находит страницу. У
+/// свободной раскладки к ней дописывается [`free_layout_hint`].
 fn page_line(ctx: NotesCtx, id: &str) -> String {
-    format!("page: {id} · \"{}\" · path: {}", ctx.title_of(id), path_of(ctx, id))
+    let mut s = format!("page: {id} · \"{}\" · path: {}", ctx.title_of(id), path_of(ctx, id));
+    if let Some(hint) = free_layout_hint(ctx, id) {
+        s.push('\n');
+        s.push_str(&hint);
+    }
+    s
+}
+
+/// Свободная раскладка: блок без `x`/`y` уходит в колонку потока по центру
+/// холста, а закреплённые стоят по координатам — две системы отсчёта на
+/// одной странице, и текст оказывается под фигурами и досками. Модель
+/// координат не видит и по умолчанию надеется, что редактор разложит блоки
+/// сам, поэтому предупреждение висит в КАЖДОМ ответе по такой странице,
+/// пока геометрия не проставлена (07.09.2026: страница «Тестовая» из
+/// `create layout=free` + markdown легла кашей ровно так).
+///
+/// Новая страница — холст по умолчанию (`PageLayout::default`), но пока на
+/// ней ничего не закреплено, она рисуется одной колонкой и выглядит как
+/// обычный документ. Поэтому подсказка только при СМЕСИ: есть и
+/// закреплённые блоки, и блоки без координат.
+fn free_layout_hint(ctx: NotesCtx, id: &str) -> Option<String> {
+    if !ctx.page_layout(id).free {
+        return None;
+    }
+    let model = load_model(ctx, id);
+    let mut flow: Vec<usize> = Vec::new();
+    let mut bottom: Option<f32> = None;
+    for (i, b) in model.blocks.iter().enumerate() {
+        match block_rect(b) {
+            Some((_, y, _, h)) => bottom = Some(bottom.map_or(y + h, |m| m.max(y + h))),
+            None => flow.push(i),
+        }
+    }
+    let (Some(bottom), false) = (bottom, flow.is_empty()) else {
+        return None;
+    };
+    const SHOWN: usize = 12;
+    let shown = flow.iter().take(SHOWN).map(|i| format!("#{i}")).collect::<Vec<_>>().join(" ");
+    let more = if flow.len() > SHOWN { format!(" … +{}", flow.len() - SHOWN) } else { String::new() };
+    Some(format!(
+        "!! free layout: {} of {} blocks have no x/y ({shown}{more}) — they are drawn as one \
+         centred column ON TOP of the pinned blocks, so the page looks like a pile. Nothing \
+         places blocks for you: give every block its own x y w (and h for shapes, media, \
+         boards, charts, mind maps and calendars) with blocks op=pin or op=set_attrs, or switch \
+         the page to layout=flow. Pinned content currently ends at y={}.",
+        flow.len(),
+        model.blocks.len(),
+        fnum(bottom)
+    ))
 }
 
 /// Страница по ссылке агента: id, название либо путь «A / B».
@@ -629,6 +678,128 @@ fn block_rect(b: &DocBlock) -> Option<(f32, f32, f32, f32)> {
     let w = block_width(b);
     let h = free::height_of(&b.attrs).unwrap_or_else(|| est_height(b, w));
     Some((x, y, w, h))
+}
+
+/// Параметры [`arrange_column`]. `x`/`y` — начало колонки (иначе — под
+/// нижним закреплённым блоком у его левого края, на пустом холсте 40×40),
+/// `w` — ширина всем разложенным (иначе своя у блока, иначе
+/// [`DEFAULT_BLOCK_W`]), `all` — перекладывать и уже закреплённые.
+struct Arrange {
+    x: Option<f32>,
+    y: Option<f32>,
+    w: Option<f32>,
+    gap: f32,
+    all: bool,
+}
+
+impl Default for Arrange {
+    fn default() -> Self {
+        Self { x: None, y: None, w: None, gap: ARRANGE_GAP, all: false }
+    }
+}
+
+/// Зазор между блоками колонки по умолчанию, px.
+const ARRANGE_GAP: f32 = 24.0;
+/// Левый край и верх колонки на пустом холсте, px.
+const ARRANGE_ORIGIN: f32 = 40.0;
+
+/// Разложить блоки колонкой в порядке документа: каждый следующий — под
+/// предыдущим с зазором `gap`. Берёт неприкреплённые блоки (или все при
+/// `all`). У объектов без своей высоты (фигуры, медиа, врезки) высота
+/// фиксируется оценкой — чтобы редактор и агент считали одно и то же.
+/// Возвращает индексы разложенных блоков.
+fn arrange_column(model: &mut DocModel, a: &Arrange) -> Vec<usize> {
+    let targets: Vec<usize> = (0..model.blocks.len())
+        .filter(|&i| a.all || free::pos_of(&model.blocks[i].attrs).is_none())
+        .collect();
+    if targets.is_empty() {
+        return targets;
+    }
+    let others: Vec<(f32, f32, f32, f32)> = model
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !targets.contains(i))
+        .filter_map(|(_, b)| block_rect(b))
+        .collect();
+    let x = a.x.unwrap_or_else(|| {
+        others
+            .iter()
+            .map(|r| r.0)
+            .fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.min(v))))
+            .unwrap_or(ARRANGE_ORIGIN)
+            .max(0.0)
+    });
+    let mut y = a.y.unwrap_or_else(|| {
+        others
+            .iter()
+            .map(|r| r.1 + r.3)
+            .fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.max(v))))
+            .map(|bottom| bottom + a.gap)
+            .unwrap_or(ARRANGE_ORIGIN)
+    });
+    for &i in &targets {
+        let b = &mut model.blocks[i];
+        let w = a.w.or_else(|| free::width_of(&b.attrs)).unwrap_or(DEFAULT_BLOCK_W);
+        free::set_pos(&mut b.attrs, x.round(), y.round());
+        free::set_width(&mut b.attrs, w);
+        if needs_own_height(b) && free::height_of(&b.attrs).is_none() {
+            let h = est_height(b, w).round();
+            free::set_height(&mut b.attrs, h);
+        }
+        if let BlockKind::Shape { shape } = b.kind {
+            if shape.is_line() {
+                canonicalize_line(b, shape);
+            }
+        }
+        let h = free::height_of(&b.attrs).unwrap_or_else(|| est_height(b, w));
+        y = (y + h + a.gap).round();
+    }
+    targets
+}
+
+/// Блок, у которого нет собственной высоты по содержимому: без `h` редактор
+/// возьмёт свою (200 px), и оценка агента с ней разойдётся.
+fn needs_own_height(b: &DocBlock) -> bool {
+    matches!(b.kind, BlockKind::Shape { .. } | BlockKind::Media { .. } | BlockKind::Embed { .. })
+}
+
+fn is_line(b: &DocBlock) -> bool {
+    matches!(b.kind, BlockKind::Shape { shape } if shape.is_line())
+}
+
+/// Закреплённые блоки, чьи рамки пересекают рамку блока `i`, — строкой для
+/// ответа (`!! overlaps #3 (x=… y=… w=… h=…)`), либо `None`. Не запрет, а
+/// подсказка: высоты текста оценочные (в списке помечены `~`). Линии не в
+/// счёт — стрелка между двумя блоками пересекает оба по замыслу.
+fn overlap_note(model: &DocModel, i: usize) -> Option<String> {
+    let me = model.blocks.get(i)?;
+    if is_line(me) {
+        return None;
+    }
+    let (x, y, w, h) = block_rect(me)?;
+    let hits: Vec<String> = model
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(j, b)| *j != i && !is_line(b))
+        .filter_map(|(j, b)| {
+            let (ox, oy, ow, oh) = block_rect(b)?;
+            let overlaps = x < ox + ow - 1.0 && ox < x + w - 1.0 && y < oy + oh - 1.0 && oy < y + h - 1.0;
+            overlaps.then(|| format!("#{j} (x={} y={} w={} h={})", fnum(ox), fnum(oy), fnum(ow), fnum(oh)))
+        })
+        .collect();
+    (!hits.is_empty()).then(|| format!("!! overlaps {}", hits.join(", ")))
+}
+
+/// Строка блока для ответа плюс предупреждение о наложении, если есть.
+fn block_line_checked(model: &DocModel, i: usize) -> String {
+    let mut s = block_line(i, &model.blocks[i]);
+    if let Some(note) = overlap_note(model, i) {
+        s.push('\n');
+        s.push_str(&note);
+    }
+    s
 }
 
 fn kind_label(b: &DocBlock) -> String {
@@ -1164,6 +1335,20 @@ fn create_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     if let Some(content) = raw_string(v, "content") {
         write_page(ctx, &id, &content)?;
         out.push_str(&format!("content: {} words\n", count_words(&content)));
+        // `create layout=free` + markdown: агент явно просил холст, а
+        // раскладка применилась к ещё пустой странице и контент пришёл без
+        // геометрии — кладём его колонкой, как при переключении раскладки,
+        // иначе первая же фигура ляжет поверх текста. Без явного `layout`
+        // страницу не трогаем: холст по умолчанию без закреплённых блоков
+        // рисуется как обычный документ.
+        let asked_free = str_field(v, "layout")
+            .is_some_and(|l| matches!(l.trim().to_ascii_lowercase().as_str(), "free" | "canvas"));
+        if asked_free && ctx.page_layout(&id).free {
+            let pinned = pin_flow_blocks(ctx, &id)?;
+            if pinned > 0 {
+                out.push_str(&format!("layout: free — {pinned} blocks pinned in a column\n"));
+            }
+        }
     }
     if bool_field(v, "open").unwrap_or(false) {
         show_page(ctx, Some(&id));
@@ -1200,6 +1385,7 @@ fn grid_name(g: PageGrid) -> &'static str {
 /// возвращает список изменений.
 fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, String> {
     let mut l: PageLayout = ctx.page_layout(id);
+    let was_free = l.free;
     let mut changes = Vec::new();
     if let Some(layout) = str_field(v, "layout") {
         match layout.to_ascii_lowercase().as_str() {
@@ -1242,9 +1428,31 @@ fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, S
         changes.push(if l.bg.is_empty() { "bg: theme".to_string() } else { format!("bg: {}", l.bg) });
     }
     if !changes.is_empty() {
+        let now_free = l.free;
         ctx.set_page_layout(id, l);
+        if now_free && !was_free {
+            // Переход поток → холст сохраняет расположение: блоки без
+            // координат встают колонкой в порядке документа. Редактор на
+            // экране сделал бы то же по настоящим прямоугольникам; агенту
+            // они недоступны, поэтому колонка — по оценке высот.
+            let pinned = pin_flow_blocks(ctx, id)?;
+            if pinned > 0 {
+                changes.push(format!("{pinned} blocks pinned in a column where the flow had them"));
+            }
+        }
     }
     Ok(changes)
+}
+
+/// Разложить неприкреплённые блоки страницы колонкой (см.
+/// [`arrange_column`]); возвращает, сколько блоков получили координаты.
+fn pin_flow_blocks(ctx: NotesCtx, id: &str) -> Result<usize, String> {
+    let mut model = load_model(ctx, id);
+    let placed = arrange_column(&mut model, &Arrange::default());
+    if !placed.is_empty() {
+        store_model(ctx, id, &model)?;
+    }
+    Ok(placed.len())
 }
 
 fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
@@ -2164,7 +2372,7 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             let blocks = fragment_blocks(&md, &parse_geom(v)?, false)?;
             let idx = insert_blocks(&mut model, blocks, pos);
             store_model(ctx, &id, &model)?;
-            let lines: Vec<String> = idx.iter().map(|&i| block_line(i, &model.blocks[i])).collect();
+            let lines: Vec<String> = idx.iter().map(|&i| block_line_checked(&model, i)).collect();
             Ok(format!("inserted {} {}\n{}\n{}\n", indices_text(&idx), pos_text(pos), lines.join("\n"), page_line(ctx, &id)))
         }
         "set_markdown" => {
@@ -2216,14 +2424,14 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 changes.push("placed on the canvas".to_string());
             }
             store_model(ctx, &id, &model)?;
-            Ok(format!("moved: {}\n{}\n{}\n", changes.join(", "), block_line(at, &model.blocks[at]), page_line(ctx, &id)))
+            Ok(format!("moved: {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, at), page_line(ctx, &id)))
         }
         "set_attrs" => {
             let i = block_arg(&model)?;
             let pairs = attrs_arg(v)?;
             let changes = apply_attrs(&mut model.blocks[i], &pairs)?;
             store_model(ctx, &id, &model)?;
-            Ok(format!("set {}\n{}\n{}\n", changes.join(", "), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+            Ok(format!("set {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, i), page_line(ctx, &id)))
         }
         "pin" => {
             let i = block_arg(&model)?;
@@ -2252,7 +2460,44 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 }
             }
             store_model(ctx, &id, &model)?;
-            Ok(format!("pinned at x={} y={}\n{}\n{}\n", fnum(x), fnum(y), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+            Ok(format!("pinned at x={} y={}\n{}\n{}\n", fnum(x), fnum(y), block_line_checked(&model, i), page_line(ctx, &id)))
+        }
+        "arrange" => {
+            let geom = parse_geom(v)?;
+            let all = match str_field(v, "only").map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+                None | Some("flow") | Some("unpinned") => false,
+                Some("all") => true,
+                Some(other) => return Err(format!("unknown \"only\" \"{other}\" (flow | all)")),
+            };
+            let gap = f32_field(v, "gap").unwrap_or(ARRANGE_GAP);
+            if !(0.0..=400.0).contains(&gap) {
+                return Err("\"gap\" must be within 0..400 px".to_string());
+            }
+            let a = Arrange { x: geom.x, y: geom.y, w: geom.w, gap, all };
+            let placed = arrange_column(&mut model, &a);
+            if placed.is_empty() {
+                return Ok(format!(
+                    "nothing to arrange: every block already has coordinates (pass only=all to re-stack them)\n{}\n",
+                    page_line(ctx, &id)
+                ));
+            }
+            store_model(ctx, &id, &model)?;
+            let first = block_rect(&model.blocks[placed[0]]).map(|r| r.0).unwrap_or(0.0);
+            let bottom = placed
+                .iter()
+                .filter_map(|&i| block_rect(&model.blocks[i]))
+                .map(|r| r.1 + r.3)
+                .fold(0.0f32, f32::max);
+            let lines: Vec<String> = placed.iter().map(|&i| block_line_checked(&model, i)).collect();
+            Ok(format!(
+                "arranged {} blocks in a column at x={} (gap {}); the column ends at y={}\n{}\n{}\n",
+                placed.len(),
+                fnum(first),
+                fnum(gap),
+                fnum(bottom),
+                lines.join("\n"),
+                page_line(ctx, &id)
+            ))
         }
         "unpin" => {
             let i = block_arg(&model)?;
@@ -2261,7 +2506,7 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             Ok(format!("unpinned — the block flows in the column again\n{}\n{}\n", block_line(i, &model.blocks[i]), page_line(ctx, &id)))
         }
         other => Err(format!(
-            "unknown blocks op \"{other}\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin)"
+            "unknown blocks op \"{other}\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin | arrange)"
         )),
     }
 }
@@ -2419,7 +2664,7 @@ fn shape_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             let idx = insert_blocks(&mut model, vec![block], pos);
             store_model(ctx, &id, &model)?;
             let i = idx[0];
-            Ok(format!("created shape {}\n{}\n{}\n", pos_text(pos), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+            Ok(format!("created shape {}\n{}\n{}\n", pos_text(pos), block_line_checked(&model, i), page_line(ctx, &id)))
         }
         "update" => {
             let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\"")?)?;
@@ -2462,7 +2707,7 @@ fn shape_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 return Err("nothing to change: pass kind, fill/stroke/sw/dash/radius/opacity, x y w h or line points".to_string());
             }
             store_model(ctx, &id, &model)?;
-            Ok(format!("updated {}\n{}\n{}\n", changes.join(", "), block_line(i, &model.blocks[i]), page_line(ctx, &id)))
+            Ok(format!("updated {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, i), page_line(ctx, &id)))
         }
         "delete" => {
             let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\"")?)?;
@@ -3582,6 +3827,93 @@ mod tests {
         let read = call(ctx, "read", serde_json::json!({"page": &page, "blocks": true}));
         assert!(read.contains("--- Blocks") && read.contains("grid: dots step 20 · snap: on step 5"), "{read}");
         assert!(ctx.page(&page).unwrap().handle.history_state().get_untracked().0);
+    }
+
+    /// Переход поток → холст сохраняет расположение: блоки получают
+    /// координаты колонкой в порядке документа, подсказка про свободную
+    /// раскладку исчезает; `create layout=free` с контентом рождает страницу
+    /// уже разложенной (07.09.2026: страница «Тестовая» без этого легла кашей).
+    #[test]
+    fn switching_to_free_layout_pins_blocks_in_a_column() {
+        let ctx = ctx();
+        // Новая страница — холст по умолчанию, но без закреплённых блоков
+        // она документ: ни закрепления, ни подсказки.
+        let out = call(ctx, "create", serde_json::json!({"title": "Переход", "content": "# Заголовок\n\nАбзац\n\n![[shape:rect]]\n"}));
+        assert!(!out.contains("pinned") && !out.contains("!! free layout"), "{out}");
+        let page = page_id(&out);
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("· flow") && !listed.contains("!! free layout"), "{listed}");
+        // Поток → холст: блоки встают колонкой.
+        call(ctx, "update", serde_json::json!({"page": &page, "layout": "flow"}));
+        let out = call(ctx, "update", serde_json::json!({"page": &page, "layout": "free"}));
+        assert!(out.contains("layout: free") && out.contains("3 blocks pinned in a column"), "{out}");
+        assert!(!out.contains("!! free layout"), "{out}");
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("#0 heading1 \"Заголовок\" · x=40 y=40 w=520"), "{listed}");
+        assert!(!listed.contains("· flow"), "{listed}");
+        // Каждый следующий блок ниже предыдущего; фигура получила свою высоту.
+        let model = load_model(ctx, &page);
+        let rects: Vec<_> = model.blocks.iter().map(|b| block_rect(b).unwrap()).collect();
+        assert!(rects[1].1 >= rects[0].1 + rects[0].3 + 24.0, "{rects:?}");
+        assert!(rects[2].1 >= rects[1].1 + rects[1].3 + 24.0, "{rects:?}");
+        assert!(free::height_of(&model.blocks[2].attrs).is_some(), "{}", ctx.page_markdown(&page));
+        // Повторное включение холста ничего не перекладывает; обратно в поток
+        // координаты остаются.
+        call(ctx, "update", serde_json::json!({"page": &page, "layout": "flow"}));
+        let out = call(ctx, "update", serde_json::json!({"page": &page, "layout": "free"}));
+        assert!(!out.contains("pinned in a column"), "{out}");
+
+        // create layout=free + content — сразу колонкой.
+        let out = call(ctx, "create", serde_json::json!({"title": "Сразу холст", "layout": "free", "content": "Один\n\nДва\n"}));
+        assert!(out.contains("2 blocks pinned in a column") && !out.contains("!! free layout"), "{out}");
+
+        // Смесь на странице по умолчанию: фигура закреплена, текст в потоке —
+        // подсказка появляется и пропадает после arrange.
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Смесь", "content": "Текст\n"})));
+        let out = call(ctx, "shape", serde_json::json!({"op": "create", "page": &page, "kind": "rect", "x": 40, "y": 40, "w": 200, "h": 100}));
+        assert!(out.contains("!! free layout: 1 of 2 blocks have no x/y (#0)") && out.contains("ends at y=140"), "{out}");
+        let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page}));
+        assert!(out.contains("arranged 1 blocks in a column at x=40") && out.contains("y=164") && !out.contains("!! free layout"), "{out}");
+    }
+
+    /// `blocks op=arrange`: одна команда кладёт неприкреплённые блоки под
+    /// закреплённые; `only=all` перекладывает всё; предупреждение о наложении
+    /// появляется у pin/shape и не мешает линиям.
+    #[test]
+    fn arrange_stacks_blocks_and_overlaps_are_reported() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Раскладка-2", "layout": "free", "content": "Один\n\nДва\n"})));
+        // Дописанный контент без геометрии → подсказка; arrange её снимает.
+        call(ctx, "update", serde_json::json!({"page": &page, "content": "Три\n", "mode": "append"}));
+        let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        assert!(listed.contains("!! free layout: 1 of 3"), "{listed}");
+        let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page}));
+        assert!(out.contains("arranged 1 blocks in a column at x=40"), "{out}");
+        assert!(!out.contains("!! free layout") && !out.contains("!! overlaps"), "{out}");
+        // Новый блок встал под нижним закреплённым.
+        let model = load_model(ctx, &page);
+        let r1 = block_rect(&model.blocks[1]).unwrap();
+        let r2 = block_rect(&model.blocks[2]).unwrap();
+        assert!(r2.1 >= r1.1 + r1.3 + 24.0, "{r1:?} {r2:?}");
+        // Повтор — нечего раскладывать; only=all перекладывает всё заново.
+        let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page}));
+        assert!(out.contains("nothing to arrange"), "{out}");
+        let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page, "only": "all", "x": 100, "y": 100, "w": 300, "gap": 0}));
+        assert!(out.contains("arranged 3 blocks in a column at x=100 (gap 0)") && out.contains("x=100 y=100 w=300"), "{out}");
+        assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "arrange", "page": &page, "only": "some"})).is_err());
+        assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "arrange", "page": &page, "gap": 900})).is_err());
+
+        // Наложение: фигура поверх первого блока — предупреждение с его рамкой.
+        let out = call(ctx, "shape", serde_json::json!({"op": "create", "page": &page, "kind": "rect", "x": 100, "y": 100, "w": 200, "h": 100}));
+        assert!(out.contains("!! overlaps #0 (x=100 y=100 w=300 h="), "{out}");
+        // Линия поверх тех же блоков — не в счёт.
+        let out = call(ctx, "shape", serde_json::json!({"op": "create", "page": &page, "kind": "arrow", "x1": 100, "y1": 100, "x2": 300, "y2": 200}));
+        assert!(!out.contains("!! overlaps"), "{out}");
+        // pin в свободное место — тихо; pin поверх фигуры — с предупреждением.
+        let out = call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 1000, "y": 1000, "w": 200}));
+        assert!(!out.contains("!! overlaps"), "{out}");
+        let out = call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 150, "y": 150, "w": 200}));
+        assert!(out.contains("!! overlaps") && out.contains("#3 (x=100 y=100 w=200 h=100)"), "{out}");
     }
 
     /// Фигуры: рамка из x y w h, линия из абсолютных концов (рамка считается

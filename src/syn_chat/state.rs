@@ -155,6 +155,9 @@ pub struct SynChatCtx {
     pub last_vram_free_mb: RwSignal<u32>,
     /// Сколько токенов промпта взято из префикс-KV (не считалось заново).
     pub last_reused_tokens: RwSignal<u32>,
+    /// `(на карте, всего)` блоков модели после хода — только при частичном
+    /// оффлоаде; `None`, когда все блоки резидентны или архитектура своя.
+    pub last_blocks_resident: RwSignal<Option<(u32, u32)>>,
 
     /// Живые (и только что завершённые) вложенные агент-циклы — субагенты.
     /// Пишется из worker-потоков через `syn_chat::telemetry`, читается
@@ -221,6 +224,7 @@ impl SynChatCtx {
             ctx_budget_tokens: use_signal(0),
             last_vram_free_mb: use_signal(0),
             last_reused_tokens: use_signal(0),
+            last_blocks_resident: use_signal(None),
             agent_runs: use_signal(Vec::new()),
             details_open: use_signal(HashMap::new()),
             sampling_open: use_signal(false),

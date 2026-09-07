@@ -416,7 +416,15 @@ fn context_need_mb(model: &LoadedSynModel, tokens: usize) -> usize {
 /// Плата за оффлоад — скорость (каждый нерезидентный блок едет по PCIe на
 /// каждом forward'е, CUDA-графы выключаются), поэтому включается он только
 /// когда иначе ход не проходит, и снимается при первой возможности.
-fn fit_blocks_for_context(model: &LoadedSynModel, tokens: usize) {
+///
+/// `session_held_mb` — VRAM живого кэша префикс-KV. Ход считает в этом кэше и
+/// новой памяти под него не просит (а при росте кэш освобождается ДО новой
+/// аллокации), поэтому из потребности он вычитается — ровно как в
+/// [`RingPlan::with_session`]. Без этого ход с кэшем на 30k токенов решал, что
+/// ему не хватает пары мегабайт, и выселял блоки под память, которая у него
+/// уже была: 07.09.2026 чат на промпте 10k так потерял 32 → 20 ток/с и назад
+/// уже не вернулся (гистерезис возврата требует запаса в два блока).
+fn fit_blocks_for_context(model: &LoadedSynModel, tokens: usize, session_held_mb: usize) {
     let Some((block_bytes, total)) = model.model.block_offload_shape() else {
         return; // архитектура со своим оффлоадом (MoE) — не наше дело
     };
@@ -430,51 +438,99 @@ fn fit_blocks_for_context(model: &LoadedSynModel, tokens: usize) {
     if block_mb == 0 {
         return;
     }
-    let need_mb = context_need_mb(model, tokens);
+    let need_mb = context_need_mb(model, tokens).saturating_sub(session_held_mb);
     let free_mb = crate::syn_chat::model_registry::vram_available_mb();
-    if need_mb > free_mb {
-        // Не хватает: выселяем столько блоков, сколько нужно, плюс один — на
-        // сам стриминг (на карте живут текущий и префетченный).
-        let missing = need_mb - free_mb;
-        let evict = missing.div_ceil(block_mb) + 1;
-        let want = resident.saturating_sub(evict);
-        if want < resident {
-            let got = model
-                .model
-                .set_block_residency(want)
-                .unwrap_or(resident);
-            let (freed, _) = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
+    let device = *model.model.device();
+    // Трим — ДО решения, а не после выселения: кэши ядер и слабина пулов
+    // весов/staging в `vram_available_mb` не входят, а отдают они стабильно
+    // 300–600 МБ (журнал 07.09.2026). Дефицит же бывал в 2 МБ — выселять
+    // блок ради него значило платить треть скорости за память, которую
+    // драйвер вернул бы и так.
+    let mut trimmed_mb = 0u64;
+    let after_trim = || {
+        let (freed, _) = crate::syn_chat::model_registry::reclaim_vram(device);
+        trimmed_mb = freed;
+        crate::syn_chat::model_registry::vram_available_mb()
+    };
+    let target = block_residency_target(need_mb, free_mb, after_trim, block_mb, resident, total);
+    let Some(want) = target else {
+        if trimmed_mb > 0 {
             log::info!(
-                "[syn_chat] оффлоад блоков: {resident} → {got} из {total} на карте                  (не хватало {missing} MB под контекст {tokens} ток, блок {block_mb} MB,                  трим вернул {freed} MB); остальные стримятся с хоста"
+                "[syn_chat] блоки остаются на карте ({resident} из {total}): ходу не хватало \
+                 {} MB под контекст {tokens} ток, трим вернул {trimmed_mb} MB",
+                need_mb.saturating_sub(free_mb)
             );
         }
         return;
+    };
+    let got = model.model.set_block_residency(want).unwrap_or(resident);
+    if want < resident {
+        // Память уехавших блоков остаётся в резерве default-пула, а планировщик
+        // ринга считает по «свободно по драйверу»: без трима он не увидит
+        // освобождённого, упрёт ринг в пол `промпт + 512` и выдаст сессию,
+        // которую следующий ход пересоздаст с полным префиллом (07.09.2026:
+        // 103 с на 77k токенов ровно из-за этого).
+        let (after, _) = crate::syn_chat::model_registry::reclaim_vram(device);
+        log::info!(
+            "[syn_chat] оффлоад блоков: {resident} → {got} из {total} на карте \
+             (не хватало {} MB под контекст {tokens} ток, блок {block_mb} MB, \
+             кэш префикс-KV держит {session_held_mb} MB, трим до этого вернул \
+             {trimmed_mb} MB, после выселения — {after} MB); остальные стримятся с хоста",
+            need_mb.saturating_sub(free_mb + trimmed_mb as usize)
+        );
+    } else if got > resident {
+        log::info!(
+            "[syn_chat] блоки вернулись на карту: {resident} → {got} из {total} \
+             (свободно {free_mb} MB, ходу нужно ещё {need_mb} MB)"
+        );
+    }
+}
+
+/// Арифметика [`fit_blocks_for_context`] без модели — чтобы её проверял тест.
+/// `need_mb` — то, что ходу осталось выделить (потребность за вычетом живого
+/// кэша префикс-KV), `free_mb` — доступная VRAM, `after_trim` — она же после
+/// трима кэшей ядер и пулов (зовётся только когда без него не хватает).
+/// `None` — резидентность не трогаем.
+fn block_residency_target(
+    need_mb: usize,
+    free_mb: usize,
+    after_trim: impl FnOnce() -> usize,
+    block_mb: usize,
+    resident: usize,
+    total: usize,
+) -> Option<usize> {
+    if block_mb == 0 {
+        return None;
+    }
+    let free_mb = if need_mb > free_mb { free_mb.max(after_trim()) } else { free_mb };
+    if need_mb > free_mb {
+        // Не хватает: выселяем столько блоков, сколько нужно, плюс один — на
+        // сам стриминг (на карте живут текущий и префетченный), но только
+        // когда дефицит не меньше блока: при дефиците в мегабайты один
+        // выселенный блок и так оставляет почти весь свой размер запасом.
+        let missing = need_mb - free_mb;
+        let evict = missing.div_ceil(block_mb) + usize::from(missing >= block_mb);
+        let want = resident.saturating_sub(evict);
+        return (want < resident).then_some(want);
+    }
+    if resident >= total {
+        return None;
     }
     // Памяти хватает — возвращаем блоки. Гистерезис в два блока, чтобы не
     // гонять их туда-сюда на каждом ходу; но если запаса хватает, доводим до
     // полной резидентности: последний стримящийся блок стоит и CUDA-графов,
     // и заметной части скорости (04.09.2026: 51 из 52 на карте — 14 ток/с
     // против 22 при полной резидентности).
-    if resident < total {
-        let spare = (free_mb - need_mb) / block_mb;
-        if spare >= 2 {
-            // Если до полной резидентности не хватает меньше блока — всё
-            // равно дотягиваем: последний стримящийся блок отнимает больше
-            // (нет CUDA-графов, треть скорости), чем стоит запас под него, а
-            // если ход всё же не влезет, ретрай по OOM отработает честно.
-            let want = if resident + spare + 1 >= total {
-                total
-            } else {
-                resident + spare
-            };
-            let got = model.model.set_block_residency(want).unwrap_or(resident);
-            if got > resident {
-                log::info!(
-                    "[syn_chat] блоки вернулись на карту: {resident} → {got} из {total}                      (свободно {free_mb} MB, ходу нужно {need_mb} MB)"
-                );
-            }
-        }
+    let spare = (free_mb - need_mb) / block_mb;
+    if spare < 2 {
+        return None;
     }
+    // Если до полной резидентности не хватает меньше блока — всё равно
+    // дотягиваем: последний стримящийся блок отнимает больше (нет CUDA-графов,
+    // треть скорости), чем стоит запас под него, а если ход всё же не влезет,
+    // ретрай по OOM отработает честно.
+    let want = if resident + spare + 1 >= total { total } else { resident + spare };
+    (want > resident).then_some(want)
 }
 
 fn kv_reserve_mb() -> usize {
@@ -492,9 +548,11 @@ pub fn reset_kernel_cache_warm() {
 }
 /// На сколько токенов ответа планируется ринг, если слайдер `max_new_tokens`
 /// стоит выше. Ринг живёт ровно один ход; планировать его на 130k «про запас»
-/// значит впустую занять гигабайты (у гибрида 27B это 64 КБ на токен). 8k
-/// токенов ответа — это ~6k слов, для чата с запасом.
-pub(crate) const RING_ANSWER_TOKENS: usize = 8192;
+/// значит впустую занять гигабайты. 16k — потолок ответа по умолчанию
+/// (`SamplingParams::default`): ниже него ринг молча резал бы длинный ответ,
+/// хотя настройка обещает больше; при MXFP8-KV (33 КБ/ток у гибрида 27B)
+/// это ~530 МБ — столько же, сколько прежние 8k стоили при F16.
+pub(crate) const RING_ANSWER_TOKENS: usize = 16384;
 /// Гранулярность длины ринга. Промпт растёт от хода к ходу, и ринг «в притык»
 /// каждый раз просил бы блоки чуть большего размера — освободившиеся от
 /// прошлого ринга пул отдать под них не может. Кратность 4096 делает ринг
@@ -552,6 +610,12 @@ impl RingPlan {
         // размер уже живущего кэша и контекст перестал бы расти.
         let vram_available_mb =
             crate::syn_chat::model_registry::vram_available_mb() + session_held_mb;
+        // Часть блоков стримится с хоста — VRAM уже в дефиците, и запас под
+        // сессию только отнял бы её у рабочего набора стриминга.
+        let offloading = model
+            .model
+            .block_offload_shape()
+            .is_some_and(|(_, total)| model.model.resident_blocks().unwrap_or(total) < total);
         Self::compute(
             prompt_tokens,
             answer_tokens,
@@ -561,6 +625,7 @@ impl RingPlan {
             // входит в ставку «на токен», но VRAM занимает.
             model.model.kv_fixed_bytes(cap),
             vram_available_mb,
+            offloading,
         )
     }
 
@@ -572,6 +637,7 @@ impl RingPlan {
         kv_per_token: usize,
         kv_fixed_bytes: usize,
         vram_available_mb: usize,
+        offloading: bool,
     ) -> Self {
         let cap = model_cap.saturating_sub(1);
         let by_mem = if kv_per_token > 0 {
@@ -595,12 +661,15 @@ impl RingPlan {
         // Ёмкость сессии берём с запасом: пересоздание кэша стирает префикс,
         // и на моделях, где бюджет позволяет лишь пару шагов (Muse-30B: 2 ГБ
         // свободных), каждый рост промпта стоил полного префилла. Запас —
-        // вдвое от нужного ходу, но не больше того, что честно влезает.
+        // вдвое от нужного ходу, но не больше того, что честно влезает. При
+        // оффлоаде блоков удвоения нет: каждый лишний гигабайт кэша — это ещё
+        // четыре блока на хосте и треть скорости.
+        let spare = if offloading { want } else { want.saturating_mul(2) };
         let session_ctx = want
             .div_ceil(SESSION_CTX_STEP)
             .max(1)
             .saturating_mul(SESSION_CTX_STEP)
-            .max(want.saturating_mul(2))
+            .max(spare)
             .min(hard_cap)
             .max(ring_tokens);
         let prompt_capped = prompt_tokens.min(ring_tokens.saturating_sub(1));
@@ -640,6 +709,8 @@ struct TurnStats {
     ring_bytes: u64,
     ctx_budget: u32,
     vram_free_mb: u32,
+    /// `(на карте, всего)` блоков — только при частичном оффлоаде.
+    blocks_resident: Option<(u32, u32)>,
 }
 
 impl TurnStats {
@@ -653,7 +724,15 @@ impl TurnStats {
         ctx.kv_cache_bytes.set_always(self.ring_bytes);
         ctx.ctx_budget_tokens.set_always(self.ctx_budget);
         ctx.last_vram_free_mb.set_always(self.vram_free_mb);
+        ctx.last_blocks_resident.set_always(self.blocks_resident);
     }
+}
+
+/// `(на карте, всего)` блоков модели, если часть их стримится с хоста.
+fn blocks_resident_of(model: &LoadedSynModel) -> Option<(u32, u32)> {
+    let (_, total) = model.model.block_offload_shape()?;
+    let on_card = model.model.resident_blocks().unwrap_or(total);
+    (on_card < total).then_some((on_card as u32, total as u32))
 }
 
 /// Ошибка — это исчерпание VRAM? Драйвер отдаёт `CUDA_ERROR_OUT_OF_MEMORY`,
@@ -1679,17 +1758,24 @@ async fn run_agent_loop(
         // доходят, поэтому ни инициализатор, ни `mut` не нужны.
         let turn_decode_s: f64;
         let turn_result = loop {
-            // Контекст важнее скорости: если ход в память не помещается,
-            // часть блоков уезжает на хост и стримится, освобождая VRAM под
-            // KV. Считаем по тому, что ходу реально нужно — промпт плюс
-            // бюджет ответа.
-            fit_blocks_for_context(&model, prompt_ids.len() + answer_budget + 128);
+            // Припаркованный в RAM кэш VRAM не держит — его размер в бюджет
+            // не идёт ни как «освободится под новый», ни как «уже выделено».
             let session_held_mb = kv_slot
                 .as_ref()
+                .filter(|s| !s.session.is_parked())
                 .map(|s| {
                     (s.session.ctx_tokens() * model.model.kv_bytes_per_token()) / (1024 * 1024)
                 })
                 .unwrap_or(0);
+            // Контекст важнее скорости: если ход в память не помещается,
+            // часть блоков уезжает на хост и стримится, освобождая VRAM под
+            // KV. Считаем по тому, что ходу реально нужно — промпт плюс
+            // бюджет ответа, минус уже занятый кэш префикс-KV.
+            fit_blocks_for_context(
+                &model,
+                prompt_ids.len() + answer_budget + 128,
+                session_held_mb,
+            );
             let plan = RingPlan::with_session(
                 &model,
                 prompt_ids.len(),
@@ -2038,6 +2124,7 @@ async fn run_agent_loop(
                 ring_bytes: plan.ring_bytes(),
                 ctx_budget: plan.by_mem as u32,
                 vram_free_mb: vram_after as u32,
+                blocks_resident: blocks_resident_of(&model),
             };
             if_active(&chat_id, move |c| stat.apply(c));
 
@@ -3394,7 +3481,18 @@ mod tests {
     /// ≈1.7 ГБ постоянных ring-окон sliding-слоёв. С этими числами `compute`
     /// повторяет журнал разобранной сессии токен в токен.
     fn plan(prompt: usize, answer: usize, vram_mb: usize) -> RingPlan {
-        RingPlan::compute(prompt, answer, 262_144, 13_440, 1_761_830_912, vram_mb)
+        RingPlan::compute(prompt, answer, 262_144, 13_440, 1_761_830_912, vram_mb, false)
+    }
+
+    /// При стриминге блоков сессия не удваивается: ровно под ход (с шагом
+    /// `SESSION_CTX_STEP`), даже если VRAM формально позволяет больше.
+    #[test]
+    fn session_is_not_doubled_while_blocks_are_streamed() {
+        let resident = plan(20_000, 8_192, 20_000);
+        let streamed = RingPlan::compute(20_000, 8_192, 262_144, 13_440, 1_761_830_912, 20_000, true);
+        assert_eq!(resident.ring_tokens, streamed.ring_tokens);
+        assert!(streamed.session_ctx < resident.session_ctx, "{} vs {}", streamed.session_ctx, resident.session_ctx);
+        assert!(streamed.session_ctx >= streamed.ring_tokens);
     }
 
     #[test]
@@ -3435,6 +3533,74 @@ mod tests {
         let small = plan(8_481, 384, 1_067);
         let bigger = plan(8_889, 384, 4_459);
         assert!(small.session_ctx < bigger.ring_tokens);
+    }
+
+    /// Журнал 07.09.2026, qwen3.8-27b: 64 блока по 229 МБ, живой кэш
+    /// префикс-KV на 30748 ток (1921 МБ) — ход считает прямо в нём и новой
+    /// памяти под KV не просит. Пока кэш не вычитался из потребности, ход на
+    /// промпте 10k видел «не хватает 2 МБ», выселял два блока и терял
+    /// 32 → 20 ток/с.
+    #[test]
+    fn a_live_prefix_kv_cache_does_not_evict_blocks() {
+        assert_eq!(block_residency_target(2431 - 1921, 2429, || 2429, 229, 64, 64), None);
+        assert!(
+            block_residency_target(2431, 2429, || 2429, 229, 64, 64).is_some(),
+            "регресс: без учёта кэша ход выселял блоки"
+        );
+    }
+
+    /// И обратно: после такого выселения блоки не возвращались никогда —
+    /// свободных 2835 МБ при потребности 2431 давали запас ровно в один блок,
+    /// а гистерезис возврата требует двух.
+    #[test]
+    fn blocks_come_back_once_the_cache_is_counted() {
+        assert_eq!(block_residency_target(2431, 2835, || 2835, 229, 62, 64), None);
+        assert_eq!(block_residency_target(2431 - 1921, 2835, || 2835, 229, 62, 64), Some(64));
+    }
+
+    #[test]
+    fn a_turn_that_really_does_not_fit_still_offloads() {
+        // Кэш на 1921 МБ жив, но контекст вырос: ходу нужно ещё 2500 МБ при
+        // 1000 свободных и бесполезном триме — выселяем 1500/229 + 1 = 8.
+        assert_eq!(block_residency_target(2500, 1000, || 1000, 229, 64, 64), Some(56));
+    }
+
+    /// Журнал 07.09.2026: «не хватало 2 MB … трим вернул 384 MB» — трим
+    /// шёл ПОСЛЕ выселения двух блоков. Теперь он идёт до решения и такой
+    /// дефицит закрывает сам; а если не закрыл — за дефицит меньше блока
+    /// уезжает один блок, а не «один плюс один на стриминг».
+    #[test]
+    fn trim_runs_before_eviction_and_a_tiny_deficit_costs_one_block_at_most() {
+        assert_eq!(block_residency_target(2431, 2429, || 2429 + 384, 229, 64, 64), None);
+        assert_eq!(block_residency_target(2431, 2429, || 2429, 229, 64, 64), Some(63));
+        // Дефицит в блок и больше — по-прежнему с запасом на стриминг.
+        assert_eq!(block_residency_target(2429 + 229, 2429, || 2429, 229, 64, 64), Some(62));
+        // Трим не зовётся, когда памяти и так хватает.
+        assert_eq!(block_residency_target(100, 2429, || unreachable!(), 229, 64, 64), None);
+    }
+
+    /// Шаг A2 плана 07.09.2026 — «ёмкость кэша префикс-KV (удвоение `want`)
+    /// не должна выселять блоки». После того как живой кэш вычитается из
+    /// потребности хода, размер кэша из решения выпадает алгебраически:
+    /// `need − free = want·kv + reserve − available` при любом `session_ctx`.
+    /// Тест держит это как инвариант — если кто-то перестанет вычитать кэш,
+    /// удвоение снова начнёт стоить блоков.
+    #[test]
+    fn session_capacity_does_not_change_the_eviction_decision() {
+        // Журнал 07.09: промпт 10108, ответ 8192, 65536 Б/ток, доступно с
+        // учётом кэша 4350 МБ (2429 свободно + 1921 в кэше), блок 229 МБ.
+        let kv = 65_536usize;
+        let want = 10_108 + 8_192 + 128;
+        let available = 2_429 + 1_921;
+        let need_total = want * kv / (1024 * 1024) + kv_reserve_mb();
+        let decision = |session_tokens: usize| {
+            let held = session_tokens * kv / (1024 * 1024);
+            let free = available - held;
+            block_residency_target(need_total.saturating_sub(held), free, || free, 229, 64, 64)
+        };
+        assert_eq!(decision(want), decision(want * 2));
+        assert_eq!(decision(want), decision(0));
+        assert_eq!(decision(want), None);
     }
 
     #[test]

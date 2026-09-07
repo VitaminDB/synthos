@@ -558,6 +558,7 @@ fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             ring_bytes: ctx.kv_cache_bytes.get(),
             ctx_budget: ctx.ctx_budget_tokens.get(),
             vram_free_mb: ctx.last_vram_free_mb.get(),
+            blocks_resident: ctx.last_blocks_resident.get(),
         };
         // Подпись — имя бандла: числа карточки принадлежат именно ему, а в
         // табе «Детали» модель больше нигде не видна.
@@ -803,7 +804,7 @@ fn stat_tiles(s: &RunStats, turns: u32) -> Vec<Box<dyn Widget>> {
             tr!("chat.right.details.tile.prefill_ms"),
         )
     };
-    let rows: Vec<(String, String, bool)> = vec![
+    let mut rows: Vec<(String, String, bool)> = vec![
         (
             format!("{:.1}", s.decode_tps),
             tr!("chat.right.details.tile.tps"),
@@ -851,6 +852,15 @@ fn stat_tiles(s: &RunStats, turns: u32) -> Vec<Box<dyn Widget>> {
             false,
         ),
     ];
+    // Только при частичном оффлоаде: при полной резидентности плитки нет,
+    // а «62/64» рядом со скоростью объясняет, куда делась её треть.
+    if let Some((on_card, total)) = s.blocks_resident {
+        rows.push((
+            format!("{on_card}/{total}"),
+            tr!("chat.right.details.tile.blocks"),
+            true,
+        ));
+    }
     rows.into_iter()
         .map(|(value, label, accent)| stat_tile(value, label, accent))
         .collect()

@@ -695,8 +695,10 @@ pub struct AppConfig {
     /// перетаскивании. Пусто — порядок только по `created_at`.
     #[serde(default)]
     pub rail_order: Vec<String>,
-    /// Системный prompt для Syn-чата. Пусто — в `build_history` не
-    /// добавляется. Редактируется в правой панели → Параметры → «Система».
+    /// Устаревшее: одиночный системный prompt Syn-чата. С библиотекой
+    /// пресетов (`syn_chat::prompt_presets`, файл `syn_system_prompts.json`)
+    /// больше не пишется; читается один раз при первом запуске без файла
+    /// библиотеки — текст становится первым пресетом.
     #[serde(default)]
     pub syn_chat_system_prompt: String,
     /// Потолок vision-токенов на одну картинку-вложение в Syn-чате.

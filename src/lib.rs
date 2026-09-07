@@ -762,14 +762,12 @@ fn install_config_autosave(ctx: &AppCtx) {
 /// в `last_saved_fp` при выборе чата, чтобы простое переключение не
 /// считалось правкой.
 ///
-/// Эффект 2 (global): подписывается на `system_prompt`, пишет в
-/// `AppConfig.syn_chat_system_prompt`.
+/// Эффект 2 (global): подписывается на `system_prompt`, переливает текст в
+/// активный пресет библиотеки промптов (`syn_chat::prompt_presets`), та
+/// пишется на диск с дебаунсом. Стартовое значение `system_prompt` берёт
+/// конструктор `SynChatCtx` из той же библиотеки.
 fn install_syn_chat_autosave() {
     let ctx = use_context::<syn_chat::SynChatCtx>();
-
-    // Изначально подтягиваем system_prompt из AppConfig (один раз на старте).
-    let initial_cfg = config::AppConfig::load();
-    ctx.system_prompt.set_always(initial_cfg.syn_chat_system_prompt.clone());
 
     // Эффект 1 — per-chat persistence.
     create_effect(move || {
@@ -806,18 +804,11 @@ fn install_syn_chat_autosave() {
         }
     });
 
-    // Эффект 2 — system_prompt → AppConfig.syn_chat_system_prompt.
+    // Эффект 2 — system_prompt → активный пресет библиотеки промптов.
     let ctx2 = ctx.clone();
     create_effect(move || {
         let prompt = ctx2.system_prompt.get();
-        if ctx2.loading.get_untracked() {
-            return;
-        }
-        let mut cfg = config::AppConfig::load();
-        if cfg.syn_chat_system_prompt != prompt {
-            cfg.syn_chat_system_prompt = prompt;
-            cfg.save();
-        }
+        syn_chat::prompt_presets::sync_active_text(&ctx2, &prompt);
     });
 }
 

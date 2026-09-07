@@ -19,7 +19,11 @@ pub use crate::agent::state::{
 pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::prompt_presets::{self, PromptDialog, PromptPreset};
 use crate::syn_chat::telemetry::AgentRun;
+
+/// Размер плавающего окна системного промпта при первом открытии.
+pub const PROMPT_WINDOW_DEFAULT_SIZE: Size = Size::new(760.0, 540.0);
 
 /// Контекст Syn-чата. Клонируется дёшево (Arc на abort/input_tok_gen + Copy-сигналы).
 #[derive(Clone)]
@@ -91,8 +95,24 @@ pub struct SynChatCtx {
 
     /// Параметры sampling (двусторонне связаны с right_panel слайдерами).
     pub params: RwSignal<SamplingParams>,
-    /// Системный prompt (зеркало `AppConfig.syn_chat_system_prompt`).
+    /// Текст активного системного промпта — то, что уходит модели. Его
+    /// правят редактор в правой панели и плавающее окно; эффект в
+    /// `lib.rs::install_syn_chat_autosave` переливает текст в активный
+    /// пресет `prompt_presets` и пишет библиотеку на диск.
     pub system_prompt: RwSignal<String>,
+    /// Библиотека именованных системных промптов
+    /// ([`crate::syn_chat::prompt_presets`]). Всегда непуста.
+    pub prompt_presets: RwSignal<Vec<PromptPreset>>,
+    /// id активного пресета из `prompt_presets`.
+    pub prompt_active: RwSignal<String>,
+    /// Плавающее окно редактора системного промпта: открыто ли, где и
+    /// какого размера (размер/позиция переживают закрытие в рамках сессии).
+    pub prompt_window_open: RwSignal<bool>,
+    pub prompt_window_pos: RwSignal<Point>,
+    pub prompt_window_size: RwSignal<Size>,
+    /// Модальный диалог над панелью «Система»: создать / переименовать /
+    /// удалить пресет. `None` — закрыт.
+    pub prompt_dialog: RwSignal<Option<PromptDialog>>,
     /// Состояние раскрытия thinking-блоков по индексу сообщения.
     pub thinking_open: RwSignal<HashMap<usize, bool>>,
     /// Состояние раскрытия свёрнутых групп tool-вызовов (`minimal`-режим).
@@ -179,6 +199,11 @@ impl SynChatCtx {
         // один раз на создание контекста (сам контекст — синглтон на
         // приложение, см. `crate::run_desktop`).
         let cfg = crate::config::AppConfig::load();
+        // Библиотека системных промптов: текст активного пресета — стартовое
+        // значение `system_prompt`.
+        let prompts = prompt_presets::load();
+        let prompt_text = prompts.active_text();
+        let prompt_active = prompts.active.clone().unwrap_or_default();
         Self {
             chats: use_signal(Vec::new()),
             active_chat_id: use_signal(None),
@@ -202,7 +227,13 @@ impl SynChatCtx {
             error: use_signal(None),
             abort: Arc::new(AtomicU64::new(0)),
             params: use_signal(SamplingParams::default()),
-            system_prompt: use_signal(String::new()),
+            system_prompt: use_signal(prompt_text),
+            prompt_presets: use_signal(prompts.presets),
+            prompt_active: use_signal(prompt_active),
+            prompt_window_open: use_signal(false),
+            prompt_window_pos: use_signal(Point::new(120.0, 120.0)),
+            prompt_window_size: use_signal(PROMPT_WINDOW_DEFAULT_SIZE),
+            prompt_dialog: use_signal(None),
             thinking_open: use_signal(HashMap::new()),
             tool_group_open: use_signal(HashMap::new()),
             tool_body_open: use_signal(HashMap::new()),

@@ -45,6 +45,7 @@ pub mod media_inline;
 pub mod media_viewer;
 pub mod message_area;
 pub mod message_bubble;
+pub mod prompt_window;
 pub mod right_panel;
 pub mod tool_group;
 
@@ -86,6 +87,11 @@ pub fn view() -> impl Widget {
             // Portal полноэкранного просмотра вложений
             // (источник — SynChatCtx.viewer).
             media_viewer::view(),
+            // Плавающее окно редактора системного промпта и диалоги
+            // библиотеки пресетов (источник — SynChatCtx.prompt_window_open /
+            // prompt_dialog).
+            prompt_window::window(),
+            prompt_window::dialog(),
         ]
     }
 }

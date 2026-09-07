@@ -11,11 +11,12 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::containers::GestureDetector;
-use syngui::widgets::{Slider, SpinBox, TextField, Toggle};
+use syngui::widgets::{Dropdown, DropdownItem, Slider, SpinBox, TextField, Toggle};
 
 use crate::context::{SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS};
 use crate::icons::*;
 use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::prompt_presets::{self, PromptDialog};
 use crate::syn_chat::telemetry::{AgentRun, RunKind, RunState, RunStats, ROOT_RUN};
 use crate::syn_chat::{SynChatCtx, SynModelRegistry};
 
@@ -461,11 +462,83 @@ fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
 }
 
 // ── Карточка «Системный prompt» ──────────────────────────────────────
+//
+// Библиотека пресетов (`SynChatCtx.prompt_presets`): дропдаун переключает
+// активный, кнопки в шапке — создать / переименовать / удалить и открыть
+// текст в плавающем окне (`prompt_window`). Редактор внизу и окно правят
+// один и тот же `system_prompt`; на диск текст уходит через эффект в
+// `lib.rs::install_syn_chat_autosave`.
+
+/// Карточка «Система» как самостоятельный виджет — для harness-тестов
+/// (`tests/system_prompt_card_layout.rs`); панель собирает её через
+/// [`system_prompt_card_reactive`].
+pub fn system_prompt_card() -> impl Widget {
+    DecoratedBox::new().child(system_prompt_card_reactive())
+}
 
 fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
         let cur = ctx.system_prompt.get();
+        let presets = ctx.prompt_presets.get();
+        let active = ctx.prompt_active.get();
+        let active_name = presets
+            .iter()
+            .find(|p| p.id == active)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+
+        let items: Vec<DropdownItem> = presets
+            .iter()
+            .map(|p| DropdownItem::new(p.id.clone(), p.name.clone()))
+            .collect();
+        let picker = Dropdown::with_items(items)
+            .selected(active.clone())
+            .leading_icon(MI_DESCRIPTION)
+            .on_change(|id| {
+                let ctx = use_context::<SynChatCtx>();
+                prompt_presets::select(&ctx, id);
+            })
+            .class("system-prompt-picker");
+
+        let add = ToolButton::new(MI_ADD)
+            .tooltip(tr!("chat.right.system.preset.add"))
+            .on_click(|| {
+                use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Create));
+            })
+            .class("system-prompt-action");
+        let rename = {
+            let (id, name) = (active.clone(), active_name.clone());
+            ToolButton::new(MI_DRIVE_FILE_RENAME_OUTLINE)
+                .tooltip(tr!("chat.right.system.preset.rename"))
+                .on_click(move || {
+                    use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Rename {
+                        id: id.clone(),
+                        name: name.clone(),
+                    }));
+                })
+                .class("system-prompt-action")
+        };
+        let delete = {
+            let (id, name) = (active.clone(), active_name.clone());
+            ToolButton::new(MI_DELETE)
+                .tooltip(tr!("chat.right.system.preset.delete"))
+                .on_click(move || {
+                    use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Delete {
+                        id: id.clone(),
+                        name: name.clone(),
+                    }));
+                })
+                .class("system-prompt-action")
+        };
+        let open_window = ToolButton::new(MI_OPEN_IN_NEW)
+            .tooltip(tr!("chat.right.system.preset.open_window"))
+            .active(ctx.prompt_window_open.get())
+            .on_click(|| {
+                use_context::<SynChatCtx>().prompt_window_open.set(true);
+            })
+            .class("system-prompt-action");
+
         let edit = syngui::widgets::MultilineTextEdit::new()
             .text(cur)
             .placeholder(tr!("chat.right.system.placeholder"))
@@ -474,12 +547,31 @@ fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Se
             .auto_height(true)
             .on_change(|s| {
                 let ctx = use_context::<SynChatCtx>();
-                ctx.system_prompt.set_always(s.to_string());
+                ctx.system_prompt.set(s.to_string());
             })
             .class("system-prompt-edit");
+
         DecoratedBox::new().class("sampling-card").child(mgui! {
             Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.system.title")),
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                        // Заголовок — flex-элемент (см. `.system-prompt-head-title`):
+                        // кнопки справа держат размер, заголовок ужимается.
+                        DecoratedBox::new().class("system-prompt-head-title") => [
+                            Text::new(tr!("chat.right.system.title"))
+                                .max_lines(1)
+                                .class("right-panel-section-title"),
+                        ],
+                        Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                            add,
+                            rename,
+                            delete,
+                            open_window,
+                        ],
+                    ],
+                picker,
                 edit,
             ]
         })

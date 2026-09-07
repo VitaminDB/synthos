@@ -11,6 +11,7 @@ pub mod compact;
 pub mod model_registry;
 pub mod params;
 pub mod pipeline_run;
+pub mod prompt_presets;
 pub mod registry;
 pub mod session;
 pub mod state;

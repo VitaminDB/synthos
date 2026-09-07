@@ -233,3 +233,63 @@
   color: var(--text);
 }
 
+
+/* ── Карточка «Система»: библиотека промптов и окно редактора ──
+ * Шапка карточки: заголовок + четыре маленькие ToolButton (создать /
+ * переименовать / удалить / открыть в окне). Под ней — дропдаун пресетов на
+ * всю ширину, ниже — компактный редактор. Плавающее окно
+ * (`pages::syn_chat::prompt_window`) — редактор на всю площадь, растёт
+ * вместе с окном через flex-grow. */
+
+.system-prompt-action {
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.system-prompt-action:hover {
+  background-color: var(--surface-hover);
+  color: var(--text);
+}
+
+.system-prompt-picker {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background-color: var(--bg-window);
+  color: var(--text);
+}
+
+.system-prompt-window {
+  background-color: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 12px;
+  min-width: 420px;
+  min-height: 280px;
+  font-size: 13px;
+}
+
+.system-prompt-window-edit {
+  flex-grow: 1;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background-color: var(--bg-window);
+  color: var(--text);
+}
+
+.system-prompt-window-stats {
+  font-size: 11px;
+  color: var(--text-subtle);
+}
+
+.system-prompt-head-title {
+  /* Заголовок шапки — flex-элемент: кнопки справа держат свой размер, а
+   * заголовок ужимается до остатка и обрезается в одну строку. */
+  flex-grow: 1;
+  min-width: 0;
+}

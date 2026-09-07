@@ -12,7 +12,8 @@
 //!   `search` — поиск по названиям и тексту; `read` — страница целиком
 //!   (markdown, доски и диаграммы на ней, связи) или сразу пачка:
 //!   `pages` (список), `depth` (подстраницы), `page="all"` (весь проект)
-//!   — сколько влезает в [`READ_BUDGET`], остальное перечислено по id.
+//!   — сколько влезает в живой бюджет контекста ([`ReadBudget`]),
+//!   остальное перечислено по id.
 //!   `blocks op=read` так же берёт `all` / «0,2,5-7» / массив.
 //! - `create` / `update` / `move` / `delete` / `duplicate` — страницы.
 //!   `update` умеет переименовать, сменить иконку и раскладку, заменить
@@ -78,7 +79,8 @@ use crate::pages::notes::state::{object_refs, LiveObject, NotesCtx};
 use crate::pages::notes::{embeds, media};
 use crate::syn_chat::attach::blobs;
 
-use super::executor::{ToolError, MAX_OUTPUT_BYTES};
+use super::budget;
+use super::executor::{ToolError, MAX_NOTES_OUTPUT_BYTES};
 
 /// Главный entrypoint из `executor::execute`.
 pub async fn run(args_json: &str) -> Result<String, ToolError> {
@@ -1180,6 +1182,13 @@ fn list_impl(ctx: NotesCtx) -> Result<String, String> {
             }
         }
         walk(ctx, &tree.roots, 0, &mut out);
+        // Дерево на тысячу страниц само по себе больше окна. Клипа поверх
+        // ответа `notes` нет (инструмент отвечает за свой размер сам),
+        // поэтому список режется здесь — по строке, а не посреди неё.
+        let budget = ReadBudget::take();
+        if !budget.fits((0, 0), ReadBudget::cost(&out)) {
+            out = budget.clip_lines(out, "the tree is longer than the context left");
+        }
     }
     out.push_str(
         "---\nread {page} shows the markdown, boards and charts on the page and its links; \
@@ -1231,11 +1240,122 @@ fn search_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     Ok(out)
 }
 
-/// Бюджет одного ответа массового чтения в байтах. Исполнитель режет вывод
-/// инструмента на [`MAX_OUTPUT_BYTES`] молча и посреди строки — пачка
-/// страниц (или блоков) обрывается сама, на границе страницы, и в ответе
-/// перечислено, что осталось дочитать.
-const READ_BUDGET: usize = MAX_OUTPUT_BYTES - 8 * 1024;
+/// Потолок ответа, когда бюджет не измерен: вызов идёт вне agent-loop
+/// (юнит-тесты, чужой код) и остатка окна взять неоткуда. В самом ходе
+/// потолка нет — границу ставит живое окно модели.
+const READ_FALLBACK_TOKENS: usize = 8_000;
+
+/// Вторая мера — байты, предохранитель исполнителя
+/// ([`MAX_NOTES_OUTPUT_BYTES`]): он режет вывод молча и посреди строки, а
+/// пачка обязана обрываться на границе страницы. Вычет — на шапку ответа и
+/// список недочитанного.
+const READ_MAX_BYTES: usize = MAX_NOTES_OUTPUT_BYTES - 8 * 1024;
+
+/// Сколько инструмент может отдать этим ответом.
+struct ReadBudget {
+    /// Грант живого окна в токенах — половина того, что осталось.
+    tokens: usize,
+    bytes: usize,
+    /// Сколько токенов окна осталось до конца контекста (0 — не измерено).
+    left: usize,
+    measured: bool,
+}
+
+impl ReadBudget {
+    fn take() -> Self {
+        // Потолка сверху нет: сколько окна модель даёт, столько и читаем —
+        // проект на 14k токенов при свободном контексте уходит одним
+        // ответом, а не тремя ходами с полным префиллом каждый.
+        let g = budget::grant(usize::MAX);
+        Self {
+            tokens: if g.measured { g.tokens } else { READ_FALLBACK_TOKENS },
+            bytes: READ_MAX_BYTES,
+            left: g.left,
+            measured: g.measured,
+        }
+    }
+
+    /// Влезает ли ещё один кусок: считаем обеими мерами сразу.
+    fn fits(&self, spent: (usize, usize), piece: (usize, usize)) -> bool {
+        spent.0 + piece.0 <= self.tokens && spent.1 + piece.1 <= self.bytes
+    }
+
+    /// Обрыв случился из-за тесноты в окне, а не из-за предохранителя.
+    fn by_window(&self, spent: (usize, usize), piece: (usize, usize)) -> bool {
+        self.measured && spent.0 + piece.0 > self.tokens
+    }
+
+    /// Чего стоит кусок: токены (точно либо оценкой) и байты.
+    fn cost(text: &str) -> (usize, usize) {
+        (budget::count(text), text.len())
+    }
+
+    /// Хвост шапки: сколько занял ответ и сколько окна осталось. Модель
+    /// должна видеть причину обрыва — «контекст кончается», а не «инструмент
+    /// такой».
+    fn note(&self, spent: usize) -> String {
+        if !self.measured {
+            return String::new();
+        }
+        format!(" · ~{spent} tokens of the ~{} left in context", self.left)
+    }
+
+    /// Текст длиннее бюджета: отрезаем по строкам (в markdown это границы
+    /// блоков) и дописываем пометку — `tail(keep, total, spent)`. Доля
+    /// берётся от цены целого и ужимается, пока ответ вместе с пометкой не
+    /// влезет: считать токены по каждой строке слишком дорого.
+    fn clip_by_lines(&self, text: String, tail: impl Fn(usize, usize, usize) -> String) -> String {
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let total = lines.len();
+        let cost = Self::cost(&text);
+        let mut share = (self.tokens as f32 / cost.0.max(1) as f32)
+            .min(self.bytes as f32 / cost.1.max(1) as f32)
+            .min(1.0);
+        let mut last = String::new();
+        for _ in 0..4 {
+            share *= 0.8;
+            let keep = ((total as f32 * share) as usize).clamp(1, total);
+            let head: String = lines[..keep].concat();
+            last = format!("{head}{}", tail(keep, total, Self::cost(&head).0));
+            if self.fits((0, 0), Self::cost(&last)) {
+                return last;
+            }
+        }
+        last
+    }
+
+    /// Список страниц длиннее бюджета: дерево на тысячу страниц само по
+    /// себе больше окна.
+    fn clip_lines(&self, text: String, why: &str) -> String {
+        self.clip_by_lines(text, |keep, total, spent| {
+            format!("--- Cut after {keep} of {total} lines: {why}{} ---\n", self.note(spent))
+        })
+    }
+
+    /// Одна страница больше всего бюджета: обрываем по строке и говорим,
+    /// чем дочитать — `blocks op=read` умеет отдать остаток кусками.
+    fn clip_page(&self, text: String, id: &str) -> String {
+        self.clip_by_lines(text, |keep, total, spent| {
+            format!(
+                "--- Page truncated: {keep} of {total} lines{} ---\n\
+                 Read the rest in pieces: blocks {{\"op\": \"read\", \"page\": \"{id}\", \
+                 \"block\": \"...\"}}.\n{}",
+                self.note(spent),
+                self.advice(self.measured)
+            )
+        })
+    }
+
+    /// Подсказка, когда режет именно теснота окна.
+    fn advice(&self, by_window: bool) -> &'static str {
+        if by_window {
+            "\nContext is filling up: read only what you need next, or ask the user to \
+             compact the chat before reading the rest.\n"
+        } else {
+            ""
+        }
+    }
+}
 
 /// «Весь проект» в `page`/`pages` — но только если так не называется
 /// настоящая страница.
@@ -1436,10 +1556,11 @@ fn page_text(ctx: NotesCtx, id: &str, with_blocks: bool) -> String {
 /// `read` — одна страница или сразу пачка (`pages`, `depth`, `page="all"`).
 /// Чтение по одной странице за вызов у локальной модели стоит целого хода
 /// с полным префиллом, поэтому дерево целиком отдаётся одним ответом,
-/// сколько влезает в [`READ_BUDGET`].
+/// сколько влезает в [`ReadBudget`].
 fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let ids = read_targets(ctx, v)?;
     let with_blocks = bool_field(v, "blocks").unwrap_or(false);
+    let budget = ReadBudget::take();
     if ids.len() == 1 {
         let mut out = page_text(ctx, &ids[0], with_blocks);
         // Подстраницы называем сразу: иначе модель обходит дерево по
@@ -1460,17 +1581,25 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 ));
             }
         }
+        if !budget.fits((0, 0), ReadBudget::cost(&out)) {
+            out = budget.clip_page(out, &ids[0]);
+        }
         return Ok(out);
     }
     let total = ids.len();
     let mut body = String::new();
     let mut done = 0usize;
     let mut words = 0usize;
+    let mut spent = (0usize, 0usize);
+    let mut by_window = false;
     for (n, id) in ids.iter().enumerate() {
         let text = page_text(ctx, id, with_blocks);
-        if !body.is_empty() && body.len() + text.len() > READ_BUDGET {
+        let cost = ReadBudget::cost(&text);
+        if !body.is_empty() && !budget.fits(spent, cost) {
+            by_window = budget.by_window(spent, cost);
             break;
         }
+        spent = (spent.0 + cost.0, spent.1 + cost.1);
         if !body.is_empty() {
             body.push('\n');
         }
@@ -1484,10 +1613,14 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     }
     let mut out = String::new();
     if done == total {
-        out.push_str(&format!("--- {total} pages · {words} words · all of them in this reply ---\n"));
+        out.push_str(&format!(
+            "--- {total} pages · {words} words{} · all of them in this reply ---\n",
+            budget.note(spent.0)
+        ));
     } else {
         out.push_str(&format!(
-            "--- {done} of {total} pages · {words} words · the rest did not fit in one reply ---\n"
+            "--- {done} of {total} pages · {words} words{} · the rest did not fit in one reply ---\n",
+            budget.note(spent.0)
         ));
     }
     out.push_str(&body);
@@ -1495,10 +1628,11 @@ fn read_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         let rest: Vec<String> =
             ids[done..].iter().map(|id| format!("{id} \"{}\"", ctx.title_of(id))).collect();
         out.push_str(&format!(
-            "--- Not read ({}) ---\n{}\nRead them with one more call: pages=[\"{}\", …].\n",
+            "--- Not read ({}) ---\n{}\nRead them with one more call: pages=[\"{}\", …].\n{}",
             total - done,
             rest.join("\n"),
-            ids[done]
+            ids[done],
+            budget.advice(by_window)
         ));
     }
     Ok(out)
@@ -2668,13 +2802,19 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if idx.len() == 1 {
                 return Ok(block_read_text(idx[0], &model.blocks[idx[0]]));
             }
+            let budget = ReadBudget::take();
             let mut body = String::new();
             let mut done = 0usize;
+            let mut spent = (0usize, 0usize);
+            let mut by_window = false;
             for &i in &idx {
                 let text = block_read_text(i, &model.blocks[i]);
-                if !body.is_empty() && body.len() + text.len() > READ_BUDGET {
+                let cost = ReadBudget::cost(&text);
+                if !body.is_empty() && !budget.fits(spent, cost) {
+                    by_window = budget.by_window(spent, cost);
                     break;
                 }
+                spent = (spent.0 + cost.0, spent.1 + cost.1);
                 body.push_str(&text);
                 body.push('\n');
                 done += 1;
@@ -2682,11 +2822,19 @@ fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             let mut out = if done == idx.len() {
                 format!("--- {} blocks ---\n", idx.len())
             } else {
-                format!("--- {done} of {} blocks · the rest did not fit in one reply ---\n", idx.len())
+                format!(
+                    "--- {done} of {} blocks{} · the rest did not fit in one reply ---\n",
+                    idx.len(),
+                    budget.note(spent.0)
+                )
             };
             out.push_str(&body);
             if done < idx.len() {
-                out.push_str(&format!("--- Not read: {} ---\n", indices_text(&idx[done..])));
+                out.push_str(&format!(
+                    "--- Not read: {} ---\n{}",
+                    indices_text(&idx[done..]),
+                    budget.advice(by_window)
+                ));
             }
             out.push_str(&format!("{}\n", page_line(ctx, &id)));
             Ok(out)
@@ -4627,6 +4775,7 @@ mod tests {
     /// полным префиллом за каждую подстраницу.
     #[test]
     fn read_takes_many_pages_at_once() {
+        let _serial = budget::test_serial();
         let ctx = ctx();
         let root = page_id(&call(ctx, "create", serde_json::json!({"title": "Проект", "content": "Корень\n"})));
         let a = page_id(&call(
@@ -4668,10 +4817,136 @@ mod tests {
         assert!(two.starts_with("--- 2 pages"), "{two}");
     }
 
+    /// Пачка обязана делиться по тому же числу, каким её мерит история
+    /// хода: иначе `clip_for_history` вырежет из ответа середину — целые
+    /// страницы, о пропаже которых модель узнаёт только по дыре в тексте.
+    #[test]
+    fn notes_answers_are_not_clipped_by_history() {
+        // Клипа поверх `notes` нет: инструмент сам меряет ответ живым окном
+        // и обрывает его на границе страницы. Статический клип вырезал бы
+        // у честной пачки середину — целые страницы, о пропаже которых
+        // модель узнаёт только по дыре в тексте.
+        assert_eq!(
+            super::super::executor::history_limit(super::super::catalog::KEY_NOTES),
+            None
+        );
+        assert!(
+            READ_MAX_BYTES < MAX_NOTES_OUTPUT_BYTES,
+            "предохранитель исполнителя не оставил места шапке и списку недочитанного"
+        );
+    }
+
+    /// Свободное окно — весь проект одним ответом: своего потолка у
+    /// инструмента больше нет, границу ставит только контекст.
+    #[test]
+    fn a_roomy_window_reads_the_whole_project_in_one_reply() {
+        let _serial = budget::test_serial();
+        let ctx = ctx();
+        let long = "Строка текста для объёма.\n\n".repeat(110);
+        for i in 1..=12 {
+            call(ctx, "create", serde_json::json!({"title": format!("Стр {i}"), "content": &long}));
+        }
+        // Без бюджета те же страницы в один ответ не влезают (фолбэк —
+        // 8000 токенов), с живым окном на 200k — влезают все.
+        assert!(call(ctx, "read", serde_json::json!({"page": "all"})).contains("did not fit"));
+
+        let _budget = budget::arm(200_000, std::sync::Arc::new(|s: &str| s.chars().count() / 3));
+        let all = call(ctx, "read", serde_json::json!({"page": "all"}));
+        assert!(all.contains("all of them in this reply"), "{}", &all[..160]);
+        assert_eq!(all.matches("=== page ").count(), 12);
+        assert!(all.contains("left in context"), "шапка называет цену ответа и остаток окна");
+        assert!(!all.contains("Context is filling up"), "окно свободно — пугать нечем");
+    }
+
+    /// Одна страница больше бюджета: обрывается по строке, называет
+    /// остаток и способ его дочитать — а не уезжает под клип истории.
+    #[test]
+    fn a_huge_single_page_is_cut_with_a_way_to_finish_it() {
+        let _serial = budget::test_serial();
+        let ctx = ctx();
+        let long = "Строка текста для объёма.\n\n".repeat(400);
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Полотно", "content": &long})));
+
+        let _budget = budget::arm(2_000, std::sync::Arc::new(|s: &str| s.chars().count() / 3));
+        let out = call(ctx, "read", serde_json::json!({"page": &page}));
+        assert!(out.contains("--- Page truncated: "), "{}", &out[..200]);
+        assert!(out.contains("blocks {\"op\": \"read\""), "нужен способ дочитать остаток");
+        assert!(
+            budget::count(&out) <= 1_000,
+            "ответ на ~{} токенов больше гранта",
+            budget::count(&out)
+        );
+        // Обрыв по границе строки: половинок строк в ответе нет.
+        let body = out.split("--- Page truncated").next().unwrap();
+        assert!(
+            body.matches("Строка текста для объёма.").count() > 0
+                && body.ends_with('\n'),
+            "страница обязана обрываться на строке"
+        );
+    }
+
+    /// Тесное окно опускает потолок ответа, и модель узнаёт об этом из
+    /// шапки — вместо молчаливой дыры в середине.
+    #[test]
+    fn a_tight_context_shrinks_the_reply_and_says_so() {
+        let _serial = budget::test_serial();
+        let ctx = ctx();
+        let long = "Строка текста для объёма.\n\n".repeat(60);
+        for i in 1..=12 {
+            call(ctx, "create", serde_json::json!({"title": format!("Стр {i}"), "content": &long}));
+        }
+        let roomy = call(ctx, "read", serde_json::json!({"page": "all"}));
+
+        // 4000 токенов окна → грант 2000 → страниц влезает меньше.
+        let _budget = budget::arm(4_000, std::sync::Arc::new(|s: &str| s.chars().count() / 3));
+        let tight = call(ctx, "read", serde_json::json!({"page": "all"}));
+        let pages = |s: &str| s.matches("=== page ").count();
+        assert!(
+            pages(&tight) < pages(&roomy),
+            "тесное окно ({} страниц) должно отдавать меньше свободного ({})",
+            pages(&tight),
+            pages(&roomy)
+        );
+        assert!(tight.contains("left in context"), "шапка обязана назвать остаток окна: {}", &tight[..120]);
+        assert!(tight.contains("Context is filling up"), "модель должна узнать причину обрыва");
+    }
+
+    /// Массовое чтение обрывается на границе страницы и называет остаток.
+    #[test]
+    fn read_stops_on_a_page_boundary_and_lists_the_rest() {
+        let _serial = budget::test_serial();
+        let ctx = ctx();
+        // Каждая страница — заметно больше десятой доли бюджета, так что
+        // в один ответ они все не влезают.
+        let long = "Строка текста для объёма.\n\n".repeat(110);
+        for i in 1..=12 {
+            call(ctx, "create", serde_json::json!({"title": format!("Стр {i}"), "content": &long}));
+        }
+        let all = call(ctx, "read", serde_json::json!({"page": "all"}));
+        assert!(all.starts_with("--- ") && all.contains("did not fit in one reply"), "{}", &all[..200]);
+        assert!(all.contains("--- Not read ("), "остаток должен быть перечислен по id");
+        assert!(
+            budget::count(&all) <= READ_FALLBACK_TOKENS && all.len() <= READ_MAX_BYTES,
+            "ответ на ~{} токенов вышел за бюджет",
+            budget::count(&all)
+        );
+        // Обрыв ровно на границе: сколько страниц названо в шапке, столько
+        // их и в ответе — целиком, а не с оборванным хвостом у последней.
+        let done: usize = all.split(' ').nth(1).and_then(|n| n.parse().ok()).expect("шапка пачки");
+        assert!(done > 0 && done < 12, "прочитано {done} из 12");
+        assert_eq!(all.matches("=== page ").count(), done);
+        assert_eq!(
+            all.matches("Строка текста для объёма.").count(),
+            done * 110,
+            "страница попала в ответ не целиком"
+        );
+    }
+
     /// Блоки страницы читаются пачкой: `all`, список и диапазон; одиночная
     /// ссылка отвечает как прежде.
     #[test]
     fn blocks_read_takes_a_list_and_the_whole_page() {
+        let _serial = budget::test_serial();
         let ctx = ctx();
         let page = page_id(&call(
             ctx,

@@ -147,12 +147,6 @@ const TOTAL_STOP_AT: usize = 8;
 /// пакетной работы («создать страницу → доску на ней» для каждой из десяти
 /// сфер), останавливать такое нельзя.
 const SHAPE_ALTERNATION_ANTI_LOOP_AT: usize = 3;
-/// Сколько символов результата инструмента уходит в промпт модели.
-///
-/// В UI пузырь остаётся полным, обрезается только копия для истории:
-/// `MAX_OUTPUT_BYTES` у executor'а — 64 КБ, и десяток таких результатов
-/// сжигает контекст быстрее, чем агент успевает решить задачу.
-const HISTORY_TOOL_RESULT_CHARS: usize = 8000;
 /// Сколько последних сообщений ленты не трогает компактификация внутри хода
 /// (последняя tool-пара + плейсхолдер).
 const IN_TURN_KEEP_TAIL: usize = 3;
@@ -2239,6 +2233,19 @@ async fn run_agent_loop(
             m.push(ChatMsg::tool_call(name_for_ui, args_pretty, calls_for_ui));
         });
 
+        // Сколько окна остаётся под результаты инструментов этого хода:
+        // честный потолок минус то, что уже занято промптом и ответом, минус
+        // резерв на следующий шаг. Инструмент, который сам решает, сколько
+        // отдать (`notes read` пачкой), режет ответ по этому числу и говорит
+        // модели, что осталось, — вместо того чтобы упереться в статический
+        // клип истории и потерять середину. Guard живёт до конца хода и
+        // возвращает бюджет родителя, если внутри крутился субагент.
+        let _tool_budget = tools::budget::arm_turn(
+            turn_ctx_budget,
+            prompt_ids.len() + tokens_this_turn as usize,
+            tools::budget::model_counter(&model),
+        );
+
         // Выполняем каждый tool: guard повторов → confirm → execute → push.
         for chat_call in chat_calls.iter() {
             if abort.load(Ordering::Relaxed) != abort_snapshot {
@@ -2440,6 +2447,7 @@ async fn run_agent_loop(
                     }
                 }
                 note_outcome(&mut call_outcomes, &key, &res.content);
+                tools::budget::spend(&res.content);
                 let mut for_history = clip_for_history(&res.content, &tool_name(chat_call));
                 for_history.push_str(&note);
                 history.push(Message::tool_named(tool_name(chat_call), for_history));
@@ -2507,6 +2515,9 @@ async fn run_agent_loop(
             // с одного вызова (потолок executor'а) съедают контекст быстрее,
             // чем агент успевает решить задачу. Исключение — `autoskill`:
             // инструкция нужна модели целиком (см. history_clip_limit).
+            // Результат уже уехал в историю — следующий вызов этого же хода
+            // получит окно на его размер меньше.
+            tools::budget::spend(&outcome.content);
             let mut for_history = clip_for_history(&outcome.content, &tool_name(chat_call));
             for_history.push_str(&note);
             history.push(Message::tool_named(tool_name(chat_call), for_history));
@@ -2868,14 +2879,11 @@ fn outcome_fingerprint(out: &str) -> u64 {
 }
 
 /// Предел копии для промпта по инструменту. `None` — не обрезать.
-///
-/// `autoskill` отдаёт не выхлоп команды, а инструкцию, которую модель
-/// обязана выполнить целиком: вырезанная середина — ровно то знание, ради
-/// которого скил и подключали. Его размер ограничивает только потолок
-/// executor'а ([`tools::executor::MAX_SKILL_OUTPUT_BYTES`]); платой идёт
-/// контекст — большой скил занимает его надолго.
+/// Пределы живут рядом с исполнителем: инструмент, который сам делит
+/// вывод на порции, должен считать порцию по тому же числу
+/// ([`notes::READ_BUDGET`](crate::agent::tools) — из этого предела).
 fn history_clip_limit(tool: &str) -> Option<usize> {
-    (tool != crate::agent::tools::catalog::KEY_AUTOSKILL).then_some(HISTORY_TOOL_RESULT_CHARS)
+    crate::agent::tools::executor::history_limit(tool)
 }
 
 /// Копия вывода инструмента для промпта: голова + хвост, середина заменяется
@@ -3813,6 +3821,7 @@ mod tests {
     }
 
     use crate::agent::tools::catalog::KEY_BASH;
+    use crate::agent::tools::executor::HISTORY_TOOL_RESULT_CHARS;
 
     #[test]
     fn clip_for_history_keeps_short_output_intact() {

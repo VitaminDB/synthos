@@ -423,6 +423,15 @@ async fn run_subagent_loop(
             assistant_turn_message(&out.clean_text, &out.think_text, &out.calls)
         });
 
+        // Остаток окна под результаты инструментов этого turn'а — тем же
+        // счётом, что и в основном цикле. Guard возвращает бюджет родителя,
+        // когда субагент отработал: его вызов идёт изнутри родительского.
+        let _tool_budget = super::budget::arm_turn(
+            out.ctx_budget,
+            out.prompt_tokens + out.gen_tokens as usize,
+            super::budget::model_counter(&snap.model),
+        );
+
         for (i, raw_call) in out.calls.iter().enumerate() {
             // Двойная защита от рекурсии: catalog уже исключает subagent из
             // дескрипторов, но модель всё равно может сгенерировать call с
@@ -471,6 +480,7 @@ async fn run_subagent_loop(
                 r.tool = None;
                 r.tool_calls += 1;
             });
+            super::budget::spend(&outcome.content);
             history.push(Message::tool(outcome.content));
         }
     }
@@ -501,6 +511,11 @@ struct SubagentTurn {
     channel: bool,
     /// Сколько токенов модель выдала за этот turn.
     gen_tokens: u32,
+    /// Длина промпта этого turn'а в токенах и честный потолок контекста
+    /// (окно модели, ограниченное VRAM) — из них цикл считает, сколько окна
+    /// осталось под результаты инструментов (см. [`budget`](super::budget)).
+    prompt_tokens: usize,
+    ctx_budget: usize,
 }
 
 impl SubagentTurn {
@@ -699,6 +714,8 @@ fn generate_subagent_turn(
             calls,
             channel,
             gen_tokens: tokens_this_turn as u32,
+            prompt_tokens: prompt_ids.len(),
+            ctx_budget: plan.by_mem.min(plan.cap),
         });
     }
 }

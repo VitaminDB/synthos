@@ -6,6 +6,8 @@
 //! - [`catalog`]    — конкретные инструменты: `bash`, `kb_search`, `web`.
 //! - [`executor`]   — async-исполнение: безопасный парсинг аргументов,
 //!   запуск, truncate больших выводов, структурированный результат.
+//! - [`budget`]     — сколько контекста осталось под ответ: agent-loop кладёт
+//!   туда остаток окна в токенах, инструмент режет ответ по нему.
 //! - [`web`]        — единый tool интернет-доступа: `action=search` (DDG
 //!   html-endpoint) и `action=read` (reqwest → Readability → htmd).
 //! - [`kb_search`]  — поиск по локальным базам знаний (RAG hybrid).
@@ -23,6 +25,7 @@
 //!   обрезается — см. `syn_chat::session::history_clip_limit`).
 
 pub mod autoskill;
+pub mod budget;
 pub mod catalog;
 pub mod descriptor;
 pub mod executor;

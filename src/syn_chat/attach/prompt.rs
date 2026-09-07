@@ -25,9 +25,24 @@ use crate::syn_chat::model_registry;
 
 use super::{blobs, format_duration, format_size, media_cache};
 
-/// Потолок инлайна документа. 60k символов ≈ 20k токенов — дальше вложение
-/// вытесняет из контекста саму переписку.
+/// Потолок инлайна документа без токенизатора (юнит-тесты, прогоны вне
+/// чата): 60k символов ≈ 20k токенов. В чате действует [`DocBudget`] —
+/// доля окна модели, посчитанная её токенизатором.
 const DOC_INLINE_LIMIT: usize = 60_000;
+
+/// Сколько документ-вложение может занять в промпте.
+///
+/// Считается при сборке промпта, когда остаток хода ещё не известен,
+/// поэтому берётся от окна модели, а не от живого бюджета — и обязан быть
+/// одинаковым от хода к ходу: блок вложения лежит в голове истории, и
+/// плавающая граница обнуляла бы префикс-KV на каждом сообщении.
+#[derive(Clone)]
+pub struct DocBudget {
+    /// Потолок на один документ в токенах.
+    pub tokens: usize,
+    /// Счётчик токенов — токенизатор загруженной модели.
+    pub count: crate::agent::tools::budget::Counter,
+}
 
 /// Что модель умеет принимать в этой сессии.
 #[derive(Clone)]
@@ -44,6 +59,9 @@ pub struct MediaCaps {
     pub max_image_tokens: Option<usize>,
     /// ASR-модель для расшифровки аудио-вложений; `None` — не загружена.
     pub asr: Option<Arc<Mutex<Option<Transcriber>>>>,
+    /// Бюджет документа-вложения в токенах; `None` — потолок по символам
+    /// ([`DOC_INLINE_LIMIT`]).
+    pub doc_budget: Option<DocBudget>,
 }
 
 /// Готовое user-сообщение: текст для chat-шаблона + медиа в порядке
@@ -83,7 +101,7 @@ pub fn prepare_user_message(
                     }
                 }
             }
-            AttachmentKind::Document => text.push_str(&document_block(a)),
+            AttachmentKind::Document => text.push_str(&document_block(a, caps)),
             AttachmentKind::Audio => text.push_str(&audio_block(a, caps)),
             AttachmentKind::Other => text.push_str(&fallback_line(a, None)),
         }
@@ -261,21 +279,52 @@ fn display_name(a: &MsgAttachment) -> &str {
 }
 
 /// Текст документа в fenced-блоке с именем файла в заголовке.
-fn document_block(a: &MsgAttachment) -> String {
+///
+/// Что не влезает в [`DocBudget`], режется как выхлоп инструмента
+/// (`budget::fit_with`): голова и хвост по строкам, в середине — пометка с
+/// номерами пропущенных строк и путём к файлу, чтобы модель дочитала их
+/// инструментом `bash`, а не гадала по обрыву.
+fn document_block(a: &MsgAttachment, caps: &MediaCaps) -> String {
     let path = blobs::source_path(a);
     match read_document(&path) {
         Ok(text) if !text.trim().is_empty() => {
-            let (body, truncated) = truncate_chars(&text, DOC_INLINE_LIMIT);
-            let mut s = format!("[документ: {}]\n```\n{body}", display_name(a));
-            if truncated {
-                s.push_str("\n… (документ обрезан)");
-            }
-            s.push_str("\n```\n");
-            s
+            let body = match &caps.doc_budget {
+                Some(b) => fit_document(&text, b, &path.display().to_string()),
+                None => {
+                    let (body, truncated) = truncate_chars(&text, DOC_INLINE_LIMIT);
+                    if truncated {
+                        format!("{body}\n… (документ обрезан)")
+                    } else {
+                        body
+                    }
+                }
+            };
+            format!("[документ: {}]\n```\n{body}\n```\n", display_name(a))
         }
         Ok(_) => fallback_line(a, Some("документ пуст")),
         Err(e) => fallback_line(a, Some(&e)),
     }
+}
+
+/// Укладка документа в [`DocBudget`]; `path` — откуда дочитать вырезанное.
+fn fit_document(text: &str, budget: &DocBudget, path: &str) -> String {
+    let count = budget.count.clone();
+    crate::agent::tools::budget::fit_with(text, budget.tokens, 0, false, &*count, |c| {
+        format!(
+            "…[документ обрезан по окну контекста: показаны строки 1–{} и {}–{} из {} \
+             (~{} токенов при потолке ~{}); пропущены строки {}–{} — если они нужны, \
+             прочитайте именно этот диапазон из файла {path} инструментом bash \
+             (sed -n 'A,Bp'), не перечитывая всё]…\n",
+            c.omitted.0 - 1,
+            c.omitted.1 + 1,
+            c.lines,
+            c.lines,
+            c.tokens,
+            c.allowed,
+            c.omitted.0,
+            c.omitted.1,
+        )
+    })
 }
 
 /// Парсинг документа: markdown/html/pdf разбираются синаптиксовым
@@ -365,6 +414,25 @@ mod tests {
         assert!(line.contains("photo.png"));
         assert!(line.contains("1920×1080"));
         assert!(line.contains("2,0 КБ"));
+    }
+
+    /// Документ меряется токенизатором: что влезает в бюджет — целиком,
+    /// что нет — голова и хвост по строкам с номерами пропущенного и путём.
+    #[test]
+    fn document_fits_by_tokens_and_names_the_gap() {
+        let budget = DocBudget {
+            tokens: 1_000,
+            count: Arc::new(|s: &str| s.chars().count() / 3),
+        };
+        let short: String = (1..=20).map(|i| format!("строка {i}\n")).collect();
+        assert_eq!(fit_document(&short, &budget, "/tmp/a.md"), short);
+        let long: String = (1..=2_000).map(|i| format!("| {i:04} | строка таблицы |\n")).collect();
+        let out = fit_document(&long, &budget, "/tmp/big.md");
+        assert!(out.starts_with("| 0001 |"));
+        assert!(out.ends_with("| 2000 | строка таблицы |\n"));
+        assert!(out.contains("документ обрезан по окну контекста"));
+        assert!(out.contains("/tmp/big.md"));
+        assert!((budget.count)(&out) <= 1_000, "{}", (budget.count)(&out));
     }
 
     #[test]

@@ -480,8 +480,11 @@ async fn run_subagent_loop(
                 r.tool = None;
                 r.tool_calls += 1;
             });
-            super::budget::spend(&outcome.content);
-            history.push(Message::tool(outcome.content));
+            // Выхлоп укладывается в остаток окна субагента по токенам —
+            // тем же счётом, что и в основном цикле (`fit_for_prompt`).
+            let content = crate::syn_chat::session::fit_for_prompt(&outcome.content, &raw_call.name);
+            super::budget::spend(&content);
+            history.push(Message::tool(content));
         }
     }
 

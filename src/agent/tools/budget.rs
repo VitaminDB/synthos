@@ -1,21 +1,26 @@
 //! Сколько контекста осталось под результат инструмента.
 //!
-//! Клип истории (`syn_chat::session::clip_for_history`) — статическая
-//! страховка: он режет копию для промпта по числу символов и обязан быть
-//! воспроизводимым, иначе история, пересобранная из ленты на следующем
-//! сообщении, разойдётся с промптом хода и префикс-KV обнулится. Поэтому
-//! он и не может знать, сколько места в окне осталось на самом деле.
-//!
 //! Знает это agent-loop: у него на руках длина промпта в токенах и ёмкость
 //! хода ([`RingPlan`](crate::syn_chat::session) — окно модели, ограниченное
 //! свободной VRAM). Перед исполнением вызовов он кладёт сюда остаток и
-//! токенизатор загруженной модели; инструмент, который сам решает, сколько
-//! отдать (`notes read` пачкой), спрашивает [`grant`] и режет ответ по
-//! живому бюджету, а не по константе — и пишет модели, сколько осталось.
+//! токенизатор загруженной модели. Дальше два пути:
 //!
-//! Динамика идёт только вниз, от потолка инструмента: что бы ни показал
-//! бюджет, ответ не станет больше статической страховки, и клип истории
-//! по-прежнему не срабатывает на честной пачке.
+//! - инструмент, который сам решает, сколько отдать (`notes read` пачкой),
+//!   спрашивает [`grant`] и режет ответ по живому бюджету на границе
+//!   страницы — и пишет модели, сколько осталось;
+//! - выхлоп остальных (`bash`, `web`, …) укладывает в окно цикл —
+//!   [`fit_for_prompt`]: голова и хвост целиком, середина заменяется
+//!   пометкой с номерами пропущенных строк. Мера — токены по токенизатору
+//!   модели, а не символы: 16 КБ русской таблицы — это ~5,5k токенов, и при
+//!   свободном окне в 100k резать их незачем.
+//!
+//! Статического клипа истории (было 8000 символов с одного вызова) больше
+//! нет: он не знал, сколько места в окне на самом деле, резал середину у
+//! каждого куска файла и подписью «уточните команду» отправлял модель
+//! перечитывать вырезанное — по кругу, пока пользователь не нажмёт «Стоп».
+//! Ленте это ничего не стоит: в неё уходит уже уложенная копия, так что
+//! история, пересобранная из ленты на следующем сообщении, совпадает с
+//! промптом хода байт в байт, и префикс-KV цел.
 
 use std::sync::{Arc, Mutex};
 
@@ -144,6 +149,117 @@ pub fn grant(cap: usize) -> Grant {
     }
 }
 
+/// Сколько получает выхлоп инструмента, когда цикла нет и остатка окна
+/// взять неоткуда (вызов вне agent-loop, юнит-тесты): столько же, сколько
+/// `notes` вне цикла.
+pub const FALLBACK_RESULT_TOKENS: usize = 8_000;
+
+/// Запас под пометку о вырезанной середине — она тоже уходит в промпт.
+const CUT_NOTE_TOKENS: usize = 96;
+
+/// Что вырезано из выхлопа: для пометки модели.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cut {
+    /// Пропущенные строки вывода, `первая..=последняя`, нумерация с 1.
+    pub omitted: (usize, usize),
+    /// Всего строк в выводе.
+    pub lines: usize,
+    /// Цена целого вывода в токенах.
+    pub tokens: usize,
+    /// Сколько токенов на вывод выдано.
+    pub allowed: usize,
+    /// Сколько токенов окна осталось (0 — не измерено).
+    pub left: usize,
+    /// Бюджет посчитан по живому окну, а не по [`FALLBACK_RESULT_TOKENS`].
+    pub measured: bool,
+}
+
+/// Уложить выхлоп инструмента в окно: если он дороже половины остатка —
+/// оставить голову (⅔) и хвост (⅓) по границам строк, середину заменить
+/// пометкой `note`. `cap` — потолок без живого окна.
+///
+/// Хвост важен не меньше головы: у команд там `--- stderr ---`, у длинных
+/// таблиц — итоги. Доля берётся от цены целого и ужимается, пока результат
+/// вместе с пометкой не влезет: считать токены по каждой строке дорого,
+/// а весь текст — несколько миллисекунд.
+pub fn fit(text: &str, cap: usize, note: impl FnMut(&Cut) -> String) -> String {
+    let g = grant(usize::MAX);
+    let allowed = if g.measured { g.tokens } else { cap };
+    fit_with(text, allowed, g.left, g.measured, &count, note)
+}
+
+/// То же, что [`fit`], но с явным потолком `allowed` и счётчиком токенов —
+/// для укладки вне слота бюджета: документ-вложение меряется долей окна
+/// модели ещё при сборке промпта (`attach::prompt`), когда остаток хода
+/// не известен. `left`/`measured` уходят в [`Cut`] как есть.
+pub fn fit_with(
+    text: &str,
+    allowed: usize,
+    left: usize,
+    measured: bool,
+    count: &dyn Fn(&str) -> usize,
+    mut note: impl FnMut(&Cut) -> String,
+) -> String {
+    let tokens = count(text);
+    if tokens <= allowed {
+        return text.to_string();
+    }
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let total_chars = chars.len();
+    let lines = text.split_inclusive('\n').count();
+    let per_token = total_chars as f64 / tokens.max(1) as f64;
+    // Первый заход — по цене целого; дальше ужимаем по факту.
+    let mut budget = allowed.saturating_sub(CUT_NOTE_TOKENS).max(64);
+    let mut best: Option<String> = None;
+    for _ in 0..6 {
+        let head_chars = ((budget * 2 / 3) as f64 * per_token) as usize;
+        let tail_chars = ((budget / 3) as f64 * per_token) as usize;
+        if head_chars + tail_chars >= total_chars {
+            // Бюджет почти равен целому — резать нечего, но и целиком не
+            // влезает: ужимаем и пробуем снова.
+            budget = budget * 4 / 5;
+            continue;
+        }
+        // Голова кончается на последнем переводе строки до границы, хвост
+        // начинается с первого после — так строки не рвутся посередине.
+        let head_end = {
+            let byte = chars[head_chars.min(total_chars - 1)].0;
+            text[..byte].rfind('\n').map(|p| p + 1).unwrap_or(byte)
+        };
+        let tail_start = {
+            let byte = chars[total_chars - tail_chars.max(1)].0;
+            text[byte..].find('\n').map(|p| byte + p + 1).unwrap_or(byte)
+        };
+        if tail_start <= head_end {
+            budget = budget * 4 / 5;
+            continue;
+        }
+        let head = &text[..head_end];
+        let tail = &text[tail_start..];
+        let head_lines = head.matches('\n').count();
+        let tail_lines = tail.split_inclusive('\n').count();
+        let cut = Cut {
+            omitted: (head_lines + 1, lines.saturating_sub(tail_lines).max(head_lines + 1)),
+            lines,
+            tokens,
+            allowed,
+            left,
+            measured,
+        };
+        let out = format!("{head}{}{tail}", note(&cut));
+        let cost = count(&out);
+        if cost <= allowed {
+            return out;
+        }
+        best = Some(out);
+        // Ужимаем пропорционально перебору, с запасом.
+        budget = (budget * allowed / cost.max(1)) * 9 / 10;
+    }
+    // Шесть заходов не уложились (неровная токенизация): отдаём последнее
+    // приближение — оно всё равно кратно меньше целого.
+    best.unwrap_or_else(|| text.to_string())
+}
+
 /// Слот один на процесс: тесты, которые его трогают (здесь и у `notes`),
 /// обязаны идти по очереди — иначе чужой `arm` меняет бюджет посреди
 /// чужого же чтения.
@@ -194,6 +310,86 @@ mod tests {
         assert_eq!(grant(8_000).tokens, MIN_GRANT_TOKENS);
     }
 
+    fn chars3(s: &str) -> usize {
+        s.chars().count() / 3
+    }
+
+    fn table(rows: usize) -> String {
+        (1..=rows).map(|i| format!("| {i:04} | строка таблицы {i} |\n")).collect()
+    }
+
+    /// Что влезает в окно — уходит как есть, без пометок.
+    #[test]
+    fn fit_keeps_output_that_fits() {
+        let _serial = serial();
+        let _guard = arm(200_000, Arc::new(chars3));
+        let text = table(300);
+        assert_eq!(fit(&text, 100, |_| unreachable!()), text, "живое окно, а не потолок");
+        drop(_guard);
+        assert_eq!(fit(&text, FALLBACK_RESULT_TOKENS, |_| unreachable!()), text);
+    }
+
+    /// Не влезает — голова и хвост по строкам, пометка знает номера
+    /// вырезанных строк, а результат укладывается в грант.
+    #[test]
+    fn fit_cuts_the_middle_by_lines_within_the_grant() {
+        let _serial = serial();
+        let _guard = arm(4_000, Arc::new(chars3));
+        let text = table(1000);
+        let mut seen: Option<Cut> = None;
+        let out = fit(&text, FALLBACK_RESULT_TOKENS, |c| {
+            seen = Some(*c);
+            format!("…[пропущены строки {}–{}]…\n", c.omitted.0, c.omitted.1)
+        });
+        let cut = seen.expect("середина вырезана");
+        assert!(cut.measured);
+        assert_eq!(cut.allowed, 2_000, "половина остатка");
+        assert_eq!(cut.lines, 1000);
+        assert!(out.starts_with("| 0001 |"), "голова цела");
+        assert!(out.ends_with("| 1000 | строка таблицы 1000 |\n"), "хвост цел");
+        assert!(count(&out) <= 2_000, "{} токенов при гранте 2000", count(&out));
+        // Пометка стоит ровно на границе строк, и номера сходятся с тем,
+        // что осталось по обе стороны.
+        let head_lines = out.split("…[").next().unwrap().matches('\n').count();
+        assert_eq!(cut.omitted.0, head_lines + 1);
+        let tail_lines = out.split("]…\n").nth(1).unwrap().matches('\n').count();
+        assert_eq!(cut.omitted.1, 1000 - tail_lines);
+        assert!(cut.omitted.0 < cut.omitted.1);
+        // Голова примерно вдвое длиннее хвоста.
+        assert!(head_lines > tail_lines && head_lines < tail_lines * 3, "{head_lines} vs {tail_lines}");
+    }
+
+    /// Вне цикла работает потолок и оценка по символам.
+    #[test]
+    fn fit_falls_back_to_the_cap_without_a_loop() {
+        let _serial = serial();
+        let text = table(1000);
+        let out = fit(&text, 1_000, |c| {
+            assert!(!c.measured);
+            assert_eq!(c.allowed, 1_000);
+            "…\n".to_string()
+        });
+        assert!(estimate(&out) <= 1_000);
+        assert!(out.contains("…\n"));
+    }
+
+    /// Одна гигантская строка без переводов тоже режется — по символам.
+    #[test]
+    fn fit_handles_a_single_huge_line() {
+        let _serial = serial();
+        let _guard = arm(2_000, Arc::new(chars3));
+        let text = "я".repeat(30_000);
+        let out = fit(&text, FALLBACK_RESULT_TOKENS, |_| "|…|".to_string());
+        assert!(out.contains("|…|"));
+        assert!(count(&out) <= 1_000, "{}", count(&out));
+        assert!(out.starts_with('я') && out.ends_with('я'));
+        // Совсем тесное окно всё равно отдаёт минимум ([`MIN_GRANT_TOKENS`]).
+        drop(_guard);
+        let _guard = arm(100, Arc::new(chars3));
+        let out = fit(&text, FALLBACK_RESULT_TOKENS, |_| "|…|".to_string());
+        assert!(count(&out) <= MIN_GRANT_TOKENS && count(&out) > 300, "{}", count(&out));
+    }
+
     /// Вложенный цикл (субагент) возвращает родительский бюджет.
     #[test]
     fn a_nested_loop_restores_the_outer_budget() {
@@ -208,3 +404,4 @@ mod tests {
         assert!(!grant(8_000).measured);
     }
 }
+

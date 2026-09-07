@@ -96,6 +96,7 @@ fn main() -> Result<(), String> {
         vision_error: None,
         max_image_tokens: (max_image_tokens > 0).then_some(max_image_tokens),
         asr: None,
+        doc_budget: None,
     };
     // Тот же дефолт, что и в приложении (`AppConfig.qwen36_prefill_chunk`).
     synaptix::facade::llm::set_prefill_chunk_size(256);

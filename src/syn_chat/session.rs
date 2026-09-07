@@ -113,6 +113,31 @@ const ALTERNATION_WARN_AT: usize = 2;
 const ALTERNATION_STOP_AT: usize = 3;
 /// Сколько последних ключей вызовов держим для детекта чередования.
 const ALTERNATION_WINDOW: usize = 2 * ALTERNATION_STOP_AT;
+/// Guard зацикливания внутри одной генерации: если последние
+/// [`LOOP_WINDOW_CHARS`] символов хода — один фрагмент не длиннее
+/// [`LOOP_MAX_PERIOD_CHARS`] символов, повторённый по кругу, стрим
+/// обрывается, ход отбрасывается и переигрывается с анти-loop температурой
+/// и заметкой.
+///
+/// 07.09.2026, qwen3.8-27b при temperature 0: после чтения выписки модель
+/// писала python-скрипт с картой категорий и уходила в `'LILIT','LILIT',…`
+/// на 18k токенов (8 минут), пока не упиралась в потолок ответа; скрипт
+/// с оборванной строкой падал с SyntaxError, и следующий ход повторял то
+/// же самое. Guard'ы вызовов бессильны: петля живёт внутри одного вызова.
+///
+/// Мера — символы декодированного текста, а не id токенов: первый вариант
+/// по id (окно 1024, период ≤ 128) на той же петле сработал только на
+/// 18672-м токене — на MTP-декоде гибрида один и тот же текст выходит
+/// разной нарезкой токенов, и по id хвост периодичным не был. Окно в 3072
+/// символа при периоде до 384 — не меньше восьми повторов подряд: честной
+/// таблице или коду столько одинаковых кусков не нужно, а зацикленная
+/// модель повторяет тысячи.
+const LOOP_WINDOW_CHARS: usize = 3072;
+const LOOP_MAX_PERIOD_CHARS: usize = 384;
+/// Проверка периодичности — раз в столько токенов; непериодичный хвост
+/// отбрасывает каждый период на первых же символах, так что проверка
+/// дешёвая.
+const LOOP_CHECK_EVERY: usize = 64;
 /// Сколько вызовов подряд, не прошедших разбор аргументов (битый JSON, нет
 /// обязательного поля, неизвестный инструмент), останавливают ход. Модель,
 /// трижды не собравшая вызов, не соберёт его и на десятый раз — а бюджет
@@ -1194,7 +1219,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     ));
     let channel = ChannelIds::detect(&model.tokenizer).is_some();
     let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt, channel);
-    let caps = snapshot_media_caps(&app_ctx, &model);
+    let caps = snapshot_media_caps(&app_ctx, &model, params.max_seq_len);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
     let chat_id = ctx.active_chat_id.get_untracked();
@@ -1439,6 +1464,14 @@ impl StreamParser {
 /// Заметка в историю после хода, который не дал ни вызова, ни текста.
 /// Уходит от лица пользователя: system лежит в голове контекста, и вставка
 /// туда обнулила бы префикс-KV всего диалога ради одного хода.
+/// Заметка после хода, отброшенного guard'ом зацикливания (см.
+/// [`LOOP_WINDOW_TOKENS`]). Тоже от лица пользователя, на один ход.
+const LOOP_NOTE: &str = "[System note: your previous turn was cut off because its \
+     output degenerated into an endless repetition of the same fragment, and \
+     the whole turn was discarded. Do not enumerate long literal lists or \
+     mappings by hand; keep code and text concise, and finish the turn with a \
+     valid tool call or a text answer.]";
+
 const EMPTY_TURN_NOTE: &str = "[System note: your previous turn produced      neither a tool call nor a text answer — the whole budget went into      reasoning. If you meant to call a tool, send the call again as valid      JSON: arguments as a real structure, every bracket closed in the right      order. Otherwise answer with text.]";
 
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
@@ -1485,6 +1518,18 @@ struct RepeatState {
 }
 
 /// Сколько полных периодов «A, B, A, B…» (A ≠ B) лежит в хвосте `keys`.
+/// Период, с которым повторяются последние `window` элементов (`None` — не
+/// повторяются или элементов меньше окна). Берётся наименьший период до
+/// `max_period` включительно: у `'LILIT','LILIT',…` это длина одного
+/// элемента, у зацикленной строки таблицы — вся строка.
+fn periodic_tail<T: PartialEq>(items: &[T], window: usize, max_period: usize) -> Option<usize> {
+    if items.len() < window || window == 0 {
+        return None;
+    }
+    let tail = &items[items.len() - window..];
+    (1..=max_period.min(window / 2)).find(|&p| tail[p..].iter().zip(tail.iter()).all(|(a, b)| a == b))
+}
+
 fn alternation_periods(keys: &std::collections::VecDeque<String>) -> usize {
     let n = keys.len();
     if n < 4 {
@@ -1675,6 +1720,9 @@ async fn run_agent_loop(
     // оборвался на полуслове. Это не ответ — раньше цикл принимал его за
     // ответ и выходил, оставляя в ленте пустой пузырь и брошенную работу.
     let mut empty_answer = false;
+    // Предыдущий ход отброшен guard'ом зацикливания (см. [`LOOP_WINDOW_TOKENS`])
+    // и переигрывается; второй такой подряд — стоп.
+    let mut loop_retried = false;
     // Сколько вызовов инструментов агент реально сделал за всю генерацию.
     // Ноль при активных инструментах — тот самый случай, когда модель
     // объявляет намерение («I'll start by exploring the project») и на этом
@@ -1858,6 +1906,10 @@ async fn run_agent_loop(
             // Честный prefill: время до ПЕРВОГО токена. Прежний замер стоял до
             // старта генерации и показывал в панели 0 — время планирования ринга.
             let mut ttft_ms: Option<u32> = None;
+            // Хвост текста хода (символы) — для guard'а зацикливания;
+            // `looped` — найденный период, по нему стрим и оборван.
+            let mut turn_tail: Vec<char> = Vec::new();
+            let mut looped: Option<usize> = None;
 
             let t_turn = Instant::now();
             // Копия, а не захват `total_gen_tokens`: он дописывается уже
@@ -1875,6 +1927,18 @@ async fn run_agent_loop(
                     ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
                 }
                 tokens_this_turn += 1;
+                turn_tail.extend(delta.chars());
+                if turn_tail.len() > LOOP_WINDOW_CHARS * 2 {
+                    let extra = turn_tail.len() - LOOP_WINDOW_CHARS;
+                    turn_tail.drain(..extra);
+                }
+                if tokens_this_turn as usize % LOOP_CHECK_EVERY == 0 {
+                    if let Some(p) = periodic_tail(&turn_tail, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS) {
+                        looped = Some(p);
+                        flush_streaming(&chat_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
+                        return false;
+                    }
+                }
 
                 let (body, thinking, tool) = parser.feed(id, delta);
                 clean_text.push_str(&body);
@@ -2064,6 +2128,38 @@ async fn run_agent_loop(
             }
 
             KERNEL_CACHES_WARM.store(true, Ordering::Relaxed);
+            if let Some(period) = looped {
+                // Ход отброшен целиком: в историю и ленту он не попал, так
+                // что префикс-KV цел, а повтор идёт с заметкой и анти-loop
+                // температурой — greedy из такой петли сам не выходит.
+                log::warn!(
+                    "[syn_chat] генерация зациклилась: фрагмент из {period} симв. повторяется \
+                     по кругу, ход отброшен ({tokens_this_turn} ток. за {:?}){}",
+                    t_turn.elapsed(),
+                    if loop_retried { " — второй подряд, останавливаемся" } else { "; повторяем" }
+                );
+                if_active(&chat_id, |c| {
+                    c.streaming_body.set(String::new());
+                    c.streaming_thinking.set(String::new());
+                    c.streaming_tool.set(String::new());
+                });
+                if loop_retried {
+                    stop_reason = Some(format!(
+                        "Остановлено: модель зацикливается в генерации (фрагмент из {period} \
+                         символов повторяется по кругу) второй ход подряд. Переформулируйте \
+                         задачу или поднимите температуру."
+                    ));
+                    // Пустой пузырь этого хода снимаем — он выглядит как
+                    // «повисло»; после tool-результата снимать нечего.
+                    ledger_update(&chat_id, pop_empty_assistant);
+                    break 'agent;
+                }
+                loop_retried = true;
+                anti_loop = true;
+                pending_note = Some(LOOP_NOTE);
+                continue 'agent;
+            }
+            loop_retried = false;
             let dt = t_turn.elapsed();
             turn_decode_s = (dt.as_secs_f64() - ttft_ms.unwrap_or(0) as f64 / 1000.0).max(0.0);
             let tok_per_s = if dt.as_secs_f64() > 0.0 {
@@ -2237,9 +2333,9 @@ async fn run_agent_loop(
         // честный потолок минус то, что уже занято промптом и ответом, минус
         // резерв на следующий шаг. Инструмент, который сам решает, сколько
         // отдать (`notes read` пачкой), режет ответ по этому числу и говорит
-        // модели, что осталось, — вместо того чтобы упереться в статический
-        // клип истории и потерять середину. Guard живёт до конца хода и
-        // возвращает бюджет родителя, если внутри крутился субагент.
+        // модели, что осталось; выхлоп остальных укладывает в это же число
+        // `fit_for_prompt`. Guard живёт до конца хода и возвращает бюджет
+        // родителя, если внутри крутился субагент.
         let _tool_budget = tools::budget::arm_turn(
             turn_ctx_budget,
             prompt_ids.len() + tokens_this_turn as usize,
@@ -2424,6 +2520,12 @@ async fn run_agent_loop(
                 } else {
                     String::new()
                 };
+                // В ленту — та же копия, что уйдёт в историю (см. ниже,
+                // `fit_for_prompt`).
+                let res = PipelineToolResult {
+                    content: fit_for_prompt(&res.content, &tool_name(chat_call)),
+                    ..res
+                };
                 push_tool_result_with(
                     &chat_id,
                     chat_call,
@@ -2448,7 +2550,7 @@ async fn run_agent_loop(
                 }
                 note_outcome(&mut call_outcomes, &key, &res.content);
                 tools::budget::spend(&res.content);
-                let mut for_history = clip_for_history(&res.content, &tool_name(chat_call));
+                let mut for_history = res.content;
                 for_history.push_str(&note);
                 history.push(Message::tool_named(tool_name(chat_call), for_history));
                 continue;
@@ -2503,22 +2605,24 @@ async fn run_agent_loop(
             if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
                 note.push_str(&system_prompt::budget_note(turns_left));
             }
+            // Выхлоп укладывается в остаток окна по токенам (`fit_for_prompt`)
+            // — и в ленту, и в историю уходит одна и та же копия: история,
+            // пересобранная из ленты на следующем сообщении, обязана совпасть
+            // с промптом хода байт в байт, иначе префикс-KV обнулится.
+            // Исключения — `autoskill` и `notes` (см. `history_limit`).
+            let content = fit_for_prompt(&outcome.content, &tool_name(chat_call));
             push_tool_result_with(
                 &chat_id,
                 chat_call,
-                outcome.content.clone(),
+                content.clone(),
                 outcome.error,
                 Vec::new(),
                 note.clone(),
             );
-            // В UI уходит полный вывод, в промпт — обрезанная копия: 64 КБ
-            // с одного вызова (потолок executor'а) съедают контекст быстрее,
-            // чем агент успевает решить задачу. Исключение — `autoskill`:
-            // инструкция нужна модели целиком (см. history_clip_limit).
             // Результат уже уехал в историю — следующий вызов этого же хода
             // получит окно на его размер меньше.
-            tools::budget::spend(&outcome.content);
-            let mut for_history = clip_for_history(&outcome.content, &tool_name(chat_call));
+            tools::budget::spend(&content);
+            let mut for_history = content;
             for_history.push_str(&note);
             history.push(Message::tool_named(tool_name(chat_call), for_history));
 
@@ -2878,31 +2982,42 @@ fn outcome_fingerprint(out: &str) -> u64 {
     std::hash::Hasher::finish(&h)
 }
 
-/// Предел копии для промпта по инструменту. `None` — не обрезать.
-/// Пределы живут рядом с исполнителем: инструмент, который сам делит
-/// вывод на порции, должен считать порцию по тому же числу
-/// ([`notes::READ_BUDGET`](crate::agent::tools) — из этого предела).
-fn history_clip_limit(tool: &str) -> Option<usize> {
-    crate::agent::tools::executor::history_limit(tool)
-}
-
-/// Копия вывода инструмента для промпта: голова + хвост, середина заменяется
-/// пометкой. Хвост важен не меньше головы — у команд там exit-код и stderr.
-fn clip_for_history(s: &str, tool: &str) -> String {
-    let Some(limit) = history_clip_limit(tool) else { return s.to_string() };
-    let total = s.chars().count();
-    if total <= limit {
+/// Выхлоп инструмента, уложенный в остаток окна хода
+/// ([`tools::budget::fit`]): что влезает — целиком, что нет — голова и хвост
+/// по границам строк с пометкой, какие строки вырезаны. Мера — токены по
+/// токенизатору модели; предел без живого окна и исключения — в
+/// [`executor::history_limit`](crate::agent::tools::executor::history_limit).
+///
+/// Пометка называет причину («остаток контекста») и номера строк, чтобы
+/// модель дочитала именно пропущенное одним вызовом, а не перечитывала всё:
+/// прежний совет «уточните команду» на каждом куске файла уводил её по
+/// кругу — куски по 250 строк резались до 8000 символов, и модель
+/// запрашивала вырезанную середину снова и снова.
+pub(crate) fn fit_for_prompt(s: &str, tool: &str) -> String {
+    let Some(cap) = crate::agent::tools::executor::history_limit(tool) else {
         return s.to_string();
-    }
-    let head_len = limit * 2 / 3;
-    let tail_len = limit - head_len;
-    let head: String = s.chars().take(head_len).collect();
-    let tail: String = s.chars().skip(total - tail_len).collect();
-    format!(
-        "{head}\n…[вывод обрезан: показаны первые {head_len} и последние \
-         {tail_len} символов из {total}; уточните команду, если нужен весь \
-         вывод]…\n{tail}"
-    )
+    };
+    tools::budget::fit(s, cap, |c| {
+        let window = if c.measured {
+            format!(", в окне осталось ~{} токенов", c.left)
+        } else {
+            String::new()
+        };
+        format!(
+            "…[вывод обрезан по остатку контекста: показаны строки 1–{} и {}–{} из {} \
+             (~{} токенов при лимите ~{}{window}); пропущены строки {}–{} этого вывода — \
+             если они нужны, запросите отдельным вызовом именно этот диапазон, не \
+             перечитывая всё]…\n",
+            c.omitted.0 - 1,
+            c.omitted.1 + 1,
+            c.lines,
+            c.lines,
+            c.tokens,
+            c.allowed,
+            c.omitted.0,
+            c.omitted.1,
+        )
+    })
 }
 
 fn tool_name(call: &ChatToolCall) -> String {
@@ -3208,8 +3323,14 @@ impl HistoryItem {
 
 /// Снимок возможностей модели и окружения по части вложений. Читает
 /// сигналы, поэтому вызывается только с main thread.
-fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
+///
+/// `max_seq_len` — окно чата из параметров: документ-вложение получает
+/// половину меньшего из него и окна модели, мерой служит токенизатор
+/// модели. Половина — чтобы после документа оставалось место на переписку
+/// и ответ; величина стабильна от хода к ходу (см. `DocBudget`).
+fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>, max_seq_len: u32) -> MediaCaps {
     let max = app.syn_chat_max_image_tokens.get_untracked();
+    let window = model.model.config().max_seq_len.min(max_seq_len as usize);
     MediaCaps {
         // Кэш, а не Llm::supports_media(): функция зовётся с main thread, а
         // мьютекс пайплайна занят на всё время идущей генерации.
@@ -3217,6 +3338,10 @@ fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>) -> MediaCaps {
         vision_error: None,
         max_image_tokens: (max > 0).then_some(max),
         asr: Some(app.audio.asr.clone()),
+        doc_budget: Some(attach_prompt::DocBudget {
+            tokens: (window / 2).max(1024),
+            count: tools::budget::model_counter(model),
+        }),
     }
 }
 
@@ -3384,10 +3509,11 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<Hi
                 }
             }
             ChatMsgKind::ToolResult { tool_name, .. } => {
-                // Та же обрезка, что у хода (`clip_for_history`), плюс
-                // заметки для модели: иначе промпт следующего сообщения
-                // не совпадает с промптом хода и префикс-KV обнуляется.
-                let mut body = clip_for_history(&m.body, tool_name);
+                // Тело ленты — уже уложенная в окно копия (`fit_for_prompt`
+                // хода), плюс заметки для модели: иначе промпт следующего
+                // сообщения не совпадает с промптом хода и префикс-KV
+                // обнуляется. Чаты, записанные до укладки, приезжают целиком.
+                let mut body = m.body.clone();
                 body.push_str(&m.model_note);
                 out.push(HistoryItem {
                     role: m.role,
@@ -3820,40 +3946,112 @@ mod tests {
         assert_eq!(st.consecutive, 1);
     }
 
+    /// По символам — как в guard'е: `'LILIT',` по кругу после честного
+    /// скрипта ловится с периодом 8, тот же текст с одним лишним символом в
+    /// хвосте — нет.
+    #[test]
+    fn periodic_tail_on_chars_catches_the_lilit_loop() {
+        let script: String = (1..=60).map(|i| format!("row_{i} = parse(line_{i})\n")).collect();
+        let mut looped: Vec<char> = script.chars().collect();
+        looped.extend("'LILIT',".repeat(500).chars());
+        assert_eq!(periodic_tail(&looped, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS), Some(8));
+        let honest: Vec<char> = script.repeat(10).chars().collect();
+        assert!(honest.len() > LOOP_WINDOW_CHARS);
+        assert_eq!(periodic_tail(&honest, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS), None, "строки разные");
+        looped.push('!');
+        assert_eq!(periodic_tail(&looped, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS), None);
+    }
+
+    /// Зацикленный хвост находится с наименьшим периодом; честная
+    /// последовательность и короткий хвост — нет.
+    #[test]
+    fn periodic_tail_finds_the_shortest_period() {
+        let mut ids: Vec<u32> = (0..500).map(|i| (i * 7919 % 1000) as u32).collect();
+        assert_eq!(periodic_tail(&ids, 1024, 128), None, "короче окна");
+        ids.extend((0..2000).map(|i| (i * 7919 % 1000) as u32));
+        assert_eq!(periodic_tail(&ids, 1024, 128), None, "без повторов");
+        // `'LILIT',` как 4 токена по кругу поверх честного начала.
+        let mut looped = ids.clone();
+        for _ in 0..300 {
+            looped.extend([10, 11, 12, 13]);
+        }
+        assert_eq!(periodic_tail(&looped, 1024, 128), Some(4));
+        // Один и тот же токен — период 1.
+        let mut same = ids.clone();
+        same.extend(std::iter::repeat(7).take(1100));
+        assert_eq!(periodic_tail(&same, 1024, 128), Some(1));
+        // Период длиннее допустимого — не петля для guard'а.
+        let mut long = ids.clone();
+        for _ in 0..10 {
+            long.extend(0..200u32);
+        }
+        assert_eq!(periodic_tail(&long, 1024, 128), None);
+        assert_eq!(periodic_tail(&long, 1024, 256), Some(200));
+    }
+
+    use crate::agent::tools::budget;
     use crate::agent::tools::catalog::KEY_BASH;
-    use crate::agent::tools::executor::HISTORY_TOOL_RESULT_CHARS;
 
+    fn chars3(s: &str) -> usize {
+        s.chars().count() / 3
+    }
+
+    /// Выхлоп `sed -n '1,250p'` по 16 КБ: при свободном окне уходит целиком
+    /// — именно на этом ломался чат «MyLife» (07.09.2026), где статический
+    /// клип резал каждый кусок и модель перечитывала файл по кругу.
     #[test]
-    fn clip_for_history_keeps_short_output_intact() {
-        let s = "короткий вывод";
-        assert_eq!(clip_for_history(s, KEY_BASH), s);
+    fn fit_for_prompt_keeps_a_chunk_that_fits_the_window() {
+        let _serial = budget::test_serial();
+        let _guard = budget::arm(100_000, std::sync::Arc::new(chars3));
+        let body = format!(
+            "$ sed -n '1,250p' doc.md\nexit: 0\n--- stdout ---\n{}",
+            (1..=250)
+                .map(|i| format!("| {i:02}.05 | Покупка | MERKURII SUPERMARKET | −9 007.00 |\n"))
+                .collect::<String>()
+        );
+        assert!(body.len() > 8_000, "кусок заведомо больше прежнего клипа");
+        assert_eq!(fit_for_prompt(&body, KEY_BASH), body);
+    }
+
+    /// Тесное окно: голова с командой и exit-кодом, хвост, пометка с
+    /// номерами вырезанных строк.
+    #[test]
+    fn fit_for_prompt_cuts_the_middle_in_a_tight_window() {
+        let _serial = budget::test_serial();
+        let _guard = budget::arm(3_000, std::sync::Arc::new(chars3));
+        let body = format!(
+            "$ cat big.log\nexit: 0\n--- stdout ---\n{}--- stderr ---\nwarning: хвост\n",
+            (1..=2000).map(|i| format!("line {i}: {}\n", "x".repeat(40))).collect::<String>()
+        );
+        let out = fit_for_prompt(&body, KEY_BASH);
+        assert!(out.starts_with("$ cat big.log\nexit: 0\n"));
+        assert!(out.ends_with("--- stderr ---\nwarning: хвост\n"), "хвост со stderr обязан остаться");
+        assert!(out.contains("вывод обрезан по остатку контекста"));
+        assert!(out.contains("пропущены строки"));
+        assert!(out.contains("в окне осталось ~3000 токенов"));
+        assert!(budget::count(&out) <= 1_500, "{} токенов при гранте 1500", budget::count(&out));
     }
 
     #[test]
-    fn clip_for_history_keeps_head_and_tail() {
-        let body = format!("НАЧАЛО{}КОНЕЦ", "x".repeat(HISTORY_TOOL_RESULT_CHARS * 2));
-        let out = clip_for_history(&body, KEY_BASH);
-        assert!(out.starts_with("НАЧАЛО"));
-        assert!(out.ends_with("КОНЕЦ"), "хвост с exit-кодом обязан остаться");
-        assert!(out.contains("вывод обрезан"));
-        assert!(out.chars().count() < body.chars().count());
-    }
-
-    #[test]
-    fn clip_for_history_is_char_safe() {
-        // Обрезка идёт по символам, а не байтам: кириллица не должна биться.
-        let body = "я".repeat(HISTORY_TOOL_RESULT_CHARS + 100);
-        let out = clip_for_history(&body, KEY_BASH);
-        assert!(out.contains('я'));
+    fn fit_for_prompt_is_char_safe() {
+        let _serial = budget::test_serial();
+        let _guard = budget::arm(600, std::sync::Arc::new(chars3));
+        // Резка идёт по символам, а не байтам: кириллица не должна биться.
+        let body = "я".repeat(20_000);
+        let out = fit_for_prompt(&body, KEY_BASH);
+        assert!(out.contains("вырезан") || out.contains("обрезан"));
+        assert!(out.chars().all(|c| c != '\u{fffd}'));
     }
 
     #[test]
     fn skill_reaches_the_model_whole() {
+        let _serial = budget::test_serial();
+        let _guard = budget::arm(600, std::sync::Arc::new(chars3));
         // Скил — инструкция, а не выхлоп: вырезанная середина уносит ровно
         // то знание, ради которого его подключали.
         use crate::agent::tools::catalog::KEY_AUTOSKILL;
-        let body = "я".repeat(HISTORY_TOOL_RESULT_CHARS * 6);
-        assert_eq!(clip_for_history(&body, KEY_AUTOSKILL), body);
-        assert!(clip_for_history(&body, KEY_BASH).contains("вывод обрезан"));
+        let body = "я\n".repeat(20_000);
+        assert_eq!(fit_for_prompt(&body, KEY_AUTOSKILL), body);
+        assert!(fit_for_prompt(&body, KEY_BASH).contains("вывод обрезан"));
     }
 }

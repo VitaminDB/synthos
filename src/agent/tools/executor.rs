@@ -42,38 +42,43 @@ pub const MAX_SKILL_OUTPUT_BYTES: usize = MAX_OUTPUT_BYTES * 4;
 /// вчетверо выше общего, как у скилов.
 pub const MAX_NOTES_OUTPUT_BYTES: usize = MAX_OUTPUT_BYTES * 4;
 
+/// Инструменты чтения (`bash`, `web`): сколько поместится в окно, решает
+/// бюджет хода ([`budget::fit`](super::budget::fit)) — сюда остаётся
+/// предохранитель от `cat` по гигабайтному логу. Вчетверо выше общего: файл
+/// или статья на 200 КБ при свободном окне в 100k токенов читается одним
+/// вызовом, а не четырьмя.
+pub const MAX_READ_OUTPUT_BYTES: usize = MAX_OUTPUT_BYTES * 4;
+
 /// Предел вывода конкретного инструмента.
 fn output_limit(tool: &str) -> usize {
     match tool {
         KEY_AUTOSKILL => MAX_SKILL_OUTPUT_BYTES,
         KEY_NOTES => MAX_NOTES_OUTPUT_BYTES,
+        KEY_BASH | KEY_WEB => MAX_READ_OUTPUT_BYTES,
         _ => MAX_OUTPUT_BYTES,
     }
 }
 
-/// Сколько символов вывода инструмента уходит в промпт модели. В UI пузырь
-/// остаётся полным, режется только копия для истории
-/// (`syn_chat::session::clip_for_history`): [`MAX_OUTPUT_BYTES`] с одного
-/// вызова сжигают контекст быстрее, чем агент успевает решить задачу.
-pub const HISTORY_TOOL_RESULT_CHARS: usize = 8_000;
-
-/// Предел копии вывода для промпта (в символах). `None` — не обрезать.
+/// Укладывает ли цикл выхлоп инструмента в окно ([`budget::fit`]
+/// (super::budget::fit)), и по какому потолку в токенах — когда живого окна
+/// нет (вызов вне agent-loop). `None` — отдавать модели целиком.
 ///
-/// Клип статический: историю пересобирают из ленты на следующем сообщении,
-/// и плавающая граница разошлась бы с промптом хода, обнуляя префикс-KV.
-/// Поэтому он ничего не знает про остаток окна и режет из середины — что
-/// годится выхлопу команды, но не ответу, собранному из целых кусков.
+/// Мера — токены по токенизатору модели, а не символы: прежний статический
+/// клип в 8000 символов резал середину у каждого куска файла и отправлял
+/// модель перечитывать вырезанное по кругу. Ужатая копия уходит и в ленту,
+/// поэтому история, пересобранная из ленты на следующем сообщении,
+/// совпадает с промптом хода и префикс-KV цел.
 ///
 /// Два исключения. `autoskill` отдаёт не выхлоп, а инструкцию, которую
 /// модель обязана выполнить целиком: вырезанная середина — ровно то знание,
 /// ради которого скил и подключали. `notes` сам меряет ответ живым окном
 /// (`notes::ReadBudget`) и обрывает его на границе страницы, называя
-/// недочитанное, — клип поверх этого только вырезал бы у честной пачки
+/// недочитанное, — укладка поверх этого только вырезала бы у честной пачки
 /// середину. Обоим размер ограничивает потолок исполнителя.
 pub fn history_limit(tool: &str) -> Option<usize> {
     match tool {
         KEY_AUTOSKILL | KEY_NOTES => None,
-        _ => Some(HISTORY_TOOL_RESULT_CHARS),
+        _ => Some(super::budget::FALLBACK_RESULT_TOKENS),
     }
 }
 
@@ -342,6 +347,12 @@ mod tests {
         assert!(skill.len() > MAX_OUTPUT_BYTES);
         assert_eq!(output_limit(KEY_AUTOSKILL), MAX_SKILL_OUTPUT_BYTES);
         assert_eq!(truncate_output(&skill, output_limit(KEY_AUTOSKILL)), skill);
-        assert!(truncate_output(&skill, output_limit(KEY_BASH)).ends_with(" bytes)"));
+        assert!(truncate_output(&skill, MAX_OUTPUT_BYTES).ends_with(" bytes)"));
+        // `bash` и `web` — тот же предохранитель, что у скилов: файл или
+        // статья на 200 КБ при свободном окне читается одним вызовом, сколько
+        // влезет в окно — решает `budget::fit`, а не байты.
+        assert_eq!(output_limit(KEY_BASH), MAX_READ_OUTPUT_BYTES);
+        assert_eq!(output_limit(KEY_WEB), MAX_READ_OUTPUT_BYTES);
+        assert_eq!(truncate_output(&skill, output_limit(KEY_BASH)), skill);
     }
 }

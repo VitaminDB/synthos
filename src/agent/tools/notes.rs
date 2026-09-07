@@ -24,6 +24,9 @@
 //! - `kanban` / `gantt` — объекты-примитивы: создать на странице, прочитать,
 //!   колонки/карточки и задачи/зависимости, стиль доски и масштаб
 //!   диаграммы, удалить (врезки убираются со страниц, файл — из бандла).
+//! - `chart` — график (линии, столбцы, круговая, радар, шкала): создать на
+//!   странице или из блока-таблицы, прочитать данными, менять вид, подписи,
+//!   ряды и оформление, удалить.
 //! - `blocks` — блоки страницы как структура: список с индексами,
 //!   геометрией и атрибутами; вставка, замена, перенос, удаление одного
 //!   блока; любые атрибуты (стиль текста, координаты и размеры, параметры
@@ -72,6 +75,8 @@ use crate::pages::notes::calendar::model::{
     fmt_hm, parse_hm, CalEvent, CalView, CalendarStore, CalendarStyle, EventStyle, Repeat,
 };
 use crate::pages::notes::calendar::{CalendarHandle, CalendarStoreHandle};
+use crate::pages::notes::chart::model::{self as chart_model, ChartDoc, ChartKind, GaugeZone, LegendPos, PieLabels};
+use crate::pages::notes::chart::ChartHandle;
 use crate::pages::notes::mindmap::model::{Curve, Direction, MindmapDoc, NodeShape};
 use crate::pages::notes::mindmap::MindmapHandle;
 use crate::pages::notes::project::{PageGrid, PageLayout};
@@ -119,9 +124,10 @@ pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String>
         "shape" => shape_impl(ctx, v),
         "mindmap" => mindmap_impl(ctx, v),
         "calendar" => calendar_impl(ctx, v),
+        "chart" => chart_impl(ctx, v),
         other => Err(format!(
             "unknown action \"{other}\" (list | search | read | create | update | move | delete | \
-             duplicate | open | attach | blocks | shape | kanban | gantt | mindmap | calendar)"
+             duplicate | open | attach | blocks | shape | kanban | gantt | mindmap | calendar | chart)"
         )),
     }
 }
@@ -350,8 +356,9 @@ fn all_objects(ctx: NotesCtx, kind: &str) -> Vec<(String, String)> {
 fn resolve_object(ctx: NotesCtx, v: &Json, kind: &str, key: &str) -> Result<LiveObject, String> {
     let noun = match kind {
         "kanban" => "board",
-        "gantt" => "chart",
+        "gantt" => "gantt chart",
         "mindmap" => "map",
+        "chart" => "chart",
         _ => "calendar",
     };
     let candidates: Vec<(String, String)> = match str_field(v, key) {
@@ -418,7 +425,10 @@ fn calendar_handle(ctx: NotesCtx, v: &Json) -> Result<(String, CalendarHandle), 
 }
 
 fn gantt_handle(ctx: NotesCtx, v: &Json) -> Result<(String, GanttHandle), String> {
-    match resolve_object(ctx, v, "gantt", "chart")? {
+    // Диаграмму адресует ключ "gantt": "chart" с появлением графиков
+    // (`![[chart:<id>]]`) означает их, но как старое имя ещё принимается.
+    let key = if str_field(v, "gantt").is_some() { "gantt" } else { "chart" };
+    match resolve_object(ctx, v, "gantt", key)? {
         LiveObject::Gantt { id, handle } => Ok((id, handle)),
         _ => Err("not a gantt chart".to_string()),
     }
@@ -1195,7 +1205,8 @@ fn list_impl(ctx: NotesCtx) -> Result<String, String> {
          read {pages: [\"id\", \"id\"]} or {page, depth=all} or {page=\"all\"} brings back \
          several pages, a whole subtree or the whole project in ONE call — use it instead of \
          reading page by page; update {page, content | find+replace | mode=append} edits it; \
-         kanban / gantt {op=create, page} add a board or chart.\n",
+         kanban / gantt / chart {op=create, page} add a board, a Gantt chart or a \
+         line/bar/pie/radar/gauge chart.\n",
     );
     Ok(out)
 }
@@ -1528,9 +1539,10 @@ fn page_text(ctx: NotesCtx, id: &str, with_blocks: bool) -> String {
         for (kind, oid) in &objects {
             match ctx.object(kind, oid) {
                 Some(LiveObject::Kanban { handle, .. }) => out.push_str(&board_text(oid, &handle, false)),
-                Some(LiveObject::Gantt { handle, .. }) => out.push_str(&chart_text(oid, &handle)),
+                Some(LiveObject::Gantt { handle, .. }) => out.push_str(&gantt_text(oid, &handle)),
                 Some(LiveObject::Mindmap { handle, .. }) => out.push_str(&map_text(oid, &handle)),
                 Some(LiveObject::Calendar { handle, .. }) => out.push_str(&calendar_widget_text(oid, &handle)),
+                Some(LiveObject::Chart { handle, .. }) => out.push_str(&chart_text(oid, &handle)),
                 None => out.push_str(&format!("{kind}:{oid} · (file missing)\n")),
             }
         }
@@ -2500,7 +2512,7 @@ fn resolve_task(handle: &GanttHandle, s: &str) -> Result<crate::pages::notes::ga
     }
 }
 
-fn chart_text(id: &str, handle: &GanttHandle) -> String {
+fn gantt_text(id: &str, handle: &GanttHandle) -> String {
     let doc = handle.lock();
     let mut out = format!(
         "gantt:{id} · tasks: {} · deps: {} · zoom: {} px/day\n",
@@ -2588,7 +2600,7 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         "read" => {
             let (id, handle) = gantt_handle(ctx, v)?;
-            Ok(format!("{}{}\n", chart_text(&id, &handle), object_page_line(ctx, "gantt", &id)))
+            Ok(format!("{}{}\n", gantt_text(&id, &handle), object_page_line(ctx, "gantt", &id)))
         }
         "set_zoom" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -2601,12 +2613,12 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 ));
             }
             handle.set_zoom(zoom);
-            Ok(format!("zoom {} px/day\n{}", fnum(zoom), chart_text(&id, &handle)))
+            Ok(format!("zoom {} px/day\n{}", fnum(zoom), gantt_text(&id, &handle)))
         }
         "show_today" => {
             let (id, handle) = gantt_handle(ctx, v)?;
             handle.show_today();
-            Ok(format!("scrolled the chart to today\n{}", chart_text(&id, &handle)))
+            Ok(format!("scrolled the chart to today\n{}", gantt_text(&id, &handle)))
         }
         "add_task" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -2628,7 +2640,7 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 let dep = resolve_task(&handle, after)?;
                 handle.add_dep(&dep.id, &tid);
             }
-            Ok(format!("added task {tid} \"{name}\"\n{}", chart_text(&id, &handle)))
+            Ok(format!("added task {tid} \"{name}\"\n{}", gantt_text(&id, &handle)))
         }
         "update_task" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -2663,13 +2675,13 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if changes.is_empty() {
                 return Err("nothing to update: pass name, start, end or color".to_string());
             }
-            Ok(format!("updated task {}: {}\n{}", task.id, changes.join(", "), chart_text(&id, &handle)))
+            Ok(format!("updated task {}: {}\n{}", task.id, changes.join(", "), gantt_text(&id, &handle)))
         }
         "delete_task" => {
             let (id, handle) = gantt_handle(ctx, v)?;
             let task = resolve_task(&handle, str_field(v, "task").ok_or("missing \"task\"")?)?;
             handle.delete_task(&task.id);
-            Ok(format!("deleted task \"{}\"\n{}", task.name, chart_text(&id, &handle)))
+            Ok(format!("deleted task \"{}\"\n{}", task.name, gantt_text(&id, &handle)))
         }
         "add_dep" | "delete_dep" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -2680,10 +2692,10 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     return Err("a task can't depend on itself".to_string());
                 }
                 handle.add_dep(&from.id, &to.id);
-                Ok(format!("dependency \"{}\" → \"{}\"\n{}", from.name, to.name, chart_text(&id, &handle)))
+                Ok(format!("dependency \"{}\" → \"{}\"\n{}", from.name, to.name, gantt_text(&id, &handle)))
             } else {
                 handle.delete_dep(&from.id, &to.id);
-                Ok(format!("removed dependency \"{}\" → \"{}\"\n{}", from.name, to.name, chart_text(&id, &handle)))
+                Ok(format!("removed dependency \"{}\" → \"{}\"\n{}", from.name, to.name, gantt_text(&id, &handle)))
             }
         }
         "delete" => {
@@ -3607,6 +3619,532 @@ fn mindmap_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Chart
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn chart_handle(ctx: NotesCtx, v: &Json) -> Result<(String, ChartHandle), String> {
+    match resolve_object(ctx, v, "chart", "chart")? {
+        LiveObject::Chart { id, handle } => Ok((id, handle)),
+        _ => Err("not a chart".to_string()),
+    }
+}
+
+/// Число из поля: и `12`, и `"12"` — модели шлют по-разному.
+fn f64_field(v: &Json, key: &str) -> Option<f64> {
+    match v.get(key)? {
+        Json::Number(n) => n.as_f64(),
+        Json::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// Ряд чисел из поля: массив либо строка «12, 24, 18».
+fn data_field(v: &Json, key: &str) -> Option<Vec<f64>> {
+    match v.get(key)? {
+        Json::Array(a) => Some(
+            a.iter()
+                .map(|x| match x {
+                    Json::Number(n) => n.as_f64().unwrap_or(0.0),
+                    Json::String(s) => chart_model::parse_num(s),
+                    _ => 0.0,
+                })
+                .collect(),
+        ),
+        Json::String(s) => Some(chart_model::parse_values(s)),
+        Json::Number(n) => Some(vec![n.as_f64().unwrap_or(0.0)]),
+        _ => None,
+    }
+}
+
+/// Ряд графика по id или названию.
+fn resolve_series(handle: &ChartHandle, s: &str) -> Result<String, String> {
+    handle
+        .lock()
+        .find_series(s)
+        .map(|x| x.id.clone())
+        .ok_or_else(|| format!("series \"{s}\" not found — ids and names are in chart op=read"))
+}
+
+/// Вид графика из поля `kind`.
+fn chart_kind_field(v: &Json, key: &str) -> Result<Option<ChartKind>, String> {
+    match str_field(v, key) {
+        Some(k) => Ok(Some(
+            ChartKind::parse(k).ok_or_else(|| format!("bad kind \"{k}\" (line | bar | pie | radar | gauge)"))?,
+        )),
+        None => Ok(None),
+    }
+}
+
+/// Текст графика: шапка с видом и настройками, подписи и ряды таблицей.
+fn chart_text(id: &str, handle: &ChartHandle) -> String {
+    let doc = handle.lock();
+    let o = &doc.options;
+    let mut out = format!(
+        "chart:{id} · kind: {} · series: {} · points: {}{}\n",
+        doc.kind.key(),
+        doc.series.len(),
+        doc.categories.len(),
+        if doc.title.is_empty() { String::new() } else { format!(" · title: \"{}\"", doc.title) }
+    );
+    match doc.kind {
+        ChartKind::Gauge => {
+            out.push_str(&format!(
+                "  value {} · range {}…{}{}{}\n",
+                chart_model::fmt_num(doc.gauge_value()),
+                chart_model::fmt_num(o.gauge_min),
+                chart_model::fmt_num(o.gauge_max),
+                if o.unit.is_empty() { String::new() } else { format!(" · unit \"{}\"", o.unit) },
+                if o.zones.is_empty() { String::new() } else { format!(" · {} zone(s)", o.zones.len()) }
+            ));
+        }
+        _ => {
+            out.push_str(&format!("  labels: {}\n", doc.categories.join(", ")));
+            for s in &doc.series {
+                out.push_str(&format!(
+                    "  series {} \"{}\" · {}{}\n",
+                    s.id,
+                    s.name,
+                    chart_model::values_text(&s.data),
+                    if s.color.is_empty() { String::new() } else { format!(" · color {}", s.color) }
+                ));
+            }
+        }
+    }
+    out.push_str(&format!("  legend {} · tooltip {} · animate {}", o.legend.key(), o.tooltip, o.animate));
+    match doc.kind {
+        ChartKind::Line => out.push_str(&format!(" · smooth {} · points {} · area {}", o.smooth, o.points, o.area)),
+        ChartKind::Bar => out.push_str(&format!(
+            " · stacked {} · horizontal {} · value_labels {}",
+            o.stacked, o.horizontal, o.value_labels
+        )),
+        ChartKind::Pie => out.push_str(&format!(
+            " · donut {} · labels {} · percentage {}",
+            o.donut,
+            o.pie_labels.key(),
+            o.percentage
+        )),
+        ChartKind::Radar => out.push_str(&format!(
+            " · grid {} · levels {} · max {}",
+            if o.radar_circle { "circle" } else { "polygon" },
+            o.radar_levels,
+            o.radar_max.map(chart_model::fmt_num).unwrap_or_else(|| "auto".to_string())
+        )),
+        ChartKind::Gauge => out.push_str(&format!(" · needle {} · ticks {} · labels {}", o.needle, o.ticks, o.gauge_labels)),
+    }
+    if doc.kind.has_axes() {
+        out.push_str(&format!(
+            " · grid {} · y {}…{}",
+            o.grid,
+            o.y_min.map(chart_model::fmt_num).unwrap_or_else(|| "auto".to_string()),
+            o.y_max.map(chart_model::fmt_num).unwrap_or_else(|| "auto".to_string())
+        ));
+    }
+    out.push('\n');
+    out
+}
+
+/// Данные графика из аргументов: таблица целиком либо подписи и ряд.
+fn apply_chart_data(handle: &ChartHandle, v: &Json) -> Result<Vec<String>, String> {
+    let mut changes = Vec::new();
+    if let Some(table) = raw_string(v, "table").filter(|t| !t.trim().is_empty()) {
+        let kind = handle.kind();
+        let fresh = ChartDoc::from_table(&table, kind);
+        handle.edit(|d| {
+            d.categories = fresh.categories.clone();
+            d.series = fresh.series.clone();
+        });
+        changes.push(format!("{} labels, {} series from the table", fresh.categories.len(), fresh.series.len()));
+    }
+    if let Some(labels) = list_field(v, "categories") {
+        handle.set_categories(labels.clone());
+        changes.push(format!("{} labels", labels.len()));
+    }
+    if let Some(data) = data_field(v, "data") {
+        // Ряд по имени/id, а без него — первый: у круговой и шкалы он
+        // единственный, и указывать его каждый раз бессмысленно.
+        let sid = match str_field(v, "series") {
+            Some(s) => resolve_series(handle, s)?,
+            None => handle.lock().series.first().map(|s| s.id.clone()).unwrap_or_default(),
+        };
+        match f64_field(v, "value").zip(usize_field(v, "index")) {
+            Some((value, i)) => {
+                handle.set_value(&sid, i, value);
+                changes.push(format!("point {i} = {}", chart_model::fmt_num(value)));
+            }
+            None => {
+                handle.set_series_data(&sid, data.clone());
+                changes.push(format!("{} values", data.len()));
+            }
+        }
+    } else if let Some(value) = f64_field(v, "value") {
+        let sid = match str_field(v, "series") {
+            Some(s) => resolve_series(handle, s)?,
+            None => handle.lock().series.first().map(|s| s.id.clone()).unwrap_or_default(),
+        };
+        let i = usize_field(v, "index").unwrap_or(0);
+        handle.set_value(&sid, i, value);
+        changes.push(format!("point {i} = {}", chart_model::fmt_num(value)));
+    }
+    Ok(changes)
+}
+
+/// Оформление графика из объекта `style`.
+fn apply_chart_style(handle: &ChartHandle, v: &Json) -> Result<Vec<String>, String> {
+    let Some(raw) = v.get("style") else { return Ok(Vec::new()) };
+    let pairs = style_pairs(raw)?;
+    let mut changes = Vec::new();
+    let mut err = None;
+    handle.set_options(|o| {
+        for (k, val) in &pairs {
+            let key = k.trim().to_ascii_lowercase();
+            let val = val.trim();
+            let flag = |err: &mut Option<String>| -> Option<bool> {
+                match val.to_ascii_lowercase().as_str() {
+                    "true" | "yes" | "1" | "on" => Some(true),
+                    "false" | "no" | "0" | "off" => Some(false),
+                    _ => {
+                        *err = Some(format!("bad \"{key}\" \"{val}\" — true or false"));
+                        None
+                    }
+                }
+            };
+            let num = |err: &mut Option<String>| -> Option<f64> {
+                match val.parse::<f64>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        *err = Some(format!("bad \"{key}\" \"{val}\" — a number"));
+                        None
+                    }
+                }
+            };
+            // Пустое значение и «auto» снимают границу оси.
+            let auto = val.is_empty() || val.eq_ignore_ascii_case("auto") || val.eq_ignore_ascii_case("none");
+            match key.as_str() {
+                "legend" => match LegendPos::parse(val) {
+                    Some(p) => o.legend = p,
+                    None => {
+                        err = Some(format!("bad legend \"{val}\" (top | bottom | left | right | none)"));
+                        return;
+                    }
+                },
+                "pie_labels" | "labels" => match PieLabels::parse(val) {
+                    Some(p) => o.pie_labels = p,
+                    None => {
+                        err = Some(format!("bad pie_labels \"{val}\" (outside | inside | none)"));
+                        return;
+                    }
+                },
+                "tooltip" | "animate" | "grid" | "smooth" | "points" | "stacked" | "horizontal"
+                | "value_labels" | "percentage" | "radar_circle" | "needle" | "ticks" | "gauge_labels" => {
+                    let Some(b) = flag(&mut err) else { return };
+                    match key.as_str() {
+                        "tooltip" => o.tooltip = b,
+                        "animate" => o.animate = b,
+                        "grid" => o.grid = b,
+                        "smooth" => o.smooth = b,
+                        "points" => o.points = b,
+                        "stacked" => o.stacked = b,
+                        "horizontal" => o.horizontal = b,
+                        "value_labels" => o.value_labels = b,
+                        "percentage" => o.percentage = b,
+                        "radar_circle" => o.radar_circle = b,
+                        "needle" => o.needle = b,
+                        "ticks" => o.ticks = b,
+                        _ => o.gauge_labels = b,
+                    }
+                }
+                "area" | "donut" | "bar_radius" | "radar_levels" | "gauge_min" | "gauge_max" => {
+                    let Some(n) = num(&mut err) else { return };
+                    match key.as_str() {
+                        "area" => o.area = n as f32,
+                        "donut" => o.donut = n as f32,
+                        "bar_radius" => o.bar_radius = n as f32,
+                        "radar_levels" => o.radar_levels = n.max(1.0) as usize,
+                        "gauge_min" => o.gauge_min = n,
+                        _ => o.gauge_max = n,
+                    }
+                }
+                "y_min" | "y_max" | "radar_max" => {
+                    let value = if auto {
+                        None
+                    } else {
+                        let Some(n) = num(&mut err) else { return };
+                        Some(n)
+                    };
+                    match key.as_str() {
+                        "y_min" => o.y_min = value,
+                        "y_max" => o.y_max = value,
+                        _ => o.radar_max = value,
+                    }
+                }
+                "x_title" | "y_title" | "unit" => {
+                    let text = if auto { String::new() } else { val.to_string() };
+                    match key.as_str() {
+                        "x_title" => o.x_title = text,
+                        "y_title" => o.y_title = text,
+                        _ => o.unit = text,
+                    }
+                }
+                "zones" => {
+                    match parse_zones(val) {
+                        Ok(z) => o.zones = z,
+                        Err(e) => {
+                            err = Some(e);
+                            return;
+                        }
+                    };
+                }
+                other => {
+                    err = Some(format!(
+                        "unknown style key \"{other}\" (legend, tooltip, animate, grid, x_title, y_title, \
+                         y_min, y_max, smooth, points, area, stacked, horizontal, value_labels, bar_radius, \
+                         donut, pie_labels, percentage, radar_circle, radar_levels, radar_max, gauge_min, \
+                         gauge_max, needle, ticks, gauge_labels, unit, zones)"
+                    ));
+                    return;
+                }
+            }
+            changes.push(key);
+        }
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(changes),
+    }
+}
+
+/// Зоны шкалы: «0-50 green, 50-80 #E8A33D» либо JSON-массив
+/// `[{"from":0,"to":50,"color":"green"}]`.
+fn parse_zones(raw: &str) -> Result<Vec<GaugeZone>, String> {
+    let t = raw.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("none") {
+        return Ok(Vec::new());
+    }
+    if let Ok(Json::Array(items)) = serde_json::from_str::<Json>(t) {
+        let mut out = Vec::new();
+        for it in &items {
+            let from = f64_field(it, "from").ok_or("zone needs \"from\"")?;
+            let to = f64_field(it, "to").ok_or("zone needs \"to\"")?;
+            let color = str_field(it, "color").unwrap_or("#4FBF7A");
+            out.push(GaugeZone { from, to, color: parse_hex_color(color, false)? });
+        }
+        return Ok(out);
+    }
+    let mut out = Vec::new();
+    for part in t.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (range, color) = part.split_once(char::is_whitespace).unwrap_or((part, "#4FBF7A"));
+        let (from, to) = range
+            .split_once(['-', '…', ':'])
+            .ok_or_else(|| format!("bad zone \"{part}\" — «from-to color», e.g. «0-50 green»"))?;
+        out.push(GaugeZone {
+            from: chart_model::parse_num(from),
+            to: chart_model::parse_num(to),
+            color: parse_hex_color(color.trim(), false)?,
+        });
+    }
+    Ok(out)
+}
+
+fn chart_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let op = str_field(v, "op").ok_or(
+        "missing \"op\" (create | read | update | set_data | add_series | update_series | \
+         delete_series | set_style | from_table | delete)",
+    )?;
+    match op {
+        "create" => {
+            let pid = page_arg(ctx, v, "page")?;
+            let kind = chart_kind_field(v, "kind")?.unwrap_or(ChartKind::Line);
+            let mut doc = match raw_string(v, "table").filter(|t| !t.trim().is_empty()) {
+                Some(table) => ChartDoc::from_table(&table, kind),
+                None => ChartDoc::template(kind, &tr!("notes.chart.series")),
+            };
+            if let Some(t) = str_field(v, "title") {
+                doc.title = t.trim().to_string();
+            }
+            if let Some(labels) = list_field(v, "categories") {
+                doc.categories = labels;
+            }
+            if let Some(data) = data_field(v, "data") {
+                let name = str_field(v, "name").unwrap_or(&tr!("notes.chart.series")).to_string();
+                doc.series = vec![chart_model::ChartSeries::new(&name, data)];
+            }
+            doc.sanitize();
+            let id = ctx.create_chart(doc);
+            let Some(LiveObject::Chart { handle, .. }) = ctx.object("chart", &id) else {
+                return Err("chart vanished".to_string());
+            };
+            apply_chart_style(&handle, v)?;
+            let (pos, idx) = embed_object_with(ctx, &pid, "chart", &id, v, None)?;
+            Ok(format!(
+                "created chart {} ({})\n{}{}\n",
+                pos_text(pos),
+                indices_text(&idx),
+                chart_text(&id, &handle),
+                page_line(ctx, &pid)
+            ))
+        }
+        "read" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            Ok(format!(
+                "{}{}{}\n",
+                chart_text(&id, &handle),
+                handle.lock().to_table(),
+                object_page_line(ctx, "chart", &id)
+            ))
+        }
+        "update" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            let mut changes = Vec::new();
+            if let Some(kind) = chart_kind_field(v, "kind")? {
+                handle.set_kind(kind);
+                changes.push(format!("kind {}", kind.key()));
+            }
+            if let Some(t) = str_field(v, "title") {
+                handle.set_title(t);
+                changes.push("title".to_string());
+            }
+            changes.extend(apply_chart_data(&handle, v)?);
+            changes.extend(apply_chart_style(&handle, v)?);
+            if changes.is_empty() {
+                return Err("nothing to update: pass kind, title, categories, data, table or style".to_string());
+            }
+            Ok(format!("updated chart: {}\n{}", changes.join(", "), chart_text(&id, &handle)))
+        }
+        "set_data" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            let changes = apply_chart_data(&handle, v)?;
+            if changes.is_empty() {
+                return Err("nothing to set: pass table, categories, data or value with index".to_string());
+            }
+            Ok(format!("data: {}\n{}", changes.join(", "), chart_text(&id, &handle)))
+        }
+        "add_series" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            if handle.kind().single_series() {
+                return Err(format!(
+                    "a {} chart shows one series — change its data instead (op=set_data) or switch the kind",
+                    handle.kind().key()
+                ));
+            }
+            let name = str_field(v, "name")
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{} {}", tr!("notes.chart.series"), handle.lock().series.len() + 1));
+            let sid = handle.add_series(&name, data_field(v, "data").unwrap_or_default());
+            if let Some(c) = str_field(v, "color") {
+                handle.set_series_color(&sid, chart_color(c)?);
+            }
+            Ok(format!("added series {sid} \"{name}\"\n{}", chart_text(&id, &handle)))
+        }
+        "update_series" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            let sid = match str_field(v, "series") {
+                Some(s) => resolve_series(&handle, s)?,
+                None => handle.lock().series.first().map(|s| s.id.clone()).ok_or("the chart has no series")?,
+            };
+            let mut changes = Vec::new();
+            if let Some(name) = str_field(v, "name") {
+                handle.rename_series(&sid, name);
+                changes.push("name".to_string());
+            }
+            if let Some(c) = str_field(v, "color") {
+                handle.set_series_color(&sid, chart_color(c)?);
+                changes.push("color".to_string());
+            }
+            if let Some(data) = data_field(v, "data") {
+                handle.set_series_data(&sid, data.clone());
+                changes.push(format!("{} values", data.len()));
+            }
+            if let (Some(value), Some(i)) = (f64_field(v, "value"), usize_field(v, "index")) {
+                handle.set_value(&sid, i, value);
+                changes.push(format!("point {i} = {}", chart_model::fmt_num(value)));
+            }
+            if changes.is_empty() {
+                return Err("nothing to update: pass name, color, data, or value with index".to_string());
+            }
+            Ok(format!("updated series {sid}: {}\n{}", changes.join(", "), chart_text(&id, &handle)))
+        }
+        "delete_series" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            let sid = resolve_series(&handle, str_field(v, "series").ok_or("missing \"series\"")?)?;
+            if !handle.delete_series(&sid) {
+                return Err("the last series can't be deleted — delete the whole chart with op=delete".to_string());
+            }
+            Ok(format!("deleted series {sid}\n{}", chart_text(&id, &handle)))
+        }
+        "set_style" => {
+            let (id, handle) = chart_handle(ctx, v)?;
+            let changes = apply_chart_style(&handle, v)?;
+            if changes.is_empty() {
+                return Err(
+                    "nothing to change: pass style with legend, tooltip, animate, grid, axis titles, \
+                     y_min/y_max, smooth, points, area, stacked, horizontal, value_labels, bar_radius, \
+                     donut, pie_labels, percentage, radar_circle, radar_levels, radar_max, gauge_min, \
+                     gauge_max, needle, ticks, gauge_labels, unit or zones"
+                        .to_string(),
+                );
+            }
+            Ok(format!("style: {}\n{}", changes.join(", "), chart_text(&id, &handle)))
+        }
+        "from_table" => {
+            let pid = page_arg(ctx, v, "page")?;
+            let mut model = load_model(ctx, &pid);
+            let i = resolve_block(&model, &ref_field(v, "block").ok_or("missing \"block\" (table to convert)")?)?;
+            let md = block_markdown(&model.blocks[i]);
+            if !md.trim_start().starts_with('|') {
+                return Err(format!("block #{i} is not a table — chart op=from_table converts markdown tables"));
+            }
+            let kind = chart_kind_field(v, "kind")?.unwrap_or(ChartKind::Bar);
+            let mut doc = ChartDoc::from_table(&md, kind);
+            if let Some(t) = str_field(v, "title") {
+                doc.title = t.trim().to_string();
+            }
+            let points = doc.categories.len();
+            let rows = doc.series.len();
+            let id = ctx.create_chart(doc);
+            let geom = model.blocks[i].attrs.clone();
+            let embed = format!("![[chart:{id}]]{{h={}}}", fnum(embeds::default_object_h("chart")));
+            let idx = replace_block(&mut model, i, &embed)?;
+            // Врезка встаёт на место таблицы и наследует её координаты.
+            for (k, val) in geom.0.iter() {
+                if free::is_geom_key(k) && model.blocks[idx[0]].attrs.get(k).is_none() {
+                    model.blocks[idx[0]].attrs.set(k.clone(), val.clone());
+                }
+            }
+            store_model(ctx, &pid, &model)?;
+            let Some(LiveObject::Chart { handle, .. }) = ctx.object("chart", &id) else {
+                return Err("chart vanished".to_string());
+            };
+            apply_chart_style(&handle, v)?;
+            Ok(format!(
+                "block #{i} → chart with {rows} series over {points} points\n{}{}\n",
+                chart_text(&id, &handle),
+                page_line(ctx, &pid)
+            ))
+        }
+        "delete" => {
+            let (id, _) = chart_handle(ctx, v)?;
+            delete_object(ctx, "chart", &id)
+        }
+        other => Err(format!(
+            "unknown chart op \"{other}\" (create | read | update | set_data | add_series | \
+             update_series | delete_series | set_style | from_table | delete)"
+        )),
+    }
+}
+
+/// Цвет ряда или доли: `none` снимает его (тогда цвет берётся из палитры).
+fn chart_color(s: &str) -> Result<Option<String>, String> {
+    if s.trim().is_empty() || s.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    parse_hex_color(s, false).map(Some)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Calendar
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -4468,6 +5006,94 @@ mod tests {
         assert!(call(ctx, "gantt", serde_json::json!({"op": "show_today", "page": &page})).contains("today"));
     }
 
+    /// График через инструмент: создание из таблицы, ряды, точечные
+    /// значения, вид, оформление, «из блока-таблицы», удаление.
+    #[test]
+    fn chart_through_the_tool() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Отчёт"})));
+        let out = call(
+            ctx,
+            "chart",
+            serde_json::json!({
+                "op": "create",
+                "page": &page,
+                "kind": "bar",
+                "title": "Квартал",
+                "table": "| Месяц | План | Факт |\n| --- | --- | --- |\n| Янв | 10 | 12 |\n| Фев | 20 | 18 |",
+                "style": {"stacked": true, "legend": "top", "y_max": 40}
+            }),
+        );
+        assert!(out.contains("kind: bar") && out.contains("series: 2") && out.contains("points: 2"), "{out}");
+        assert!(out.contains("\"Квартал\"") && out.contains("stacked true") && out.contains("legend top"), "{out}");
+        let (_, chart) = object_refs(&ctx.page_markdown(&page)).into_iter().find(|(k, _)| k == "chart").unwrap();
+        let Some(LiveObject::Chart { handle, .. }) = ctx.object("chart", &chart) else { panic!() };
+        assert_eq!(handle.lock().options.y_max, Some(40.0));
+
+        // Ряд: добавление, переименование, цвет, замена значений.
+        let out = call(ctx, "chart", serde_json::json!({"op": "add_series", "chart": &chart, "name": "Прогноз", "data": [11, 19], "color": "green"}));
+        assert!(out.contains("Прогноз") && out.contains("series: 3"), "{out}");
+        call(ctx, "chart", serde_json::json!({"op": "update_series", "chart": &chart, "series": "Прогноз", "data": [15, 25], "color": "none"}));
+        {
+            let doc = handle.lock();
+            let s = doc.find_series("Прогноз").unwrap();
+            assert_eq!(s.data, vec![15.0, 25.0]);
+            assert!(s.color.is_empty(), "«none» снимает цвет: {s:?}");
+        }
+        // Точечная правка и подписи.
+        call(ctx, "chart", serde_json::json!({"op": "set_data", "chart": &chart, "series": "План", "value": 30, "index": 1}));
+        call(ctx, "chart", serde_json::json!({"op": "set_data", "chart": &chart, "categories": ["Янв", "Фев", "Мар"]}));
+        {
+            let doc = handle.lock();
+            assert_eq!(doc.find_series("План").unwrap().at(1), 30.0);
+            assert_eq!(doc.categories.len(), 3, "новая подпись — новая точка у всех рядов");
+            assert_eq!(doc.series[0].data.len(), 3);
+        }
+
+        // Вид: у круговой один ряд, и лишние отбрасываются.
+        let out = call(ctx, "chart", serde_json::json!({"op": "update", "chart": &chart, "kind": "pie"}));
+        assert!(out.contains("kind: pie") && out.contains("series: 1"), "{out}");
+        assert!(dispatch(ctx, "chart", &serde_json::json!({"op": "add_series", "chart": &chart, "name": "Ещё"})).is_err());
+        assert!(dispatch(ctx, "chart", &serde_json::json!({"op": "update", "chart": &chart, "kind": "sausage"})).is_err());
+
+        // Шкала: значение, границы, зоны и единица.
+        call(ctx, "chart", serde_json::json!({"op": "update", "chart": &chart, "kind": "gauge", "value": 72,
+            "style": {"gauge_max": 120, "unit": "%", "zones": "0-60 green, 60-120 red"}}));
+        {
+            let doc = handle.lock();
+            assert_eq!(doc.gauge_value(), 72.0);
+            assert_eq!(doc.options.gauge_max, 120.0);
+            assert_eq!(doc.options.unit, "%");
+            assert_eq!(doc.options.zones.len(), 2);
+            assert_eq!(doc.options.zones[1].color, "#EE5E48");
+        }
+        assert!(dispatch(ctx, "chart", &serde_json::json!({"op": "set_style", "chart": &chart, "style": {"nope": 1}})).is_err());
+        assert!(dispatch(ctx, "chart", &serde_json::json!({"op": "set_style", "chart": &chart, "style": {"legend": "sideways"}})).is_err());
+
+        // График из блока-таблицы страницы: таблица заменяется врезкой.
+        call(ctx, "update", serde_json::json!({"page": &page, "content": "| Город | Людей |\n| --- | --- |\n| Алматы | 2 |\n| Астана | 1 |\n", "mode": "append"}));
+        let idx = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        let block = idx.lines().find(|l| l.contains("table")).unwrap()[1..2].to_string();
+        let out = call(ctx, "chart", serde_json::json!({"op": "from_table", "page": &page, "block": &block, "kind": "line"}));
+        assert!(out.contains("chart with 1 series over 2 points") && out.contains("kind: line"), "{out}");
+        assert_eq!(object_refs(&ctx.page_markdown(&page)).iter().filter(|(k, _)| k == "chart").count(), 2);
+        // Не таблица — понятная ошибка, а не пустой график.
+        let idx = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+        if let Some(line) = idx.lines().find(|l| l.contains("paragraph")) {
+            let b = line[1..2].to_string();
+            assert!(dispatch(ctx, "chart", &serde_json::json!({"op": "from_table", "page": &page, "block": &b})).is_err());
+        }
+
+        // Чтение отдаёт и таблицу значений, и страницу.
+        let out = call(ctx, "chart", serde_json::json!({"op": "read", "chart": &chart}));
+        assert!(out.contains("value 72") && out.contains(&page), "{out}");
+
+        // Удаление: врезка уходит со страницы.
+        let out = call(ctx, "chart", serde_json::json!({"op": "delete", "chart": &chart}));
+        assert!(out.contains("deleted chart:"), "{out}");
+        assert_eq!(object_refs(&ctx.page_markdown(&page)).iter().filter(|(k, _)| k == "chart").count(), 1);
+    }
+
     /// Интеллект-карта через инструмент: создание из списка, узлы, перенос,
     /// кросс-ссылки, раскладка, стиль, «из блока».
     #[test]
@@ -4610,7 +5236,17 @@ mod tests {
         let src = include_str!("notes.rs");
         let body = src.split("#[cfg(test)]").next().unwrap();
         let mut missing = Vec::new();
-        for pat in ["str_field(v, \"", "ref_field(v, \"", "raw_string(v, \"", "bool_field(v, \"", "usize_field(v, \"", "f32_field(v, \"", "list_field(v, \""] {
+        for pat in [
+            "str_field(v, \"",
+            "ref_field(v, \"",
+            "raw_string(v, \"",
+            "bool_field(v, \"",
+            "usize_field(v, \"",
+            "f32_field(v, \"",
+            "f64_field(v, \"",
+            "data_field(v, \"",
+            "list_field(v, \"",
+        ] {
             for (i, _) in body.match_indices(pat) {
                 let rest = &body[i + pat.len()..];
                 let key = rest.split('"').next().unwrap();

@@ -34,8 +34,9 @@
 | `blocks` | `op`, `page`, `block`, … | `list` (строка на блок: `#i kind "подпись" · x y w h` либо `flow`, `~` — оценка высоты, атрибуты), `read` (markdown + атрибуты; `block="all"`, `"0,2,5-7"` или массив — сразу пачкой), `insert` (`md`, позиция, `x y w h`), `set_markdown` (`md`; атрибуты первого нового блока — от старого), `delete`, `move` (позиция и/или `x y`), `set_attrs` (`attrs` — объект; `null`/`""` снимает), `pin` (`x y [w h]`; без координат — под нижним закреплённым), `unpin` |
 | `shape` | `op`, `page`, … | `create` (`kind`; рамочные — `x y w h`, линейные — **абсолютные** `x1 y1 x2 y2 [cx1 cy1 cx2 cy2]`; `fill stroke sw dash radius opacity`; позиция), `update` (`block`, те же поля, `kind` — смена вида с сохранением оформления), `delete`, `connect` (`from`/`to` — закреплённые блоки, `from_side`/`to_side` `auto\|left\|right\|top\|bottom\|center`, `kind` по умолчанию `arrow`) |
 | `kanban` | `op`, `board` / `page`, … | `create` (на страницу, `columns`, `title`-заголовок, позиция, `x y w h`), `read` (со стилем), `set_style` (`column_width`, `lane_bg`, `card_bg`, `show_counts`), `add_column` / `update_column` / `delete_column`, `add_card` / `update_card` (+`before`) / `move_card` / `delete_card`, `delete` |
-| `gantt` | `op`, `chart` / `page`, … | `create` (позиция, геометрия), `read`, `add_task` (`start`/`end`, `after` — зависимость), `update_task` (только `start` — длительность сохраняется), `delete_task`, `add_dep` / `delete_dep`, `set_zoom` (5..90 px/день), `show_today`, `delete` |
+| `gantt` | `op`, `gantt` / `page`, … | `create` (позиция, геометрия), `read`, `add_task` (`start`/`end`, `after` — зависимость), `update_task` (только `start` — длительность сохраняется), `delete_task`, `add_dep` / `delete_dep`, `set_zoom` (5..90 px/день), `show_today`, `delete` |
 | `mindmap` | `op`, `map` / `page`, … | `create` (`title` — корень, `outline` — markdown-список целиком, `direction`, позиция/геометрия), `read` (дерево с id, ссылки, раскладка), `add_node` (`parent`, `text`, поля), `update_node` (`text note link color shape icon collapsed dx dy`), `move_node` (`parent`, `index`; корень и своё поддерево — ошибка), `delete_node` (с поддеревом), `add_link` / `delete_link` (`from`, `to`, `label`), `set_layout` (`direction curve h_gap v_gap reset`), `set_style` (`style{…}`), `from_list` (блок-список → карта на его месте, координаты наследуются), `delete` |
+| `chart` | `op`, `chart` / `page`, … | `create` (`kind` `line\|bar\|pie\|radar\|gauge`, `title` — заголовок внутри графика, `table` — markdown-таблица с данными либо `categories`+`data`+`name`, `style{…}`, позиция/геометрия), `read` (настройки + таблица значений), `update` (`kind`, `title`, данные, `style`), `set_data` (`table` целиком, `categories`, `data` ряда, `value`+`index` — одна точка), `add_series` / `update_series` (`series`, `name`, `color`, `data`) / `delete_series`, `set_style` (`style{…}`), `from_table` (блок-таблица → график на её месте, координаты наследуются), `delete` |
 | `calendar` | `op`, `calendar` / `page`, … | `create` (`view`, `anchor`, `heading`, позиция/геометрия), `read` (виджет + события диапазона), `set_view` (`view anchor calendars`), `set_style` (`style{…}`), `add_event`, `update_event`, `move_event`, `complete`, `delete_event`, `list_events` (`from to calendar include_external`), `add_calendar` / `update_calendar` / `delete_calendar`, `delete` (виджет; события остаются) |
 
 Карточка: `title`, `md` (чек-лист `- [ ]` даёт прогресс), `priority`
@@ -59,6 +60,23 @@
 делает событие «весь день»; перенос даты тянет за собой конечную дату
 многодневного события. `include_external=true` добавляет в вывод сроки
 карточек досок и задачи Ганта проекта (read-only слой виджета).
+
+График: один документ на пять видов, поэтому смена `kind` ничего не
+теряет — настройки прежнего вида остаются в файле. Данные — подписи
+(`categories`) и ряды чисел; круговая берёт первый ряд (доля на подпись),
+шкала — первое число (`value`), у радара подписи становятся осями.
+Подписи и ряды всегда одной длины: лишние точки не режутся молча, а
+недостающие дополняются нулями; укоротить график — задать `categories`
+короче. Ряд адресуется id или именем, `color: none` возвращает ему цвет
+палитры. `style` принимает `legend`, `tooltip`, `animate`, `grid`,
+`x_title`, `y_title`, `y_min`/`y_max` (число либо `auto`), `smooth`,
+`points`, `area` (0..1), `stacked`, `horizontal`, `value_labels`,
+`bar_radius`, `donut` (0..0.9), `pie_labels`, `percentage`,
+`radar_circle`, `radar_levels`, `radar_max`, `gauge_min`, `gauge_max`,
+`needle`, `ticks`, `gauge_labels`, `unit` и `zones` (`"0-50 green, 50-80
+orange"` либо массив `{from,to,color}`). Диаграмму Ганта адресует ключ
+`gantt`; прежнее имя `chart` у неё ещё принимается, но означает теперь
+график.
 
 Атрибуты блока (`blocks op=set_attrs`, проверяются теми же диапазонами, что
 панель свойств): текст — `color bg size(6..160) weight(bold|normal)
@@ -252,7 +270,11 @@ delete, `read blocks=true`), фигуры (рамка из `x y w h`, линия
 обязан быть в `notes_schema()` (иначе `additionalProperties: false` его
 отрежет), интеллект-карта (создание из `outline`, узлы по тексту, поля,
 перенос с запретом корня и своего поддерева, кросс-ссылки, раскладка,
-стиль с пресетом палитры, удаление поддерева, `from_list`) и календарь
+стиль с пресетом палитры, удаление поддерева, `from_list`), график
+(создание из markdown-таблицы со стилем, ряды с цветом и заменой значений,
+точечное значение, подписи, смена вида на круговую с обрезкой лишних рядов,
+шкала с зонами и единицей, ошибки на неизвестный вид, чужой ключ стиля и
+не-таблицу, `from_table`, удаление с чисткой врезки) и календарь
 (виджет с видом и якорем, событие со временем и повтором, список за
 диапазон и по одному дню, свой календарь и фильтр виджета, перенос
 многодневного события, «сделано», удаление события, стиль виджета,
@@ -268,6 +290,18 @@ delete, `read blocks=true`), фигуры (рамка из `x y w h`, линия
 
 Живой прогон с моделью (реальный чат → `notes kanban op=create` →
 карточки в UI) не делался в этой серии.
+
+## Как это ложится на состояние UI (график)
+
+- `ChartHandle::edit` пересобирает виджет (перестройка по `structure_rev`)
+  и будит автосейв, `edit_data` — только автосейв. Своего редактирования на
+  графике нет, поэтому расхождения «правка мышью против правки агентом» тут
+  не возникает: и панель свойств, и инструмент зовут одни и те же методы
+  ручки.
+- `from_table` наследует врезке координаты заменённой таблицы — на холсте
+  график встаёт ровно на её место.
+- `sanitize` вызывается после каждой правки ручки, поэтому агент не может
+  оставить документ с рядами разной длины или круговую с двумя рядами.
 
 ## Как это ложится на состояние UI (объекты волны 9)
 

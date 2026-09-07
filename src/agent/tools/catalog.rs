@@ -313,7 +313,11 @@ pub(super) fn build_all() -> Vec<Tool> {
                 add_card | update_card | move_card | delete_card | delete), \
                 gantt (op=create | read | add_task | update_task | \
                 delete_task | add_dep | delete_dep | set_zoom | show_today | \
-                delete). Workflow: list → read the pages you need in one \
+                delete), chart (op=create | read | update | set_data | \
+                add_series | update_series | delete_series | set_style | \
+                from_table | delete — a line, bar, pie, radar or gauge chart \
+                drawn from labels + series of numbers; from_table turns a \
+                markdown table on the page into one). Workflow: list → read the pages you need in one \
                 call (pages=[…] / depth=all, blocks op=read block=all for \
                 every block of a page) → edit. Reading one page or one \
                 block per call is the slow way and wastes the user's time. \
@@ -418,9 +422,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "enum": ["list", "search", "read", "create", "update", "move",
                      "delete", "duplicate", "open", "attach", "blocks", "shape",
-                     "kanban", "gantt", "mindmap", "calendar"],
-            "description": "What to do. blocks, shape, kanban, gantt, mindmap and \
-                calendar take the sub-operation in op."
+                     "kanban", "gantt", "mindmap", "calendar", "chart"],
+            "description": "What to do. blocks, shape, kanban, gantt, mindmap, \
+                calendar and chart take the sub-operation in op."
         })),
         ("page", json!({
             "type": "string",
@@ -451,7 +455,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "create: page title (made unique among siblings). \
                 update: new title. kanban/gantt op=create: optional heading \
                 above the object. kanban add_card/update_card: card title. \
-                mindmap op=create/from_list: text of the root node."
+                mindmap op=create/from_list: text of the root node. chart: \
+                heading drawn inside the chart itself."
         })),
         ("content", json!({
             "type": "string",
@@ -646,7 +651,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "shape create/update/connect: rect | ellipse | \
                 triangle | diamond | line | arrow | arrow2 (both ends) | curve | \
                 curve-arrow | curve-arrow2. Default rect (create) / arrow \
-                (connect)."
+                (connect). chart create/update/from_table: line | bar | pie | \
+                radar | gauge (default line, from_table bar)."
         })),
         ("fill", json!({
             "type": "string",
@@ -822,7 +828,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 preset (theme|light|contrast|pastel), event_style (chip|dot|bar), \
                 first_weekday (0=Mon), show_week_numbers, hour_from, hour_to, \
                 slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
-                cell_bg, grid_color, text_color, show_kanban_due, show_gantt."
+                cell_bg, grid_color, text_color, show_kanban_due, show_gantt. \
+                chart set_style: legend (top|bottom|left|right|none), tooltip, \
+                animate, grid, x_title, y_title, y_min, y_max (a number or \
+                \"auto\"), smooth, points, area (0..1), stacked, horizontal, \
+                value_labels, bar_radius, donut (0..0.9), pie_labels \
+                (outside|inside|none), percentage, radar_circle, radar_levels, \
+                radar_max, gauge_min, gauge_max, needle, ticks, gauge_labels, \
+                unit, zones (\"0-50 green, 50-80 orange\")."
         })),
         ("heading", json!({
             "type": "string",
@@ -844,6 +857,12 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "items": { "type": "string" },
             "description": "calendar set_view: named calendars the widget shows \
                 (ids or names); empty means all."
+        })),
+        ("categories", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "chart: labels along the bottom — the slices of a pie, \
+                the axes of a radar, the x ticks of a line or bar chart."
         })),
         ("event", json!({
             "type": "string",
@@ -919,10 +938,39 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 for add_event, update_calendar and delete_calendar. Events live in \
                 one project-wide store, the widget only picks the view and filter."
         })),
-        ("chart", json!({
+        ("gantt", json!({
             "type": "string",
             "description": "gantt: chart id (gantt:<id> from list/read). Omit \
+                when the page (or the whole project) has exactly one gantt chart."
+        })),
+        ("chart", json!({
+            "type": "string",
+            "description": "chart: chart id (chart:<id> from list/read). Omit \
                 when the page (or the whole project) has exactly one chart."
+        })),
+        ("series", json!({
+            "type": "string",
+            "description": "chart update_series/delete_series/set_data: which \
+                series — its id or its name. Omit to mean the first one."
+        })),
+        ("data", json!({
+            "type": "array",
+            "items": { "type": "number" },
+            "description": "chart: the numbers of one series, one per label \
+                (create, add_series, update_series, set_data). A gauge takes a \
+                single number."
+        })),
+        ("value", json!({
+            "type": "number",
+            "description": "chart: one number — with index it replaces that \
+                point of the series, alone it is the gauge value."
+        })),
+        ("table", json!({
+            "type": "string",
+            "description": "chart create/set_data: the data as a markdown table \
+                — the header row names the series, the first column holds the \
+                labels, e.g. \"| Month | Plan | Fact |\\n| Jan | 10 | 12 |\". \
+                Cells that are not numbers count as 0."
         })),
         ("columns", json!({
             "type": "array",
@@ -940,13 +988,15 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "kanban add_column/update_column: column name. \
                 gantt add_task/update_task: task name. calendar add_calendar/\
-                update_calendar: calendar name."
+                update_calendar: calendar name. chart add_series/update_series: \
+                series name (it labels the legend)."
         })),
         ("color", json!({
             "type": "string",
-            "description": "Color of a column, task, calendar, event or mind-map \
-                node: #rrggbb or gray | orange | green | blue | purple | red | \
-                teal; \"none\" clears it."
+            "description": "Color of a column, task, calendar, event, mind-map \
+                node or chart series: #rrggbb or gray | orange | green | blue | \
+                purple | red | teal; \"none\" clears it (a chart series then \
+                takes its palette color)."
         })),
         ("width", json!({
             "type": "number",

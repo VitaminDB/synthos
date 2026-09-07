@@ -244,6 +244,11 @@ pub const MI_DATE_RANGE: &str          = "\u{E916}";
 pub const MI_CALENDAR_MONTH: &str      = "\u{EBCC}";
 pub const MI_CALENDAR_VIEW_WEEK: &str  = "\u{EFE8}";
 pub const MI_CALENDAR_VIEW_DAY: &str   = "\u{E936}";
+/// Графики заметок: линии / столбцы / круговая / радар (лучи из центра) /
+/// шкала-спидометр. Столбцы — `MI_BAR_CHART`, шкала — `MI_SPEED`, радар —
+/// `MI_HUB`.
+pub const MI_SHOW_CHART: &str          = "\u{E6E1}";
+pub const MI_PIE_CHART: &str           = "\u{E6C4}";
 /// Чекбокс события календаря.
 pub const MI_CHECK_BOX: &str           = "\u{E834}";
 pub const MI_CHECK_BOX_OUTLINE_BLANK: &str = "\u{E835}";

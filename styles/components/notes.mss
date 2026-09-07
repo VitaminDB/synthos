@@ -745,3 +745,28 @@ document-editor {
 .notes-calendar-chip-text {
     font-size: 11px;
 }
+
+/* ── Графики (виджеты syngui) ──────────────────────────────────────
+ * `width/height: 100%` — график занимает свою врезку целиком: без этого
+ * он берёт встроенные умолчания библиотеки (600×400 у линий, 300×300 у
+ * круговой) и висит куском в углу блока. Цвета осей, подписей и заголовка
+ * графики выводят из `color`, поэтому одной строки хватает на всю тему;
+ * `background-color` радару нужен явно — его умолчание белое. */
+.notes-chart {
+    width: 100%;
+    height: 100%;
+    color: var(--text);
+    background-color: transparent;
+    grid-color: var(--border-soft);
+    axis-color: var(--text-subtle);
+    label-color: var(--text-muted);
+    track-color: var(--surface-hover);
+    needle-color: var(--text);
+    tooltip-background: var(--bg-panel);
+    tooltip-border-color: var(--border-soft);
+    axis-font-size: 11px;
+    label-font-size: 11px;
+    legend-font-size: 12px;
+    title-font-size: 14px;
+    value-font-size: 22px;
+}

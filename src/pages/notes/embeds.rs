@@ -1,7 +1,8 @@
 //! Живые врезки `![[…]]` в страницах.
 //!
-//! `![[kanban:<id>]]` / `![[gantt:<id>]]` — примитивы-объекты проекта
-//! (канбан-доска, диаграмма Ганта), живые и редактируемые прямо в странице
+//! `![[kanban:<id>]]` / `![[gantt:<id>]]` / `![[chart:<id>]]` — примитивы-
+//! объекты проекта (канбан-доска, диаграмма Ганта, график), живые прямо в
+//! странице
 //! (ручки из пула `NotesCtx.objects`, автосейв подписан и на них). Высота
 //! такой врезки — ключ `h` свободной раскладки (тянется за нижнюю кромку,
 //! правится в свойствах); без него — дефолт. `![[Название]]` — другая
@@ -25,6 +26,7 @@ pub fn default_object_h(kind: &str) -> f32 {
         "kanban" => 400.0,
         "mindmap" => 420.0,
         "calendar" => 480.0,
+        "chart" => 320.0,
         _ => 340.0,
     }
 }
@@ -41,6 +43,7 @@ pub fn is_sized_object(target: &str) -> bool {
         || target.starts_with("gantt:")
         || target.starts_with("mindmap:")
         || target.starts_with("calendar:")
+        || target.starts_with("chart:")
 }
 
 /// Окружение интеллект-карты: ссылка узла открывает страницу, «в список»
@@ -153,6 +156,10 @@ impl EmbedFactory for NotesEmbedFactory {
         if let Some(id) = target.strip_prefix("calendar:") {
             let LiveObject::Calendar { handle, id: oid } = ctx.object("calendar", id.trim())? else { return None };
             return Some(sized(Box::new(super::calendar::view::view(calendar_env(ctx), oid, handle)), height));
+        }
+        if let Some(id) = target.strip_prefix("chart:") {
+            let LiveObject::Chart { handle, .. } = ctx.object("chart", id.trim())? else { return None };
+            return Some(sized(Box::new(super::chart::view::view(handle)), height));
         }
         let id = ctx.index.get_untracked().resolve(target)?;
         if ectx.depth >= MAX_DEPTH {

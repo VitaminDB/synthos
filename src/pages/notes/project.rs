@@ -11,6 +11,7 @@
 //! notes/objects/<id>.gantt.json  диаграмма Ганта (блок `![[gantt:<id>]]`)
 //! notes/objects/<id>.mindmap.json интеллект-карта (блок `![[mindmap:<id>]]`)
 //! notes/objects/<id>.calendar.json виджет календаря (блок `![[calendar:<id>]]`)
+//! notes/objects/<id>.chart.json  график (блок `![[chart:<id>]]`)
 //! notes/calendar.json           единое хранилище событий календаря
 //! notes/assets/<sha256>.<ext>   вложения (`asset:<sha256>.<ext>` в md)
 //! ```
@@ -385,7 +386,7 @@ pub fn page_path(id: &str) -> String {
     format!("{PAGES_DIR}/{id}.md")
 }
 
-/// `kind` — `kanban` | `gantt`.
+/// `kind` — `kanban` | `gantt` | `mindmap` | `calendar` | `chart`.
 pub fn object_path(kind: &str, id: &str) -> String {
     format!("{OBJECTS_DIR}/{id}.{kind}.json")
 }

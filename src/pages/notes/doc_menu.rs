@@ -27,6 +27,7 @@ use crate::context::AppCtx;
 use crate::icons::*;
 
 use super::calendar::model::CalView;
+use super::chart::model::{ChartDoc, ChartKind};
 use super::media::{self, PickKind};
 use super::state::NotesCtx;
 
@@ -62,12 +63,36 @@ pub fn shape_icon(kind: ShapeKind) -> &'static str {
 }
 
 /// Объекты-примитивы: id, иконка, ключ подписи.
-const OBJECTS: [(&str, &str, &str); 4] = [
+const OBJECTS: [(&str, &str, &str); 5] = [
     ("kanban", MI_VIEW_KANBAN, "notes.block.kanban"),
     ("gantt", MI_VIEW_TIMELINE, "notes.block.gantt"),
     ("mindmap", MI_SCHEMA, "notes.block.mindmap"),
     ("calendar", MI_CALENDAR_MONTH, "notes.block.calendar"),
+    ("chart", MI_SHOW_CHART, "notes.block.chart"),
 ];
+
+/// Виды графика для подменю вставки: id пункта, вид, иконка, ключ.
+const CHART_KINDS: [(&str, ChartKind, &str, &str); 5] = [
+    ("ins_chart_line", ChartKind::Line, MI_SHOW_CHART, "notes.chart.kind.line"),
+    ("ins_chart_bar", ChartKind::Bar, MI_BAR_CHART, "notes.chart.kind.bar"),
+    ("ins_chart_pie", ChartKind::Pie, MI_PIE_CHART, "notes.chart.kind.pie"),
+    ("ins_chart_radar", ChartKind::Radar, MI_HUB, "notes.chart.kind.radar"),
+    ("ins_chart_gauge", ChartKind::Gauge, MI_SPEED, "notes.chart.kind.gauge"),
+];
+
+/// Иконка вида графика — та же в меню, в дереве блоков и в панели свойств.
+pub fn chart_icon(kind: ChartKind) -> &'static str {
+    CHART_KINDS.iter().find(|(_, k, _, _)| *k == kind).map(|(_, _, icon, _)| *icon).unwrap_or(MI_SHOW_CHART)
+}
+
+/// Подпись вида графика на языке интерфейса.
+pub fn chart_label(kind: ChartKind) -> String {
+    CHART_KINDS
+        .iter()
+        .find(|(_, k, _, _)| *k == kind)
+        .map(|(_, _, _, key)| syngui::i18n::tr(key))
+        .unwrap_or_default()
+}
 
 /// Виды календаря для подменю вставки: id пункта, вид, иконка, ключ.
 const CALENDAR_VIEWS: [(&str, CalView, &str, &str); 4] = [
@@ -106,6 +131,13 @@ fn object_items() -> Vec<MenuItem> {
                         .map(|(mid, _, icon, key)| MenuItem::new(*mid, syngui::i18n::tr(key)).icon(*icon))
                         .collect(),
                 )
+            } else if *id == "chart" {
+                let mut kinds: Vec<MenuItem> = CHART_KINDS
+                    .iter()
+                    .map(|(mid, _, icon, key)| MenuItem::new(*mid, syngui::i18n::tr(key)).icon(*icon))
+                    .collect();
+                kinds.push(MenuItem::new("ins_chart_from_table", tr!("notes.chart.from_table")).icon(MI_GRID_ON));
+                item.children(kinds)
             } else {
                 item
             }
@@ -119,6 +151,36 @@ pub fn insert_calendar(ctx: NotesCtx, view: CalView) {
     ctx.doc_op(DocOp::InsertMarkdown(format!(
         "![[calendar:{id}]]{{h={}}}",
         super::embeds::default_object_h("calendar") as i64
+    )));
+}
+
+/// График заданного вида — врезка в место каретки.
+pub fn insert_chart(ctx: NotesCtx, kind: ChartKind) {
+    let id = ctx.create_chart(ChartDoc::template(kind, &tr!("notes.chart.series")));
+    ctx.doc_op(DocOp::InsertMarkdown(format!(
+        "![[chart:{id}]]{{h={}}}",
+        super::embeds::default_object_h("chart") as i64
+    )));
+}
+
+/// График из текущего блока-таблицы: шапка — ряды, первая колонка —
+/// подписи; блок заменяется врезкой графика. Без таблицы под кареткой —
+/// обычный график с демо-данными.
+pub fn insert_chart_from_table(ctx: NotesCtx) {
+    let Some(page) = ctx.active.get_untracked().and_then(|id| ctx.page(&id)) else { return };
+    let Some(block) = page.handle.selected().get_untracked() else {
+        insert_chart(ctx, ChartKind::Bar);
+        return;
+    };
+    let md = page.handle.block_markdown(block).unwrap_or_default();
+    if !md.trim_start().starts_with('|') {
+        insert_chart(ctx, ChartKind::Bar);
+        return;
+    }
+    let id = ctx.create_chart(ChartDoc::from_table(&md, ChartKind::Bar));
+    ctx.doc_op(DocOp::InsertMarkdown(format!(
+        "![[chart:{id}]]{{h={}}}",
+        super::embeds::default_object_h("chart") as i64
     )));
 }
 
@@ -167,6 +229,12 @@ pub fn slash_items() -> Vec<SlashItem> {
         SlashItem::new(SlashAction::Custom("calendar-week".into()), tr!("notes.calendar.insert.week"), "calendar week календарь неделя расписание"),
         SlashItem::new(SlashAction::Custom("calendar-day".into()), tr!("notes.calendar.insert.day"), "calendar day календарь день расписание"),
         SlashItem::new(SlashAction::Custom("calendar-year".into()), tr!("notes.calendar.insert.year"), "calendar year календарь год"),
+        SlashItem::new(SlashAction::Custom("chart-line".into()), tr!("notes.chart.insert.line"), "chart line график линия график линий"),
+        SlashItem::new(SlashAction::Custom("chart-bar".into()), tr!("notes.chart.insert.bar"), "chart bar column график столбцы гистограмма"),
+        SlashItem::new(SlashAction::Custom("chart-pie".into()), tr!("notes.chart.insert.pie"), "chart pie donut круговая диаграмма доли"),
+        SlashItem::new(SlashAction::Custom("chart-radar".into()), tr!("notes.chart.insert.radar"), "chart radar spider радар паутина"),
+        SlashItem::new(SlashAction::Custom("chart-gauge".into()), tr!("notes.chart.insert.gauge"), "chart gauge speed шкала спидометр"),
+        SlashItem::new(SlashAction::Custom("chart-table".into()), tr!("notes.chart.from_table"), "chart table график из таблицы"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Rect), tr!("notes.shape.rect"), "rect shape прямоугольник фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Ellipse), tr!("notes.shape.ellipse"), "ellipse circle овал круг фигура"),
         SlashItem::new(SlashAction::Shape(ShapeKind::Triangle), tr!("notes.shape.triangle"), "triangle треугольник фигура"),
@@ -193,7 +261,12 @@ pub fn slash_custom(ctx: NotesCtx) -> impl Fn(&str) + Send + Sync + 'static {
         "calendar-month" | "calendar" => insert_calendar(ctx, CalView::Month),
         "calendar-week" => insert_calendar(ctx, CalView::Week),
         "calendar-day" => insert_calendar(ctx, CalView::Day),
-        _ => insert_object(ctx, id),
+        "chart-table" => insert_chart_from_table(ctx),
+        "chart" => insert_chart(ctx, ChartKind::Line),
+        _ => match id.strip_prefix("chart-").and_then(ChartKind::parse) {
+            Some(kind) => insert_chart(ctx, kind),
+            None => insert_object(ctx, id),
+        },
     }
 }
 
@@ -342,6 +415,14 @@ pub fn handle(ctx: NotesCtx, id: &str) {
     }
     if let Some((_, view, _, _)) = CALENDAR_VIEWS.iter().find(|(mid, _, _, _)| *mid == id) {
         insert_calendar(ctx, *view);
+        return;
+    }
+    if id == "ins_chart_from_table" {
+        insert_chart_from_table(ctx);
+        return;
+    }
+    if let Some((_, kind, _, _)) = CHART_KINDS.iter().find(|(mid, _, _, _)| *mid == id) {
+        insert_chart(ctx, *kind);
         return;
     }
     if let Some(kind) = id.strip_prefix("ins_object_") {

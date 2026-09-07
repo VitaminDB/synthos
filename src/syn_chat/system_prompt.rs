@@ -176,8 +176,9 @@ pub fn build(env: &PromptEnv) -> String {
             s.push_str(
                 "\nNotes (`notes`) — the user's notebook in the app: a tree of \
                  markdown pages (each page is a free canvas) with shapes, \
-                 arrows, kanban boards, Gantt charts, mind maps and calendars \
-                 embedded in them.\n\
+                 arrows, kanban boards, Gantt charts, mind maps, calendars \
+                 and charts (line, bar, pie, radar, gauge) embedded in \
+                 them.\n\
                  - Start with list (page tree, ids, the boards/charts on each \
                  page) or search; read a page before editing it — update \
                  with content and mode=replace overwrites the whole page.\n\

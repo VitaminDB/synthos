@@ -2,7 +2,8 @@
 //!
 //! Проект — один `.syn`-файл ([`project`]); дерево страниц живёт в памяти
 //! (`tree`) и пишется автосейвом по `tree_rev`. Страницы и объекты
-//! (доски/диаграммы) загружаются лениво и держатся в пулах `pages`/`objects`
+//! (доски, диаграммы, карты, календари, графики) загружаются лениво и
+//! держатся в пулах `pages`/`objects`
 //! — у каждого своя ручка с сигналом ревизии, на который подписан автосейв.
 //! Активная страница одна; плитка рейла одна на проект.
 
@@ -19,6 +20,8 @@ use crate::config::{now_millis, AppConfig};
 use super::autosave;
 use super::calendar::model::{CalView, CalendarDoc, CalendarStore};
 use super::calendar::{CalendarHandle, CalendarStoreHandle};
+use super::chart::model::{ChartDoc, ChartKind};
+use super::chart::ChartHandle;
 use super::gantt::model::GanttDoc;
 use super::gantt::GanttHandle;
 use super::index::VaultIndex;
@@ -49,7 +52,7 @@ impl LivePage {
 }
 
 /// Виды объектов-примитивов (`![[<kind>:<id>]]`).
-pub const OBJECT_KINDS: [&str; 4] = ["kanban", "gantt", "mindmap", "calendar"];
+pub const OBJECT_KINDS: [&str; 5] = ["kanban", "gantt", "mindmap", "calendar", "chart"];
 
 /// Загруженный объект-врезка.
 #[derive(Clone)]
@@ -58,6 +61,7 @@ pub enum LiveObject {
     Gantt { id: String, handle: GanttHandle },
     Mindmap { id: String, handle: MindmapHandle },
     Calendar { id: String, handle: CalendarHandle },
+    Chart { id: String, handle: ChartHandle },
 }
 
 impl LiveObject {
@@ -66,7 +70,8 @@ impl LiveObject {
             LiveObject::Kanban { id, .. }
             | LiveObject::Gantt { id, .. }
             | LiveObject::Mindmap { id, .. }
-            | LiveObject::Calendar { id, .. } => id,
+            | LiveObject::Calendar { id, .. }
+            | LiveObject::Chart { id, .. } => id,
         }
     }
 
@@ -76,6 +81,7 @@ impl LiveObject {
             LiveObject::Gantt { .. } => "gantt",
             LiveObject::Mindmap { .. } => "mindmap",
             LiveObject::Calendar { .. } => "calendar",
+            LiveObject::Chart { .. } => "chart",
         }
     }
 
@@ -86,6 +92,7 @@ impl LiveObject {
             LiveObject::Gantt { handle, .. } => handle.serialize(),
             LiveObject::Mindmap { handle, .. } => handle.serialize(),
             LiveObject::Calendar { handle, .. } => handle.serialize(),
+            LiveObject::Chart { handle, .. } => handle.serialize(),
         }
     }
 
@@ -96,6 +103,7 @@ impl LiveObject {
             LiveObject::Gantt { handle, .. } => handle.revision.get(),
             LiveObject::Mindmap { handle, .. } => handle.revision.get(),
             LiveObject::Calendar { handle, .. } => handle.revision.get(),
+            LiveObject::Chart { handle, .. } => handle.revision.get(),
         }
     }
 
@@ -619,6 +627,10 @@ impl NotesCtx {
                 id: id.to_string(),
                 handle: CalendarHandle::new(CalendarDoc::parse(&content).ok()?),
             },
+            "chart" => LiveObject::Chart {
+                id: id.to_string(),
+                handle: ChartHandle::new(ChartDoc::parse(&content).ok()?),
+            },
             _ => return None,
         };
         autosave::mark_saved(&path, 0);
@@ -653,6 +665,11 @@ impl NotesCtx {
                 let doc = CalendarDoc::template(CalView::Month, super::gantt::calendar::today_days());
                 let content = doc.serialize();
                 (LiveObject::Calendar { id: id.clone(), handle: CalendarHandle::new(doc) }, content)
+            }
+            "chart" => {
+                let doc = ChartDoc::template(ChartKind::Line, &tr!("notes.chart.series"));
+                let content = doc.serialize();
+                (LiveObject::Chart { id: id.clone(), handle: ChartHandle::new(doc) }, content)
             }
             _ => return None,
         };
@@ -691,6 +708,15 @@ impl NotesCtx {
         let handle = CalendarStoreHandle::new(store);
         self.calendar.set(Some(handle.clone()));
         handle
+    }
+
+    /// График заданного вида либо из готового документа (из таблицы
+    /// страницы, от агента).
+    pub fn create_chart(&self, doc: ChartDoc) -> String {
+        let id = project::new_id();
+        let content = doc.serialize();
+        self.register_object("chart", &id, LiveObject::Chart { id: id.clone(), handle: ChartHandle::new(doc) }, content);
+        id
     }
 
     /// Интеллект-карта из готового документа (из списка страницы, от агента).

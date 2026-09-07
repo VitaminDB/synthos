@@ -26,6 +26,11 @@ use super::kanban::model::{MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH};
 use super::kanban::KanbanHandle;
 use super::calendar::model::{CalView, EventStyle, CalendarStyle};
 use super::calendar::CalendarHandle;
+use super::chart::model::{
+    fmt_num, parse_labels, parse_num, parse_values, values_text, ChartDoc, ChartKind, GaugeZone,
+    LegendPos, PieLabels,
+};
+use super::chart::ChartHandle;
 use super::mindmap::model::{MindNode, MindmapDoc};
 use super::mindmap::MindmapHandle;
 use super::project::{PageGrid, PageLayout};
@@ -158,6 +163,7 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
         Some(t) if t.starts_with("gantt:") => tr!("notes.block.gantt"),
         Some(t) if t.starts_with("mindmap:") => tr!("notes.block.mindmap"),
         Some(t) if t.starts_with("calendar:") => tr!("notes.block.calendar"),
+        Some(t) if t.starts_with("chart:") => tr!("notes.block.chart"),
         _ => blocks::kind_label(props.kind, props.level),
     };
     let mut col = Column::new()
@@ -230,6 +236,12 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("calendar:")) {
         if let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", oid.trim()) {
             col = col.child(calendar_props(ctx, handle));
+        }
+    }
+    // График: вид, данные и оформление — на самом графике их не поправить.
+    if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("chart:")) {
+        if let Some(LiveObject::Chart { handle, .. }) = ctx.object("chart", oid.trim()) {
+            col = col.child(chart_props(handle));
         }
     }
 
@@ -945,6 +957,541 @@ fn mindmap_map_props(handle: &MindmapHandle, doc: &MindmapDoc) -> impl Widget {
         .child(reset)
 }
 
+/// Виды графика в переключателе панели: та же иконка, что в меню вставки.
+const CHART_KIND_SEG: [(&str, &str); 5] = [
+    (MI_SHOW_CHART, "line"),
+    (MI_BAR_CHART, "bar"),
+    (MI_PIE_CHART, "pie"),
+    (MI_HUB, "radar"),
+    (MI_SPEED, "gauge"),
+];
+
+/// Свойства графика: вид, данные и оформление. Своего редактирования на
+/// самом графике нет — данные правятся только здесь и инструментом агента,
+/// поэтому панель показывает и подписи, и ряды целиком.
+pub(super) fn chart_props(handle: ChartHandle) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = handle.structure_rev.get();
+        let doc = handle.lock().clone();
+
+        let h_kind = handle.clone();
+        let kind = segmented(&CHART_KIND_SEG, doc.kind.key(), move |v| {
+            if let Some(k) = ChartKind::parse(v) {
+                h_kind.set_kind(k);
+            }
+        });
+        let h_title = handle.clone();
+        let title = TextField::with_text(doc.title.clone())
+            .placeholder(tr!("notes.props.chart.no_title"))
+            .submit_on_focus_lost(true)
+            .on_submit(move |t| h_title.set_title(t))
+            .class("notes-props-field");
+
+        let col = Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-props")
+            .child(Text::new(tr!("notes.props.chart.section")).class("notes-links-section"))
+            .child(field_row(tr!("notes.props.chart.kind"), kind))
+            .child(field_row(tr!("notes.props.chart.title"), title))
+            .child(chart_data_props(&handle, &doc))
+            .child(chart_look_props(&handle, &doc));
+        vec![Box::new(col)]
+    })
+}
+
+/// Данные: у шкалы — одно число и границы, у круговой — доли с цветом, у
+/// остальных — подписи и ряды значений через запятую.
+fn chart_data_props(handle: &ChartHandle, doc: &ChartDoc) -> impl Widget {
+    let mut col = Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.chart.data")).class("notes-links-section"));
+
+    if doc.kind == ChartKind::Gauge {
+        let sid = doc.series.first().map(|s| s.id.clone()).unwrap_or_default();
+        let h_val = handle.clone();
+        let id_val = sid.clone();
+        let h_min = handle.clone();
+        let h_max = handle.clone();
+        let h_unit = handle.clone();
+        return col
+            .child(field_row(
+                tr!("notes.props.chart.value"),
+                SpinBox::new()
+                    .range(-1.0e9, 1.0e9)
+                    .step(1.0)
+                    .width(110.0)
+                    .value(doc.gauge_value())
+                    .on_change(move |v| h_val.set_value(&id_val, 0, v))
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.chart.min"),
+                SpinBox::new()
+                    .range(-1.0e9, 1.0e9)
+                    .step(1.0)
+                    .width(110.0)
+                    .value(doc.options.gauge_min)
+                    .on_change(move |v| h_min.set_options(|o| o.gauge_min = v))
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.chart.max"),
+                SpinBox::new()
+                    .range(-1.0e9, 1.0e9)
+                    .step(1.0)
+                    .width(110.0)
+                    .value(doc.options.gauge_max)
+                    .on_change(move |v| h_max.set_options(|o| o.gauge_max = v))
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.chart.unit"),
+                TextField::with_text(doc.options.unit.clone())
+                    .width(110.0)
+                    .submit_on_focus_lost(true)
+                    .on_submit(move |t| {
+                        let t = t.trim().to_string();
+                        h_unit.set_options(|o| o.unit = t);
+                    })
+                    .class("notes-props-field"),
+            ))
+            .child(chart_zones_props(handle, doc));
+    }
+
+    if doc.kind == ChartKind::Pie {
+        let sid = doc.series.first().map(|s| s.id.clone()).unwrap_or_default();
+        for (i, label) in doc.categories.iter().enumerate() {
+            let h_color = handle.clone();
+            let h_label = handle.clone();
+            let h_value = handle.clone();
+            let h_del = handle.clone();
+            let id_value = sid.clone();
+            let value = doc.series.first().map(|s| s.at(i)).unwrap_or(0.0);
+            col = col
+                .child(
+                    Row::new()
+                        .gap(6.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .child(
+                            DecoratedBox::new().class("grow").child(
+                                TextField::with_text(label.clone())
+                                    .submit_on_focus_lost(true)
+                                    .on_submit(move |t| h_label.set_category(i, t))
+                                    .class("notes-props-field"),
+                            ),
+                        )
+                        .child(
+                            SpinBox::new()
+                                .range(-1.0e9, 1.0e9)
+                                .step(1.0)
+                                .width(84.0)
+                                .value(value)
+                                .on_change(move |v| h_value.set_value(&id_value, i, v))
+                                .class("notes-props-field"),
+                        )
+                        .child(
+                            ToolButton::new(MI_DELETE)
+                                .tooltip(tr!("notes.props.chart.delete_slice"))
+                                .on_click(move || h_del.delete_category(i))
+                                .class("notes-kanban-lane-btn"),
+                        ),
+                )
+                .child(
+                    Row::new()
+                        .gap(8.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .child(swatches(COLOR_PRESETS, doc.color_at(i), move |c| h_color.set_category_color(i, c))),
+                );
+        }
+        let h_add = handle.clone();
+        return col.child(chart_add_button(tr!("notes.props.chart.add_slice"), move || {
+            h_add.add_category("");
+        }));
+    }
+
+    // Линии, столбцы и радар: общий список подписей и ряды значений.
+    let h_cats = handle.clone();
+    col = col.child(field_row(
+        tr!("notes.props.chart.categories"),
+        TextField::with_text(values_labels(&doc.categories))
+            .width(190.0)
+            .submit_on_focus_lost(true)
+            .on_submit(move |t| h_cats.set_categories(parse_labels(t)))
+            .class("notes-props-field"),
+    ));
+    for s in &doc.series {
+        let h_name = handle.clone();
+        let id_name = s.id.clone();
+        let h_data = handle.clone();
+        let id_data = s.id.clone();
+        let h_color = handle.clone();
+        let id_color = s.id.clone();
+        let h_del = handle.clone();
+        let id_del = s.id.clone();
+        let can_delete = doc.series.len() > 1;
+        let mut head = Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(
+                DecoratedBox::new().class("grow").child(
+                    TextField::with_text(s.name.clone())
+                        .placeholder(tr!("notes.chart.series"))
+                        .submit_on_focus_lost(true)
+                        .on_submit(move |t| h_name.rename_series(&id_name, t))
+                        .class("notes-props-field"),
+                ),
+            );
+        if can_delete {
+            head = head.child(
+                ToolButton::new(MI_DELETE)
+                    .tooltip(tr!("notes.props.chart.delete_series"))
+                    .on_click(move || {
+                        h_del.delete_series(&id_del);
+                    })
+                    .class("notes-kanban-lane-btn"),
+            );
+        }
+        col = col
+            .child(head)
+            .child(
+                TextField::with_text(values_text(&s.data))
+                    .placeholder(tr!("notes.props.chart.values_hint"))
+                    .submit_on_focus_lost(true)
+                    .on_submit(move |t| h_data.set_series_data(&id_data, parse_values(t)))
+                    .class("notes-props-field"),
+            )
+            .child(
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(swatches(COLOR_PRESETS, (!s.color.is_empty()).then_some(s.color.as_str()), move |c| {
+                        h_color.set_series_color(&id_color, c)
+                    })),
+            );
+    }
+    let h_add = handle.clone();
+    let next = doc.series.len() + 1;
+    col.child(chart_add_button(tr!("notes.props.chart.add_series"), move || {
+        h_add.add_series(&format!("{} {next}", tr!("notes.chart.series")), Vec::new());
+    }))
+}
+
+/// Цветные зоны шкалы: от, до, цвет.
+fn chart_zones_props(handle: &ChartHandle, doc: &ChartDoc) -> impl Widget {
+    let mut col = Column::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.chart.zones")).class("notes-links-section"));
+    for (i, z) in doc.options.zones.iter().enumerate() {
+        let h_from = handle.clone();
+        let h_to = handle.clone();
+        let h_color = handle.clone();
+        let h_del = handle.clone();
+        col = col
+            .child(
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(
+                        SpinBox::new()
+                            .range(-1.0e9, 1.0e9)
+                            .step(1.0)
+                            .width(84.0)
+                            .value(z.from)
+                            .on_change(move |v| h_from.set_options(|o| { if let Some(z) = o.zones.get_mut(i) { z.from = v; } }))
+                            .class("notes-props-field"),
+                    )
+                    .child(
+                        SpinBox::new()
+                            .range(-1.0e9, 1.0e9)
+                            .step(1.0)
+                            .width(84.0)
+                            .value(z.to)
+                            .on_change(move |v| h_to.set_options(|o| { if let Some(z) = o.zones.get_mut(i) { z.to = v; } }))
+                            .class("notes-props-field"),
+                    )
+                    .child(
+                        ToolButton::new(MI_DELETE)
+                            .tooltip(tr!("notes.props.chart.delete_zone"))
+                            .on_click(move || h_del.set_options(|o| { if i < o.zones.len() { o.zones.remove(i); } }))
+                            .class("notes-kanban-lane-btn"),
+                    ),
+            )
+            .child(
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(swatches(CHART_ZONE_PRESETS, Some(z.color.as_str()), move |c| {
+                        h_color.set_options(|o| {
+                            if let Some(z) = o.zones.get_mut(i) {
+                                z.color = c.unwrap_or_else(|| "#4FBF7A".to_string());
+                            }
+                        })
+                    })),
+            );
+    }
+    let h_add = handle.clone();
+    let max = doc.options.gauge_max;
+    let min = doc.options.gauge_min;
+    let from = doc.options.zones.last().map(|z| z.to).unwrap_or(min);
+    col.child(chart_add_button(tr!("notes.props.chart.add_zone"), move || {
+        h_add.set_options(|o| o.zones.push(GaugeZone { from, to: max, color: "#4FBF7A".to_string() }));
+    }))
+}
+
+/// Оформление: общее (легенда, подсказки, анимация) и то, что понимает
+/// только текущий вид.
+fn chart_look_props(handle: &ChartHandle, doc: &ChartDoc) -> impl Widget {
+    let o = doc.options.clone();
+    let kind = doc.kind;
+    let mut col = Column::new()
+        .gap(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(Text::new(tr!("notes.props.chart.look")).class("notes-links-section"));
+
+    if kind != ChartKind::Gauge {
+        let h_legend = handle.clone();
+        col = col.child(field_row(
+            tr!("notes.props.chart.legend"),
+            Dropdown::new()
+                .width(132.0)
+                .items(
+                    LegendPos::ALL
+                        .iter()
+                        .map(|p| DropdownItem::new(p.key(), syngui::i18n::tr(&format!("notes.chart.legend.{}", p.key()))))
+                        .collect(),
+                )
+                .selected(o.legend.key())
+                .on_change(move |v| {
+                    if let Some(p) = LegendPos::parse(v) {
+                        h_legend.set_options(|o| o.legend = p);
+                    }
+                })
+                .class("notes-props-field"),
+        ));
+        let h_tip = handle.clone();
+        col = col.child(switch_row(tr!("notes.props.chart.tooltip"), o.tooltip, move |on| {
+            h_tip.set_options(|o| o.tooltip = on)
+        }));
+    }
+    let h_anim = handle.clone();
+    col = col.child(switch_row(tr!("notes.props.chart.animate"), o.animate, move |on| {
+        h_anim.set_options(|o| o.animate = on)
+    }));
+
+    if kind.has_axes() {
+        let h_grid = handle.clone();
+        let h_x = handle.clone();
+        let h_y = handle.clone();
+        let h_min = handle.clone();
+        let h_max = handle.clone();
+        col = col
+            .child(switch_row(tr!("notes.props.chart.grid"), o.grid, move |on| h_grid.set_options(|o| o.grid = on)))
+            .child(field_row(
+                tr!("notes.props.chart.x_title"),
+                TextField::with_text(o.x_title.clone())
+                    .width(132.0)
+                    .submit_on_focus_lost(true)
+                    .on_submit(move |t| {
+                        let t = t.trim().to_string();
+                        h_x.set_options(|o| o.x_title = t);
+                    })
+                    .class("notes-props-field"),
+            ))
+            .child(field_row(
+                tr!("notes.props.chart.y_title"),
+                TextField::with_text(o.y_title.clone())
+                    .width(132.0)
+                    .submit_on_focus_lost(true)
+                    .on_submit(move |t| {
+                        let t = t.trim().to_string();
+                        h_y.set_options(|o| o.y_title = t);
+                    })
+                    .class("notes-props-field"),
+            ))
+            // Пустое поле — «по данным»: у SpinBox такого состояния нет.
+            .child(field_row(
+                tr!("notes.props.chart.y_min"),
+                bound_field(o.y_min, move |v| h_min.set_options(|o| o.y_min = v)),
+            ))
+            .child(field_row(
+                tr!("notes.props.chart.y_max"),
+                bound_field(o.y_max, move |v| h_max.set_options(|o| o.y_max = v)),
+            ));
+    }
+
+    match kind {
+        ChartKind::Line => {
+            let h_smooth = handle.clone();
+            let h_points = handle.clone();
+            let h_area = handle.clone();
+            col = col
+                .child(switch_row(tr!("notes.props.chart.smooth"), o.smooth, move |on| {
+                    h_smooth.set_options(|o| o.smooth = on)
+                }))
+                .child(switch_row(tr!("notes.props.chart.points"), o.points, move |on| {
+                    h_points.set_options(|o| o.points = on)
+                }))
+                .child(field_row(
+                    tr!("notes.props.chart.area"),
+                    percent_field(o.area, move |v| h_area.set_options(|o| o.area = v)),
+                ));
+        }
+        ChartKind::Bar => {
+            let h_stack = handle.clone();
+            let h_horiz = handle.clone();
+            let h_labels = handle.clone();
+            let h_radius = handle.clone();
+            col = col
+                .child(switch_row(tr!("notes.props.chart.stacked"), o.stacked, move |on| {
+                    h_stack.set_options(|o| o.stacked = on)
+                }))
+                .child(switch_row(tr!("notes.props.chart.horizontal"), o.horizontal, move |on| {
+                    h_horiz.set_options(|o| o.horizontal = on)
+                }))
+                .child(switch_row(tr!("notes.props.chart.value_labels"), o.value_labels, move |on| {
+                    h_labels.set_options(|o| o.value_labels = on)
+                }))
+                .child(field_row(
+                    tr!("notes.props.mindmap.radius"),
+                    SpinBox::new()
+                        .range(0.0, 40.0)
+                        .step(1.0)
+                        .width(96.0)
+                        .value(o.bar_radius as f64)
+                        .on_change(move |v| h_radius.set_options(|o| o.bar_radius = v as f32))
+                        .class("notes-props-field"),
+                ));
+        }
+        ChartKind::Pie => {
+            let h_donut = handle.clone();
+            let h_labels = handle.clone();
+            let h_pct = handle.clone();
+            col = col
+                .child(field_row(
+                    tr!("notes.props.chart.donut"),
+                    percent_field(o.donut, move |v| h_donut.set_options(|o| o.donut = v)),
+                ))
+                .child(field_row(
+                    tr!("notes.props.chart.pie_labels"),
+                    Dropdown::new()
+                        .width(132.0)
+                        .items(
+                            PieLabels::ALL
+                                .iter()
+                                .map(|p| DropdownItem::new(p.key(), syngui::i18n::tr(&format!("notes.chart.pie_labels.{}", p.key()))))
+                                .collect(),
+                        )
+                        .selected(o.pie_labels.key())
+                        .on_change(move |v| {
+                            if let Some(p) = PieLabels::parse(v) {
+                                h_labels.set_options(|o| o.pie_labels = p);
+                            }
+                        })
+                        .class("notes-props-field"),
+                ))
+                .child(switch_row(tr!("notes.props.chart.percentage"), o.percentage, move |on| {
+                    h_pct.set_options(|o| o.percentage = on)
+                }));
+        }
+        ChartKind::Radar => {
+            let h_circle = handle.clone();
+            let h_levels = handle.clone();
+            let h_max = handle.clone();
+            let h_points = handle.clone();
+            let h_area = handle.clone();
+            col = col
+                .child(switch_row(tr!("notes.props.chart.radar_circle"), o.radar_circle, move |on| {
+                    h_circle.set_options(|o| o.radar_circle = on)
+                }))
+                .child(field_row(
+                    tr!("notes.props.chart.radar_levels"),
+                    SpinBox::new()
+                        .range(1.0, 10.0)
+                        .step(1.0)
+                        .width(96.0)
+                        .value(o.radar_levels as f64)
+                        .on_change(move |v| h_levels.set_options(|o| o.radar_levels = v.max(1.0) as usize))
+                        .class("notes-props-field"),
+                ))
+                .child(field_row(
+                    tr!("notes.props.chart.radar_max"),
+                    bound_field(o.radar_max, move |v| h_max.set_options(|o| o.radar_max = v)),
+                ))
+                .child(switch_row(tr!("notes.props.chart.points"), o.points, move |on| {
+                    h_points.set_options(|o| o.points = on)
+                }))
+                .child(field_row(
+                    tr!("notes.props.chart.area"),
+                    percent_field(o.area, move |v| h_area.set_options(|o| o.area = v)),
+                ));
+        }
+        ChartKind::Gauge => {
+            let h_needle = handle.clone();
+            let h_ticks = handle.clone();
+            let h_labels = handle.clone();
+            col = col
+                .child(switch_row(tr!("notes.props.chart.needle"), o.needle, move |on| {
+                    h_needle.set_options(|o| o.needle = on)
+                }))
+                .child(switch_row(tr!("notes.props.chart.ticks"), o.ticks, move |on| {
+                    h_ticks.set_options(|o| o.ticks = on)
+                }))
+                .child(switch_row(tr!("notes.props.chart.gauge_labels"), o.gauge_labels, move |on| {
+                    h_labels.set_options(|o| o.gauge_labels = on)
+                }));
+        }
+    }
+    col
+}
+
+/// Кнопка «добавить …» под списком — тот же вид, что «новая карточка».
+fn chart_add_button(label: String, on_click: impl Fn() + Send + Sync + 'static) -> impl Widget {
+    GestureDetector::new()
+        .cursor(syngui::input::CursorIcon::Pointer)
+        .on_click(on_click)
+        .child(
+            DecoratedBox::new().class("notes-kanban-tail").child(
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(Icon::new(MI_ADD).class("notes-insert-icon"))
+                    .child(Text::new(label).class("notes-insert-label")),
+            ),
+        )
+}
+
+/// Поле границы оси: пусто — считать по данным.
+fn bound_field(value: Option<f64>, on_change: impl Fn(Option<f64>) + Send + Sync + 'static) -> impl Widget {
+    TextField::with_text(value.map(fmt_num).unwrap_or_default())
+        .width(96.0)
+        .placeholder(tr!("notes.props.chart.auto"))
+        .submit_on_focus_lost(true)
+        .on_submit(move |t: &str| {
+            let t = t.trim();
+            on_change((!t.is_empty()).then(|| parse_num(t)));
+        })
+        .class("notes-props-field")
+}
+
+/// Доля 0…1 в панели — проценты: «заливка 30 %» понятнее «0.3».
+fn percent_field(value: f32, on_change: impl Fn(f32) + Send + Sync + 'static) -> impl Widget {
+    SpinBox::new()
+        .range(0.0, 90.0)
+        .step(5.0)
+        .width(96.0)
+        .value((value * 100.0).round() as f64)
+        .on_change(move |v| on_change((v / 100.0) as f32))
+        .class("notes-props-field")
+}
+
+/// Подписи одной строкой для поля ввода.
+fn values_labels(labels: &[String]) -> String {
+    labels.join(", ")
+}
+
 /// Свойства календаря: выбранное событие, вид, стиль, календари проекта.
 fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
     let store = ctx.calendar_store();
@@ -1284,6 +1831,10 @@ const BG_PRESETS: &[&str] =
 /// чёрные пятна, как тёмные подложки текста.
 const TINT_PRESETS: &[&str] =
     &["", "#EE5E4833", "#E8A33D33", "#4FBF7A33", "#4F8CFF33", "#C08FE833", "#8B95A633"];
+/// Зоны шкалы всегда цветные — пустого кружка «как в теме» тут нет: зона
+/// без цвета не читается.
+const CHART_ZONE_PRESETS: &[&str] =
+    &["#4FBF7A", "#E8A33D", "#EE5E48", "#4F8CFF", "#C08FE8", "#8B95A6"];
 /// Заливка фигуры: первый кружок — «без заливки» (только контур).
 const SHAPE_FILL_PRESETS: &[&str] =
     &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#2B2F36"];

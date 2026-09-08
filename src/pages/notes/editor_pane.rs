@@ -57,9 +57,9 @@ pub fn body() -> impl Widget {
             .block_drag_type(super::kanban::sinks::DRAG_TYPE_BLOCK)
             .on_drop_data(move |pos, data| super::kanban::sinks::drop_on_page(ctx, pos, data))
             .class("notes-editor");
-        // Поток не выходит за ширину колонки — прокрутка только вниз;
-        // холст свободной раскладки — в обе стороны.
-        let scroller = if layout.free { Page::new().both() } else { Page::new().vertical() };
+        // Холст прокручивается в обе стороны: блок, ушедший за правый
+        // край, растягивает страницу.
+        let scroller = Page::new().both();
         vec![Box::new(
             Stack::new()
                 .clip(false)

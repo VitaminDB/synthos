@@ -5,7 +5,8 @@
 //!
 //! Область: `src/agent/**/*.rs`, `src/syn_chat/{system_prompt,compact,
 //! channel_parser,tool_parser}.rs` — без комментариев (`//`, `/* */`) и без
-//! тестовых модулей (`#[cfg(test)]` и всё, что после него, тест не смотрит:
+//! тестовых модулей (`#[cfg(test)]` и всё, что после него, а также файлы
+//! `tests.rs` / `harness_tests.rs` целиком, тест не смотрит:
 //! там кириллица — валидные фикстуры для парсеров, а не текст для модели);
 //! плюс `DEFAULT_SYSTEM_PROMPT`/`DEFAULT_VOICE_REFINE_PROMPT` из
 //! `src/config.rs` — читаются напрямую из `synthos::config`, а не файловым
@@ -32,6 +33,12 @@ fn agent_rs_files(dir: &Path, acc: &mut Vec<PathBuf>) {
         if p.is_dir() {
             agent_rs_files(&p, acc);
         } else if p.extension().is_some_and(|x| x == "rs") {
+            // Файл-модуль тестов (`mod tests;` рядом с кодом) целиком
+            // тестовый: фикстуры в нём русские по делу — названия
+            // страниц, колонок и карточек проверяются через `tr!`.
+            if p.file_name().is_some_and(|n| n == "tests.rs" || n == "harness_tests.rs") {
+                continue;
+            }
             acc.push(p);
         }
     }
@@ -276,6 +283,10 @@ fn strip_diagnostic_calls(src: &str) -> String {
 /// узкий и привязан к конкретным строкам — новая кириллица в этих файлах
 /// потребует либо перевода, либо явного добавления сюда с причиной.
 const ALLOWED: &[(&str, &str)] = &[
+    // Стоп-слова русского запроса в проверке релевантности выдачи: это
+    // данные фильтра, а не текст для модели — перевести их нельзя, они
+    // и должны быть на языке запроса.
+    ("src/agent/tools/web/search.rs", "\"или\" | \"как\" | \"что\""),
     // Голосовой ввод (запись/распознавание/выбор ASR-модели) — сигналы
     // `session.error()`/`refine_error`, отрисовываются в voice_fab-панели
     // (src/components/voice_fab/**), это отдельная UI-фаза i18n, не тексты

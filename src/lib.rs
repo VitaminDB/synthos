@@ -92,8 +92,14 @@ pub fn run_desktop() {
         .with_system_appearance(ctx.appearance.system)
         .with_backdrop(ctx.appearance.backdrop)
         .with_window_state(ctx.appearance.window_state)
+        // Закрытие окна сначала спрашивает приложение: живая команда в
+        // терминале, ход агента, несохранённый файл или граф, идущая
+        // загрузка — повод показать диалог вместо молчаливого выхода
+        // (см. `components::quit_dialog`).
+        .on_close_request(components::quit_dialog::allow_close)
         .run(move |_| {
             provide_context(ctx.clone());
+            provide_context(components::quit_dialog::QuitCtx::new());
             // Снимок до автосейва: `install_config_autosave` пишет файл сразу
             // при установке, и `restore_last_view` увидел бы уже стартовые
             // значения вместо сохранённых при выходе.
@@ -1001,6 +1007,7 @@ fn build_app() -> impl Widget {
             shell,
             components::template_picker::view(),
             components::graph_close_dialog::view(),
+            components::quit_dialog::view(),
             pages::syn_chat::archive_dialog::view(),
             pages::syn_chat::clear_dialog::view(),
             components::voice_fab::view(),

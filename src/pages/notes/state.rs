@@ -477,7 +477,8 @@ impl NotesCtx {
         let Some(id) = self.active.get() else { return DocLayout::default() };
         let l = self.tree.get().layout_of(&id);
         DocLayout {
-            free: l.free,
+            // Раскладка одна — холст: блоки стоят по координатам.
+            free: true,
             grid: match l.grid {
                 PageGrid::None => DocGrid::None,
                 PageGrid::Dots => DocGrid::Dots,

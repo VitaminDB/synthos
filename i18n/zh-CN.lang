@@ -1718,3 +1718,13 @@ notes.props.chart.ticks = "刻度"
 notes.props.chart.gauge_labels = "刻度标签"
 app.save = "保存"
 app.edit = "编辑"
+
+# Quit confirmation (components::quit_dialog)
+app.quit.title = "退出 Synthos？"
+app.quit.hint = "未完成的工作将丢失：正在运行的命令会中断，未保存的更改不会写入。"
+app.quit.confirm = "退出"
+app.quit.reason.agent = "智能体正在聊天中回复"
+app.quit.reason.terminals.other = "{n} 个终端正在运行命令"
+app.quit.reason.files.other = "{n} 个未保存的文件"
+app.quit.reason.graphs.other = "{n} 个未保存的图"
+app.quit.reason.downloads.other = "{n} 项进行中的下载"

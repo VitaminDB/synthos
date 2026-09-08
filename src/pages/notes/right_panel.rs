@@ -2068,24 +2068,15 @@ fn page_props(ctx: NotesCtx, id: String) -> impl Widget {
         .child(layout_props(ctx, id))
 }
 
-/// Раскладка страницы: режим, фон-сетка и привязка.
+/// Раскладка страницы: фон-сетка и привязка. Режим не выбирается —
+/// страница всегда холст: блоки стоят по координатам, а не колонкой.
 fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
     let layout = ctx.page_layout(&id);
-
-    let free_id = id.clone();
-    let free_row = switch_row(tr!("notes.props.layout.free"), layout.free, move |on| {
-        ctx.set_page_layout(&free_id, PageLayout { free: on, ..ctx.page_layout(&free_id) });
-    });
 
     let mut col = Column::new()
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(Text::new(tr!("notes.props.layout")).class("notes-links-section"))
-        .child(free_row);
-
-    if !layout.free {
-        return col.child(Text::new(tr!("notes.props.layout.hint")).class("notes-props-hint"));
-    }
+        .child(Text::new(tr!("notes.props.layout")).class("notes-links-section"));
 
     let grid_id = id.clone();
     let grid = Dropdown::new()

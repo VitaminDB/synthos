@@ -211,3 +211,22 @@
         transform: translateY(0);
     }
 }
+
+/* ─── Подтверждение выхода (components::quit_dialog) ──────────────────
+ * Та же карточка, что у остальных подтверждений; отличается списком
+ * причин — по строке на каждое незавершённое дело.
+ * ───────────────────────────────────────────────────────────────────── */
+
+.quit-dialog {
+    max-width: 520px;
+}
+
+.quit-dialog-bullet {
+    color: var(--warning);
+    font-size: 16px;
+}
+
+.quit-dialog-reason {
+    color: var(--text);
+    font-size: 14px;
+}

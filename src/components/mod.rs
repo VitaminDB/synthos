@@ -10,4 +10,5 @@ pub mod titlebar;
 pub mod tool_confirm;
 pub mod voice_fab;
 pub mod notification;
+pub mod quit_dialog;
 pub mod template_picker;

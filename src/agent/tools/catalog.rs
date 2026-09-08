@@ -413,8 +413,8 @@ pub(super) fn build_all() -> Vec<Tool> {
                 shapes, media, boards, charts, mind maps and calendars), \
                 otherwise the unplaced ones are drawn in the flow column ON \
                 TOP of the pinned blocks and the page turns into a pile. \
-                create layout=free with content, and update layout=free on \
-                a flow page, pin the blocks in a column where the flow had \
+                create layout=free with content, and update layout=free, \
+                pin the unplaced blocks in a column where the flow had \
                 them; content added later carries no geometry, so after \
                 such an edit on a page with pinned blocks run blocks \
                 op=arrange once (stacks every unplaced block below the \
@@ -599,16 +599,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("layout", json!({
             "type": "string",
-            "enum": ["free", "flow"],
-            "description": "create/update: free (default for new pages) — a \
-                canvas where every block keeps its own x y w h; until \
+            "enum": ["free"],
+            "description": "create/update: every page is a canvas where each \
+                block keeps its own x y w h — there is no flow mode. Until \
                 something is pinned the blocks flow in one centred column \
                 like a document, but a block left without x/y next to \
-                pinned ones is drawn over them. flow — a plain document \
-                column, coordinates are ignored. Passing layout=free \
-                explicitly on create (with content) or on a flow page pins \
-                the blocks in one column where the flow had them, so the \
-                picture does not change."
+                pinned ones is drawn over them. Passing layout=free pins \
+                the unplaced blocks in one column where the flow had them, \
+                so the picture does not change."
         })),
         ("gap", json!({
             "type": "number",

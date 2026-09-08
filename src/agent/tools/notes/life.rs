@@ -14,18 +14,17 @@ use crate::pages::notes::gantt::calendar::weekday_of;
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /// Карточка с адресом: доска, страница, колонка.
-pub(super) struct TaskRow {
+struct TaskRow {
     pub board: String,
     pub page: String,
     pub page_title: String,
     pub column: String,
-    pub column_done: bool,
     pub archived: bool,
     pub card: KanbanCard,
 }
 
 /// Все карточки проекта (с архивом), в порядке дерева и досок.
-pub(super) fn all_cards(ctx: NotesCtx) -> Vec<TaskRow> {
+fn all_cards(ctx: NotesCtx) -> Vec<TaskRow> {
     let mut out = Vec::new();
     for (oid, pid) in all_objects(ctx, "kanban") {
         let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", &oid) else { continue };
@@ -37,7 +36,6 @@ pub(super) fn all_cards(ctx: NotesCtx) -> Vec<TaskRow> {
                 page: pid.clone(),
                 page_title: page_title.clone(),
                 column: doc.column_name(&c.column),
-                column_done: doc.is_done_column(&c.column),
                 archived: false,
                 card: c.clone(),
             });
@@ -48,7 +46,6 @@ pub(super) fn all_cards(ctx: NotesCtx) -> Vec<TaskRow> {
                 page: pid.clone(),
                 page_title: page_title.clone(),
                 column: doc.column_name(&c.column),
-                column_done: true,
                 archived: true,
                 card: c.clone(),
             });
@@ -337,7 +334,7 @@ pub(super) fn agenda_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let open: Vec<&TaskRow> = rows.iter().filter(|r| !r.archived && !r.card.is_done()).collect();
     let due_of = |r: &TaskRow| r.card.due.as_deref().and_then(parse_days);
     let mut out = format!("--- Agenda · {} ({}) ---\n", days_to_iso(today), WEEKDAYS[weekday_of(today) as usize]);
-    let mut section = |out: &mut String, title: &str, items: Vec<&TaskRow>, with_due: bool| {
+    let section = |out: &mut String, title: &str, items: Vec<&TaskRow>, with_due: bool| {
         if items.is_empty() {
             return;
         }

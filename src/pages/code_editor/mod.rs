@@ -81,13 +81,10 @@ pub fn view() -> impl Widget {
                 )))];
             };
 
-            // Lazy-init первого таба терминала в активной сессии. Guard через
-            // `tabs.is_empty()` — повторные вызовы view() уже видят таб и не
-            // дублируют. `tabs.update` внутри `add_terminal` триггерит ещё один
-            // ребилд, но guard гасит цикл (на втором заходе tab'ы не пусты).
-            if session.terminals.tabs.get_untracked().is_empty() {
-                let _ = state::add_terminal(session, app.clone());
-            }
+            // Терминал не заводится сам: PTY поднимает shell, а тот —
+            // профиль пользователя со всем, что в нём прописано. Открытие
+            // страницы такого не просило; первый таб появляется по «+» в
+            // панели терминала (до этого там подсказка `empty_placeholder`).
 
             let (left_visible, right_visible) = app.panels.code;
             let spec = FrameSpec::new(

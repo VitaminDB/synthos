@@ -1720,3 +1720,13 @@ notes.props.chart.ticks = "目盛り"
 notes.props.chart.gauge_labels = "目盛りラベル"
 app.save = "保存"
 app.edit = "編集"
+
+# Quit confirmation (components::quit_dialog)
+app.quit.title = "Synthos を終了しますか？"
+app.quit.hint = "未完了の作業は失われます: 実行中のコマンドは停止し、未保存の変更は書き込まれません。"
+app.quit.confirm = "終了"
+app.quit.reason.agent = "エージェントがチャットで応答中です"
+app.quit.reason.terminals.other = "コマンド実行中のターミナル {n} 個"
+app.quit.reason.files.other = "未保存のファイル {n} 件"
+app.quit.reason.graphs.other = "未保存のグラフ {n} 件"
+app.quit.reason.downloads.other = "進行中のダウンロード {n} 件"

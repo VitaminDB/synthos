@@ -13,8 +13,8 @@
 .notes-tree {
     padding: 6px;
 }
-/* Высота строки фиксирована: от неё считаются зоны дропа
- * «перед / внутрь / после» (contents.rs::ROW_H). */
+/* Зоны дропа «перед / внутрь / после» считаются от высоты цели
+ * (contents.rs::zone_at), над каждой строкой — линия вставки. */
 .notes-tree-row {
     height: 28px;
     border-radius: 6px;
@@ -26,6 +26,21 @@
 }
 .notes-tree-row.selected {
     background-color: var(--surface-selected);
+}
+/* Курсор с переносом над серединой строки — «вложить внутрь». */
+.notes-tree-row.drop-into {
+    background-color: var(--surface-selected);
+    outline-width: 1px;
+    outline-color: var(--primary);
+    outline-offset: -1px;
+}
+/* Линия вставки над строкой: всегда 2px, красится только под курсором. */
+.notes-tree-drop-line {
+    background-color: transparent;
+    border-radius: 1px;
+}
+.notes-tree-drop-line.active {
+    background-color: var(--primary);
 }
 .notes-tree-chevron-box {
     width: 16px;

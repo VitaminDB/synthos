@@ -122,6 +122,19 @@ pub const TAB_LINKS: usize = 1;
 pub const TAB_PAGES: usize = 0;
 pub const TAB_BLOCKS: usize = 1;
 
+/// Куда упадёт страница, которую тащат по дереву «Содержимое»: индикатор
+/// рисуется по этому сигналу, сама вставка считается заново на отпускании
+/// (`contents::drop_plan`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeDropHint {
+    /// Линия над строкой `id` — вставить перед ней (как соседа).
+    Line(String),
+    /// Линия под последней строкой — в конец корня.
+    Tail,
+    /// Рамка на строке `id` — вложить внутрь.
+    Into(String),
+}
+
 #[derive(Clone, Copy)]
 pub struct NotesCtx {
     pub project_path: RwSignal<PathBuf>,
@@ -162,6 +175,9 @@ pub struct NotesCtx {
     pub tile_opened_at: RwSignal<Option<u64>>,
     /// Строка дерева в режиме переименования.
     pub renaming: RwSignal<Option<String>>,
+    /// Подсказка дропа в дереве страниц (см. [`TreeDropHint`]). `None` —
+    /// ничего не тащат или курсор вне дерева.
+    pub tree_drop: RwSignal<Option<TreeDropHint>>,
     /// Панель выбора иконки: страница-цель, якорь, открыта ли.
     pub icon_picker_page: RwSignal<Option<String>>,
     pub icon_picker_anchor: RwSignal<Rect>,
@@ -238,6 +254,7 @@ impl NotesCtx {
             doc_epoch: use_signal(0),
             tile_opened_at: use_signal(cfg.notes_tile_opened_at),
             renaming: use_signal(None),
+            tree_drop: use_signal(None),
             icon_picker_page: use_signal(None),
             icon_picker_anchor: use_signal(Rect::zero()),
             icon_picker_open: use_signal(false),

@@ -40,6 +40,24 @@ pub struct QueuedMsg {
     pub time: String,
 }
 
+/// Черновик ответа на панель визарда (`pages::syn_chat::wizard`); ключ в
+/// `SynChatCtx::wizard_drafts` — индекс tool_call-сообщения в ленте.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WizardDraft {
+    /// Индексы выбранных вариантов (у одиночного выбора — не больше одного).
+    pub selected: Vec<usize>,
+    /// Свободный текст.
+    pub custom: String,
+    /// Поле свободного текста раскрыто выбором варианта «свой».
+    pub custom_open: bool,
+    /// Момент, когда панель свернётся без ответа (unix-секунды).
+    pub deadline: Option<u64>,
+    /// Таймер истёк — панель свёрнута с пометкой.
+    pub expired: bool,
+    /// Ответ отправлен или вопрос пропущен — панель свёрнута.
+    pub dismissed: bool,
+}
+
 /// Контекст Syn-чата. Клонируется дёшево (Arc на abort/input_tok_gen + Copy-сигналы).
 #[derive(Clone)]
 pub struct SynChatCtx {
@@ -164,6 +182,12 @@ pub struct SynChatCtx {
     /// (`pages::syn_chat::clear_dialog`). Кнопка в шапке только взводит
     /// сигнал; `session::clear_chat` зовётся из диалога.
     pub pending_clear: RwSignal<bool>,
+    /// Черновики ответов на панели визарда по индексу сообщения. Эфемерно,
+    /// сбрасывается вместе с остальными index-keyed картами.
+    pub wizard_drafts: RwSignal<HashMap<usize, WizardDraft>>,
+    /// Секундный тик для обратного отсчёта панелей с таймером — на него
+    /// подписана только сама панель, не лента.
+    pub wizard_tick: RwSignal<u64>,
     /// Очередь отправки: сообщения, написанные во время хода, в порядке
     /// добавления. Первое сообщение активного чата уходит, как только ход
     /// закончился (`session::flush_queue`). В памяти, не persist'ится.
@@ -266,6 +290,8 @@ impl SynChatCtx {
             editing_msg: use_signal(None),
             renaming_chat: use_signal(false),
             pending_clear: use_signal(false),
+            wizard_drafts: use_signal(HashMap::new()),
+            wizard_tick: use_signal(0),
             queue: use_signal(Vec::new()),
             queue_editing: use_signal(None),
             queue_seq: Arc::new(AtomicU64::new(1)),

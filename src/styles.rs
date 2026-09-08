@@ -71,6 +71,7 @@ pub fn styles() -> &'static str {
         include_str!("../styles/components/settings_kb.mss"),
         "\n",
         include_str!("../styles/components/tool_messages.mss"),
+        include_str!("../styles/components/wizard_panel.mss"),
         "\n",
         include_str!("../styles/components/tool_group.mss"),
         "\n",

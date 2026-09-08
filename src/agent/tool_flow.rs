@@ -113,6 +113,11 @@ pub(crate) async fn await_decision_on_tool_call(
     snapshot: u64,
 ) -> ToolDecision {
     let tool_key = call.function.name.clone().unwrap_or_default();
+    // Вопрос пользователю — не действие: подтверждать нечего, диалог перед
+    // панелью с кнопками только мешал бы.
+    if tool_key == crate::agent::tools::catalog::KEY_WIZARD {
+        return ToolDecision::Allow;
+    }
 
     // Быстрый путь: один main-hop читает три источника и решает,
     // нужно ли вообще показывать диалог.

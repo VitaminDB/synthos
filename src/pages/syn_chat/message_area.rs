@@ -272,6 +272,9 @@ fn pair_at(msgs: &[ChatMsg], i: usize) -> Option<(&str, bool)> {
         return None;
     }
     let call_name = match &msgs[i].kind {
+        // Панель визарда — не карточка инструмента: под шапку группы её не
+        // прятать.
+        ChatMsgKind::ToolCall { tool_name } if tool_name == "wizard" => return None,
         ChatMsgKind::ToolCall { tool_name } => tool_name.as_str(),
         _ => return None,
     };

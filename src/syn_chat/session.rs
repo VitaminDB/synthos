@@ -1110,6 +1110,7 @@ fn reset_index_keyed_ui(ctx: &SynChatCtx) {
     ctx.tool_group_open.set(HashMap::new());
     ctx.tool_body_open.set(HashMap::new());
     ctx.compaction_open.set(HashMap::new());
+    ctx.wizard_drafts.set(HashMap::new());
 }
 
 /// Снять хвостовой пустой пузырь ассистента: он выглядит как «повисло».
@@ -1818,6 +1819,10 @@ async fn run_agent_loop(
     // с пустым assistant-плейсхолдером, в логе — ничего, и снаружи это
     // выглядело как зависшая без ошибки генерация.
     let mut answered = false;
+    // `wizard` показал вопрос: ход заканчивается, ответ придёт следующим
+    // сообщением пользователя. Ставится после результата вызова, ход
+    // обрывается после всех вызовов этого хода (пары call/result целы).
+    let mut awaiting_user = false;
     // Ход без вызовов и без текста: весь бюджет ушёл в reasoning, который
     // оборвался на полуслове. Это не ответ — раньше цикл принимал его за
     // ответ и выходил, оставляя в ленте пустой пузырь и брошенную работу.
@@ -2727,6 +2732,9 @@ async fn run_agent_loop(
             let mut for_history = content;
             for_history.push_str(&note);
             history.push(Message::tool_named(tool_name(chat_call), for_history));
+            if !outcome.error && tool_name(chat_call) == tools::catalog::KEY_WIZARD {
+                awaiting_user = true;
+            }
 
             // Серия вызовов, не дошедших до исполнения: модель не может
             // собрать вызов — дальше только сгорает бюджет ходов.
@@ -2791,6 +2799,11 @@ async fn run_agent_loop(
 
         // Готовим placeholder для следующего turn (UI bubble — пустой
         // assistant, который заполнится stream'ом).
+        if awaiting_user {
+            log::info!("[syn_chat] wizard: вопрос показан пользователю — ход завершён, ждём ответ");
+            answered = true;
+            break 'agent;
+        }
         ledger_update(&chat_id, |m| m.push(ChatMsg::assistant_empty()));
         if_active(&chat_id, |c| {
             c.streaming_body.set(String::new());

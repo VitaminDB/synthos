@@ -37,6 +37,7 @@ pub mod subagent;
 pub mod system;
 pub mod web;
 pub mod web_fetch;
+pub mod wizard;
 
 use std::sync::Arc;
 

@@ -171,6 +171,19 @@ pub fn build(env: &PromptEnv) -> String {
                  — in pipelines list).\n",
             );
         }
+        if env.tools.iter().any(|t| t == "wizard") {
+            s.push_str(
+                "\nWizard (`wizard`) — a question panel for the user: \
+                 clickable options (single or multiple choice) and/or a \
+                 free-text field. Use it when a decision is the user's to \
+                 make — a period, a template, confirm vs alternatives — \
+                 instead of asking in plain text. The call ENDS your turn: \
+                 write nothing after it and call no other tool in that \
+                 turn; the answer arrives as the user's next message (the \
+                 option labels, or the typed text). One question per call, \
+                 2–6 short options.\n",
+            );
+        }
         // Правила заметок — тоже только при активном инструменте.
         if env.tools.iter().any(|t| t == "notes") {
             s.push_str(
@@ -381,6 +394,16 @@ mod tests {
     #[test]
     fn budget_note_mentions_remaining_turns() {
         assert!(budget_note(2).contains("agent turns remaining — 2"));
+    }
+
+    #[test]
+    fn wizard_rules_only_with_wizard_tool() {
+        let s = build(&env());
+        assert!(!s.contains("Wizard (`wizard`)"));
+        let mut e = env();
+        e.tools.push("wizard".to_string());
+        let s = build(&e);
+        assert!(s.contains("Wizard (`wizard`)") && s.contains("ENDS your turn"), "{s}");
     }
 
     #[test]

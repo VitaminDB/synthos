@@ -661,6 +661,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             tools_active: tools_active.get(),
             // Загруженный конфиг уже прошёл `introduce_notes_tool`.
             tools_notes_introduced: true,
+            tools_wizard_introduced: true,
             skills_active: skills_active.get(),
             audio_models: audio_models.get(),
             selected_audio_model: selected_audio_model.get(),

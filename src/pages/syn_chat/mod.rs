@@ -48,6 +48,7 @@ pub mod message_bubble;
 pub mod prompt_window;
 pub mod right_panel;
 pub mod tool_group;
+pub mod wizard;
 
 pub fn view() -> impl Widget {
     // Авто-загрузки модели тут нет: открытие чата не должно занимать VRAM.

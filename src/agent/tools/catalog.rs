@@ -3,8 +3,8 @@
 use serde_json::json;
 
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL,
-    MI_TRAVEL_EXPLORE,
+    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_HELP_OUTLINE, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH,
+    MI_TERMINAL, MI_TRAVEL_EXPLORE,
 };
 
 use super::descriptor::Tool;
@@ -18,6 +18,7 @@ pub const KEY_SUBAGENT: &str = "subagent";
 pub const KEY_SYSTEM: &str = "system";
 pub const KEY_PIPELINES: &str = "pipelines";
 pub const KEY_NOTES: &str = "notes";
+pub const KEY_WIZARD: &str = "wizard";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -282,6 +283,67 @@ pub(super) fn build_all() -> Vec<Tool> {
                     }
                 },
                 "required": ["action"],
+                "additionalProperties": false
+            }),
+        },
+        Tool {
+            key: KEY_WIZARD,
+            label: "wizard",
+            icon: MI_HELP_OUTLINE,
+            description: "Ask the user ONE question with clickable answer \
+                options (single or multiple choice) and/or a free-text \
+                field. A panel appears in the chat; the user's click is \
+                sent as their next message (the chosen option labels, or \
+                the typed text). THIS CALL ENDS YOUR TURN: write nothing \
+                after it and call no other tool in the same turn — the \
+                reply comes as the next user message. Use it for decisions \
+                only the user can make (a period, a template, confirm vs \
+                alternatives), not for questions you can answer yourself. \
+                2–6 short options; value = machine-readable id when it \
+                differs from the label; allow_free_text on an option = the \
+                user types a custom value for it; required = the panel \
+                cannot be skipped; timeout_sec = the panel folds without an \
+                answer after that many seconds.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question shown above the options."
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": { "type": "string", "description": "Button text." },
+                                "value": { "type": "string", "description": "Optional id; the user's message carries the label." },
+                                "tooltip": { "type": "string", "description": "Hint shown on hover." },
+                                "allow_free_text": { "type": "boolean", "description": "Choosing this option opens a text field; the answer is \"label: text\"." }
+                            },
+                            "required": ["label"],
+                            "additionalProperties": false
+                        },
+                        "description": "2–6 answer buttons (max 12). Omit for a free-text question."
+                    },
+                    "allow_multiple": {
+                        "type": "boolean",
+                        "description": "true — checkboxes, several options at once (labels come comma-separated)."
+                    },
+                    "allow_free_text": {
+                        "type": "boolean",
+                        "description": "true — a free-text field next to the options."
+                    },
+                    "required": {
+                        "type": "boolean",
+                        "description": "true — the user cannot skip the question."
+                    },
+                    "timeout_sec": {
+                        "type": "integer",
+                        "description": "Seconds until the panel folds without an answer (0 = no timer)."
+                    }
+                },
+                "required": ["question"],
                 "additionalProperties": false
             }),
         },

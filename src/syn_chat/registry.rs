@@ -159,6 +159,7 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     ctx.highlight_msg.set(None);
     ctx.editing_msg.set(None);
     ctx.queue_editing.set(None);
+    ctx.wizard_drafts.update(|m| m.clear());
     ctx.error.set(None);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());

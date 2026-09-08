@@ -47,6 +47,17 @@ pub fn view(
     tool_mode: &str,
 ) -> Box<dyn Widget> {
     match &msg.kind {
+        // Панель визарда видна в любом режиме показа инструментов — это
+        // вопрос пользователю; результат вызова — служебная строка, прячем.
+        ChatMsgKind::ToolCall { tool_name } if tool_name == "wizard" => {
+            match super::wizard::spec_of(msg) {
+                Some(spec) => Box::new(super::wizard::row(msg, msg_idx, spec)),
+                None => Box::new(tool_call_row(msg, msg_idx, tool_name, is_typing, tool_mode == "minimal")),
+            }
+        }
+        ChatMsgKind::ToolResult { tool_name, error, .. } if tool_name == "wizard" && !*error => {
+            Box::new(DecoratedBox::new())
+        }
         ChatMsgKind::ToolCall { tool_name } => match tool_mode {
             "hidden" => Box::new(DecoratedBox::new()),
             "minimal" => Box::new(tool_call_row(msg, msg_idx, tool_name, is_typing, true)),

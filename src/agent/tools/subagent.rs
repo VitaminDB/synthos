@@ -200,7 +200,9 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
 fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
     let keys = app.tools.active.get_untracked();
     keys.iter()
-        .filter(|k| k.as_str() != KEY_SUBAGENT)
+        // Визард — панель для пользователя в ленте; у субагента ни ленты,
+        // ни пользователя.
+        .filter(|k| k.as_str() != KEY_SUBAGENT && k.as_str() != super::catalog::KEY_WIZARD)
         .filter_map(|k| {
             if k == KEY_AUTOSKILL {
                 Some(crate::agent::tool_flow::build_autoskill_chat_tool(app))
@@ -222,7 +224,7 @@ fn select_tools(snap_tools: &[ChatTool], requested: Option<&[String]>) -> Vec<Ch
             let known: std::collections::HashSet<&str> =
                 snap_tools.iter().map(|t| t.function.name.as_str()).collect();
             for k in req {
-                if k == KEY_SUBAGENT {
+                if k == KEY_SUBAGENT || k == super::catalog::KEY_WIZARD {
                     continue;
                 }
                 if !known.contains(k.as_str()) {

@@ -512,6 +512,9 @@ pub struct AppConfig {
     /// активные один раз, дальше выбор пользователя не трогается.
     #[serde(default)]
     pub tools_notes_introduced: bool,
+    /// То же для `wizard` (08.09.2026): один раз дописывается в активные.
+    #[serde(default)]
+    pub tools_wizard_introduced: bool,
     /// Slug-id скилов, активных в правой панели (отображаются как
     /// «Активные» чипы рядом с tools_section). Сами скилы хранятся в
     /// `~/.config/synthos/skills/*.md` — здесь только подсветка.
@@ -1131,6 +1134,7 @@ pub fn default_tools_active() -> Vec<String> {
         "system".to_string(),
         "pipelines".to_string(),
         "notes".to_string(),
+        "wizard".to_string(),
     ]
 }
 
@@ -1148,6 +1152,7 @@ impl Default for AppConfig {
             general: GeneralConfig::default(),
             tools_active: default_tools_active(),
             tools_notes_introduced: true,
+            tools_wizard_introduced: true,
             skills_active: Vec::new(),
             audio_models: Vec::new(),
             selected_audio_model: None,
@@ -1348,6 +1353,17 @@ impl AppConfig {
         }
     }
 
+    /// Один раз включить инструмент `wizard` (см. `tools_wizard_introduced`).
+    pub fn introduce_wizard_tool(&mut self) {
+        if self.tools_wizard_introduced {
+            return;
+        }
+        self.tools_wizard_introduced = true;
+        if !self.tools_active.iter().any(|k| k == "wizard") {
+            self.tools_active.push("wizard".to_string());
+        }
+    }
+
     /// Одноразовая миграция дефолтов сэмплинга Syn-чата (03.09.2026): старый
     /// набор 0.7 / 0.9 / 40 / repeat 1.05 → рекомендованные Qwen 0.6 / 0.95 /
     /// 20 без штрафа за повторы. Переписываем только конфиг, в котором лежит
@@ -1376,6 +1392,7 @@ impl AppConfig {
                         m.migrate_legacy_dtype();
                     }
                     cfg.introduce_notes_tool();
+                    cfg.introduce_wizard_tool();
                     cfg.migrate_sampling_defaults();
                     cfg
                 }
@@ -1449,6 +1466,19 @@ mod tests {
         // Свежий конфиг: notes уже в стартовом наборе, флаг взведён.
         assert!(AppConfig::default().tools_active.iter().any(|k| k == "notes"));
         assert!(AppConfig::default().tools_notes_introduced);
+    }
+
+    #[test]
+    fn wizard_tool_is_introduced_once() {
+        let mut cfg: AppConfig =
+            serde_json::from_str(r#"{"tools_active":["bash"],"tools_notes_introduced":true}"#).unwrap();
+        assert!(!cfg.tools_wizard_introduced);
+        cfg.introduce_wizard_tool();
+        assert_eq!(cfg.tools_active, ["bash", "wizard"]);
+        cfg.tools_active.retain(|k| k != "wizard");
+        cfg.introduce_wizard_tool();
+        assert_eq!(cfg.tools_active, ["bash"], "выбор пользователя не трогается");
+        assert!(AppConfig::default().tools_active.iter().any(|k| k == "wizard"));
     }
 
     #[test]

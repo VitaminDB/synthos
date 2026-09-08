@@ -46,6 +46,8 @@
     /* Semantic state */
     --error:            #E55353;
     --error-hover:      #C03E3E;
+    /* «Готово»/«сделано»: галочка закрытой карточки, флаг колонки done. */
+    --success:          #2F9E63;
     --warning:          #E8A33D;
     --warning-soft:     #FCF1DF;
 

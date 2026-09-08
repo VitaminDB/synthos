@@ -408,7 +408,7 @@ fn card(
         body = body.child(Text::new(title.clone()).max_lines(3).class("notes-kanban-card-title"));
     }
     if has_body {
-        body = body.child(Text::new(preview).max_lines(3).class("notes-kanban-card-preview"));
+        body = body.child(Text::new(preview).max_lines(5).class("notes-kanban-card-preview"));
     }
     if !c.files.is_empty() {
         body = body.child(files_row(env, c, lane_width));
@@ -520,17 +520,18 @@ fn chips_row(c: &KanbanCard, lane_width: f32) -> impl Widget {
     row
 }
 
-/// Прикидка ширины чипа: 6.5px на символ + отступы.
+/// Прикидка ширины чипа: 6.5px на символ + отступы (`padding: 2px 8px`
+/// в `.notes-kanban-chip`).
 fn chip_width(text: &str) -> f32 {
-    text.chars().count() as f32 * 6.5 + 16.0
+    text.chars().count() as f32 * 6.5 + 20.0
 }
 
 fn chip(text: &str, color: &str, class: &str) -> impl Widget {
-    let c = Color::from_hex(color);
+    let (bg, fg) = super::model::chip_colors(color);
     DecoratedBox::new()
         .class(class)
-        .style("background-color", c.with_alpha(0.18))
-        .child(Text::new(text.to_string()).max_lines(1).style("color", c).class("notes-kanban-chip-text"))
+        .style("background-color", bg)
+        .child(Text::new(text.to_string()).max_lines(1).style("color", fg).class("notes-kanban-chip-text"))
 }
 
 /// Подвал: срок (просроченный — красным; у закрытой карточки — дата

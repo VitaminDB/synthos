@@ -18,6 +18,7 @@
 //! одинаково, без правок в каждом месте.
 
 use serde::{Deserialize, Serialize};
+use syngui::core::Color;
 
 pub use super::super::calendar::model::Repeat;
 use super::super::gantt::calendar::{civil_from_days, days_from_civil, days_to_iso, parse_days};
@@ -804,9 +805,32 @@ impl KanbanDoc {
     }
 }
 
+/// Цвета чипа (фон, текст) по цвету метки/приоритета. Фон — сам цвет,
+/// текст — чёрный или белый по яркости фона (`Color::readable_on`): так чип
+/// читается на любой карточке и в любой теме. Полупрозрачная подложка с
+/// текстом того же цвета «сливалась» — разница яркости была почти нулевой.
+pub fn chip_colors(hex: &str) -> (Color, Color) {
+    let bg = Color::from_hex(hex);
+    (bg, bg.readable_on())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Текст чипа контрастен фону на всей палитре: коэффициент контраста
+    /// WCAG не ниже 4.5 (норма для мелкого текста).
+    #[test]
+    fn chip_text_contrasts_with_every_palette_color() {
+        for hex in PALETTE.iter().copied().chain(["#4F8CFF", "#E8A33D", "#EE5E48", "#C03E3E"]) {
+            let (bg, fg) = chip_colors(hex);
+            let (a, b) = (bg.relative_luminance(), fg.relative_luminance());
+            let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(ratio >= 4.5, "{hex}: contrast {ratio:.2}");
+        }
+        assert_eq!(chip_colors("#E8A33D").1, Color::BLACK);
+        assert_eq!(chip_colors("#C03E3E").1, Color::WHITE);
+    }
 
     fn doc() -> KanbanDoc {
         let mut d = KanbanDoc::template(["Todo", "Doing", "Done"]);

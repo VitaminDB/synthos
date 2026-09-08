@@ -439,10 +439,12 @@ document-editor {
     border-color: var(--primary);
     background-color: var(--surface-selected);
 }
-/* Чипы приоритета и меток; цвет — из данных, здесь только форма. */
+/* Чипы приоритета и меток; цвет — из данных (`model::chip_colors`: фон —
+ * цвет метки, текст — чёрный/белый по яркости), здесь только форма.
+ * Ширину чипа оценивает `view::chip_width` — менять padding вместе с ней. */
 .notes-kanban-chip {
     border-radius: 6px;
-    padding: 1px 6px;
+    padding: 2px 8px;
 }
 .notes-kanban-chip-text {
     font-size: 10px;

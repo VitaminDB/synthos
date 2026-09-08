@@ -158,6 +158,7 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     // Подсветка принадлежала прошлому переходу из поиска, правка — прошлой ленте.
     ctx.highlight_msg.set(None);
     ctx.editing_msg.set(None);
+    ctx.queue_editing.set(None);
     ctx.error.set(None);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
@@ -169,6 +170,9 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     ctx.pending
         .set(ctx.generating_chat.get_untracked().as_deref() == Some(stored_id.as_str()));
     ctx.loading.set(false);
+    // В этом чате могли ждать сообщения очереди, а ход другого чата уже
+    // закончился: отправляем отдельным тиком, когда переключение завершено.
+    syngui::async_runtime::run_on_main_thread(crate::syn_chat::session::flush_queue);
 }
 
 pub fn delete(id: &str) {

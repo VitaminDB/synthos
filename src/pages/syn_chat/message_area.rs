@@ -13,7 +13,7 @@ use syngui::prelude::*;
 use crate::agent::time::format_date_today;
 use crate::components::date_divider;
 use crate::context::AppCtx;
-use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, SynChatCtx};
+use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, QueuedMsg, SynChatCtx};
 
 use super::{compaction_marker, message_bubble, tool_group};
 
@@ -73,13 +73,22 @@ fn scroll_list_for_chat() -> impl Widget {
         // Индекс сообщения, на которое привёл глобальный поиск: пузырёк
         // обводится рамкой, пока пользователь не сменит чат.
         let highlight = ctx.highlight_msg.get();
+        // Очередь отправки активного чата — пузырьки в хвосте ленты.
+        let active = ctx.active_chat_id.get_untracked();
+        let queued: Vec<QueuedMsg> = ctx
+            .queue
+            .get()
+            .into_iter()
+            .filter(|m| Some(&m.chat_id) == active.as_ref())
+            .collect();
+        let _ = ctx.queue_editing.get();
 
         let body: Box<dyn Widget> = if !has_active {
             Box::new(no_chat_hero())
-        } else if msgs.is_empty() && !pending {
+        } else if msgs.is_empty() && !pending && queued.is_empty() {
             Box::new(empty_hero())
         } else {
-            Box::new(populated(msgs, pending, &tool_mode, highlight))
+            Box::new(populated(msgs, pending, &tool_mode, highlight, &queued))
         };
 
         DecoratedBox::new()
@@ -120,6 +129,7 @@ fn populated(
     pending: bool,
     tool_mode: &str,
     highlight: Option<usize>,
+    queued: &[QueuedMsg],
 ) -> impl Widget {
     let mut items: Vec<Box<dyn Widget>> = Vec::new();
     items.push(Box::new(date_divider::view(&format_date_today())));
@@ -195,6 +205,9 @@ fn populated(
                 items.push(Box::new(tool_group::view(g)));
             }
         }
+    }
+    for q in queued {
+        items.push(Box::new(message_bubble::queued_view(q)));
     }
 
     Column::new()

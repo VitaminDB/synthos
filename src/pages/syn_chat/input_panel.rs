@@ -191,11 +191,29 @@ fn send_or_stop_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         let model_loaded = registry.current.get().is_some();
 
         let inner: Box<dyn Widget> = if pending {
-            Box::new(
+            // Во время хода рядом со «Стоп» стоит «в очередь»: Enter и эта
+            // кнопка кладут черновик в очередь отправки, он уйдёт после
+            // ответа (`session::send_message`).
+            let queue_btn: Box<dyn Widget> = Box::new(
+                ToolButton::new(MI_SEND)
+                    .tooltip(tr!("chat.input.queue.tooltip"))
+                    .on_click(|| {
+                        let ctx = use_context::<SynChatCtx>();
+                        session::send_message(ctx.input.get_untracked());
+                    })
+                    .class("input-send input-send-queue"),
+            );
+            let stop: Box<dyn Widget> = Box::new(
                 ToolButton::new(MI_CLOSE)
                     .tooltip(tr!("chat.input.stop.tooltip"))
                     .on_click(|| session::abort_current())
                     .class("input-send input-send-stop"),
+            );
+            Box::new(
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .children(vec![queue_btn, stop]),
             )
         } else {
             let disabled = !model_loaded;

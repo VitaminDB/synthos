@@ -45,7 +45,7 @@ use crate::syn_chat::channel_parser::{self, ChannelIds, ChannelParser, ATEM_CLOS
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
-    ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, SynChatCtx, ThinkParser,
+    ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, QueuedMsg, SynChatCtx, ThinkParser,
 };
 use crate::syn_chat::system_prompt::{self, PromptEnv};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
@@ -763,6 +763,10 @@ pub(crate) fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
 
 /// Отправляет сообщение от пользователя и запускает генерацию ответа.
 /// Вызывается с main thread (использует use_context).
+///
+/// Пока идёт ход — свой или чужого чата (одна карта на всех), — сообщение
+/// не уходит модели, а встаёт в очередь отправки (`SynChatCtx::queue`) и
+/// уйдёт само, когда чат освободится: см. [`flush_queue`].
 pub fn send_message(text: String) {
     let ctx = use_context::<SynChatCtx>();
     let attachments = ctx.pending_attachments.get_untracked();
@@ -773,34 +777,37 @@ pub fn send_message(text: String) {
     if text.is_empty() && attachments.is_empty() {
         return;
     }
-
-    let registry = use_context::<SynModelRegistry>();
-
-    let Some(model) = registry.current.get_untracked() else {
-        ctx.error.set(Some(tr!("chat.model.not_loaded")));
-        return;
-    };
-    if ctx.pending.get_untracked() {
-        return;
-    }
-    // Одна карта на все чаты: вторую генерацию параллельно первой не
-    // запускаем — иначе оба хода делят VRAM и падают по OOM.
-    if let Some(busy) = ctx.generating_chat.get_untracked() {
-        let title = ctx
-            .chats
-            .get_untracked()
-            .iter()
-            .find(|m| m.id == busy)
-            .map(|m| m.title.clone())
-            .unwrap_or_default();
-        ctx.error.set(Some(tr!("chat.session.error.busy_other_chat", chat = title)));
-        return;
-    }
     if ctx.attach_busy.get_untracked() > 0 {
         ctx.error.set(Some(tr!("chat.session.error.attachments_busy")));
         return;
     }
+    if ctx.pending.get_untracked() || ctx.generating_chat.get_untracked().is_some() {
+        enqueue(&ctx, text, attachments);
+        return;
+    }
 
+    let registry = use_context::<SynModelRegistry>();
+    let Some(model) = registry.current.get_untracked() else {
+        ctx.error.set(Some(tr!("chat.model.not_loaded")));
+        return;
+    };
+
+    clear_input(&ctx);
+    start_turn(ctx, model, text, attachments);
+}
+
+/// Черновик панели ввода отправлен: текст, вложения, счётчик токенов.
+fn clear_input(ctx: &SynChatCtx) {
+    ctx.pending_attachments.set(Vec::new());
+    ctx.input.set(String::new());
+    ctx.input_gen.update(|v| *v += 1);
+    ctx.input_tokens.set_always(0);
+}
+
+/// Кладёт сообщение в ленту активного чата и запускает ход. Ввод не
+/// трогает — из очереди сюда приходят уже отправленные черновики, а в
+/// панели к этому моменту может лежать следующий.
+fn start_turn(ctx: SynChatCtx, model: Arc<LoadedSynModel>, text: String, attachments: Vec<MsgAttachment>) {
     // Чата может не быть вовсе (все заархивированы, свежий запуск): лента
     // тогда живёт в воздухе — автосейв без `active_chat_id` ничего не
     // сохраняет, и ход уходит впустую. Заводим чат до первого сообщения.
@@ -814,10 +821,6 @@ pub fn send_message(text: String) {
         m.push(ChatMsg::user_with_attachments(text.clone(), attachments.clone()));
         m.push(ChatMsg::assistant_empty());
     });
-    ctx.pending_attachments.set(Vec::new());
-    ctx.input.set(String::new());
-    ctx.input_gen.update(|v| *v += 1);
-    ctx.input_tokens.set_always(0);
     ctx.streaming_body.set(String::new());
     ctx.streaming_thinking.set(String::new());
     ctx.streaming_tool.set(String::new());
@@ -826,6 +829,99 @@ pub fn send_message(text: String) {
     ctx.pending.set(true);
 
     start_agent_thread(model, ctx);
+}
+
+/// Ставит сообщение в очередь отправки активного чата и очищает ввод.
+fn enqueue(ctx: &SynChatCtx, body: String, attachments: Vec<MsgAttachment>) {
+    if ctx.active_chat_id.get_untracked().is_none() {
+        crate::syn_chat::registry::create_new();
+    }
+    let Some(chat_id) = ctx.active_chat_id.get_untracked() else {
+        return;
+    };
+    let id = ctx.queue_seq.fetch_add(1, Ordering::Relaxed);
+    ctx.queue.update(|q| {
+        q.push(QueuedMsg {
+            id,
+            chat_id,
+            body,
+            attachments,
+            time: crate::agent::time::format_hm_now(),
+        })
+    });
+    clear_input(ctx);
+    ctx.error.set(None);
+}
+
+/// Первое сообщение очереди для чата `chat_id` — очередь общая, порядок
+/// внутри чата = порядок постановки.
+pub fn next_queued(queue: &[QueuedMsg], chat_id: &str) -> Option<QueuedMsg> {
+    queue.iter().find(|m| m.chat_id == chat_id).cloned()
+}
+
+/// Убирает сообщение из очереди отправки.
+pub fn cancel_queued(id: u64) {
+    let ctx = use_context::<SynChatCtx>();
+    ctx.queue.update(|q| q.retain(|m| m.id != id));
+    if ctx.queue_editing.get_untracked() == Some(id) {
+        ctx.queue_editing.set(None);
+    }
+}
+
+/// Заменяет текст сообщения в очереди; пустой текст без вложений —
+/// то же, что убрать его.
+pub fn edit_queued(id: u64, body: String) {
+    let ctx = use_context::<SynChatCtx>();
+    let body = body.trim().to_string();
+    let drop_it = body.is_empty()
+        && ctx
+            .queue
+            .get_untracked()
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.attachments.is_empty())
+            .unwrap_or(true);
+    if drop_it {
+        cancel_queued(id);
+        return;
+    }
+    ctx.queue.update(|q| {
+        if let Some(m) = q.iter_mut().find(|m| m.id == id) {
+            m.body = body;
+        }
+    });
+    ctx.queue_editing.set(None);
+}
+
+/// Отправляет первое сообщение очереди активного чата, если чат свободен.
+/// Зовётся после каждого завершённого хода (и после «Стоп»: прерванный ход
+/// — тоже завершённый, сообщение уходит следующим) и при открытии чата.
+/// Следующее сообщение очереди уйдёт после ответа на это.
+pub fn flush_queue() {
+    let ctx = use_context::<SynChatCtx>();
+    let Some(active) = ctx.active_chat_id.get_untracked() else {
+        return;
+    };
+    let Some(next) = next_queued(&ctx.queue.get_untracked(), &active) else {
+        return;
+    };
+    if ctx.pending.get_untracked() || ctx.generating_chat.get_untracked().is_some() {
+        return;
+    }
+    let registry = use_context::<SynModelRegistry>();
+    let Some(model) = registry.current.get_untracked() else {
+        // Модель выгрузили, пока сообщение ждало: очередь остаётся, уйдёт
+        // при следующем удобном случае.
+        return;
+    };
+    if ctx.attach_busy.get_untracked() > 0 {
+        return;
+    }
+    ctx.queue.update(|q| q.retain(|m| m.id != next.id));
+    if ctx.queue_editing.get_untracked() == Some(next.id) {
+        ctx.queue_editing.set(None);
+    }
+    start_turn(ctx, model, next.body, next.attachments);
 }
 
 /// Удаляет одно сообщение ленты по индексу. Во время генерации — no-op:
@@ -998,6 +1094,9 @@ pub fn clear_chat() {
     ctx.turn_cap_reached.set(false);
     ctx.editing_msg.set(None);
     ctx.highlight_msg.set(None);
+    let active = ctx.active_chat_id.get_untracked();
+    ctx.queue.update(|q| q.retain(|m| Some(&m.chat_id) != active.as_ref()));
+    ctx.queue_editing.set(None);
     reset_index_keyed_ui(&ctx);
     drop_kv_session();
     log::info!("[syn_chat] лента чата очищена");
@@ -1344,6 +1443,9 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             if ctx.active_chat_id.get_untracked() == owner {
                 ctx.pending.set(false);
             }
+            // Очередь отправки: следующее сообщение уходит отдельным тиком —
+            // из закрывающего колбэка хода запускать новый ход не стоит.
+            run_on_main_thread(flush_queue);
         });
     });
 }
@@ -3599,6 +3701,26 @@ fn prepare_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued(id: u64, chat: &str) -> QueuedMsg {
+        QueuedMsg {
+            id,
+            chat_id: chat.to_string(),
+            body: format!("m{id}"),
+            attachments: Vec::new(),
+            time: String::new(),
+        }
+    }
+
+    /// Очередь общая на все чаты: первым уходит самое раннее сообщение
+    /// именно того чата, что открыт, а чужие ждут своего чата.
+    #[test]
+    fn next_queued_is_first_of_that_chat() {
+        let q = vec![queued(1, "b"), queued(2, "a"), queued(3, "a")];
+        assert_eq!(next_queued(&q, "a").map(|m| m.id), Some(2));
+        assert_eq!(next_queued(&q, "b").map(|m| m.id), Some(1));
+        assert_eq!(next_queued(&q, "c"), None);
+    }
 
     fn call(name: &str, args: &str) -> ChatToolCall {
         ChatToolCall {

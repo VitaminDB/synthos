@@ -134,6 +134,12 @@ ToolButton.input-regen:active {
     color: var(--on-primary);
 }
 
+/* «В очередь» рядом со «Стоп» во время хода: тот же primary, что у Send. */
+.input-send-queue {
+    background-color: var(--primary);
+    color: var(--on-primary);
+}
+
 .input-send-stop:hover {
     background-color: var(--error-hover);
 }

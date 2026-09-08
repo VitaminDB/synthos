@@ -303,3 +303,24 @@ ToolButton.msg-action-copy:active {
     color: var(--text-muted);
     font-size: 11px;
 }
+
+/* ───────────────────────── Очередь отправки ───────────────────────────── */
+/* Пузырёк сообщения, которое ждёт конца хода (`SynChatCtx::queue`): контур
+ * primary без заливки — видно, что оно ещё не ушло модели. */
+.msg-bubble-queued {
+    background-color: var(--surface-hover);
+    border-width: 1px;
+    border-color: var(--primary);
+    border-radius: 18px 4px 18px 18px;
+}
+
+.msg-queued-icon {
+    color: var(--primary);
+    icon-size: 14px;
+}
+
+.msg-queued-label {
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 600;
+}

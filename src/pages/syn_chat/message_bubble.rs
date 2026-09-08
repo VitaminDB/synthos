@@ -23,7 +23,8 @@ use crate::agent::tools::Tool;
 use crate::context::AppCtx;
 use crate::icons::{
     MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
-    MI_EDIT_NOTE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_PSYCHOLOGY, MI_REPORT, MI_TERMINAL,
+    MI_EDIT_NOTE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_HOURGLASS_TOP, MI_PSYCHOLOGY, MI_REPORT,
+    MI_TERMINAL,
 };
 use crate::pages::notes::NotesCtx;
 use crate::pages::node_editor::run_controls;
@@ -31,7 +32,7 @@ use crate::pages::settings::theme_data;
 use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
 use crate::pages::node_editor::timing;
 use crate::syn_chat::session;
-use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, SynChatCtx};
+use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, QueuedMsg, SynChatCtx};
 
 /// Сколько строк tool-результата показывать в свёрнутом виде. Длинный
 /// stdout (web-поиск отдаёт 10 результатов ≈ 60 строк) иначе выдавливает
@@ -269,6 +270,155 @@ fn chat_row(
                 meta,
             ]
         }
+    }
+}
+
+/// Пузырёк сообщения из очереди отправки: написано во время хода и ждёт,
+/// когда чат освободится (`session::flush_queue`). Живёт вне ленты
+/// (`SynChatCtx::queue`), поэтому у него свой ряд действий — убрать из
+/// очереди и править — без guard'а `pending`, которым штатный ряд прячется
+/// на время генерации.
+pub fn queued_view(q: &QueuedMsg) -> impl Widget {
+    let ctx = use_context::<SynChatCtx>();
+    let editing = ctx.queue_editing.get_untracked() == Some(q.id);
+    let id = q.id;
+    let body = q.body.clone();
+
+    let label: Box<dyn Widget> = Box::new(
+        Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .children(vec![
+                Box::new(Icon::new(MI_HOURGLASS_TOP).class("msg-queued-icon")) as Box<dyn Widget>,
+                Box::new(Text::new(tr!("chat.queue.label")).class("msg-queued-label")),
+            ]),
+    );
+    let mut bubble_children: Vec<Box<dyn Widget>> = vec![label];
+    if !q.attachments.is_empty() {
+        bubble_children.push(super::attachments::bubble_grid(&q.attachments));
+    }
+    if editing {
+        bubble_children.push(Box::new(queued_edit_box(id, body.clone())));
+    } else if !body.trim().is_empty() {
+        bubble_children.push(Box::new(bubble_markdown(&body, "msg-bubble-md")));
+    }
+    let bubble_class = if editing {
+        "msg-bubble msg-bubble-queued msg-bubble-editing"
+    } else {
+        "msg-bubble msg-bubble-queued"
+    };
+    let bubble: Box<dyn Widget> = Box::new(
+        DecoratedBox::new().class(bubble_class).child(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(bubble_children),
+        ),
+    );
+
+    let bubble_row: Box<dyn Widget> = if editing {
+        bubble
+    } else {
+        let actions: Box<dyn Widget> = Box::new(
+            DecoratedBox::new().class("msg-actions").child(
+                Row::new()
+                    .gap(6.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .children(vec![
+                        Box::new(
+                            ToolButton::new(MI_EDIT)
+                                .tooltip(tr!("chat.queue.edit.tooltip"))
+                                .on_click(move || {
+                                    use_context::<SynChatCtx>().queue_editing.set(Some(id))
+                                })
+                                .class("msg-action-edit"),
+                        ) as Box<dyn Widget>,
+                        Box::new(
+                            ToolButton::new(MI_CLOSE)
+                                .tooltip(tr!("chat.queue.cancel.tooltip"))
+                                .on_click(move || session::cancel_queued(id))
+                                .class("msg-action-delete"),
+                        ),
+                    ]),
+            ),
+        );
+        Box::new(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::End)
+                .main_axis_alignment(MainAxisAlignment::End)
+                .children(vec![actions, bubble]),
+        )
+    };
+
+    let header_row = mgui! {
+        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Text::new(tr!("chat.msg.author.you")).class("msg-author msg-author-right"),
+            Text::new(q.time.clone()).class("msg-time"),
+        ]
+    };
+    let meta = Column::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::End)
+        .children(vec![Box::new(header_row) as Box<dyn Widget>, bubble_row]);
+    let avatar = Avatar::new()
+        .text(tr!("chat.msg.author.you_initials"))
+        .size(32.0)
+        .class("avatar-slate");
+    mgui! {
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::End).main_axis_alignment(MainAxisAlignment::End) => [
+            meta,
+            avatar,
+        ]
+    }
+}
+
+/// Правка сообщения очереди — тот же вид, что `edit_box`, но сохраняет в
+/// очередь (`session::edit_queued`), а не в ленту.
+fn queued_edit_box(id: u64, body: String) -> impl Widget {
+    use std::sync::{Arc, Mutex};
+    let draft = Arc::new(Mutex::new(body.clone()));
+    let draft_change = draft.clone();
+    let draft_save = draft.clone();
+    let editor = MultilineTextEdit::new()
+        .text(body)
+        .rows(2)
+        .max_rows(16)
+        .auto_height(true)
+        .submit_on_enter(true)
+        .on_change(move |s| {
+            if let Ok(mut d) = draft_change.lock() {
+                *d = s.to_string();
+            }
+        })
+        .on_submit(move |s| session::edit_queued(id, s.to_string()))
+        .class("msg-edit-field");
+    let save = Button::new(tr!("chat.msg.edit.save"))
+        .leading_icon(MI_CHECK)
+        .on_click(move || {
+            let text = draft_save.lock().map(|d| d.clone()).unwrap_or_default();
+            session::edit_queued(id, text);
+        })
+        .class("code-editor-dialog-btn-primary");
+    let cancel = Button::new(tr!("app.cancel"))
+        .leading_icon(MI_CLOSE)
+        .on_click(|| use_context::<SynChatCtx>().queue_editing.set(None))
+        .class("code-editor-dialog-btn-secondary");
+    mgui! {
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("msg-edit-box") => [
+                editor,
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .main_axis_alignment(MainAxisAlignment::End) => [
+                        Text::new(tr!("chat.msg.edit.hint")).class("msg-edit-hint"),
+                        cancel,
+                        save,
+                    ],
+            ]
     }
 }
 

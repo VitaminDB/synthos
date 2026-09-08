@@ -25,6 +25,21 @@ use crate::syn_chat::telemetry::AgentRun;
 /// Размер плавающего окна системного промпта при первом открытии.
 pub const PROMPT_WINDOW_DEFAULT_SIZE: Size = Size::new(760.0, 540.0);
 
+/// Сообщение в очереди отправки: написано, пока шёл ход, и уйдёт модели,
+/// когда чат освободится. Живёт вне ленты (`SynChatCtx::queue`) — в
+/// `messages` оно попало бы в автосейв, в промпт и в fingerprint чата.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueuedMsg {
+    /// Стабильный ключ (индексы не годятся: элементы уходят из середины).
+    pub id: u64,
+    /// Чат, в котором сообщение написано; уходит только в него.
+    pub chat_id: String,
+    pub body: String,
+    pub attachments: Vec<MsgAttachment>,
+    /// Время постановки в очередь (чч:мм) — подпись пузырька.
+    pub time: String,
+}
+
 /// Контекст Syn-чата. Клонируется дёшево (Arc на abort/input_tok_gen + Copy-сигналы).
 #[derive(Clone)]
 pub struct SynChatCtx {
@@ -149,6 +164,14 @@ pub struct SynChatCtx {
     /// (`pages::syn_chat::clear_dialog`). Кнопка в шапке только взводит
     /// сигнал; `session::clear_chat` зовётся из диалога.
     pub pending_clear: RwSignal<bool>,
+    /// Очередь отправки: сообщения, написанные во время хода, в порядке
+    /// добавления. Первое сообщение активного чата уходит, как только ход
+    /// закончился (`session::flush_queue`). В памяти, не persist'ится.
+    pub queue: RwSignal<Vec<QueuedMsg>>,
+    /// id сообщения очереди, которое правится прямо в пузырьке.
+    pub queue_editing: RwSignal<Option<u64>>,
+    /// Счётчик id очереди.
+    pub queue_seq: Arc<AtomicU64>,
 
     /// Положение левого разделителя (список чатов ↔ центр). Биндится к
     /// `SplitView::ratio_signal`; drag пишет в сигнал, а
@@ -243,6 +266,9 @@ impl SynChatCtx {
             editing_msg: use_signal(None),
             renaming_chat: use_signal(false),
             pending_clear: use_signal(false),
+            queue: use_signal(Vec::new()),
+            queue_editing: use_signal(None),
+            queue_seq: Arc::new(AtomicU64::new(1)),
             left_split_ratio: use_signal(cfg.syn_chat_left_split_ratio),
             right_split_ratio: use_signal(cfg.syn_chat_right_split_ratio),
             last_prompt_tokens: use_signal(0),

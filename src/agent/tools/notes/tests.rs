@@ -1084,6 +1084,12 @@ fn board_cards_become_calendar_bars_and_gantt_rows() {
     // Снятие плана: полоса исчезает, карточка остаётся.
     call(ctx, "kanban", serde_json::json!({"op": "unschedule", "board": &board, "card": "Созвон"}));
     assert_eq!((env.external)(&q).len(), 1, "осталась только полоса «Импорта»");
+
+    // Доска, встроенная ещё и на второй странице, считается один раз —
+    // раньше каждая врезка добавляла в календарь свой экземпляр карточки.
+    call(ctx, "create", serde_json::json!({"title": "Обзор", "content": format!("Доска спринта:\n\n![[kanban:{board}]]\n")}));
+    let again = (env.external)(&q);
+    assert_eq!(again.len(), 1, "полоса не задвоилась: {again:?}");
 }
 
 /// Ведение жизни: колонка «готово» по названию, штампы и повтор при

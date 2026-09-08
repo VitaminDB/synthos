@@ -336,3 +336,125 @@ fn row(label: String, field: impl Widget + 'static) -> impl Widget {
 fn anchor_default() -> Rect {
     Rect::zero()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Список дня
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Попап «ещё n»: все события и задачи дня списком — маркер цвета, время,
+/// название; клик по событию открывает попап правки, по задаче — её
+/// страницу; «+» — новое событие на этот день.
+pub fn day_popup(env: CalendarEnv, handle: CalendarHandle, data: &super::view::GridData) -> impl Widget {
+    let h_close = handle.clone();
+    PopupPanel::new()
+        .is_open(handle.day_popup_open)
+        .anchor_rect(handle.day_popup_anchor)
+        .anchor(syngui::widgets::overlay::menu::PopupAnchor::BottomStart)
+        .min_width(260.0)
+        .max_width(340.0)
+        .on_close(move || h_close.day_popup_day.set(None))
+        .class("notes-calendar-popup")
+        .child(Stack::new().children(vec![day_body(env, handle, data)]))
+}
+
+fn day_body(env: CalendarEnv, handle: CalendarHandle, data: &super::view::GridData) -> Box<dyn Widget> {
+    use super::layout::{segments, ItemRef};
+    use super::model::fmt_hm;
+    use super::view::{color_of, day_weekday};
+
+    let Some(day) = handle.day_popup_day.get_untracked() else {
+        return Box::new(Column::new());
+    };
+    let (_, m, d) = civil_from_days(day);
+    let title = format!("{d} {}, {}", data.locale.month_name(m), data.locale.weekday_short(day_weekday(day)));
+    let anchor = handle.day_popup_anchor.get_untracked();
+
+    let h_add = handle.clone();
+    let slot = data.doc.style.slot_min;
+    let first_cal = data.doc.calendars.first().cloned().or_else(|| data.store.calendars.first().map(|c| c.id.clone())).unwrap_or_default();
+    let add = ToolButton::new(MI_ADD).tooltip(tr!("notes.calendar.add_event")).on_click(move || h_add.open_new(&first_cal, day, None, slot, anchor));
+    let h_x = handle.clone();
+    let close = ToolButton::new(MI_CLOSE).tooltip(tr!("app.cancel")).on_click(move || h_x.close_day_popup());
+    let header = Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(Text::new(title).max_lines(1).class("notes-calendar-day-title"))
+        .child(DecoratedBox::new().class("grow"))
+        .child(add)
+        .child(close);
+
+    let accent = "#4F8CFF".to_string();
+    let mut list = Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+    let mut n = 0usize;
+    for s in segments(&data.occurrences, &data.external).into_iter().filter(|s| s.covers(day)) {
+        n += 1;
+        let (color, name, done, is_event) = match &s.item {
+            ItemRef::Event(id) => {
+                let e = data.store.event(id);
+                (e.map(|e| data.store.color_of(e)).unwrap_or_else(|| accent.clone()), e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), true)
+            }
+            ItemRef::External(i) => {
+                let ext = &data.external[*i];
+                (ext.color.clone(), ext.title.clone(), false, false)
+            }
+        };
+        let when = match s.time {
+            Some((a, b)) => format!("{}–{}", fmt_hm(a), fmt_hm(b)),
+            None => tr!("notes.calendar.day.all_day"),
+        };
+        let marker = DecoratedBox::new()
+            .class(if is_event { "notes-calendar-day-marker" } else { "notes-calendar-day-marker task" })
+            .style("background-color", color_of(&color).unwrap_or_else(|| syngui::core::Color::from_hex(&accent)));
+        let row = Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(marker)
+            .child(Text::new(when).max_lines(1).class("notes-calendar-day-time"))
+            .child(Text::new(name).max_lines(1).class(if done { "notes-calendar-day-name done" } else { "notes-calendar-day-name" }));
+        let h = handle.clone();
+        let env = env.clone();
+        let item = s.item.clone();
+        let event = match &s.item {
+            ItemRef::Event(id) => data.store.event(id).cloned(),
+            ItemRef::External(_) => None,
+        };
+        let page = match &s.item {
+            ItemRef::External(i) => data.external.get(*i).map(|e| e.page.clone()),
+            ItemRef::Event(_) => None,
+        };
+        list = list.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || match (&item, &event, &page) {
+                    (ItemRef::Event(_), Some(e), _) => h.open_edit(e.clone(), anchor),
+                    (ItemRef::External(_), _, Some(p)) => {
+                        h.close_day_popup();
+                        (env.open_page)(p);
+                    }
+                    _ => {}
+                })
+                .child(DecoratedBox::new().class("notes-calendar-day-row").child(row)),
+        );
+    }
+    if n == 0 {
+        list = list.child(Text::new(tr!("notes.calendar.day.empty")).class("notes-calendar-popup-label"));
+    }
+    // Длинный список прокручивается, а не растягивает попап за экран.
+    let body: Box<dyn Widget> = if n > 10 {
+        Box::new(
+            DecoratedBox::new()
+                .style("height", syngui::mss::StyleValue::px(10.0 * 30.0))
+                .child(ScrollView::new().vertical().child(list)),
+        )
+    } else {
+        Box::new(list)
+    };
+    Box::new(
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .class("notes-calendar-popup-body")
+            .child(header)
+            .child(Stack::new().children(vec![body])),
+    )
+}

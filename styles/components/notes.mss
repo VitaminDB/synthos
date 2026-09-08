@@ -782,6 +782,42 @@ document-editor {
 .notes-calendar-chip-text {
     font-size: 11px;
 }
+/* Список дня («ещё n»): строки с маркером цвета, временем и названием. */
+.notes-calendar-day-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+.notes-calendar-day-row {
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+.notes-calendar-day-row:hover {
+    background-color: var(--surface-hover);
+}
+.notes-calendar-day-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+}
+.notes-calendar-day-marker.task {
+    width: 4px;
+    height: 14px;
+    border-radius: 2px;
+}
+.notes-calendar-day-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    width: 78px;
+}
+.notes-calendar-day-name {
+    font-size: 12px;
+    color: var(--text);
+}
+.notes-calendar-day-name.done {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
 
 /* ── Графики (виджеты syngui) ──────────────────────────────────────
  * `width/height: 100%` — график занимает свою врезку целиком: без этого

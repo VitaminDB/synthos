@@ -84,8 +84,10 @@ macro_rules! element_boilerplate {
     };
 }
 
+pub mod layout;
 pub mod model;
 pub mod month;
+pub mod paint;
 pub mod popup;
 pub mod timegrid;
 pub mod view;
@@ -317,6 +319,10 @@ pub struct CalendarHandle {
     pub popup_open: RwSignal<bool>,
     pub popup_anchor: RwSignal<Rect>,
     pub draft: RwSignal<Option<EventDraft>>,
+    /// Попап-список дня («ещё n»): открыт ли, день, якорь.
+    pub day_popup_open: RwSignal<bool>,
+    pub day_popup_day: RwSignal<Option<i64>>,
+    pub day_popup_anchor: RwSignal<Rect>,
     /// Бамп — перерисовать сетки (внешний слой, «сейчас»).
     pub tick: RwSignal<u64>,
 }
@@ -332,6 +338,9 @@ impl CalendarHandle {
             popup_open: use_signal(false),
             popup_anchor: use_signal(Rect::zero()),
             draft: use_signal(None),
+            day_popup_open: use_signal(false),
+            day_popup_day: use_signal(None),
+            day_popup_anchor: use_signal(Rect::zero()),
             tick: use_signal(0),
         }
     }
@@ -468,6 +477,7 @@ impl CalendarHandle {
             e.end = Some((s + slot_min).min(24 * 60));
             e.all_day = false;
         }
+        self.close_day_popup();
         self.draft.set(Some(EventDraft { id: None, event: e }));
         self.popup_anchor.set(anchor);
         self.popup_open.set(true);
@@ -477,6 +487,7 @@ impl CalendarHandle {
 
     /// Открыть попап правки события.
     pub fn open_edit(&self, event: CalEvent, anchor: Rect) {
+        self.close_day_popup();
         self.select(Some(event.id.clone()));
         self.draft.set(Some(EventDraft { id: Some(event.id.clone()), event }));
         self.popup_anchor.set(anchor);
@@ -488,6 +499,25 @@ impl CalendarHandle {
             self.popup_open.set(false);
         }
         self.draft.set(None);
+    }
+
+    /// Открыть список дня (все события и задачи дня) у ячейки `anchor`.
+    pub fn open_day(&self, day: i64, anchor: Rect) {
+        self.close_popup();
+        self.select(None);
+        self.selected_day.set(Some(day));
+        self.day_popup_day.set(Some(day));
+        self.day_popup_anchor.set(anchor);
+        self.day_popup_open.set(true);
+    }
+
+    pub fn close_day_popup(&self) {
+        if self.day_popup_open.get_untracked() {
+            self.day_popup_open.set(false);
+        }
+        if self.day_popup_day.get_untracked().is_some() {
+            self.day_popup_day.set(None);
+        }
     }
 
     pub fn bump_tick(&self) {

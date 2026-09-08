@@ -1,34 +1,42 @@
 //! Месячная сетка календаря — собственный элемент: 6 недель × 7 дней,
-//! номера недель по флагу, чипы событий (`chip` / `dot` / `bar`), «+n»,
-//! чекбокс «сделано» у чипа, внешний слой (сроки досок, задачи Ганта)
-//! приглушёнными чипами.
+//! номера недель по флагу, полосы событий по дорожкам ([`layout`]):
+//! многодневное — одна полоса через ячейки (плоский край там, где она
+//! продолжается за строку), однодневное «весь день» — заливка, со
+//! временем — точка + время + название (стиль «плашки»; «полосы» —
+//! заливка всем, «точки» — всем точка), задачи досок и Ганта — подложка
+//! с полоской слева. Текст режется по ширине с многоточием. Что не
+//! влезло в ячейку — «ещё n», клик открывает список дня.
 //!
 //! Жесты: клик по дню — выбор дня, двойной — новое событие (весь день);
-//! клик по чипу — попап правки, перенос чипа на другой день — `move_event`
-//! (мутация на MouseUp, до него — локальный предпросмотр); клик по
-//! квадратику — переключить «сделано»; клик по внешнему чипу — открыть
-//! его страницу.
+//! клик по полосе — попап правки, перенос полосы на другой день —
+//! `move_event` на разницу дней (мутация на MouseUp, до него — локальный
+//! предпросмотр); клик по маркеру слева — переключить «сделано»; клик по
+//! внешней полосе — открыть её страницу; наведение подсвечивает полосу.
 
 use std::any::Any;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use syngui::core::canvas::CanvasContext;
-use syngui::core::{Color, Point, Rect, Size};
+use syngui::core::{Point, Rect, Size};
 use syngui::input::{CursorIcon, Event, EventResult, MouseButton};
 use syngui::layout::Constraints;
 use syngui::mss::{TextAlign, TextDecoration};
 use syngui::prelude::*;
 use syngui::render::DisplayList;
-use syngui::widget::context::{EventContext, UpdateContext};
+use syngui::widget::context::{EventContext, TextMeasure, UpdateContext};
 use syngui::widget::{DirtyFlags, Element, ElementId, ElementTree};
 
-use super::model::{fmt_hm, EventStyle};
+use super::layout::{self, ItemRef};
+use super::paint::{self, Bar, Look};
 use super::view::{color_of, day_weekday, GridData, Palette};
 use super::{CalendarEnv, CalendarHandle, ElementBase};
 use crate::pages::notes::gantt::calendar::civil_from_days;
 
 const HEADER_H: f32 = 22.0;
 const DAY_ROW_H: f32 = 20.0;
+const PAD_X: f32 = 3.0;
+const LANE_GAP: f32 = 2.0;
 const DRAG_THRESHOLD: f32 = 4.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
@@ -45,7 +53,8 @@ impl Widget for MonthGrid {
             env: self.env.clone(),
             handle: self.handle.clone(),
             data: self.data.clone(),
-            hover_day: None,
+            tm: None,
+            hover: None,
             drag: None,
             last_click: None,
         })
@@ -62,30 +71,48 @@ impl Widget for MonthGrid {
     fn mount(&self, _tree: &mut ElementTree, _parent_id: ElementId) {}
 }
 
-/// Что тащим: событие календаря либо внешнюю полосу (индекс в
-/// `data.external`).
-#[derive(Clone, Debug, PartialEq)]
-enum ChipTarget {
-    Event(String),
-    External(usize),
-}
-
 struct ChipDrag {
-    target: ChipTarget,
+    target: ItemRef,
     start: Point,
     moved: bool,
+    /// День, за который взялись.
+    grab_day: i64,
     /// День под курсором.
-    day: i64,
+    over: Option<i64>,
 }
 
-/// Чип в сетке: событие (id) либо внешний элемент (индекс).
+/// Видимый кусок полосы в сетке.
 #[derive(Clone, Debug)]
 struct Chip {
     rect: Rect,
+    item: ItemRef,
+    /// Первый день куска.
     day: i64,
-    event: Option<String>,
-    external: Option<usize>,
+    look: Look,
+    /// Время начала — подпись (однодневные со временем).
+    time: Option<u32>,
     done_box: Option<Rect>,
+    flat_left: bool,
+    flat_right: bool,
+}
+
+/// «Ещё n» в ячейке дня.
+#[derive(Clone, Debug)]
+struct More {
+    rect: Rect,
+    day: i64,
+    n: usize,
+}
+
+struct Arrangement {
+    chips: Vec<Chip>,
+    more: Vec<More>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hover {
+    Chip(usize),
+    More(usize),
 }
 
 pub struct MonthElement {
@@ -93,7 +120,8 @@ pub struct MonthElement {
     env: CalendarEnv,
     handle: CalendarHandle,
     data: GridData,
-    hover_day: Option<i64>,
+    tm: Option<Arc<dyn TextMeasure>>,
+    hover: Option<Hover>,
     drag: Option<ChipDrag>,
     last_click: Option<(Instant, i64)>,
 }
@@ -138,57 +166,86 @@ impl MonthElement {
         (s.font_size + if s.compact { 4.0 } else { 8.0 }).round()
     }
 
-    /// Чипы всех дней (сверху вниз внутри ячейки), плюс «+n» считается при
-    /// отрисовке.
-    fn chips(&self) -> Vec<Chip> {
-        let mut out = Vec::new();
-        let (from, to) = self.data.range;
+    /// Дорожек влезает в ячейку под номером дня (последняя — под «ещё n»
+    /// при нехватке).
+    fn capacity(&self) -> usize {
         let (_, ch) = self.cell_size();
+        (((ch - DAY_ROW_H - 2.0) / (self.chip_h() + LANE_GAP)).floor() as usize).max(1)
+    }
+
+    /// Полосы и «ещё n» всех строк.
+    fn arrange(&self) -> Arrangement {
+        let (from, _) = self.data.range;
+        let (cw, _) = self.cell_size();
         let chip_h = self.chip_h();
-        let max = (((ch - DAY_ROW_H - 4.0) / (chip_h + 2.0)).floor() as usize).max(1);
+        let capacity = self.capacity();
         let style = self.data.doc.style.event_style;
-        for day in from..=to {
-            let Some(cell) = self.cell_rect(day) else { continue };
-            let mut y = cell.origin.y + DAY_ROW_H + 2.0;
-            let mut count = 0usize;
-            let pad = if style == EventStyle::Bar { 0.0 } else { 3.0 };
-            let items: Vec<(Option<String>, Option<usize>)> = self
-                .data
-                .occurrences
-                .iter()
-                .filter(|o| o.day == day)
-                .map(|o| (Some(o.event.clone()), None))
-                .chain(self.data.external.iter().enumerate().filter(|(_, e)| day >= e.day && day <= e.end_day).map(|(i, _)| (None, Some(i))))
-                .collect();
-            for (event, external) in items {
-                if count >= max {
-                    break;
+        let segs = layout::segments(&self.data.occurrences, &self.data.external);
+        let mut chips = Vec::new();
+        let mut more = Vec::new();
+        for row in 0..6i64 {
+            let row_start = from + row * 7;
+            let placed = layout::pack_row(&segs, row_start, 7);
+            let (runs, hidden) = layout::visible(&placed, 7, capacity);
+            for run in runs {
+                let p = &placed[run.placed];
+                let s = &segs[p.seg];
+                let (Some(c0), Some(c1)) = (self.cell_rect(row_start + run.col0 as i64), self.cell_rect(row_start + run.col1 as i64)) else { continue };
+                let flat_left = (run.col0 == p.col0 && p.cont_left) || run.col0 > p.col0;
+                let flat_right = (run.col1 == p.col1 && p.cont_right) || run.col1 < p.col1;
+                let x0 = c0.origin.x + if flat_left { 0.0 } else { PAD_X };
+                let x1 = c1.origin.x + c1.size.width - if flat_right { 0.0 } else { PAD_X };
+                let y = c0.origin.y + DAY_ROW_H + 2.0 + p.lane as f32 * (chip_h + LANE_GAP);
+                let rect = Rect::new(Point::new(x0, y), Size::new((x1 - x0).max(4.0), chip_h));
+                let is_event = s.is_event();
+                let look = Look::of(style, is_event, s.time.is_none(), s.multi_day());
+                let done_box = match look {
+                    Look::Filled if is_event => Some(Rect::new(Point::new(rect.origin.x + 5.0, rect.origin.y + ((chip_h - 10.0) / 2.0).round()), Size::new(10.0, 10.0))),
+                    Look::Plain if is_event => Some(Rect::new(Point::new(rect.origin.x + 1.0, rect.origin.y + ((chip_h - 16.0) / 2.0).round()), Size::new(16.0, 16.0))),
+                    _ => None,
+                };
+                chips.push(Chip {
+                    rect,
+                    item: s.item.clone(),
+                    day: row_start + run.col0 as i64,
+                    look,
+                    time: if s.multi_day() { None } else { s.time.map(|t| t.0) },
+                    done_box,
+                    flat_left,
+                    flat_right,
+                });
+            }
+            for (col, &n) in hidden.iter().enumerate() {
+                if n == 0 {
+                    continue;
                 }
-                let rect = Rect::new(Point::new(cell.origin.x + pad, y), Size::new(cell.size.width - pad * 2.0, chip_h));
-                let done_box = (event.is_some() && style != EventStyle::Dot)
-                    .then(|| Rect::new(Point::new(rect.origin.x + 4.0, rect.origin.y + (chip_h - 10.0) / 2.0), Size::new(10.0, 10.0)));
-                out.push(Chip { rect, day, event, external, done_box });
-                y += chip_h + 2.0;
-                count += 1;
+                let Some(cell) = self.cell_rect(row_start + col as i64) else { continue };
+                let y = cell.origin.y + DAY_ROW_H + 2.0 + (capacity - 1) as f32 * (chip_h + LANE_GAP);
+                more.push(More { rect: Rect::new(Point::new(cell.origin.x + PAD_X, y), Size::new(cw - PAD_X * 2.0, chip_h)), day: row_start + col as i64, n });
             }
         }
-        out
+        Arrangement { chips, more }
     }
 
-    fn overflow(&self, day: i64, shown: usize) -> usize {
-        let total = self.data.occurrences.iter().filter(|o| o.day == day).count()
-            + self.data.external.iter().filter(|e| day >= e.day && day <= e.end_day).count();
-        total.saturating_sub(shown)
-    }
-
-    fn chip_at(&self, p: Point) -> Option<Chip> {
-        self.chips().into_iter().rev().find(|c| c.rect.contains(p))
+    fn hit(&self, arr: &Arrangement, p: Point) -> Option<Hover> {
+        if let Some(i) = arr.more.iter().position(|m| m.rect.contains(p)) {
+            return Some(Hover::More(i));
+        }
+        arr.chips.iter().rposition(|c| c.rect.contains(p)).map(Hover::Chip)
     }
 
     fn open_edit(&self, id: &str, anchor: Rect) {
         if let Some(e) = self.data.store.event(id) {
             self.handle.open_edit(e.clone(), anchor);
         }
+    }
+
+    /// Сдвиг предпросмотра переноса: из ячейки захвата в ячейку под
+    /// курсором.
+    fn drag_offset(&self) -> Option<(f32, f32)> {
+        let d = self.drag.as_ref().filter(|d| d.moved)?;
+        let (src, dst) = (self.cell_rect(d.grab_day)?, self.cell_rect(d.over?)?);
+        Some((dst.origin.x - src.origin.x, dst.origin.y - src.origin.y))
     }
 }
 
@@ -198,11 +255,14 @@ impl Element for MonthElement {
         self.handle = w.handle.clone();
         self.env = w.env.clone();
         self.data = w.data.clone();
+        self.hover = None;
         self.base.dirty |= DirtyFlags::LAYOUT | DirtyFlags::RENDER;
         ctx.mark_layout_dirty();
     }
 
-    fn mount(&mut self, _tree: &mut ElementTree) {}
+    fn mount(&mut self, tree: &mut ElementTree) {
+        self.tm = tree.text_measure.clone();
+    }
 
     fn layout(&mut self, constraints: Constraints) -> Size {
         let w = if constraints.max_width.is_finite() { constraints.max_width } else { 600.0 };
@@ -241,6 +301,7 @@ impl Element for MonthElement {
         // Ячейки.
         let (from, to) = self.data.range;
         let (_, anchor_m, _) = civil_from_days(self.data.doc.anchor_days());
+        let drag_over = self.drag.as_ref().filter(|d| d.moved).and_then(|d| d.over);
         let mut c = CanvasContext::new(Point::zero(), Size::new(16384.0, 16384.0));
         for day in from..=to {
             let Some(cell) = self.cell_rect(day) else { continue };
@@ -253,7 +314,7 @@ impl Element for MonthElement {
             if self.data.selected_day == Some(day) {
                 list.push_rect(cell, pal.accent.with_alpha(0.08), [0.0; 4]);
             }
-            if self.hover_day == Some(day) && self.drag.as_ref().is_some_and(|dr| dr.moved) {
+            if drag_over == Some(day) {
                 list.push_rect(cell, pal.accent.with_alpha(0.14), [0.0; 4]);
             }
             // Номер дня; сегодня — кружок.
@@ -268,7 +329,7 @@ impl Element for MonthElement {
                 list.push_text_styled_singleline(
                     &format!("{d}"),
                     Rect::new(Point::new(cell.origin.x + 4.0, cell.origin.y + 3.0), Size::new(r * 2.0, r * 2.0 - 2.0)),
-                    Color::from_hex("#FFFFFF"),
+                    paint::text_on(pal.today),
                     font - 1.0,
                     TextAlign::CENTER,
                     TextDecoration::None,
@@ -313,115 +374,66 @@ impl Element for MonthElement {
         }
         c.flush(list);
 
-        // Чипы.
-        let chips = self.chips();
-        let mut shown_per_day: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
-        for chip in &chips {
-            *shown_per_day.entry(chip.day).or_default() += 1;
-            let chip_target = match (&chip.event, chip.external) {
-                (Some(id), _) => Some(ChipTarget::Event(id.clone())),
-                (None, Some(i)) => Some(ChipTarget::External(i)),
-                _ => None,
-            };
-            let dragged = self.drag.as_ref().is_some_and(|d| d.moved && chip_target.as_ref() == Some(&d.target));
+        // Полосы: переносимая — последней, поверх остальных.
+        let arr = self.arrange();
+        let drag_target = self.drag.as_ref().filter(|d| d.moved).map(|d| d.target.clone());
+        let offset = self.drag_offset();
+        let mut order: Vec<usize> = (0..arr.chips.len()).collect();
+        order.sort_by_key(|&i| drag_target.as_ref() == Some(&arr.chips[i].item));
+        for i in order {
+            let chip = &arr.chips[i];
+            let dragged = drag_target.as_ref() == Some(&chip.item);
             let mut rect = chip.rect;
+            let mut done_box = chip.done_box;
             if dragged {
-                if let (Some(target), Some(src)) = (self.hover_day.and_then(|d| self.cell_rect(d)), self.cell_rect(chip.day)) {
-                    rect.origin.x += target.origin.x - src.origin.x;
-                    rect.origin.y += target.origin.y - src.origin.y;
+                if let Some((dx, dy)) = offset {
+                    rect.origin.x += dx;
+                    rect.origin.y += dy;
+                    if let Some(bx) = done_box.as_mut() {
+                        bx.origin.x += dx;
+                        bx.origin.y += dy;
+                    }
                 }
             }
-            let (color, title, done, selected) = match (&chip.event, chip.external) {
-                (Some(id), _) => {
+            let (color, title, done, selected) = match &chip.item {
+                ItemRef::Event(id) => {
                     let e = self.data.store.event(id);
                     let color = e.map(|e| self.data.store.color_of(e)).and_then(|c| color_of(&c)).unwrap_or(pal.accent);
-                    let occ = self.data.occurrences.iter().find(|o| &o.event == id && o.day == chip.day);
-                    let mut title = e.map(|e| e.title.clone()).unwrap_or_default();
-                    if let Some((s, _)) = occ.and_then(|o| o.time) {
-                        title = format!("{} {title}", fmt_hm(s));
-                    }
-                    if occ.is_some_and(|o| !o.first) {
-                        title = format!("… {title}");
-                    }
-                    (color, title, e.is_some_and(|e| e.done), self.data.selected.as_deref() == Some(id.as_str()))
+                    (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), self.data.selected.as_deref() == Some(id.as_str()))
                 }
-                (None, Some(i)) => {
-                    let ext = &self.data.external[i];
-                    (color_of(&ext.color).unwrap_or(pal.muted).with_alpha(0.7), format!("◆ {}", ext.title), false, false)
+                ItemRef::External(i) => {
+                    let ext = &self.data.external[*i];
+                    (color_of(&ext.color).unwrap_or(pal.muted), ext.title.clone(), false, false)
                 }
-                _ => continue,
             };
-            let alpha = if dragged { 0.5 } else if done { 0.45 } else { 1.0 };
-            let text_x_pad = if chip.done_box.is_some() { 18.0 } else { 6.0 };
-            match self.data.doc.style.event_style {
-                EventStyle::Chip => {
-                    list.push_rect(rect, color.with_alpha(0.85 * alpha), [4.0; 4]);
-                }
-                EventStyle::Bar => {
-                    list.push_rect(rect, color.with_alpha(0.9 * alpha), [0.0; 4]);
-                }
-                EventStyle::Dot => {
-                    let r = 3.0;
-                    list.push_rect(
-                        Rect::new(Point::new(rect.origin.x + 4.0, rect.origin.y + rect.size.height / 2.0 - r), Size::new(r * 2.0, r * 2.0)),
-                        color.with_alpha(alpha),
-                        [r; 4],
-                    );
-                }
-            }
-            if let Some(bx) = chip.done_box {
-                let mut bx = bx;
-                bx.origin.x += rect.origin.x - chip.rect.origin.x;
-                bx.origin.y += rect.origin.y - chip.rect.origin.y;
-                list.push_rect(bx, Color::from_hex("#FFFFFF").with_alpha(if done { 0.9 } else { 0.35 }), [2.0; 4]);
-                if done {
-                    let mut k = CanvasContext::new(Point::zero(), Size::new(16384.0, 16384.0));
-                    k.set_color(color.with_alpha(1.0));
-                    k.set_stroke_width(1.6);
-                    k.draw_polyline(&[(bx.origin.x + 2.0, bx.origin.y + 5.0), (bx.origin.x + 4.5, bx.origin.y + 8.0), (bx.origin.x + 8.5, bx.origin.y + 2.5)]);
-                    k.flush(list);
-                }
-            }
-            let text_color = if self.data.doc.style.event_style == EventStyle::Dot { pal.text } else { Color::from_hex("#FFFFFF") };
-            list.push_text_styled_singleline(
-                &title,
-                Rect::new(
-                    Point::new(rect.origin.x + text_x_pad, rect.origin.y + (rect.size.height - font - 2.0) / 2.0),
-                    Size::new((rect.size.width - text_x_pad - 4.0).max(4.0), font + 4.0),
-                ),
-                text_color.with_alpha(alpha),
-                font - 1.0,
-                TextAlign::DEFAULT,
-                if done { TextDecoration::LineThrough } else { TextDecoration::None },
-                500,
-                None,
+            paint::draw_bar(
+                list,
+                self.tm.as_ref(),
+                &Bar {
+                    rect,
+                    color,
+                    look: chip.look,
+                    title: &title,
+                    time: chip.time,
+                    done,
+                    selected,
+                    hover: self.hover == Some(Hover::Chip(i)) && self.drag.is_none(),
+                    alpha: if dragged { 0.55 } else { 1.0 },
+                    flat_left: chip.flat_left,
+                    flat_right: chip.flat_right,
+                    done_box,
+                    font,
+                    text: pal.text,
+                    accent: pal.accent,
+                },
             );
-            if selected {
-                let mut k = CanvasContext::new(Point::zero(), Size::new(16384.0, 16384.0));
-                k.set_color(pal.accent);
-                k.set_stroke_width(1.5);
-                k.draw_rect(rect.origin.x - 1.0, rect.origin.y - 1.0, rect.size.width + 2.0, rect.size.height + 2.0);
-                k.flush(list);
-            }
         }
-        // «+n».
-        for day in from..=to {
-            let shown = shown_per_day.get(&day).copied().unwrap_or(0);
-            let more = self.overflow(day, shown);
-            if more == 0 {
-                continue;
+        for (i, m) in arr.more.iter().enumerate() {
+            let hovered = self.hover == Some(Hover::More(i));
+            if hovered {
+                list.push_rect(m.rect, pal.text.with_alpha(0.07), [4.0; 4]);
             }
-            let Some(cell) = self.cell_rect(day) else { continue };
-            list.push_text_styled_singleline(
-                &format!("+{more}"),
-                Rect::new(Point::new(cell.origin.x + 4.0, cell.origin.y + cell.size.height - font - 6.0), Size::new(cw - 8.0, font + 4.0)),
-                pal.muted,
-                font - 2.0,
-                TextAlign::DEFAULT,
-                TextDecoration::None,
-                600,
-                None,
-            );
+            paint::draw_more(list, m.rect, m.n, font, if hovered { pal.accent } else { pal.muted });
         }
         list.pop_clip();
     }
@@ -432,23 +444,30 @@ impl Element for MonthElement {
                 if !self.base.bounds.contains(*position) {
                     return EventResult::Ignored;
                 }
-                if let Some(chip) = self.chip_at(*position) {
-                    if let Some(id) = chip.event {
-                        if chip.done_box.is_some_and(|bx| bx.contains(*position)) {
-                            let done = self.data.store.event(&id).is_some_and(|e| e.done);
-                            self.env.store.update_event(&id, |e| e.done = !done);
-                            return EventResult::Handled;
+                let arr = self.arrange();
+                match self.hit(&arr, *position) {
+                    Some(Hover::More(i)) => {
+                        let m = &arr.more[i];
+                        let anchor = self.cell_rect(m.day).unwrap_or(m.rect);
+                        self.handle.open_day(m.day, anchor);
+                        return EventResult::Handled;
+                    }
+                    Some(Hover::Chip(i)) => {
+                        let chip = &arr.chips[i];
+                        if let ItemRef::Event(id) = &chip.item {
+                            if chip.done_box.is_some_and(|bx| bx.contains(*position)) {
+                                let done = self.data.store.event(id).is_some_and(|e| e.done);
+                                self.env.store.update_event(id, |e| e.done = !done);
+                                return EventResult::Handled;
+                            }
+                            self.handle.select(Some(id.clone()));
                         }
-                        self.handle.select(Some(id.clone()));
-                        self.drag = Some(ChipDrag { target: ChipTarget::Event(id), start: *position, moved: false, day: chip.day });
+                        let grab_day = self.day_at(*position).unwrap_or(chip.day);
+                        self.drag = Some(ChipDrag { target: chip.item.clone(), start: *position, moved: false, grab_day, over: None });
                         ctx.capture();
                         return EventResult::Handled;
                     }
-                    if let Some(i) = chip.external {
-                        self.drag = Some(ChipDrag { target: ChipTarget::External(i), start: *position, moved: false, day: chip.day });
-                        ctx.capture();
-                        return EventResult::Handled;
-                    }
+                    None => {}
                 }
                 let Some(day) = self.day_at(*position) else { return EventResult::Ignored };
                 let now = Instant::now();
@@ -465,50 +484,57 @@ impl Element for MonthElement {
                 EventResult::Handled
             }
             Event::MouseMove(position) => {
-                let inside = self.base.bounds.contains(*position);
+                let over = self.day_at(*position);
                 if let Some(drag) = &mut self.drag {
                     if (position.x - drag.start.x).abs() > DRAG_THRESHOLD || (position.y - drag.start.y).abs() > DRAG_THRESHOLD {
                         drag.moved = true;
                     }
                     if drag.moved {
-                        self.hover_day = self.day_at(*position);
+                        drag.over = over;
                         ctx.set_cursor(CursorIcon::Grabbing);
                         self.base.dirty |= DirtyFlags::RENDER;
                     }
                     return EventResult::Handled;
                 }
-                if inside && self.chip_at(*position).is_some() {
+                let hover = if self.base.bounds.contains(*position) { self.hit(&self.arrange(), *position) } else { None };
+                if hover != self.hover {
+                    self.hover = hover;
+                    self.base.dirty |= DirtyFlags::RENDER;
+                }
+                if hover.is_some() {
                     ctx.set_cursor(CursorIcon::Pointer);
                 }
                 EventResult::Ignored
             }
             Event::MouseUp { button: MouseButton::Left, position } => {
                 let Some(drag) = self.drag.take() else { return EventResult::Ignored };
-                let dropped = self.day_at(*position).filter(|d| *d != drag.day);
+                let delta = self.day_at(*position).map(|d| d - drag.grab_day).filter(|d| *d != 0);
                 match (&drag.target, drag.moved) {
-                    (ChipTarget::Event(id), true) => {
-                        if let Some(day) = dropped {
-                            self.env.store.move_event(id, day, None);
+                    (ItemRef::Event(id), true) => {
+                        // Перенос на разницу дней: полоса, взятая за середину,
+                        // не прыгает началом в день броска.
+                        if let (Some(delta), Some((start, _))) = (delta, self.data.store.event(id).and_then(|e| e.span())) {
+                            self.env.store.move_event(id, start + delta, None);
                         }
                     }
-                    (ChipTarget::Event(id), false) => {
-                        let anchor = self.chip_at(*position).map(|c| c.rect).unwrap_or(self.base.bounds);
+                    (ItemRef::Event(id), false) => {
+                        let arr = self.arrange();
+                        let anchor = arr.chips.iter().rev().find(|c| c.rect.contains(*position)).map(|c| c.rect).unwrap_or(self.base.bounds);
                         self.open_edit(id, anchor);
                     }
                     // Внешняя полоса: перенос сдвигает её задачу на столько
                     // же дней, клик без переноса — открывает её страницу.
-                    (ChipTarget::External(i), moved) => {
+                    (ItemRef::External(i), moved) => {
                         let Some(item) = self.data.external.get(*i) else { return EventResult::Handled };
-                        match dropped.filter(|_| moved) {
-                            Some(day) => {
-                                (self.env.shift_external)(&item.source, day - drag.day);
+                        match (moved, delta) {
+                            (true, Some(delta)) => {
+                                (self.env.shift_external)(&item.source, delta);
                             }
-                            None if !moved => (self.env.open_page)(&item.page.clone()),
-                            None => {}
+                            (false, _) => (self.env.open_page)(&item.page.clone()),
+                            _ => {}
                         }
                     }
                 }
-                self.hover_day = None;
                 self.base.dirty |= DirtyFlags::RENDER;
                 EventResult::Handled
             }

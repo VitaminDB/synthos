@@ -143,8 +143,15 @@ fn external_items(ctx: NotesCtx, q: &super::calendar::ExternalQuery) -> Vec<supe
     use super::gantt::calendar::parse_days;
     let (from, to) = (q.from, q.to);
     let mut out = Vec::new();
+    // Объект, встроенный на нескольких страницах, считается один раз —
+    // иначе каждая его карточка шла в календарь по числу врезок.
+    let mut seen: Vec<(String, String)> = Vec::new();
     for pid in ctx.tree.get_untracked().all_ids() {
         for (kind, oid) in super::state::object_refs(&ctx.page_markdown(&pid)) {
+            if seen.iter().any(|(k, o)| *k == kind && *o == oid) {
+                continue;
+            }
+            seen.push((kind.clone(), oid.clone()));
             match (kind.as_str(), ctx.object(&kind, &oid)) {
                 ("kanban", Some(LiveObject::Kanban { handle, .. })) => {
                     if !q.boards.is_empty() && !q.boards.contains(&oid) {

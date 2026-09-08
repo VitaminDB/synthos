@@ -112,11 +112,12 @@ pub fn view(env: CalendarEnv, id: String, handle: CalendarHandle) -> impl Widget
         let _ = handle.selected_day.get();
         let _ = handle.tick.get();
         let popup_open = handle.popup_open.get();
-        vec![build(&env, &id, handle.clone(), popup_open)]
+        let day_open = handle.day_popup_open.get();
+        vec![build(&env, &id, handle.clone(), popup_open, day_open)]
     })
 }
 
-fn build(env: &CalendarEnv, _id: &str, handle: CalendarHandle, popup_open: bool) -> Box<dyn Widget> {
+fn build(env: &CalendarEnv, _id: &str, handle: CalendarHandle, popup_open: bool, day_open: bool) -> Box<dyn Widget> {
     let data = snapshot(env, &handle);
     let view = data.doc.view;
     let body: Box<dyn Widget> = match view {
@@ -132,6 +133,9 @@ fn build(env: &CalendarEnv, _id: &str, handle: CalendarHandle, popup_open: bool)
     let mut stack = Stack::new().clip(false).child(DecoratedBox::new().class("grow").child(crate::components::workspace_frame::expand(body)));
     if popup_open {
         stack = stack.child(super::popup::event_popup(env.clone(), handle.clone()));
+    }
+    if day_open {
+        stack = stack.child(super::popup::day_popup(env.clone(), handle.clone(), &data));
     }
     Box::new(
         Column::new()

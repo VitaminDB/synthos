@@ -348,3 +348,80 @@ fn now_line_is_drawn_in_todays_column() {
     assert!(found, "линия «сейчас» на y={expected_y}");
     crate::agent::time::override_offset_secs(None);
 }
+
+/// Прямоугольники дисплей-листа (после укладки) — для проверок геометрии.
+fn rects(w: &mut World) -> Vec<Rect> {
+    let mut list = syngui::render::DisplayList::new();
+    w.h.tree.build_display_list(w.h.root_id, &mut list, Rect::new(Point::zero(), syngui::core::Size::new(1200.0, 800.0)));
+    list.iter_all_commands()
+        .filter_map(|c| match c {
+            syngui::render::DrawCommand::Rect { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Многодневное событие в месяце — одна полоса через три ячейки, а не три
+/// чипа: раньше каждый день получал свой чип с «…», и полоса рвалась.
+#[test]
+fn month_multi_day_event_is_one_bar_across_cells() {
+    let mut e = CalEvent::new("", "Отпуск", day(D));
+    e.end_date = Some("2026-09-05".into());
+    let (mut w, handle, _store) = world(CalView::Month, vec![e]);
+    let grid = w.grid("notes-calendar-month");
+    let cw = grid.size.width / 7.0;
+    let ch = (grid.size.height - 22.0) / 6.0;
+    let (from, _) = range_of(CalView::Month, handle.anchor(), 0);
+    let col = (day(D) - from) % 7;
+    let row = (day(D) - from) / 7;
+    let top = grid.origin.y + 22.0 + row as f32 * ch + 22.0;
+    let bar = rects(&mut w).into_iter().find(|r| (r.origin.y - top).abs() < 1.0 && r.size.height > 15.0 && r.size.width > cw * 2.0);
+    let bar = bar.expect("полоса на три ячейки");
+    assert!((bar.size.width - (cw * 3.0 - 6.0)).abs() < 1.5, "ширина полосы {} при ячейке {cw}", bar.size.width);
+    assert!((bar.origin.x - (grid.origin.x + col as f32 * cw + 3.0)).abs() < 1.5, "полоса начинается в ячейке своего первого дня");
+}
+
+/// Что не влезло в ячейку — «ещё n», а не наезд на нижнюю кромку; клик
+/// по нему открывает список дня.
+#[test]
+fn month_overflow_shows_more_and_click_opens_day_list() {
+    let target = day("2026-09-10");
+    let events: Vec<CalEvent> = (0..8).map(|i| CalEvent::new("", &format!("Дело {i}"), target)).collect();
+    let (mut w, handle, _store) = world(CalView::Month, events);
+    let grid = w.grid("notes-calendar-month");
+    let cw = grid.size.width / 7.0;
+    let ch = (grid.size.height - 22.0) / 6.0;
+    let (from, _) = range_of(CalView::Month, handle.anchor(), 0);
+    let (col, row) = ((target - from) % 7, (target - from) / 7);
+    let cell_top = grid.origin.y + 22.0 + row as f32 * ch;
+    let capacity = ((ch - 22.0) / 22.0).floor().max(1.0);
+    assert!(capacity < 8.0, "ячейка вмещает всё — тест не про переполнение (ch {ch})");
+    // Полос нарисовано не больше вместимости минус слот под «ещё n».
+    let chips = rects(&mut w).into_iter().filter(|r| (r.origin.x - (grid.origin.x + col as f32 * cw + 3.0)).abs() < 1.5 && r.size.height > 15.0 && r.origin.y > cell_top && r.origin.y < cell_top + ch).count();
+    assert_eq!(chips as f32, capacity - 1.0, "полос в ячейке при вместимости {capacity}");
+    // Клик по строке «ещё n» — под последней видимой полосой.
+    let more_y = cell_top + 22.0 + (capacity - 1.0) * 22.0 + 10.0;
+    w.click(Point::new(grid.origin.x + col as f32 * cw + cw / 2.0, more_y));
+    assert!(handle.day_popup_open.get_untracked(), "список дня открыт");
+    assert_eq!(handle.day_popup_day.get_untracked(), Some(target));
+    assert!(!handle.popup_open.get_untracked());
+    w.settle();
+    assert!(!w.h.find_by_type_name("PopupPanel").is_empty(), "попап списка дня смонтирован");
+}
+
+/// В ряду «весь день» недели многодневное событие — одна полоса через
+/// колонки.
+#[test]
+fn week_all_day_multi_day_event_spans_columns() {
+    let mut e = CalEvent::new("", "Конференция", day(D));
+    e.end_date = Some("2026-09-05".into());
+    let (mut w, handle, _store) = world(CalView::Week, vec![e]);
+    let grid = w.grid("notes-calendar-timegrid");
+    let (from, _) = range_of(CalView::Week, handle.anchor(), 0);
+    let col_w = (grid.size.width - 48.0) / 7.0;
+    let x0 = grid.origin.x + 48.0 + (day(D) - from) as f32 * col_w + 2.0;
+    let top = grid.origin.y + 32.0 + 3.0;
+    let bar = rects(&mut w).into_iter().find(|r| (r.origin.y - top).abs() < 1.0 && (r.origin.x - x0).abs() < 1.5 && r.size.width > col_w * 2.0);
+    let bar = bar.expect("полоса на три колонки");
+    assert!((bar.size.width - (col_w * 3.0 - 4.0)).abs() < 1.5, "ширина {} при колонке {col_w}", bar.size.width);
+}

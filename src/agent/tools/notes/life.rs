@@ -11,7 +11,7 @@ use crate::pages::notes::activity::{LogEntry, LogQuery};
 use crate::pages::notes::calendar::model::Repeat;
 use crate::pages::notes::gantt::calendar::weekday_of;
 
-const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+pub(super) const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /// Карточка с адресом: доска, страница, колонка.
 struct TaskRow {

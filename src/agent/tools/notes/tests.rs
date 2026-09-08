@@ -1232,3 +1232,41 @@ fn life_management_through_the_tool() {
     let out = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": iso(-3), "to": iso(7), "include_external": false}));
     assert!(!out.contains("external:"), "{out}");
 }
+
+/// Шапка `now:`: локальные дата, время и день недели на момент вызова —
+/// системный промпт даёт агенту только дату, а срокам, событиям и штампам
+/// журнала нужны часы.
+#[test]
+fn now_line_has_local_date_time_and_weekday() {
+    crate::agent::time::override_offset_secs(Some(5 * 3600));
+    let line = now_line();
+    crate::agent::time::override_offset_secs(None);
+
+    let rest = line.strip_prefix("now: ").expect("шапка now: {line}");
+    let rest = rest.strip_suffix(" (local)\n").expect("пометка (local): {line}");
+    let mut parts = rest.split(' ');
+    let (date, time, weekday) = (
+        parts.next().expect("дата"),
+        parts.next().expect("время"),
+        parts.next().expect("день недели"),
+    );
+    assert_eq!(parts.next(), None, "{line}");
+    assert!(
+        date.len() == 10 && date.as_bytes()[4] == b'-' && date.as_bytes()[7] == b'-',
+        "{line}"
+    );
+    let (h, m) = time.split_once(':').expect("HH:MM");
+    assert!(h.parse::<u32>().is_ok_and(|h| h < 24) && m.parse::<u32>().is_ok_and(|m| m < 60), "{line}");
+    assert!(life::WEEKDAYS.contains(&weekday), "{line}");
+
+    // Дата в шапке — тот же день, что и у остальных действий инструмента.
+    assert!(line.contains(&days_to_iso(today_days())), "{line}");
+}
+
+/// Описание инструмента объясняет, откуда брать время: без этого агент
+/// шапку в ответе просто не замечает.
+#[test]
+fn tool_description_points_at_the_now_line() {
+    let t = crate::agent::tools::descriptor::Tool::by_key("notes").expect("notes зарегистрирован");
+    assert!(t.description.contains("`now:` line"), "{}", t.description);
+}

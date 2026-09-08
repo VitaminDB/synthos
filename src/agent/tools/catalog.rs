@@ -370,7 +370,13 @@ pub(super) fn build_all() -> Vec<Tool> {
                 DONE column (done=true on a column): move_card there = task \
                 done; done cards auto-archive after archive_after days. Due \
                 dates already appear in the calendar — never copy them into \
-                events. Actions: list (page \
+                events. TIME: every reply opens with a `now:` line — the \
+                local date, clock time and weekday at the moment of the \
+                call; your system prompt carries the date alone. Take due \
+                dates, event and reminder times and journal stamps from it \
+                instead of guessing the clock, and when you need the time \
+                before writing anything, read first (agenda is the cheapest \
+                call). Actions: list (page \
                 tree with ids and the boards/charts on each page), search \
                 (titles + text), read (page markdown, layout, its \
                 boards/charts with card ids, links; blocks=true lists blocks \

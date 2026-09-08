@@ -90,6 +90,15 @@ pub fn format_hm(unix_secs: i64) -> String {
     format!("{:02}:{:02}", h, m)
 }
 
+/// Локальные «сейчас» одной строкой: «YYYY-MM-DD HH:MM». Дата и время
+/// берутся из одного отсчёта — на границе суток пары «вчерашняя дата плюс
+/// сегодняшняя полночь» не получится.
+pub fn format_now() -> String {
+    let secs = unix_secs() as i64 + local_offset_secs();
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    format!("{:04}-{:02}-{:02} {}", y, m, d, format_hm(secs))
+}
+
 /// Возвращает дату сегодняшнего дня в формате «YYYY-MM-DD» для date-divider.
 /// Календарные вычисления — через алгоритм Howard Hinnant (days_from_civil).
 pub fn format_date_today() -> String {

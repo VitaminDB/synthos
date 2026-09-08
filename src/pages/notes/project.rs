@@ -13,6 +13,8 @@
 //! notes/objects/<id>.calendar.json виджет календаря (блок `![[calendar:<id>]]`)
 //! notes/objects/<id>.chart.json  график (блок `![[chart:<id>]]`)
 //! notes/calendar.json           единое хранилище событий календаря
+//! notes/log/<yyyy-mm>.jsonl     журнал изменений (запись на строку)
+//! notes/reminders.json          настройки напоминаний и что уже показано
 //! notes/assets/<sha256>.<ext>   вложения (`asset:<sha256>.<ext>` в md)
 //! ```
 //!
@@ -34,6 +36,8 @@ pub const PAGES_DIR: &str = "notes/pages";
 pub const OBJECTS_DIR: &str = "notes/objects";
 /// Единое хранилище событий календаря проекта.
 pub const CALENDAR_PATH: &str = "notes/calendar.json";
+pub const LOG_DIR: &str = "notes/log";
+pub const REMINDERS_PATH: &str = "notes/reminders.json";
 pub const ASSETS_DIR: &str = "notes/assets";
 /// `BundleMeta.purpose` — по нему проект отличается от модельных бандлов.
 pub const BUNDLE_PURPOSE: &str = "notes";
@@ -575,6 +579,15 @@ pub fn read_tree(path: &Path) -> ProjectTree {
         },
         None => ProjectTree::new(),
     }
+}
+
+/// Файлы журнала изменений (`notes/log/<yyyy-mm>.jsonl`) по порядку месяцев.
+pub fn list_log_files(path: &Path) -> Vec<String> {
+    let Some(b) = bundle(path) else { return Vec::new() };
+    let prefix = format!("{LOG_DIR}/");
+    let mut out: Vec<String> = b.list_files().filter(|e| e.name.starts_with(&prefix)).map(|e| e.name.clone()).collect();
+    out.sort();
+    out
 }
 
 /// Имена всех вложений проекта (для GC).

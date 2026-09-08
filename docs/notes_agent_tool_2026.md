@@ -33,16 +33,25 @@
 | `attach` | `page`, `path` \| `attachment`, `caption`, позиция, `x y w h` | файл с диска или вложение чата (`имя` / префикс sha / `last`) → вложение бандла `asset:<sha>.<ext>` + медиа-блок в позиции (по умолчанию в конце) |
 | `blocks` | `op`, `page`, `block`, … | `list` (строка на блок: `#i kind "подпись" · x y w h` либо `flow`, `~` — оценка высоты, атрибуты), `read` (markdown + атрибуты; `block="all"`, `"0,2,5-7"` или массив — сразу пачкой), `insert` (`md`, позиция, `x y w h`), `set_markdown` (`md`; атрибуты первого нового блока — от старого), `delete`, `move` (позиция и/или `x y`), `set_attrs` (`attrs` — объект; `null`/`""` снимает), `pin` (`x y [w h]`; без координат — под нижним закреплённым), `unpin` |
 | `shape` | `op`, `page`, … | `create` (`kind`; рамочные — `x y w h`, линейные — **абсолютные** `x1 y1 x2 y2 [cx1 cy1 cx2 cy2]`; `fill stroke sw dash radius opacity`; позиция), `update` (`block`, те же поля, `kind` — смена вида с сохранением оформления), `delete`, `connect` (`from`/`to` — закреплённые блоки, `from_side`/`to_side` `auto\|left\|right\|top\|bottom\|center`, `kind` по умолчанию `arrow`) |
-| `kanban` | `op`, `board` / `page`, … | `create` (на страницу, `columns`, `title`-заголовок, позиция, `x y w h`), `read` (со стилем), `set_style` (`column_width`, `lane_bg`, `card_bg`, `show_counts`), `add_column` / `update_column` / `delete_column`, `add_card` / `update_card` (+`before`) / `move_card` / `delete_card`, `delete` |
+| `kanban` | `op`, `board` / `page`, … | `create` (на страницу, `columns`, `done_column`, `title`-заголовок, позиция, `x y w h`), `read` (со стилем; `archived=true` — и архив), `set_style` (`column_width`, `lane_bg`, `card_bg`, `show_counts`, `archive_after`), `add_column` / `update_column` (+`done` — флаг колонки «готово») / `delete_column`, `add_card` / `update_card` (+`before`, `repeat`) / `move_card` / `delete_card`, `archive` / `unarchive` (карточка в архив доски и обратно), `attach` (`card` + `path` \| `attachment`, `name`) / `detach` (`card`, `file`), `delete` |
 | `gantt` | `op`, `gantt` / `page`, … | `create` (позиция, геометрия), `read`, `add_task` (`start`/`end`, `after` — зависимость), `update_task` (только `start` — длительность сохраняется), `delete_task`, `add_dep` / `delete_dep`, `set_zoom` (5..90 px/день), `show_today`, `delete` |
 | `mindmap` | `op`, `map` / `page`, … | `create` (`title` — корень, `outline` — markdown-список целиком, `direction`, позиция/геометрия), `read` (дерево с id, ссылки, раскладка), `add_node` (`parent`, `text`, поля), `update_node` (`text note link color shape icon collapsed dx dy`), `move_node` (`parent`, `index`; корень и своё поддерево — ошибка), `delete_node` (с поддеревом), `add_link` / `delete_link` (`from`, `to`, `label`), `set_layout` (`direction curve h_gap v_gap reset`), `set_style` (`style{…}`), `from_list` (блок-список → карта на его месте, координаты наследуются), `delete` |
 | `chart` | `op`, `chart` / `page`, … | `create` (`kind` `line\|bar\|pie\|radar\|gauge`, `title` — заголовок внутри графика, `table` — markdown-таблица с данными либо `categories`+`data`+`name`, `style{…}`, позиция/геометрия), `read` (настройки + таблица значений), `update` (`kind`, `title`, данные, `style`), `set_data` (`table` целиком, `categories`, `data` ряда, `value`+`index` — одна точка), `add_series` / `update_series` (`series`, `name`, `color`, `data`) / `delete_series`, `set_style` (`style{…}`), `from_table` (блок-таблица → график на её месте, координаты наследуются), `delete` |
+| `agenda` | `days` (7), `done_days` (3) | день одним вызовом: просрочено (с числом дней), сегодня, завтра, ближайшие N дней, важное без срока, события диапазона, сделанное за последние дни, доски со счётчиками по колонкам (✓ — колонка «готово», archive N) |
+| `tasks` | `due`, `done`, `archived`, `tag`, `priority`, `board`/`page`, `column`, `query`, `sort`, `limit` | карточки по всем доскам с фильтрами: `due` — `overdue \| today \| tomorrow \| week \| month \| 14d \| none \| any \| yyyy-mm-dd \| a..b`; `done` — `false` (по умолчанию) / `true` / `any`; `sort` — `due \| priority \| created \| done`; вывод сгруппирован по доскам |
+| `log` | `since` (`today \| yesterday \| week \| month \| 14d \| yyyy-mm-dd \| all`, по умолчанию 7 дней), `until`, `kind` (`card \| event \| page`), `actor` (`user \| agent`), `op` (действие), `board`, `card`, `limit` | журнал изменений проекта, свежие первыми: «карточка X DONE (Бэклог → Готово)», «событие добавлено», «страница переименована» — кто и когда |
+| `journal` | `date` (`today \| yesterday \| tomorrow \| yyyy-mm-dd`), `content` + `mode` (`append` по умолчанию, `prepend`, `replace`), `open` | страница дня `Журнал / yyyy-mm / yyyy-mm-dd` — находится или создаётся; ответ — строка `page:` и markdown |
 | `calendar` | `op`, `calendar` / `page`, … | `create` (`view`, `anchor`, `heading`, позиция/геометрия), `read` (виджет + события диапазона), `set_view` (`view anchor calendars`), `set_style` (`style{…}`), `add_event`, `update_event`, `move_event`, `complete`, `delete_event`, `list_events` (`from to calendar include_external`), `add_calendar` / `update_calendar` / `delete_calendar`, `delete` (виджет; события остаются) |
 
 Карточка: `title`, `md` (чек-лист `- [ ]` даёт прогресс), `priority`
 `low|medium|high|urgent|none`, `tags` (массив или через запятую), `due`
-`yyyy-mm-dd|today|tomorrow|none`, `before` (перед какой карточкой),
-`column` (переезд). Цвет колонки/задачи — `#rrggbb` или
+`yyyy-mm-dd|today|tomorrow|none`, `repeat` `none|daily|weekly|monthly|yearly`,
+`before` (перед какой карточкой), `column` (переезд). Строка карточки в
+ответах несёт штампы `created:`/`done:`, `repeat:` и `files:`; колонка
+«готово» помечена `DONE column`, доска без неё получает подсказку `!! no
+done column`. Переезд в колонку «готово» = задача сделана (штамп ставится
+сам, повтор рождает следующую карточку); закрытые старше `archive_after`
+дней уходят в архив. Цвет колонки/задачи — `#rrggbb` или
 `gray|orange|green|blue|purple|red|teal` (палитра `kanban::model::PALETTE`);
 фоны доски и блоков принимают ещё `#rrggbbaa`.
 
@@ -88,6 +97,32 @@ stroke(#|none) sw(0..40) dash(0..60) radius(0..200) opacity(0..100)`; концы
 `LINE_PAD` (`canonicalize_line` / `set_line_points`). `connect` берёт точку
 на середине стороны прямоугольника блока (`x y w`, `h` — из атрибута либо
 оценка `est_height`), сторона `auto` — обращённая к другому блоку.
+
+## Ведение жизни (08.09.2026)
+
+Локальная модель платит за каждый вызов полным префиллом, а «что мне
+делать сегодня» раньше собиралось обходом всех досок и календаря. Теперь
+это одно действие — `agenda`; `tasks` ищет карточки по всем доскам с
+фильтрами; `log` читает журнал проекта (`activity.rs`, пишется самим
+приложением на любую правку — модели не нужно вести страницу «_История»
+руками); `journal` — страница дня. Правила промпта («Life management —
+one call, not a tour of the project»; «never keep a history page by hand»;
+«never duplicate due dates as events») — в блоке «Notes» `system_prompt`.
+Актор записей журнала: `run()` оборачивает `dispatch` в
+`activity::agent_scope()`, поэтому правки агента помечены `agent`, а
+правки пользователя мышью — `user`.
+
+Вложения карточек: модель не передаёт байты — `kanban op=attach` берёт
+файл по `path` (диск) либо `attachment` (вложение чата: имя / префикс sha /
+`last`), как и `attach` страницы (`attachment_bytes`); файл уходит в бандл
+`asset:<sha>.<ext>`, картинка становится миниатюрой на карточке, остальное
+— скрепкой.
+
+Календарь: `include_external` у `read`/`list_events` теперь `true` по
+умолчанию, строки `external:` помечены «a board due date or Gantt task, not
+an event» — иначе модель дублировала сроки событиями.
+
+Страж `schema_covers_every_argument` сканирует и `notes/life.rs`.
 
 ## Массовое чтение
 

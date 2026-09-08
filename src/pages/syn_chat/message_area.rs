@@ -47,8 +47,21 @@ fn dot_pattern() -> impl Widget {
     .class("dot-pattern")
 }
 
+/// Лента — `ScrollView` в режиме `follow_end`: при показе прокручена к
+/// последнему сообщению, во время стрима держится внизу, а стоит
+/// пользователю пролистать вверх — новые токены её не дёргают, пока он не
+/// вернётся к низу сам. Смена чата пересоздаёт `ScrollView` (внешний
+/// `Reactive` по `active_chat_id`): свежий элемент снова открывается внизу,
+/// а не там, где остановились в предыдущем чате.
 fn scroll_list() -> impl Widget {
-    ScrollView::new().vertical().child(move || {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = use_context::<SynChatCtx>().active_chat_id.get();
+        vec![Box::new(scroll_list_for_chat())]
+    })
+}
+
+fn scroll_list_for_chat() -> impl Widget {
+    ScrollView::new().vertical().follow_end(true).child(move || {
         let ctx = use_context::<SynChatCtx>();
         let has_active = ctx.active_chat_id.get().is_some();
         let msgs = ctx.messages.get();

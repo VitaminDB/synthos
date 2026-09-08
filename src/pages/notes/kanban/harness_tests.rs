@@ -43,16 +43,16 @@ impl Factory {
     fn env(&self) -> BoardEnv {
         let map = self.handles.clone();
         let page = self.page.clone();
-        BoardEnv {
-            boards: Arc::new(move |id| map.get(id).cloned()),
+        BoardEnv::detached(
+            Arc::new(move |id| map.get(id).cloned()),
             // Как `sinks::take_page_block`: markdown блока + удаление.
-            take_block: Arc::new(move |payload| {
+            Arc::new(move |payload| {
                 let id = BlockId(payload.parse().ok()?);
                 let md = page.block_markdown(id)?;
                 page.queue_op(DocOp::DeleteBlock(id));
                 Some(md)
             }),
-        }
+        )
     }
 }
 

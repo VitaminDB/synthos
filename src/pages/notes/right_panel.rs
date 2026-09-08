@@ -223,7 +223,7 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
     // Доска: колонки и внешний вид живут здесь, а не на самой доске.
     if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("kanban:")) {
         if let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", oid.trim()) {
-            col = col.child(kanban_props(handle));
+            col = col.child(kanban_props(ctx, handle));
         }
     }
     // Интеллект-карта: выбранный узел и оформление карты.
@@ -419,7 +419,7 @@ fn size_props(
 
 /// Колонки доски (название, цвет, ширина, удаление, добавление) и её
 /// внешний вид. Перестраивается по `structure_rev` доски.
-fn kanban_props(handle: KanbanHandle) -> impl Widget {
+fn kanban_props(ctx: NotesCtx, handle: KanbanHandle) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.structure_rev.get();
         let selected = handle.selected.get();
@@ -434,16 +434,44 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
             let title = if card.title.trim().is_empty() { tr!("notes.kanban.untitled") } else { card.title.clone() };
             let h_del = handle.clone();
             let id_del = card.id.clone();
+            let h_arc = handle.clone();
+            let id_arc = card.id.clone();
             col = col
                 .child(Text::new(tr!("notes.kanban.card")).class("notes-links-section"))
-                .child(Text::new(title).max_lines(2).class("notes-props-card-title"))
+                .child(Text::new(title).max_lines(2).class("notes-props-card-title"));
+            if let Some(text) = kanban::view::dates_text(&card) {
+                col = col.child(Text::new(text).max_lines(2).class("notes-props-hint"));
+            }
+            col = col
                 .child(field_row(
                     tr!("notes.kanban.priority"),
                     kanban::view::priority_control(&handle, &card, 140.0),
                 ))
                 .child(field_row(tr!("notes.kanban.due"), kanban::view::due_control(&handle, &card, 140.0)))
+                .child(field_row(tr!("notes.kanban.repeat"), kanban::view::repeat_control(&handle, &card, 140.0)))
                 .child(Text::new(tr!("notes.kanban.tags")).class("notes-props-row-label"))
-                .child(kanban::view::tags_control(&handle, &card, 200.0))
+                .child(kanban::view::tags_control(&handle, &card, 200.0));
+            // Вложения: список с «убрать» и скрепка.
+            let env = kanban::env(ctx);
+            for f in &card.files {
+                col = col.child(kanban::view::file_row(&handle, &card, f, 220.0));
+            }
+            col = col
+                .child(field_row(tr!("notes.kanban.attach_file"), kanban::view::attach_button(&env, &handle, &card)))
+                .child(
+                    GestureDetector::new()
+                        .cursor(syngui::input::CursorIcon::Pointer)
+                        .on_click(move || h_arc.archive_card(&id_arc))
+                        .child(
+                            DecoratedBox::new().class("notes-kanban-tail").child(
+                                Row::new()
+                                    .gap(6.0)
+                                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                                    .child(Icon::new(MI_ARCHIVE).class("notes-insert-icon"))
+                                    .child(Text::new(tr!("notes.kanban.archive_card")).class("notes-insert-label")),
+                            ),
+                        ),
+                )
                 .child(
                     GestureDetector::new()
                         .cursor(syngui::input::CursorIcon::Pointer)
@@ -469,6 +497,9 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
             let id_w = column.id.clone();
             let h_del = handle.clone();
             let id_del = column.id.clone();
+            let h_done = handle.clone();
+            let id_done = column.id.clone();
+            let is_done = column.done;
             let mut dot = DecoratedBox::new().class("notes-props-swatch");
             if column.color.is_empty() {
                 dot = dot.class("notes-props-swatch empty");
@@ -497,6 +528,12 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
                                     .on_submit(move |v: &str| h_name.rename_column(&id_name, v))
                                     .class("notes-props-name"),
                             ),
+                        )
+                        .child(
+                            ToolButton::new(MI_CHECK)
+                                .tooltip(tr!("notes.kanban.col.done_flag"))
+                                .on_click(move || h_done.set_column_done(&id_done, !is_done))
+                                .class(if is_done { "notes-props-col-done on" } else { "notes-props-col-done" }),
                         )
                         .child(
                             ToolButton::new(MI_CLOSE)
@@ -566,6 +603,35 @@ fn kanban_props(handle: KanbanHandle) -> impl Widget {
             .child(switch_row(tr!("notes.props.kanban.counts"), style.show_counts, move |on| {
                 h_counts.set_style(|s| s.show_counts = on)
             }));
+        // Архив: срок автоархива (0 — выключен) и возврат карточек.
+        let h_arch = handle.clone();
+        col = col.child(field_row(
+            tr!("notes.props.kanban.archive_after"),
+            SpinBox::new()
+                .range(0.0, 365.0)
+                .step(1.0)
+                .width(96.0)
+                .value(doc.archive_after.unwrap_or(0) as f64)
+                .on_change(move |v| h_arch.set_archive_after((v > 0.0).then_some(v.round() as u32)))
+                .class("notes-props-field"),
+        ));
+        if !doc.archive.is_empty() {
+            let h_restore = handle.clone();
+            col = col.child(
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+                    .class("notes-props-row")
+                    .child(Text::new(tr!("notes.props.kanban.archived", n = doc.archive.len())).class("notes-props-row-label"))
+                    .child(
+                        ToolButton::new(MI_UNARCHIVE)
+                            .text(tr!("notes.props.kanban.restore_all"))
+                            .tooltip(tr!("notes.props.kanban.restore_all"))
+                            .on_click(move || h_restore.unarchive_all()),
+                    ),
+            );
+        }
         vec![Box::new(col)]
     })
 }

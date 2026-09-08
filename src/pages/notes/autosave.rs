@@ -222,6 +222,22 @@ pub fn install_notes_autosave() {
                 enqueue(project::CALENDAR_PATH, SaveSource::Calendar(store.clone()), rev, None, false);
             }
         }
+        // Журнал изменений: переписываются только грязные месяцы.
+        if let Some(log) = ctx.activity.get() {
+            let rev = log.revision.get();
+            if rev > 0 {
+                for (path, bytes) in log.take_dirty() {
+                    enqueue(&path, SaveSource::Bytes(Arc::new(bytes)), rev, None, false);
+                }
+            }
+        }
+        // Напоминания: настройки и что показано.
+        if let Some(state) = ctx.reminder_state.get() {
+            let rev = state.revision.get();
+            if rev > saved_rev(project::REMINDERS_PATH) {
+                enqueue(project::REMINDERS_PATH, SaveSource::Bytes(Arc::new(state.serialize().into_bytes())), rev, None, false);
+            }
+        }
         // Доски и диаграммы.
         for o in ctx.objects.get().iter() {
             let rev = o.revision();

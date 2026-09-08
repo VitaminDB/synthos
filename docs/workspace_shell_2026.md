@@ -163,6 +163,19 @@ i18n: блок «Оболочка» в конце каждого каталог�
 `settings.archive.*`, …); удалены `chat.chats_column.*`, `chat.delete_dialog.*`,
 `chat.right.tab.tools`, `nodes.tabs.new/close`, `nav.session.new`, `search.cmd.delete_chat`.
 
+## Лента чата: автоскролл (08.09.2026)
+
+Лента сообщений (`syn_chat::message_area::scroll_list`) — `ScrollView` в
+режиме `follow_end(true)` (syngui): при показе прокручена к последнему
+сообщению, во время стрима держится внизу по мере роста содержимого, а
+стоит пользователю пролистать вверх (колесо, клавиши, ползунок, тач) —
+новые токены её не дёргают, пока он сам не вернётся к низу (тогда
+прилипание включается снова). Смена чата пересоздаёт `ScrollView` через
+внешний `Reactive` по `active_chat_id`: свежий элемент открывается внизу,
+а не на смещении предыдущего чата. Логика прилипания живёт в элементе
+syngui (`stick_to_end`, `refresh_stick`, `set_content_size`), тест —
+`follow_end_sticks_to_the_bottom_until_the_user_scrolls_up`.
+
 ## Что не сделано / на потом
 
 * Хоткеи переключения плиток (Ctrl+Tab, Ctrl+1..9) — по решению пользователя не

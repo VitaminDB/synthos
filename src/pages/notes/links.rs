@@ -2,8 +2,9 @@
 //!
 //! Провайдер читает индекс из сигнала `NotesCtx.index` (вызовы приходят с
 //! main-потока: пейнт и события редактора). Открытие wiki-ссылки
-//! активирует страницу, битой — создаёт страницу с таким названием в корне;
-//! url — системный браузер.
+//! активирует страницу, битой — создаёт страницу с таким названием в корне
+//! (а ссылка-дата `[[yyyy-mm-dd]]` — страницу дня в журнале); url —
+//! системный браузер.
 
 use std::sync::Arc;
 
@@ -41,10 +42,17 @@ impl DocLinkProvider for NotesLinkProvider {
                 let resolved = self.ctx.index.get_untracked().resolve(target);
                 match resolved {
                     Some(id) => self.ctx.activate(&id),
-                    None => {
+                    None => match super::state::date_title(target) {
+                        // `[[2026-09-08]]` — страница дня в журнале.
+                        Some(day) => {
+                            let id = self.ctx.journal_page(day);
+                            self.ctx.activate(&id);
+                        }
                         // Битая ссылка: создаём страницу с этим названием.
-                        self.ctx.create_page(None, target.trim());
-                    }
+                        None => {
+                            self.ctx.create_page(None, target.trim());
+                        }
+                    },
                 }
                 crate::rail::navigate("notes");
             }

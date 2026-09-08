@@ -770,3 +770,132 @@ document-editor {
     title-font-size: 14px;
     value-font-size: 22px;
 }
+
+/* Штампы карточки, повтор, закрытая карточка. */
+.notes-kanban-due.done {
+    background-color: var(--surface-hover);
+}
+.notes-kanban-due.done .notes-kanban-due-icon {
+    color: var(--success);
+}
+.notes-kanban-repeat-icon {
+    font-size: 13px;
+    color: var(--text-subtle);
+}
+.notes-kanban-dates {
+    font-size: 10px;
+    color: var(--text-subtle);
+}
+/* Флаг «готово» у колонки в панели свойств. */
+.notes-props-col-done {
+    width: 24px;
+    height: 24px;
+    icon-size: 16px;
+    border-radius: 6px;
+    background-color: transparent;
+    color: var(--text-subtle);
+}
+.notes-props-col-done.on {
+    color: var(--success);
+    background-color: var(--surface-selected);
+}
+/* Напоминания: колокольчик в шапке и попап. */
+.notes-reminders-bell {
+    width: 28px;
+    height: 28px;
+    icon-size: 18px;
+    border-radius: 8px;
+    background-color: transparent;
+    color: var(--text-muted);
+}
+.notes-reminders-bell:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+.notes-reminders-bell.hot {
+    color: var(--primary);
+}
+.notes-reminders-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--primary);
+}
+.notes-reminders-popup {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border);
+}
+.notes-reminders-heading {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+.notes-reminders-journal {
+    height: 26px;
+    font-size: 11px;
+    padding: 0px 8px;
+    border-radius: 7px;
+}
+.notes-reminders-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 6px 4px;
+}
+.notes-reminders-row {
+    padding: 5px 6px;
+    border-radius: 8px;
+}
+.notes-reminders-row:hover {
+    background-color: var(--surface-hover);
+}
+.notes-reminders-row-icon {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+.notes-reminders-row.overdue .notes-reminders-row-icon {
+    color: var(--error);
+}
+.notes-reminders-row-title {
+    font-size: 12px;
+    color: var(--text);
+}
+.notes-reminders-row-sub {
+    font-size: 11px;
+    color: var(--text-subtle);
+}
+/* Вложения карточки: миниатюры и файлы-чипы; окно просмотра картинки. */
+.notes-kanban-thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 8px;
+    background-color: var(--surface-hover);
+}
+.notes-kanban-thumb-img {
+    width: 64px;
+    height: 64px;
+}
+.notes-kanban-file {
+    border-radius: 6px;
+    padding: 2px 8px 2px 6px;
+    background-color: var(--surface-hover);
+}
+.notes-kanban-file:hover {
+    background-color: var(--surface-selected);
+}
+.notes-kanban-file-icon {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+.notes-kanban-file-text {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.notes-image-viewer {
+    padding: 8px;
+}
+.notes-image-viewer-img {
+    width: 100%;
+    height: 100%;
+}

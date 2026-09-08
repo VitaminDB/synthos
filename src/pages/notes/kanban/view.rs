@@ -26,13 +26,13 @@ use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditor;
 use syngui::widgets::overlay::{Draggable, DropArea, DropInfo};
-use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, ProgressBar};
+use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, Image, ImageFit, ProgressBar};
 
 use crate::icons::*;
 
 use super::super::gantt::calendar::{civil_from_days, days_from_civil, parse_days, short_date, today_days};
 use super::drag_strip::DragStrip;
-use super::model::{parse_tags, preview_text, tag_color, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Priority};
+use super::model::{parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Priority, Repeat};
 pub use super::sinks::DRAG_TYPE_BLOCK;
 use super::{drop_block, drop_card, BoardEnv, KanbanHandle};
 
@@ -335,7 +335,7 @@ fn card_slot(
                 .gap(0.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .child(gap(handle, DropSpot::before(&c.column, &id)))
-                .child(Stack::new().children(vec![card(board, handle, doc, lane_color, c, editing, selected, lane_width)])),
+                .child(Stack::new().children(vec![card(env, board, handle, doc, lane_color, c, editing, selected, lane_width)])),
         )
 }
 
@@ -343,6 +343,7 @@ fn card_slot(
 /// перетаскивается, по клику — правка на месте.
 #[allow(clippy::too_many_arguments)]
 fn card(
+    env: &BoardEnv,
     board: &str,
     handle: &KanbanHandle,
     doc: &KanbanDoc,
@@ -385,7 +386,7 @@ fn card(
                     .on_focus_lost(move || h_blur.finish_editing(&id_blur))
                     .class("notes-kanban-card-editor"),
             )
-            .child(card_fields(handle, c, lane_width));
+            .child(card_fields(env, handle, c, lane_width));
         return Box::new(shell.child(
             Row::new()
                 .gap(8.0)
@@ -409,11 +410,14 @@ fn card(
     if has_body {
         body = body.child(Text::new(preview).max_lines(3).class("notes-kanban-card-preview"));
     }
-    if c.due.is_some() || c.checklist().is_some() {
+    if !c.files.is_empty() {
+        body = body.child(files_row(env, c, lane_width));
+    }
+    if c.due.is_some() || c.done.is_some() || c.repeat != Repeat::None || c.checklist().is_some() {
         body = body.child(footer_row(c));
     }
     if selected {
-        body = body.child(card_fields(handle, c, lane_width));
+        body = body.child(card_fields(env, handle, c, lane_width));
     }
     let content = shell.child(
         Row::new()
@@ -432,6 +436,62 @@ fn card(
             .on_drag_start(|bounds| CARD_DRAG_H.store(bounds.size.height.to_bits(), Ordering::Relaxed))
             .child(content),
     )
+}
+
+/// Вложения карточки: картинки — миниатюрами (клик — окно просмотра),
+/// файлы — чипами со скрепкой (клик — системное приложение).
+fn files_row(env: &BoardEnv, c: &KanbanCard, lane_width: f32) -> impl Widget {
+    let mut col = Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Start);
+    let images: Vec<&CardFile> = c.files.iter().filter(|f| f.is_image()).collect();
+    let files: Vec<&CardFile> = c.files.iter().filter(|f| !f.is_image()).collect();
+    if !images.is_empty() {
+        // Сколько миниатюр влезает в ряд; остальные — «+n».
+        let per_row = ((lane_width - 56.0) / (THUMB + 4.0)).floor().max(1.0) as usize;
+        let mut row = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center);
+        for (i, f) in images.iter().enumerate() {
+            if i >= per_row {
+                row = row.child(Text::new(format!("+{}", images.len() - per_row)).class("notes-kanban-chip-more"));
+                break;
+            }
+            row = row.child(thumb(env, f));
+        }
+        col = col.child(row);
+    }
+    for f in files {
+        let open = env.open_file.clone();
+        let file = (*f).clone();
+        col = col.child(
+            GestureDetector::new()
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || open(&file))
+                .child(
+                    DecoratedBox::new().class("notes-kanban-file").child(
+                        Row::new()
+                            .gap(4.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Center)
+                            .child(Icon::new(MI_ATTACH_FILE).class("notes-kanban-file-icon"))
+                            .child(Text::new(f.label()).max_lines(1).class("notes-kanban-file-text")),
+                    ),
+                ),
+        );
+    }
+    col
+}
+
+/// Сторона миниатюры вложения.
+const THUMB: f32 = 64.0;
+
+fn thumb(env: &BoardEnv, f: &CardFile) -> impl Widget {
+    let open = env.open_file.clone();
+    let file = f.clone();
+    let inner: Box<dyn Widget> = match (env.asset_path)(&f.url) {
+        Some(path) => Box::new(Image::new(path.display().to_string()).fit(ImageFit::Cover).class("notes-kanban-thumb-img")),
+        None => Box::new(Center::new().child(Icon::new(MI_ATTACH_FILE).class("notes-kanban-file-icon"))),
+    };
+    GestureDetector::new()
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || open(&file))
+        .child(DecoratedBox::new().clip(true).class("notes-kanban-thumb").child(Stack::new().clip(true).children(vec![inner])))
 }
 
 /// Бейдж приоритета и метки (сколько влезает по ширине, остальное — «+n»).
@@ -473,10 +533,20 @@ fn chip(text: &str, color: &str, class: &str) -> impl Widget {
         .child(Text::new(text.to_string()).max_lines(1).style("color", c).class("notes-kanban-chip-text"))
 }
 
-/// Подвал: срок (просроченный — красным) и прогресс чек-листа.
+/// Подвал: срок (просроченный — красным; у закрытой карточки — дата
+/// закрытия с галочкой), значок повтора и прогресс чек-листа.
 fn footer_row(c: &KanbanCard) -> impl Widget {
     let mut row = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center);
-    if let Some(days) = c.due.as_deref().and_then(parse_days) {
+    if let Some(days) = c.done.as_deref().and_then(parse_days) {
+        row = row.child(
+            Row::new()
+                .gap(3.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .class("notes-kanban-due done")
+                .child(Icon::new(MI_CHECK).class("notes-kanban-due-icon"))
+                .child(Text::new(short_date(days)).class("notes-kanban-due-text")),
+        );
+    } else if let Some(days) = c.due.as_deref().and_then(parse_days) {
         let overdue = days < today_days();
         let class = if overdue { "notes-kanban-due overdue" } else { "notes-kanban-due" };
         row = row.child(
@@ -487,6 +557,9 @@ fn footer_row(c: &KanbanCard) -> impl Widget {
                 .child(Icon::new(MI_TODAY).class("notes-kanban-due-icon"))
                 .child(Text::new(short_date(days)).class("notes-kanban-due-text")),
         );
+    }
+    if c.repeat != Repeat::None {
+        row = row.child(Icon::new(MI_AUTORENEW).class("notes-kanban-repeat-icon"));
     }
     row = row.child(DecoratedBox::new().class("grow"));
     if let Some((done, total)) = c.checklist() {
@@ -539,6 +612,33 @@ pub fn due_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl
     picker.class("notes-kanban-field")
 }
 
+/// Выпадающий список повтора.
+pub fn repeat_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    let items: Vec<DropdownItem> = Repeat::ALL
+        .iter()
+        .map(|r| DropdownItem::new(r.key(), syngui::i18n::tr(&format!("notes.calendar.repeat.{}", r.key()))))
+        .collect();
+    let h = handle.clone();
+    let id = card.id.clone();
+    Dropdown::with_items(items)
+        .selected(card.repeat.key())
+        .width(width)
+        .on_change(move |v| h.set_repeat(&id, Repeat::parse(v).unwrap_or_default()))
+        .class("notes-kanban-field")
+}
+
+/// «Создана ДД.ММ · Сделана ДД.ММ» — штампы карточки; `None`, если их нет.
+pub fn dates_text(card: &KanbanCard) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(d) = card.created.as_deref().and_then(parse_days) {
+        parts.push(format!("{} {}", tr!("notes.kanban.created"), short_date(d)));
+    }
+    if let Some(d) = card.done.as_deref().and_then(parse_days) {
+        parts.push(format!("{} {}", tr!("notes.kanban.done_at"), short_date(d)));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 /// Метки через запятую.
 pub fn tags_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
     let h = handle.clone();
@@ -558,17 +658,33 @@ fn field_width(lane_width: f32) -> f32 {
 }
 
 /// Поля под карточкой, столбиком (в колонку шириной 300 в ряд они не
-/// влезают): приоритет, срок, метки + «удалить».
-fn card_fields(handle: &KanbanHandle, card: &KanbanCard, lane_width: f32) -> impl Widget {
+/// влезают): приоритет, срок, повтор + «в архив», метки + «удалить»,
+/// штампы создания/закрытия.
+fn card_fields(env: &BoardEnv, handle: &KanbanHandle, card: &KanbanCard, lane_width: f32) -> impl Widget {
     let h_del = handle.clone();
     let id_del = card.id.clone();
+    let h_arc = handle.clone();
+    let id_arc = card.id.clone();
     let w = field_width(lane_width);
-    Column::new()
+    let mut col = Column::new()
         .gap(4.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .class("notes-kanban-card-fields")
         .child(priority_control(handle, card, w))
         .child(due_control(handle, card, w))
+        .child(
+            Row::new()
+                .gap(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(repeat_control(handle, card, w - 60.0))
+                .child(attach_button(env, handle, card))
+                .child(
+                    ToolButton::new(MI_ARCHIVE)
+                        .tooltip(tr!("notes.kanban.archive_card"))
+                        .on_click(move || h_arc.archive_card(&id_arc))
+                        .class("notes-kanban-lane-btn"),
+                ),
+        )
         .child(
             Row::new()
                 .gap(4.0)
@@ -580,7 +696,48 @@ fn card_fields(handle: &KanbanHandle, card: &KanbanCard, lane_width: f32) -> imp
                         .on_click(move || h_del.delete_card(&id_del))
                         .class("notes-kanban-lane-btn"),
                 ),
+        );
+    for f in &card.files {
+        col = col.child(file_row(handle, card, f, w));
+    }
+    if let Some(text) = dates_text(card) {
+        col = col.child(Text::new(text).max_lines(2).class("notes-kanban-dates"));
+    }
+    col
+}
+
+/// Скрепка: диалог выбора файла → вложение бандла → карточка.
+pub fn attach_button(env: &BoardEnv, handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+    let h = handle.clone();
+    let id = card.id.clone();
+    let pick = env.pick_file.clone();
+    ToolButton::new(MI_ATTACH_FILE)
+        .tooltip(tr!("notes.kanban.attach_file"))
+        .on_click(move || {
+            if let Some(file) = pick() {
+                h.add_file(&id, file);
+            }
+        })
+        .class("notes-kanban-lane-btn")
+}
+
+/// Строка вложения в полях выбранной карточки: имя + «убрать».
+pub fn file_row(handle: &KanbanHandle, card: &KanbanCard, f: &CardFile, width: f32) -> impl Widget {
+    let h = handle.clone();
+    let id = card.id.clone();
+    let url = f.url.clone();
+    Row::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(Icon::new(if f.is_image() { MI_IMAGE_ICON } else { MI_ATTACH_FILE }).class("notes-kanban-file-icon"))
+        .child(DecoratedBox::new().class("grow").child(Text::new(f.label()).max_lines(1).class("notes-kanban-file-text")))
+        .child(
+            ToolButton::new(MI_CLOSE)
+                .tooltip(tr!("notes.kanban.remove_file"))
+                .on_click(move || h.remove_file(&id, &url))
+                .class("notes-kanban-lane-btn"),
         )
+        .style("width", StyleValue::px(width))
 }
 
 /// ISO-дата по дням от эпохи (для тестов панели).

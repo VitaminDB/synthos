@@ -100,6 +100,8 @@ use syngui::prelude::*;
 
 use model::{CalEvent, CalView, CalendarDoc, CalendarStore, CalendarStyle};
 
+use super::activity::{ActivityLogHandle, LogEntry};
+
 /// Внешний элемент на календаре: срок карточки доски либо задача Ганта
 /// (read-only слой).
 #[derive(Clone, Debug, PartialEq)]
@@ -125,6 +127,8 @@ pub struct CalendarEnv {
 pub struct CalendarStoreHandle {
     store: Arc<Mutex<CalendarStore>>,
     pub revision: RwSignal<u64>,
+    /// Журнал проекта: добавление, удаление, «сделано», перенос события.
+    log: Option<ActivityLogHandle>,
 }
 
 impl PartialEq for CalendarStoreHandle {
@@ -135,7 +139,12 @@ impl PartialEq for CalendarStoreHandle {
 
 impl CalendarStoreHandle {
     pub fn new(store: CalendarStore) -> Self {
-        Self { store: Arc::new(Mutex::new(store)), revision: use_signal(0) }
+        Self { store: Arc::new(Mutex::new(store)), revision: use_signal(0), log: None }
+    }
+
+    pub fn with_log(mut self, log: ActivityLogHandle) -> Self {
+        self.log = Some(log);
+        self
     }
 
     pub fn lock(&self) -> MutexGuard<'_, CalendarStore> {
@@ -146,9 +155,19 @@ impl CalendarStoreHandle {
         self.lock().serialize()
     }
 
+    /// Правка хранилища; разница до/после по событиям уходит в журнал
+    /// проекта (добавлено, удалено, сделано/снова открыто, перенесено).
     pub fn edit(&self, f: impl FnOnce(&mut CalendarStore)) {
-        f(&mut self.lock());
+        let entries = {
+            let mut store = self.lock();
+            let before = if self.log.is_some() { Some(store.events.clone()) } else { None };
+            f(&mut store);
+            before.map(|b| event_changes(&b, &store.events)).unwrap_or_default()
+        };
         self.revision.set(self.revision.get_untracked() + 1);
+        if let Some(log) = &self.log {
+            log.record_all(entries);
+        }
     }
 
     pub fn add_event(&self, event: CalEvent) -> String {
@@ -204,6 +223,31 @@ impl CalendarStoreHandle {
         self.edit(|s| ok = s.remove_calendar(id));
         ok
     }
+}
+
+/// Записи журнала по разнице списков событий.
+fn event_changes(before: &[CalEvent], after: &[CalEvent]) -> Vec<LogEntry> {
+    let mut out = Vec::new();
+    let entry = |action: &str, e: &CalEvent| LogEntry::now("event", action).object("calendar").item(e.id.clone()).title(e.title.clone());
+    for e in after {
+        match before.iter().find(|b| b.id == e.id) {
+            None => out.push(entry("add", e).from_to(String::new(), e.date.clone())),
+            Some(b) => {
+                if b.done != e.done {
+                    out.push(entry(if e.done { "done" } else { "reopen" }, e).from_to(String::new(), e.date.clone()));
+                }
+                if b.date != e.date {
+                    out.push(entry("move", e).from_to(b.date.clone(), e.date.clone()));
+                }
+            }
+        }
+    }
+    for b in before {
+        if !after.iter().any(|e| e.id == b.id) {
+            out.push(entry("delete", b).from_to(b.date.clone(), String::new()));
+        }
+    }
+    out
 }
 
 /// Черновик события в попапе.

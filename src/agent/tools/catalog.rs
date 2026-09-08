@@ -293,7 +293,22 @@ pub(super) fn build_all() -> Vec<Tool> {
                 the app): a tree of markdown pages — a free canvas where \
                 blocks have coordinates — with shapes/arrows, kanban boards \
                 and Gantt charts embedded in them. Changes appear in the UI \
-                at once and are saved automatically. Actions: list (page \
+                at once and are saved automatically. LIFE MANAGEMENT: agenda \
+                (the day at a glance: overdue, due today / tomorrow / soon, \
+                events, recently done, board counts — ONE call, use it first \
+                for \"what should I do\" questions), tasks (cards across all \
+                boards filtered by due/tag/priority/done/board/column/query), \
+                log (history: what was added, moved, done, archived, when and \
+                by whom — the app records every change itself, never keep a \
+                history page by hand), journal (the day's page: get or create \
+                Journal / yyyy-mm / yyyy-mm-dd, append notes). Cards carry \
+                created/done dates, repeat (daily…yearly: closing spawns the \
+                next one), attachments (attach path|attachment → image \
+                thumbnail or file with a paperclip), and every board has a \
+                DONE column (done=true on a column): move_card there = task \
+                done; done cards auto-archive after archive_after days. Due \
+                dates already appear in the calendar — never copy them into \
+                events. Actions: list (page \
                 tree with ids and the boards/charts on each page), search \
                 (titles + text), read (page markdown, layout, its \
                 boards/charts with card ids, links; blocks=true lists blocks \
@@ -422,9 +437,17 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "enum": ["list", "search", "read", "create", "update", "move",
                      "delete", "duplicate", "open", "attach", "blocks", "shape",
-                     "kanban", "gantt", "mindmap", "calendar", "chart"],
+                     "kanban", "gantt", "mindmap", "calendar", "chart",
+                     "agenda", "tasks", "log", "journal"],
             "description": "What to do. blocks, shape, kanban, gantt, mindmap, \
-                calendar and chart take the sub-operation in op."
+                calendar and chart take the sub-operation in op. agenda = \
+                the day at a glance (overdue, due today/tomorrow/soon, events, \
+                recently done, boards) in ONE call — start here for any \
+                \"what should I do / how is my day / week\" question; tasks \
+                = cards across all boards with filters (due, tag, priority, \
+                done, board, column, query); log = what changed and when \
+                (cards moved/done/added, events, pages; who did it); journal \
+                = the page of a day (get or create, append content)."
         })),
         ("page", json!({
             "type": "string",
@@ -460,7 +483,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("content", json!({
             "type": "string",
-            "description": "Page markdown for create and update (see mode). \
+            "description": "Page markdown for create, update (see mode) and \
+                journal (appended to the day page by default). \
                 Supported: # headings, - lists, 1. lists, - [ ] todos, > quotes, \
                 > [!note] callouts, > [!toggle] toggles, | tables |, ``` code, \
                 --- dividers, [[Page title]] wiki links, ![[Page title]] page \
@@ -477,7 +501,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "update with content: replace the whole page \
                 (default; blocks whose markdown changed lose their canvas \
                 position and style), or add the fragment at the end / the \
-                start / at index|after|before, optionally placed at x y (w h)."
+                start / at index|after|before, optionally placed at x y (w h). \
+                journal: append (default) | prepend | replace."
         })),
         ("find", json!({
             "type": "string",
@@ -537,13 +562,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("query", json!({
             "type": "string",
             "description": "search: case-insensitive text to find in titles and \
-                page markdown."
+                page markdown. tasks: text to find in card titles and bodies."
         })),
         ("limit", json!({
             "type": "integer",
             "description": "search: max pages to return (default 20). read \
                 with pages/depth: max pages to include (all of them by \
-                default, as many as fit in one reply)."
+                default, as many as fit in one reply). tasks (default 100) \
+                and log (default 60): max rows."
         })),
         ("path", json!({
             "type": "string",
@@ -561,7 +587,7 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("open", json!({
             "type": "boolean",
-            "description": "create: also show the new page to the user."
+            "description": "create / journal: also show the page to the user."
         })),
         ("op", json!({
             "type": "string",
@@ -577,9 +603,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 complete | list_events | add_calendar | update_calendar | \
                 delete_calendar | delete. kanban: create | read | set_style | add_column | \
                 update_column | delete_column | add_card | update_card | \
-                move_card | delete_card | delete. gantt: create | read | \
+                move_card | delete_card | archive | unarchive (card to/from the \
+                board's archive) | attach | detach (a file or image on a card: \
+                path or chat attachment → thumbnail / paperclip) | delete. \
+                gantt: create | read | \
                 add_task | update_task | delete_task | add_dep | delete_dep | \
-                set_zoom | show_today | delete."
+                set_zoom | show_today | delete. log: filter by action (done | \
+                move | add | delete | due | priority | archive | restore | repeat \
+                | create | rename)."
         })),
         ("blocks", json!({
             "type": "boolean",
@@ -652,7 +683,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 triangle | diamond | line | arrow | arrow2 (both ends) | curve | \
                 curve-arrow | curve-arrow2. Default rect (create) / arrow \
                 (connect). chart create/update/from_table: line | bar | pie | \
-                radar | gauge (default line, from_table bar)."
+                radar | gauge (default line, from_table bar). log: card | event \
+                | page."
         })),
         ("fill", json!({
             "type": "string",
@@ -877,7 +909,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("date", json!({
             "type": "string",
             "description": "calendar add_event/update_event/move_event: date \
-                yyyy-mm-dd, today or tomorrow."
+                yyyy-mm-dd, today or tomorrow. journal: the day whose page to \
+                open — today (default), yesterday, tomorrow or yyyy-mm-dd."
         })),
         ("end_date", json!({
             "type": "string",
@@ -897,17 +930,19 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "calendar: the event takes the whole day (drops the times)."
         })),
         ("done", json!({
-            "type": "boolean",
-            "description": "calendar complete/update_event: mark the event done."
+            "type": ["boolean", "string"],
+            "description": "calendar complete/update_event: mark the event done. \
+                kanban add_column/update_column: true = this is the board's \
+                DONE column — cards moved into it get a done date (and a \
+                repeating card spawns its next occurrence). tasks: false \
+                (default) lists open cards, true only done ones, \"any\" both."
         })),
         ("repeat", json!({
             "type": "string",
-            "description": "calendar: none | daily | weekly | monthly | yearly."
-        })),
-        ("until", json!({
-            "type": "string",
-            "description": "calendar: last date of the repetition (yyyy-mm-dd); \
-                \"none\" repeats forever."
+            "description": "calendar and kanban add_card/update_card: none | \
+                daily | weekly | monthly | yearly. A repeating card, when moved \
+                to the done column, creates the next one with the due date \
+                shifted by one period (habits, recurring chores)."
         })),
         ("from", json!({
             "type": "string",
@@ -924,7 +959,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("include_external", json!({
             "type": "boolean",
             "description": "calendar read/list_events: also list board card due \
-                dates and Gantt tasks of the project (read-only layer)."
+                dates and Gantt tasks of the project (read-only layer; on by \
+                default — the calendar already shows them, never copy a card's \
+                due date into an event)."
         })),
         ("board", json!({
             "type": "string",
@@ -982,11 +1019,13 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "kanban: column by id, name or 1-based number — \
                 target of add_card, subject of update_column/delete_column, \
-                destination of move_card/update_card."
+                destination of move_card/update_card. tasks: filter by column \
+                name."
         })),
         ("name", json!({
             "type": "string",
-            "description": "kanban add_column/update_column: column name. \
+            "description": "kanban attach: display name of the attachment \
+                (default: the file name). kanban add_column/update_column: column name. \
                 gantt add_task/update_task: task name. calendar add_calendar/\
                 update_calendar: calendar name. chart add_series/update_series: \
                 series name (it labels the legend)."
@@ -1005,8 +1044,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("card", json!({
             "type": "string",
-            "description": "kanban update_card/move_card/delete_card: card id \
-                or exact title."
+            "description": "kanban update_card/move_card/delete_card/archive/\
+                unarchive/attach/detach: card id or exact title. log: only \
+                this card's history."
         })),
         ("priority", json!({
             "type": "string",
@@ -1022,7 +1062,62 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("due", json!({
             "type": "string",
             "description": "kanban add_card/update_card: due date yyyy-mm-dd, \
-                today, tomorrow or none."
+                today, tomorrow or none. tasks: filter — overdue | today | \
+                tomorrow | week | month | 14d | none | any | yyyy-mm-dd | \
+                from..to."
+        })),
+        ("since", json!({
+            "type": "string",
+            "description": "log: start of the range — today | yesterday | week \
+                | month | 14d | yyyy-mm-dd | all (default: the last 7 days)."
+        })),
+        ("until", json!({
+            "type": "string",
+            "description": "calendar: last date of the repetition (yyyy-mm-dd; \
+                \"none\" repeats forever). log: end of the range (yyyy-mm-dd)."
+        })),
+        ("actor", json!({
+            "type": "string",
+            "description": "log: user | agent — who made the change."
+        })),
+        ("days", json!({
+            "type": "integer",
+            "description": "agenda: how many days ahead to include (default 7)."
+        })),
+        ("done_days", json!({
+            "type": "integer",
+            "description": "agenda: show cards done within the last N days \
+                (default 3)."
+        })),
+        ("archived", json!({
+            "type": "boolean",
+            "description": "kanban read: also list the board's archive. tasks: \
+                include archived cards."
+        })),
+        ("archive_after", json!({
+            "type": ["integer", "string"],
+            "description": "kanban set_style: days after a card is done before \
+                it moves off the board into the archive (0 / none = never)."
+        })),
+        ("done_column", json!({
+            "type": "string",
+            "description": "kanban create with columns: which column is the \
+                DONE one (name or 1-based number). Without it a column named \
+                Done / Complete / Finished (or its Russian equivalent) is \
+                detected automatically."
+        })),
+        ("sort", json!({
+            "type": "string",
+            "description": "tasks: due (default) | priority | created | done."
+        })),
+        ("tag", json!({
+            "type": "string",
+            "description": "tasks: only cards carrying this tag."
+        })),
+        ("file", json!({
+            "type": "string",
+            "description": "kanban detach: the attachment to remove — its name \
+                or asset url from the card line."
         })),
         ("before", json!({
             "type": "string",

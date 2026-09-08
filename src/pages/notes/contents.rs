@@ -63,6 +63,12 @@ pub fn header() -> impl Widget {
                         rail::navigate("notes");
                     },
                 ))
+                .child(panel_header::action_button(MI_TODAY, tr!("notes.journal.today"), move || {
+                    let id = ctx.journal_page(crate::agent::time::local_today_days());
+                    ctx.activate(&id);
+                    ctx.open_tile();
+                    rail::navigate("notes");
+                }))
                 .child(panel_header::action_button(MI_HUB, tr!("notes.graph.title"), move || {
                     ctx.show_graph.set(true);
                     rail::navigate("notes");

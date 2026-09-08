@@ -22,6 +22,7 @@ use crate::components::workspace_frame::{self, FrameSpec, Pane};
 use crate::context::AppCtx;
 use crate::icons::*;
 
+pub mod activity;
 pub mod autosave;
 pub mod blocks;
 pub mod calendar;
@@ -39,6 +40,7 @@ pub mod links;
 pub mod media;
 pub mod mindmap;
 pub mod project;
+pub mod reminders;
 pub mod right_panel;
 pub mod state;
 
@@ -67,10 +69,13 @@ pub fn view() -> impl Widget {
         || Box::new(right_panel::header()),
         || Box::new(right_panel::body()),
     ));
+    let ctx = use_context::<NotesCtx>();
     Stack::new()
         .clip(false)
         .child(workspace_frame::view(spec))
         .child(icon_picker::view())
+        .child(reminders::popup(ctx))
+        .child(media::image_viewer(ctx))
 }
 
 /// Кнопки истории правок страницы (отменить / повторить) — слева в шапке
@@ -107,15 +112,17 @@ fn center_header() -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let project = ctx.project_title.get();
         if ctx.show_graph.get() {
-            return vec![Box::new(panel_header::center(CenterSpec::new(
-                panel_header::identity_text(MI_HUB, tr!("notes.graph.title"), project),
-            )))];
+            return vec![Box::new(panel_header::center(
+                CenterSpec::new(panel_header::identity_text(MI_HUB, tr!("notes.graph.title"), project))
+                    .actions(reminders::bell(ctx)),
+            ))];
         }
         let tree = ctx.tree.get();
         let Some(id) = ctx.active.get().filter(|id| tree.find(id).is_some()) else {
-            return vec![Box::new(panel_header::center(CenterSpec::new(
-                panel_header::identity_text(MI_EDIT_NOTE, tr!("notes.title"), project),
-            )))];
+            return vec![Box::new(panel_header::center(
+                CenterSpec::new(panel_header::identity_text(MI_EDIT_NOTE, tr!("notes.title"), project))
+                    .actions(reminders::bell(ctx)),
+            ))];
         };
         let title = tree.title_of(&id).unwrap_or_default();
         let icon = tree.icon_of(&id).unwrap_or_else(|| MI_DESCRIPTION.to_string());
@@ -136,10 +143,13 @@ fn center_header() -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .child(history_buttons(ctx))
             .child(bubble);
-        vec![Box::new(panel_header::center(CenterSpec::new(panel_header::identity(
-            leading,
-            panel_header::title_text(title),
-            panel_header::subtitle_text(subtitle),
-        ))))]
+        vec![Box::new(panel_header::center(
+            CenterSpec::new(panel_header::identity(
+                leading,
+                panel_header::title_text(title),
+                panel_header::subtitle_text(subtitle),
+            ))
+            .actions(reminders::bell(ctx)),
+        ))]
     })
 }

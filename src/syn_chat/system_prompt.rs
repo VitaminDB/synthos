@@ -213,13 +213,33 @@ pub fn build(env: &PromptEnv) -> String {
                  points x1 y1 x2 y2. shape op=connect from=<block> \
                  to=<block> draws an arrow between two pinned blocks (pin \
                  them first). A diagram = pinned text blocks + connect.\n\
+                 - Life management — one call, not a tour of the project: \
+                 agenda (overdue, due today/tomorrow/soon, events, recently \
+                 done, board counts) answers \"what should I do / how is my \
+                 day or week\"; tasks {due=overdue|today|week|none, tag, \
+                 priority, done} finds cards across every board; log \
+                 {since=7d|yyyy-mm-dd, board, card} tells what was added, \
+                 moved, done, archived, when and by whom (the app records it \
+                 itself — never keep a history page by hand, never write \
+                 \"done on …\" into card text); journal {date=today, content} \
+                 appends to the day page (Journal / yyyy-mm / yyyy-mm-dd; a \
+                 [[yyyy-mm-dd]] link opens it).\n\
                  - Boards: kanban op=create on a page (columns optional; \
                  index/after/before and x y w h place it), then add_card / \
                  update_card / move_card; cards carry a title, a markdown \
                  body (a `- [ ]` checklist shows progress), priority \
-                 low|medium|high|urgent, tags and a due date yyyy-mm-dd. A \
-                 task \"done\" = move_card to the done column. op=set_style \
-                 sets column_width, lane_bg, card_bg, show_counts.\n\
+                 low|medium|high|urgent, tags, a due date yyyy-mm-dd, repeat \
+                 daily|weekly|monthly|yearly (closing spawns the next one) and \
+                 attachments (kanban op=attach card path|attachment: images \
+                 become thumbnails, files get a paperclip; the file goes into \
+                 the project — never paste file bytes). One column is the DONE \
+                 column (read shows \"DONE column\"; set it with \
+                 update_column done=true): a task \"done\" = move_card there \
+                 — the card gets its done date automatically; done cards \
+                 leave the board into the archive after set_style \
+                 archive_after days (read archived=true, op=unarchive). \
+                 op=set_style also sets column_width, lane_bg, card_bg, \
+                 show_counts.\n\
                  - Charts: gantt op=create, add_task with start/end \
                  yyyy-mm-dd (after=<task> adds a dependency), update_task, \
                  add_dep, set_zoom.\n\
@@ -232,7 +252,9 @@ pub fn build(env: &PromptEnv) -> String {
                  set_style. from_list turns an existing list block into a map.\n\
                  - Calendar: events live in one project-wide store, a \
                  calendar:<id> widget on a page is just a view (year | month | \
-                 week | day) over them. calendar op=add_event with title and \
+                 week | day) over them; card due dates and Gantt tasks are \
+                 shown on it by themselves — never duplicate them as events. \
+                 calendar op=add_event with title and \
                  date yyyy-mm-dd (start_time/end_time HH:MM local, all_day, \
                  repeat daily|weekly|monthly|yearly + until, calendar=<name>, \
                  note, link=<page>); list_events from/to reads a range; \
@@ -373,6 +395,9 @@ mod tests {
         assert!(s.contains("mindmap op=create"), "{s}");
         assert!(s.contains("calendar op=add_event"), "{s}");
         assert!(s.contains("depth=all"), "{s}");
+        assert!(s.contains("agenda"), "{s}");
+        assert!(s.contains("never keep a history page by hand"), "{s}");
+        assert!(s.contains("kanban op=attach"), "{s}");
     }
 
     #[test]

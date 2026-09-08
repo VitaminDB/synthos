@@ -17,6 +17,7 @@ use syngui::widgets::input::document_editor::{DocGrid, DocLayout, DocOp, Documen
 
 use crate::config::{now_millis, AppConfig};
 
+use super::activity::{ActivityLog, ActivityLogHandle, LogEntry};
 use super::autosave;
 use super::calendar::model::{CalView, CalendarDoc, CalendarStore};
 use super::calendar::{CalendarHandle, CalendarStoreHandle};
@@ -29,7 +30,9 @@ use super::kanban::model::KanbanDoc;
 use super::kanban::KanbanHandle;
 use super::mindmap::model::MindmapDoc;
 use super::mindmap::MindmapHandle;
+use super::gantt::calendar::{days_to_iso, parse_days};
 use super::project::{self, PageGrid, PageLayout, PageNode, ProjectTree};
+use super::reminders::{Reminder, ReminderStateHandle};
 
 /// Загруженная страница: исходник для виджета (fingerprint стабилен между
 /// перестройками) + ручка редактора (модель, ревизия, очередь операций).
@@ -137,6 +140,17 @@ pub struct NotesCtx {
     pub objects: RwSignal<Vec<LiveObject>>,
     /// Единое хранилище событий календаря (лениво из `notes/calendar.json`).
     pub calendar: RwSignal<Option<CalendarStoreHandle>>,
+    /// Журнал изменений проекта (лениво из `notes/log/`).
+    pub activity: RwSignal<Option<ActivityLogHandle>>,
+    /// Напоминания: настройки и что уже показано (лениво из
+    /// `notes/reminders.json`), текущий список для колокольчика, попап.
+    pub reminder_state: RwSignal<Option<ReminderStateHandle>>,
+    pub reminders: RwSignal<Arc<Vec<Reminder>>>,
+    pub reminders_open: RwSignal<bool>,
+    pub reminders_anchor: RwSignal<Rect>,
+    /// Окно просмотра картинки (вложение карточки): файл в кэше и подпись.
+    pub viewer_open: RwSignal<bool>,
+    pub viewer_file: RwSignal<Option<(PathBuf, String)>>,
     pub right_tab: RwSignal<usize>,
     /// Вкладка левой панели: 0 — «Содержимое», 1 — «Блоки».
     pub left_tab: RwSignal<usize>,
@@ -211,6 +225,13 @@ impl NotesCtx {
             pages: use_signal(Vec::new()),
             objects: use_signal(Vec::new()),
             calendar: use_signal(None),
+            activity: use_signal(None),
+            reminder_state: use_signal(None),
+            reminders: use_signal(Arc::new(Vec::new())),
+            reminders_open: use_signal(false),
+            reminders_anchor: use_signal(Rect::zero()),
+            viewer_open: use_signal(false),
+            viewer_file: use_signal(None),
             right_tab: use_signal(TAB_PROPS),
             left_tab: use_signal(TAB_PAGES),
             index: use_signal(Arc::new(index)),
@@ -295,12 +316,13 @@ impl NotesCtx {
         activate: bool,
     ) -> String {
         let title = self.unique_title(parent, base_title);
-        let node = PageNode::new(title);
+        let node = PageNode::new(title.clone());
         let id = node.id.clone();
         self.edit_tree(|t| {
             t.insert(parent, index, node);
         });
         autosave::queue_bytes(&project::page_path(&id), Vec::new());
+        self.activity().record(LogEntry::now("page", "create").item(id.clone()).title(title));
         if let Some(pid) = parent {
             self.expanded.update(|set| {
                 set.insert(pid.to_string());
@@ -367,12 +389,14 @@ impl NotesCtx {
         if title.is_empty() || self.title_of(id) == title {
             return;
         }
+        let old = self.title_of(id);
         let title = title.to_string();
         self.edit_tree(|t| {
             if let Some(n) = t.find_mut(id) {
-                n.title = title;
+                n.title = title.clone();
             }
         });
+        self.activity().record(LogEntry::now("page", "rename").item(id.to_string()).title(title.clone()).from_to(old, title));
     }
 
     pub fn set_icon(&self, id: &str, icon: Option<String>) {
@@ -447,6 +471,12 @@ impl NotesCtx {
                 .or_else(|| tree.roots.iter().map(|n| n.id.clone()).find(|i| !doomed.contains(i)))
         };
         drop(tree);
+        self.activity().record(
+            LogEntry::now("page", "delete")
+                .item(id.to_string())
+                .title(self.title_of(id))
+                .from_to(if doomed.len() > 1 { format!("{} sub-pages", doomed.len() - 1) } else { String::new() }, String::new()),
+        );
         for pid in &doomed {
             let md = self.page_markdown(pid);
             for (kind, oid) in object_refs(&md) {
@@ -611,10 +641,11 @@ impl NotesCtx {
         let path = project::object_path(kind, id);
         let content = project::read_text(&self.project_path.get_untracked(), &path)?;
         let obj = match kind {
-            "kanban" => LiveObject::Kanban {
-                id: id.to_string(),
-                handle: KanbanHandle::new(KanbanDoc::parse(&content).ok()?),
-            },
+            "kanban" => {
+                let handle = KanbanHandle::new(KanbanDoc::parse(&content).ok()?).with_log(id, self.activity());
+                handle.sweep();
+                LiveObject::Kanban { id: id.to_string(), handle }
+            }
             "gantt" => LiveObject::Gantt {
                 id: id.to_string(),
                 handle: GanttHandle::new(GanttDoc::parse(&content).ok()?),
@@ -649,7 +680,7 @@ impl NotesCtx {
                     &tr!("notes.kanban.col.done"),
                 ]);
                 let content = doc.serialize();
-                (LiveObject::Kanban { id: id.clone(), handle: KanbanHandle::new(doc) }, content)
+                (LiveObject::Kanban { id: id.clone(), handle: KanbanHandle::new(doc).with_log(&id, self.activity()) }, content)
             }
             "gantt" => {
                 let doc = GanttDoc::template();
@@ -705,9 +736,72 @@ impl NotesCtx {
                 s
             }
         };
-        let handle = CalendarStoreHandle::new(store);
+        let handle = CalendarStoreHandle::new(store).with_log(self.activity());
         self.calendar.set(Some(handle.clone()));
         handle
+    }
+
+    /// Журнал изменений проекта: из пула либо из бандла.
+    pub fn activity(&self) -> ActivityLogHandle {
+        if let Some(a) = self.activity.get_untracked() {
+            return a;
+        }
+        let handle = ActivityLogHandle::new(ActivityLog::load(&self.project_path.get_untracked()));
+        self.activity.set(Some(handle.clone()));
+        handle
+    }
+
+    // ─── Страницы дня ─────────────────────────────────────────────────────
+
+    /// Страница дня `Журнал / yyyy-mm / yyyy-mm-dd`: находится либо
+    /// создаётся вместе с родителями; не активируется. Корень — страница с
+    /// названием журнала на любом из известных языков, иначе новая.
+    pub fn journal_page(&self, day: i64) -> String {
+        let root = self.journal_root();
+        let (y, m, _) = super::gantt::calendar::civil_from_days(day);
+        let month_title = format!("{y:04}-{m:02}");
+        let month = self
+            .child_titled(&root, &month_title)
+            .unwrap_or_else(|| self.insert_page(Some(&root), None, &month_title, false));
+        let day_title = days_to_iso(day);
+        self.child_titled(&month, &day_title).unwrap_or_else(|| self.insert_page(Some(&month), None, &day_title, false))
+    }
+
+    /// Страница дня, если она уже есть.
+    pub fn find_journal_page(&self, day: i64) -> Option<String> {
+        let root = self.find_journal_root()?;
+        let (y, m, _) = super::gantt::calendar::civil_from_days(day);
+        let month = self.child_titled(&root, &format!("{y:04}-{m:02}"))?;
+        self.child_titled(&month, &days_to_iso(day))
+    }
+
+    /// Корневая страница журнала (первая подходящая по названию).
+    fn find_journal_root(&self) -> Option<String> {
+        let tree = self.tree.get_untracked();
+        let wanted = tr!("notes.journal.root").to_lowercase();
+        tree.roots
+            .iter()
+            .find(|n| {
+                let t = n.title.trim().to_lowercase();
+                t == wanted || JOURNAL_ROOT_NAMES.contains(&t.as_str())
+            })
+            .map(|n| n.id.clone())
+    }
+
+    fn journal_root(&self) -> String {
+        if let Some(id) = self.find_journal_root() {
+            return id;
+        }
+        let id = self.insert_page(None, None, &tr!("notes.journal.root"), false);
+        self.set_icon(&id, Some(crate::icons::MI_TODAY.to_string()));
+        id
+    }
+
+    /// Ребёнок с таким названием (без регистра).
+    fn child_titled(&self, parent: &str, title: &str) -> Option<String> {
+        let tree = self.tree.get_untracked();
+        let key = title.trim().to_lowercase();
+        tree.find(parent)?.children.iter().find(|c| c.title.trim().to_lowercase() == key).map(|c| c.id.clone())
     }
 
     /// График заданного вида либо из готового документа (из таблицы
@@ -767,6 +861,15 @@ impl NotesCtx {
         expanded.sort();
         (self.active.get(), expanded, self.tile_opened_at.get())
     }
+}
+
+/// Названия корня журнала, которые узнаются на любом языке интерфейса.
+pub const JOURNAL_ROOT_NAMES: [&str; 8] = ["журнал", "дневник", "journal", "diary", "daily", "daily notes", "tagebuch", "journal quotidien"];
+
+/// Дата из названия страницы дня (`yyyy-mm-dd`) — ссылка `[[2026-09-08]]`.
+pub fn date_title(title: &str) -> Option<i64> {
+    let t = title.trim();
+    (t.len() == 10 && t.as_bytes()[4] == b'-' && t.as_bytes()[7] == b'-').then(|| parse_days(t)).flatten()
 }
 
 /// `(kind, id)` всех врезок объектов в markdown: `![[kanban:<id>]]`.

@@ -70,7 +70,7 @@ impl Repeat {
         Self::ALL.iter().copied().find(|r| r.key() == s.trim().to_ascii_lowercase())
     }
 
-    fn is_none(&self) -> bool {
+    pub fn is_none(&self) -> bool {
         *self == Repeat::None
     }
 }
@@ -507,10 +507,11 @@ pub struct CalendarStyle {
     pub slot_min: u32,
     #[serde(default)]
     pub compact: bool,
-    /// Слой сроков карточек канбана / задач Ганта проекта (read-only).
-    #[serde(default)]
+    /// Слой сроков карточек канбана / задач Ганта проекта (read-only);
+    /// у новых виджетов включён — иначе календарь молчит о сроках задач.
+    #[serde(default = "default_true_style")]
     pub show_kanban_due: bool,
-    #[serde(default)]
+    #[serde(default = "default_true_style")]
     pub show_gantt: bool,
     /// Имя пресета стиля (для панели свойств).
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -519,6 +520,9 @@ pub struct CalendarStyle {
 
 fn default_font_size() -> f32 {
     12.0
+}
+fn default_true_style() -> bool {
+    true
 }
 fn default_hour_from() -> u32 {
     8
@@ -547,8 +551,8 @@ impl Default for CalendarStyle {
             hour_to: default_hour_to(),
             slot_min: default_slot_min(),
             compact: false,
-            show_kanban_due: false,
-            show_gantt: false,
+            show_kanban_due: true,
+            show_gantt: true,
             preset: String::new(),
         }
     }

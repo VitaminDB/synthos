@@ -85,6 +85,90 @@ impl NotesMediaResolver {
     }
 }
 
+/// Файл вложения `asset:<sha>.<ext>` на диске (распаковка в кэш при первом
+/// обращении) — для миниатюр и открытия вложений карточек.
+pub fn asset_file(project_path: &Path, url: &str) -> Option<PathBuf> {
+    let name = parse_asset_url(url)?;
+    NotesMediaResolver { project_path: project_path.to_path_buf() }.extracted(name)
+}
+
+/// Файл с диска → вложение бандла → [`CardFile`] с исходным именем.
+pub fn ingest_card_file(ctx: NotesCtx, file: &Path) -> Option<super::kanban::model::CardFile> {
+    let bytes = match std::fs::read(file) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("notes: не прочитан {}: {e}", file.display());
+            return None;
+        }
+    };
+    let ext = file.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+    let url = ingest_bytes(&ctx.project_path.get_untracked(), bytes, &ext);
+    let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    Some(super::kanban::model::CardFile::new(url, name))
+}
+
+/// Диалог выбора файла для вложения карточки.
+pub fn pick_card_file(ctx: NotesCtx) -> Option<super::kanban::model::CardFile> {
+    let path = rfd::FileDialog::new().set_title(&tr!("notes.kanban.attach_file")).pick_file()?;
+    ingest_card_file(ctx, &path)
+}
+
+/// Открыть вложение карточки: картинку — в окне просмотра, остальное —
+/// системным приложением.
+pub fn open_card_file(ctx: NotesCtx, file: &super::kanban::model::CardFile) {
+    let Some(path) = asset_file(&ctx.project_path.get_untracked(), &file.url) else { return };
+    if file.is_image() {
+        ctx.viewer_file.set(Some((path, file.label())));
+        ctx.viewer_open.set(true);
+    } else {
+        open_external(&path);
+    }
+}
+
+/// Открыть файл системным приложением (`xdg-open`, иначе как url).
+pub fn open_external(path: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        if std::process::Command::new("xdg-open").arg(path).spawn().is_ok() {
+            return;
+        }
+    }
+    if let Err(e) = syngui::open_url(&format!("file://{}", path.display())) {
+        log::warn!("notes: не удалось открыть {}: {e}", path.display());
+    }
+}
+
+/// Окно просмотра картинки (вложение карточки): модальное, по центру,
+/// картинка вписывается целиком.
+pub fn image_viewer(ctx: NotesCtx) -> impl Widget {
+    use syngui::widgets::overlay::FloatingWindow;
+    use syngui::widgets::{Image, ImageFit};
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let open = ctx.viewer_open.get();
+        let Some((path, name)) = ctx.viewer_file.get() else {
+            return vec![Box::new(DecoratedBox::new())];
+        };
+        if !open {
+            return vec![Box::new(DecoratedBox::new())];
+        }
+        let window = FloatingWindow::new(name)
+            .icon(crate::icons::MI_IMAGE_ICON)
+            .is_open(ctx.viewer_open)
+            .size(syngui::core::Size::new(840.0, 640.0))
+            .centered()
+            .modal(true)
+            .with_resizable(true)
+            .closable(true)
+            .child(
+                DecoratedBox::new()
+                    .class("notes-image-viewer")
+                    .child(Image::new(path.display().to_string()).fit(ImageFit::Contain).class("notes-image-viewer-img")),
+            )
+            .class("notes-image-viewer-window");
+        vec![Box::new(window)]
+    })
+}
+
 impl DocMediaResolver for NotesMediaResolver {
     fn resolve(&self, url: &str) -> Option<ResolvedMedia> {
         let path = if let Some(name) = parse_asset_url(url) {

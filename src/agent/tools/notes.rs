@@ -87,6 +87,8 @@ use crate::syn_chat::attach::blobs;
 use super::budget;
 use super::executor::{ToolError, MAX_NOTES_OUTPUT_BYTES};
 
+mod life;
+
 /// Главный entrypoint из `executor::execute`.
 pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let v: Json = serde_json::from_str(args_json).map_err(|e| ToolError::BadArgs(e.to_string()))?;
@@ -97,6 +99,8 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     run_on_main_thread(move || {
         let ctx = use_context::<NotesCtx>();
+        // Правки от имени агента — так они помечены в журнале проекта.
+        let _agent = crate::pages::notes::activity::agent_scope();
         let _ = tx.send(dispatch(ctx, &action, &v));
     });
     rx.await
@@ -125,9 +129,14 @@ pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String>
         "mindmap" => mindmap_impl(ctx, v),
         "calendar" => calendar_impl(ctx, v),
         "chart" => chart_impl(ctx, v),
+        "agenda" => life::agenda_impl(ctx, v),
+        "tasks" => life::tasks_impl(ctx, v),
+        "log" => life::log_impl(ctx, v),
+        "journal" => life::journal_impl(ctx, v),
         other => Err(format!(
             "unknown action \"{other}\" (list | search | read | create | update | move | delete | \
-             duplicate | open | attach | blocks | shape | kanban | gantt | mindmap | calendar | chart)"
+             duplicate | open | attach | blocks | shape | kanban | gantt | mindmap | calendar | chart | \
+             agenda | tasks | log | journal)"
         )),
     }
 }
@@ -1945,14 +1954,17 @@ fn expand_home(p: &str) -> PathBuf {
     PathBuf::from(p)
 }
 
-fn attach_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
-    let id = page_arg(ctx, v, "page")?;
-    let (bytes, ext, default_caption): (Vec<u8>, String, String) = if let Some(p) = str_field(v, "path") {
+/// Байты вложения из аргументов: `path` (файл на диске) либо `attachment`
+/// (вложение чата). Возвращает `(bytes, ext, stem, имя файла)`. Модель не
+/// передаёт байты сама — только ссылку на файл.
+fn attachment_bytes(v: &Json) -> Result<(Vec<u8>, String, String, String), String> {
+    if let Some(p) = str_field(v, "path") {
         let path = expand_home(p);
         let bytes = std::fs::read(&path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
         let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
         let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        (bytes, ext, stem)
+        let name = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        Ok((bytes, ext, stem, name))
     } else if let Some(r) = str_field(v, "attachment") {
         let r = r.strip_prefix("attachment:").unwrap_or(r);
         let a = super::pipelines::find_attachment(r)
@@ -1968,10 +1980,15 @@ fn attach_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        (bytes, ext, stem)
+        Ok((bytes, ext, stem, a.original_name.clone()))
     } else {
-        return Err("pass \"path\" (file on disk) or \"attachment\" (chat attachment: name | sha | last)".to_string());
-    };
+        Err("pass \"path\" (file on disk) or \"attachment\" (chat attachment: name | sha | last)".to_string())
+    }
+}
+
+fn attach_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
+    let id = page_arg(ctx, v, "page")?;
+    let (bytes, ext, default_caption, _) = attachment_bytes(v)?;
     let size = bytes.len();
     let url = media::ingest_bytes(&ctx.project_path.get_untracked(), bytes, &ext);
     let caption = str_field(v, "caption").map(str::to_string).unwrap_or(default_caption);
@@ -2054,6 +2071,15 @@ fn parse_due(s: &str) -> Result<Option<String>, String> {
     Ok(Some(days_to_iso(days)))
 }
 
+/// Повтор карточки: `none | daily | weekly | monthly | yearly`.
+fn parse_repeat(s: &str) -> Result<Repeat, String> {
+    let t = s.trim().to_ascii_lowercase();
+    if t.is_empty() || t == "null" || t == "off" {
+        return Ok(Repeat::None);
+    }
+    Repeat::parse(&t).ok_or_else(|| format!("bad repeat \"{s}\" (none | daily | weekly | monthly | yearly)"))
+}
+
 /// Колонка по id, названию (без регистра) или номеру с единицы.
 fn resolve_column(handle: &KanbanHandle, s: &str) -> Result<KanbanColumn, String> {
     let doc = handle.lock();
@@ -2108,6 +2134,18 @@ fn card_line(c: &KanbanCard) -> String {
     if let Some((done, total)) = c.checklist() {
         s.push_str(&format!(" · checklist {done}/{total}"));
     }
+    if c.repeat != Repeat::None {
+        s.push_str(&format!(" · repeat: {}", c.repeat.key()));
+    }
+    if let Some(d) = &c.created {
+        s.push_str(&format!(" · created: {d}"));
+    }
+    if let Some(d) = &c.done {
+        s.push_str(&format!(" · done: {d}"));
+    }
+    if !c.files.is_empty() {
+        s.push_str(&format!(" · files: {}", c.files.iter().map(|f| f.label()).collect::<Vec<_>>().join(", ")));
+    }
     s
 }
 
@@ -2117,9 +2155,11 @@ fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
     let doc = handle.lock();
     let mut out = String::new();
     out.push_str(&format!(
-        "kanban:{id} · columns: {} · cards: {}{}\n",
+        "kanban:{id} · columns: {} · cards: {}{}{}{}\n",
         doc.columns.len(),
         doc.cards.len(),
+        if doc.archive.is_empty() { String::new() } else { format!(" · archived: {}", doc.archive.len()) },
+        doc.archive_after.map(|d| format!(" · archive_after: {d} days")).unwrap_or_default(),
         if full {
             format!(
                 " · style: column_width={} lane_bg={} card_bg={} counts={}",
@@ -2132,12 +2172,16 @@ fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
             String::new()
         }
     ));
+    if doc.done_column().is_none() {
+        out.push_str("  !! no done column: cards never get a done stamp — kanban op=update_column column=<name> done=true\n");
+    }
     for col in &doc.columns {
         let cards = doc.cards_of(&col.id);
         out.push_str(&format!(
-            "  column {} \"{}\"{}{} · {} card{}\n",
+            "  column {} \"{}\"{}{}{} · {} card{}\n",
             col.id,
             col.name,
+            if col.done { " · DONE column" } else { "" },
             if col.color.is_empty() { String::new() } else { format!(" · color {}", col.color) },
             col.width.map(|w| format!(" · width {w}")).unwrap_or_default(),
             cards.len(),
@@ -2157,8 +2201,8 @@ fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
 
 fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let op = str_field(v, "op").ok_or(
-        "missing \"op\" (create | read | add_column | update_column | delete_column | add_card | \
-         update_card | move_card | delete_card | delete)",
+        "missing \"op\" (create | read | set_style | add_column | update_column | delete_column | add_card | \
+         update_card | move_card | delete_card | archive | unarchive | attach | detach | delete)",
     )?;
     match op {
         "create" => {
@@ -2177,8 +2221,18 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                             name: name.clone(),
                             color: PALETTE[i % PALETTE.len()].to_string(),
                             width: None,
+                            done: false,
                         })
                         .collect();
+                    doc.detect_done_column();
+                });
+            }
+            if let Some(dc) = str_field(v, "done_column") {
+                let col = resolve_column(&handle, dc)?;
+                handle.edit(|doc| {
+                    for c in &mut doc.columns {
+                        c.done = c.id == col.id;
+                    }
                 });
             }
             let (pos, idx) = embed_object(ctx, &pid, "kanban", &id, v)?;
@@ -2192,11 +2246,29 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         "read" => {
             let (id, handle) = kanban_handle(ctx, v)?;
-            Ok(format!("{}{}\n", board_text(&id, &handle, true), object_page_line(ctx, "kanban", &id)))
+            let mut out = board_text(&id, &handle, true);
+            if bool_field(v, "archived").unwrap_or(false) {
+                let doc = handle.lock();
+                out.push_str(&format!("--- Archive ({}) ---\n", doc.archive.len()));
+                for c in &doc.archive {
+                    out.push_str(&format!("    {}\n", card_line(c)));
+                }
+            }
+            Ok(format!("{out}{}\n", object_page_line(ctx, "kanban", &id)))
         }
         "set_style" => {
             let (id, handle) = kanban_handle(ctx, v)?;
             let mut changes = Vec::new();
+            if let Some(raw) = raw_string(v, "archive_after") {
+                let t = raw.trim().to_ascii_lowercase();
+                let days = if t.is_empty() || t == "none" || t == "off" || t == "0" {
+                    None
+                } else {
+                    Some(t.parse::<u32>().map_err(|_| format!("bad \"archive_after\" \"{raw}\" (days, 0/none = off)"))?)
+                };
+                handle.set_archive_after(days);
+                changes.push(days.map(|d| format!("archive_after {d} days")).unwrap_or_else(|| "archive_after off".to_string()));
+            }
             let column_width = f32_field(v, "column_width");
             let lane_bg = match raw_string(v, "lane_bg") {
                 Some(c) => Some(parse_hex_color(&c, true).or_else(|e| if c.trim().is_empty() { Ok(String::new()) } else { Err(e) })?),
@@ -2227,7 +2299,7 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 changes.push(format!("counts {}", if s { "on" } else { "off" }));
             }
             if changes.is_empty() {
-                return Err("nothing to change: pass column_width, lane_bg, card_bg or show_counts".to_string());
+                return Err("nothing to change: pass column_width, lane_bg, card_bg, show_counts or archive_after".to_string());
             }
             handle.set_style(|s| {
                 if let Some(w) = column_width {
@@ -2260,6 +2332,9 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if let Some(w) = f32_field(v, "width") {
                 handle.set_column_width(&cid, (w > 0.0).then_some(w));
             }
+            if let Some(d) = bool_field(v, "done") {
+                handle.set_column_done(&cid, d);
+            }
             Ok(format!("added column {cid} \"{name}\"\n{}", board_text(&id, &handle, false)))
         }
         "update_column" => {
@@ -2284,8 +2359,12 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 handle.set_column_width(&col.id, (w > 0.0).then_some(w));
                 changes.push(format!("width {w}"));
             }
+            if let Some(d) = bool_field(v, "done") {
+                handle.set_column_done(&col.id, d);
+                changes.push(if d { "done column".to_string() } else { "not a done column".to_string() });
+            }
             if changes.is_empty() {
-                return Err("nothing to update: pass name, color or width".to_string());
+                return Err("nothing to update: pass name, color, width or done".to_string());
             }
             Ok(format!("column {}: {}\n{}", col.id, changes.join(", "), board_text(&id, &handle, false)))
         }
@@ -2317,6 +2396,9 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             }
             if let Some(d) = str_field(v, "due") {
                 card.due = parse_due(d)?;
+            }
+            if let Some(r) = str_field(v, "repeat") {
+                card.repeat = parse_repeat(r)?;
             }
             let before = match str_field(v, "before") {
                 Some(b) => Some(resolve_card(&handle, b)?),
@@ -2361,6 +2443,10 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 handle.set_due(&card.id, parse_due(&d)?);
                 changes.push("due".to_string());
             }
+            if let Some(r) = raw_string(v, "repeat") {
+                handle.set_repeat(&card.id, parse_repeat(&r)?);
+                changes.push("repeat".to_string());
+            }
             if str_field(v, "column").is_some() || str_field(v, "before").is_some() {
                 let col = match str_field(v, "column") {
                     Some(c) => resolve_column(&handle, c)?,
@@ -2380,7 +2466,7 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 changes.push(format!("moved to \"{}\"", col.name));
             }
             if changes.is_empty() {
-                return Err("nothing to update: pass title, md, priority, tags, due, column or before".to_string());
+                return Err("nothing to update: pass title, md, priority, tags, due, repeat, column or before".to_string());
             }
             let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
             Ok(format!("updated {}: {line}\n{}", changes.join(", "), board_text(&id, &handle, false)))
@@ -2430,13 +2516,67 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             handle.delete_card(&card.id);
             Ok(format!("deleted card \"{}\"\n{}", card.title, board_text(&id, &handle, false)))
         }
+        "archive" => {
+            let (id, handle) = kanban_handle(ctx, v)?;
+            let card = resolve_card(&handle, str_field(v, "card").ok_or("missing \"card\"")?)?;
+            handle.archive_card(&card.id);
+            Ok(format!("archived card \"{}\" (kanban op=unarchive brings it back)\n{}", card.title, board_text(&id, &handle, false)))
+        }
+        "unarchive" => {
+            let (id, handle) = kanban_handle(ctx, v)?;
+            let key = str_field(v, "card").ok_or("missing \"card\"")?;
+            let found = {
+                let doc = handle.lock();
+                let lower = key.trim().to_lowercase();
+                let hits: Vec<&KanbanCard> =
+                    doc.archive.iter().filter(|c| c.id == key.trim() || c.title.trim().to_lowercase() == lower).collect();
+                match hits.len() {
+                    1 => hits[0].id.clone(),
+                    0 => return Err(format!("card \"{key}\" is not in the archive — kanban op=read archived=true lists it")),
+                    n => return Err(format!("{n} archived cards are titled \"{key}\" — pass the id")),
+                }
+            };
+            handle.unarchive_card(&found);
+            let line = handle.card(&found).map(|c| card_line(&c)).unwrap_or_default();
+            Ok(format!("restored {line}\n{}", board_text(&id, &handle, false)))
+        }
+        "attach" => {
+            let (id, handle) = kanban_handle(ctx, v)?;
+            let card = resolve_card(&handle, str_field(v, "card").ok_or("missing \"card\"")?)?;
+            let (bytes, ext, stem, filename) = attachment_bytes(v)?;
+            let size = bytes.len();
+            let url = media::ingest_bytes(&ctx.project_path.get_untracked(), bytes, &ext);
+            let name = str_field(v, "name").map(str::to_string).unwrap_or(if filename.is_empty() { stem } else { filename });
+            let file = crate::pages::notes::kanban::model::CardFile::new(url.clone(), name.clone());
+            let kind = if file.is_image() { "image (thumbnail on the card)" } else { "file (paperclip on the card)" };
+            handle.add_file(&card.id, file);
+            let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
+            Ok(format!("attached {url} ({size} bytes) as {kind} \"{name}\" to {line}\n"))
+        }
+        "detach" => {
+            let (_, handle) = kanban_handle(ctx, v)?;
+            let card = resolve_card(&handle, str_field(v, "card").ok_or("missing \"card\"")?)?;
+            let key = str_field(v, "file").ok_or("missing \"file\" (attachment name or asset url)")?;
+            let lower = key.trim().to_lowercase();
+            let hits: Vec<&crate::pages::notes::kanban::model::CardFile> =
+                card.files.iter().filter(|f| f.url == key.trim() || f.label().to_lowercase() == lower).collect();
+            let url = match hits.len() {
+                1 => hits[0].url.clone(),
+                0 => return Err(format!("card \"{}\" has no attachment \"{key}\"", card.title)),
+                n => return Err(format!("{n} attachments are named \"{key}\" — pass the asset url")),
+            };
+            handle.remove_file(&card.id, &url);
+            let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
+            Ok(format!("removed attachment {url} from {line}\n"))
+        }
         "delete" => {
             let (id, _) = kanban_handle(ctx, v)?;
             delete_object(ctx, "kanban", &id)
         }
         other => Err(format!(
             "unknown kanban op \"{other}\" (create | read | set_style | add_column | update_column | \
-             delete_column | add_card | update_card | move_card | delete_card | delete)"
+             delete_column | add_card | update_card | move_card | delete_card | archive | unarchive | \
+             attach | detach | delete)"
         )),
     }
 }
@@ -4543,11 +4683,11 @@ fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     out.push('\n');
                 }
             }
-            let external = if bool_field(v, "include_external").unwrap_or(false) {
+            let external = if bool_field(v, "include_external").unwrap_or(true) {
                 let mut items = Vec::new();
                 for it in (embeds::calendar_env(ctx).external)(from, to) {
                     items.push(format!(
-                        "{} \"{}\"{} · page {}",
+                        "{} \"{}\"{} · page {} (a board due date or Gantt task, not an event — don't duplicate it as an event)",
                         days_to_iso(it.day),
                         it.title,
                         if it.end_day != it.day { format!(" → {}", days_to_iso(it.end_day)) } else { String::new() },
@@ -4713,8 +4853,11 @@ mod tests {
     use crate::config::AppConfig;
     use crate::pages::notes::project;
 
-    /// Контекст заметок над временным проектом.
+    /// Контекст заметок над временным проектом. Каталоги строк — русские:
+    /// названия колонок шаблона и корня журнала берутся через `tr!`.
     fn ctx() -> NotesCtx {
+        syngui::i18n::register_catalogs(&crate::i18n::CATALOGS);
+        syngui::i18n::set_language(syngui::i18n::Lang::new("ru"));
         let dir = std::env::temp_dir().join(format!("synthos-notes-tool-{}", project::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = AppConfig {
@@ -5235,6 +5378,9 @@ mod tests {
         let props = schema["properties"].as_object().unwrap();
         let src = include_str!("notes.rs");
         let body = src.split("#[cfg(test)]").next().unwrap();
+        let life = include_str!("notes/life.rs");
+        let body = format!("{body}\n{}", life.split("#[cfg(test)]").next().unwrap());
+        let body = body.as_str();
         let mut missing = Vec::new();
         for pat in [
             "str_field(v, \"",
@@ -5604,5 +5750,152 @@ mod tests {
         let single = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "find:Второй"}));
         assert!(single.starts_with("#2 paragraph"), "{single}");
         assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "read", "page": &page, "block": "9"})).is_err());
+    }
+
+    /// Ведение жизни: колонка «готово» по названию, штампы и повтор при
+    /// закрытии, журнал с актором, agenda/tasks по всем доскам, архив,
+    /// страница дня, вложения карточки, сроки в календаре по умолчанию.
+    #[test]
+    fn life_management_through_the_tool() {
+        let ctx = ctx();
+        let today = today_days();
+        let iso = |d: i64| days_to_iso(today + d);
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Работа"})));
+        let out = call(ctx, "kanban", serde_json::json!({"op": "create", "page": &page, "columns": ["Бэклог", "В работе", "Готово"]}));
+        assert!(out.contains("\"Готово\" · DONE column"), "колонка «Готово» узнаётся по названию: {out}");
+        let board = out.lines().find_map(|l| l.strip_prefix("kanban:")).unwrap().split(' ').next().unwrap().to_string();
+        let add = |title: &str, extra: serde_json::Value| {
+            let mut args = serde_json::json!({"op": "add_card", "board": &board, "column": "Бэклог", "title": title});
+            for (k, v) in extra.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            call(ctx, "kanban", args)
+        };
+        let out = add("Импорт", serde_json::json!({"due": iso(-3), "tags": "core"}));
+        assert!(out.contains(&format!("created: {}", iso(0))), "штамп создания: {out}");
+        add("Отчёт", serde_json::json!({"due": "today"}));
+        add("Звонок", serde_json::json!({"due": "tomorrow", "priority": "high"}));
+        add("План", serde_json::json!({"due": iso(5)}));
+        add("Идея", serde_json::json!({"priority": "urgent"}));
+        let out = add("Привычка", serde_json::json!({"due": "today", "repeat": "daily", "md": "- [x] шаг"}));
+        assert!(out.contains("repeat: daily"), "{out}");
+        call(ctx, "calendar", serde_json::json!({"op": "add_event", "title": "Стендап", "date": iso(1), "start_time": "10:00", "end_time": "10:30"}));
+
+        // agenda: одним вызовом — просрочено, сегодня, завтра, скоро, важное без срока, события, доски.
+        let out = call(ctx, "agenda", serde_json::json!({}));
+        assert!(out.contains("Overdue (1):") && out.contains("\"Импорт\"") && out.contains("3 days late"), "{out}");
+        assert!(out.contains("Today (2):") && out.contains("Tomorrow (1):") && out.contains("Next 7 days (1):"), "{out}");
+        assert!(out.contains("Important without a due date (1):") && out.contains("\"Идея\""), "{out}");
+        assert!(out.contains("\"Стендап\"") && out.contains("10:00–10:30"), "{out}");
+        assert!(out.contains("Boards:") && out.contains("Бэклог 6") && out.contains("Готово ✓ 0"), "{out}");
+
+        // tasks: фильтры.
+        let out = call(ctx, "tasks", serde_json::json!({"due": "overdue"}));
+        assert!(out.contains("1 card") && out.contains("\"Импорт\"") && !out.contains("\"Отчёт\""), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"tag": "core"}));
+        assert!(out.contains("\"Импорт\"") && out.contains("1 card"), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"priority": "urgent", "due": "none"}));
+        assert!(out.contains("\"Идея\"") && out.contains("1 card"), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"due": "week", "sort": "priority"}));
+        let pos = |t: &str| out.find(t).unwrap_or(usize::MAX);
+        assert!(pos("\"Звонок\"") < pos("\"Отчёт\""), "high раньше без приоритета: {out}");
+
+        // Закрытие: перенос в «Готово» — штамп done и следующая карточка повтора; agenda видит «сделано».
+        let out = call(ctx, "kanban", serde_json::json!({"op": "move_card", "board": &board, "card": "Привычка", "column": "Готово"}));
+        assert!(out.contains(&format!("done: {}", iso(0))), "{out}");
+        let doc = match ctx.object("kanban", &board) { Some(LiveObject::Kanban { handle, .. }) => handle.lock().clone(), _ => panic!() };
+        let habits: Vec<&KanbanCard> = doc.cards.iter().filter(|c| c.title == "Привычка").collect();
+        assert_eq!(habits.len(), 2, "{doc:?}");
+        let next = habits.iter().find(|c| c.done.is_none()).unwrap();
+        assert_eq!((next.due.as_deref(), next.md.as_str(), doc.column_name(&next.column).as_str()), (Some(iso(1).as_str()), "- [ ] шаг", "Бэклог"));
+        let out = call(ctx, "agenda", serde_json::json!({}));
+        assert!(out.contains("Done in the last 3 days (1):"), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"done": true}));
+        assert!(out.contains("1 card") && out.contains("done: "), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"done": "any", "query": "привыч"}));
+        assert!(out.contains("2 cards"), "{out}");
+
+        // Журнал: добавления, DONE, повтор; актор — user вне агентского скоупа, agent внутри.
+        let out = call(ctx, "log", serde_json::json!({"since": "today"}));
+        assert!(out.contains("card \"Привычка\" DONE (\"Бэклог\" → \"Готово\")"), "{out}");
+        assert!(out.contains("next repeat created") && out.contains("card \"Импорт\" added to \"Бэклог\""), "{out}");
+        assert!(out.contains("event \"Стендап\" added on") && out.contains("page \"Работа\" created"), "{out}");
+        assert!(out.lines().filter(|l| l.contains(" · user · ")).count() > 5 && !out.contains(" · agent · "), "{out}");
+        {
+            let _agent = crate::pages::notes::activity::agent_scope();
+            call(ctx, "kanban", serde_json::json!({"op": "update_card", "board": &board, "card": "План", "due": iso(6)}));
+        }
+        let out = call(ctx, "log", serde_json::json!({"since": "today", "actor": "agent"}));
+        assert!(out.contains("1 entry") && out.contains(&format!("card \"План\" due {} → {}", iso(5), iso(6))), "{out}");
+        let out = call(ctx, "log", serde_json::json!({"since": "today", "kind": "event"}));
+        assert!(out.contains("1 entry"), "{out}");
+        let out = call(ctx, "log", serde_json::json!({"since": "today", "op": "done", "board": &board}));
+        assert!(out.contains("1 entry") && out.contains("DONE"), "{out}");
+        assert!(dispatch(ctx, "log", &serde_json::json!({"since": "позавчера"})).is_err());
+
+        // Архив: archive_after=0 уносит закрытые сразу; read archived=true; unarchive по названию.
+        let out = call(ctx, "kanban", serde_json::json!({"op": "set_style", "board": &board, "archive_after": 0}));
+        assert!(out.contains("archive_after off"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "set_style", "board": &board, "archive_after": "1"}));
+        assert!(out.contains("archive_after 1 days"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "archive", "board": &board, "card": "Отчёт"}));
+        assert!(out.contains("archived card \"Отчёт\"") && out.contains("archived: 1"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "read", "board": &board, "archived": true}));
+        assert!(out.contains("--- Archive (1) ---") && out.contains("\"Отчёт\""), "{out}");
+        let out = call(ctx, "tasks", serde_json::json!({"done": "any", "archived": true, "query": "отчёт"}));
+        assert!(out.contains("· archived"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "unarchive", "board": &board, "card": "Отчёт"}));
+        assert!(out.contains("restored") && out.contains("archived: 0") || !out.contains("archived:"), "{out}");
+        let doc = match ctx.object("kanban", &board) { Some(LiveObject::Kanban { handle, .. }) => handle.lock().clone(), _ => panic!() };
+        let report = doc.cards.iter().find(|c| c.title == "Отчёт").unwrap();
+        assert!(doc.is_done_column(&report.column) && report.done.is_some());
+        let out = call(ctx, "log", serde_json::json!({"since": "today", "card": "Отчёт", "board": &board}));
+        assert!(out.contains("archived (from") && out.contains("restored to \"Готово\""), "{out}");
+
+        // Флаг колонки: снять и поставить.
+        let out = call(ctx, "kanban", serde_json::json!({"op": "update_column", "board": &board, "column": "Готово", "done": false}));
+        assert!(out.contains("!! no done column"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "add_column", "board": &board, "name": "Сделано", "done": true}));
+        assert!(out.contains("\"Сделано\" · DONE column") && !out.contains("!! no done column"), "{out}");
+
+        // Страница дня.
+        let out = call(ctx, "journal", serde_json::json!({"date": "2026-09-08", "content": "- сделал импорт"}));
+        assert!(out.contains("journal page for 2026-09-08 (Tue) · created") && out.contains("1 block appended"), "{out}");
+        assert!(out.contains("- сделал импорт"), "{out}");
+        let day = page_id(&out);
+        let out = call(ctx, "journal", serde_json::json!({"date": "2026-09-08"}));
+        assert!(!out.contains("· created") && page_id(&out) == day, "{out}");
+        let tree = ctx.tree.get_untracked();
+        let path: Vec<String> = tree.path_of(&day).into_iter().map(|(_, t)| t).collect();
+        assert_eq!(path, ["Журнал", "2026-09", "2026-09-08"]);
+        assert_eq!(ctx.find_journal_page(parse_days("2026-09-08").unwrap()), Some(day.clone()));
+        assert!(ctx.find_journal_page(parse_days("2026-09-09").unwrap()).is_none());
+        assert_eq!(crate::pages::notes::state::date_title("2026-09-08"), parse_days("2026-09-08"));
+        assert!(crate::pages::notes::state::date_title("Заметка").is_none());
+
+        // Вложения: файл с диска → бандл; картинка — миниатюра, файл — скрепка; detach по имени.
+        let dir = std::env::temp_dir().join(format!("synthos-notes-attach-{}", project::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pic = dir.join("фото.png");
+        std::fs::write(&pic, b"\x89PNG\r\n\x1a\nfake").unwrap();
+        let doc_file = dir.join("договор.pdf");
+        std::fs::write(&doc_file, b"%PDF-1.4 fake").unwrap();
+        let out = call(ctx, "kanban", serde_json::json!({"op": "attach", "board": &board, "card": "Импорт", "path": pic.display().to_string()}));
+        assert!(out.contains("as image (thumbnail on the card) \"фото.png\"") && out.contains("files: фото.png"), "{out}");
+        let out = call(ctx, "kanban", serde_json::json!({"op": "attach", "board": &board, "card": "Импорт", "path": doc_file.display().to_string(), "name": "Договор"}));
+        assert!(out.contains("as file (paperclip on the card) \"Договор\"") && out.contains("files: фото.png, Договор"), "{out}");
+        let card = match ctx.object("kanban", &board) { Some(LiveObject::Kanban { handle, .. }) => handle.lock().cards.iter().find(|c| c.title == "Импорт").cloned().unwrap(), _ => panic!() };
+        assert_eq!(card.files.len(), 2);
+        assert!(card.files[0].is_image() && !card.files[1].is_image());
+        assert!(crate::pages::notes::media::asset_file(&ctx.project_path.get_untracked(), &card.files[0].url).is_some_and(|p| p.is_file()));
+        let out = call(ctx, "kanban", serde_json::json!({"op": "detach", "board": &board, "card": "Импорт", "file": "договор"}));
+        assert!(out.contains("removed attachment") && !out.contains("Договор"), "{out}");
+        assert!(dispatch(ctx, "kanban", &serde_json::json!({"op": "detach", "board": &board, "card": "Импорт", "file": "нет"})).is_err());
+
+        // Календарь: сроки досок в выдаче по умолчанию, с пометкой «не событие».
+        let out = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": iso(-3), "to": iso(7)}));
+        assert!(out.contains("external:") && out.contains("\"Импорт\"") && out.contains("not an event"), "{out}");
+        let out = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": iso(-3), "to": iso(7), "include_external": false}));
+        assert!(!out.contains("external:"), "{out}");
     }
 }

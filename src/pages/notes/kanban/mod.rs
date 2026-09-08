@@ -29,7 +29,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditorHandle;
 
-use model::{item_id, next_color, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, KanbanStyle, Priority};
+use model::{item_id, next_color, CardChange, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, KanbanStyle, Priority, Repeat};
+
+use super::activity::{ActivityLogHandle, LogEntry};
+use super::gantt::calendar::today_days;
 
 /// Поиск доски по id (перенос карточек между досками): в приложении — пул
 /// объектов `NotesCtx`, в тестах — карта.
@@ -39,11 +42,39 @@ pub type Boards = Arc<dyn Fn(&str) -> Option<KanbanHandle> + Send + Sync>;
 /// этом уходит со страницы — он стал карточкой. `None` — блока нет.
 pub type TakeBlock = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
-/// Окружение доски: другие доски и страница, на которой она врезана.
+/// Файл вложения (`asset:…`) на диске — распакованный из бандла в кэш.
+pub type AssetPath = Arc<dyn Fn(&str) -> Option<std::path::PathBuf> + Send + Sync>;
+/// Файл с диска → вложение бандла (`None` — не прочитан).
+pub type IngestFile = Arc<dyn Fn(&std::path::Path) -> Option<CardFile> + Send + Sync>;
+/// Открыть вложение: картинку — в окне просмотра, файл — системой.
+pub type OpenFile = Arc<dyn Fn(&CardFile) + Send + Sync>;
+/// Диалог выбора файла → вложение бандла (`None` — отмена).
+pub type PickFile = Arc<dyn Fn() -> Option<CardFile> + Send + Sync>;
+
+/// Окружение доски: другие доски, страница, на которой она врезана, и
+/// вложения (файлы бандла).
 #[derive(Clone)]
 pub struct BoardEnv {
     pub boards: Boards,
     pub take_block: TakeBlock,
+    pub asset_path: AssetPath,
+    pub ingest_file: IngestFile,
+    pub open_file: OpenFile,
+    pub pick_file: PickFile,
+}
+
+impl BoardEnv {
+    /// Окружение без проекта (тесты): нет соседних досок и вложений.
+    pub fn detached(boards: Boards, take_block: TakeBlock) -> Self {
+        Self {
+            boards,
+            take_block,
+            asset_path: Arc::new(|_| None),
+            ingest_file: Arc::new(|_| None),
+            open_file: Arc::new(|_| {}),
+            pick_file: Arc::new(|| None),
+        }
+    }
 }
 
 /// Окружение из контекста заметок.
@@ -54,6 +85,10 @@ pub fn env(ctx: super::state::NotesCtx) -> BoardEnv {
             _ => None,
         }),
         take_block: Arc::new(move |payload| sinks::take_page_block(ctx, payload)),
+        asset_path: Arc::new(move |url| super::media::asset_file(&ctx.project_path.get_untracked(), url)),
+        ingest_file: Arc::new(move |path| super::media::ingest_card_file(ctx, path)),
+        open_file: Arc::new(move |file| super::media::open_card_file(ctx, file)),
+        pick_file: Arc::new(move || super::media::pick_card_file(ctx)),
     }
 }
 
@@ -72,6 +107,9 @@ pub struct KanbanHandle {
     pub drag_h: RwSignal<f32>,
     /// Редакторы карточек: ручка + исходник на момент начала правки.
     editors: Arc<Mutex<HashMap<String, (DocumentEditorHandle, Arc<String>)>>>,
+    /// Журнал проекта и id доски в нём (`kanban:<id>`); без него правки
+    /// не журналируются (тесты, доски вне проекта).
+    log: Option<(String, ActivityLogHandle)>,
 }
 
 impl KanbanHandle {
@@ -85,7 +123,36 @@ impl KanbanHandle {
             hover: use_signal(None),
             drag_h: use_signal(0.0),
             editors: Arc::new(Mutex::new(HashMap::new())),
+            log: None,
         }
+    }
+
+    /// Подключить журнал проекта: изменения карточек пишутся под
+    /// `kanban:<id>`.
+    pub fn with_log(mut self, id: &str, log: ActivityLogHandle) -> Self {
+        self.log = Some((format!("kanban:{id}"), log));
+        self
+    }
+
+    /// Доводка при загрузке (штампы, автоархив) — без записи в журнал
+    /// «добавлений»: карточки не новые, а просто без штампа.
+    pub fn sweep(&self) {
+        let changes = self.lock().sweep(today_days());
+        if !changes.is_empty() {
+            self.bump();
+            self.structure_rev.set(self.structure_rev.get_untracked() + 1);
+            self.report(changes.into_iter().filter(|c| c.kind == model::CardChangeKind::Archived).collect());
+        }
+    }
+
+    fn report(&self, changes: Vec<CardChange>) {
+        let Some((object, log)) = &self.log else { return };
+        if changes.is_empty() {
+            return;
+        }
+        log.record_all(changes.into_iter().map(|c| {
+            LogEntry::now("card", c.kind.key()).object(object.clone()).item(c.card).title(c.title).from_to(c.from, c.to)
+        }));
     }
 
     pub fn lock(&self) -> MutexGuard<'_, KanbanDoc> {
@@ -100,11 +167,26 @@ impl KanbanHandle {
         self.revision.set(self.revision.get_untracked() + 1);
     }
 
-    /// Правка, меняющая вид доски: автосейв + перестройка.
+    /// Правка, меняющая вид доски: автосейв + перестройка. После правки —
+    /// доводка ([`KanbanDoc::reconcile`]: штампы, повторы, автоархив) и
+    /// запись изменений в журнал проекта.
     pub fn edit(&self, f: impl FnOnce(&mut KanbanDoc)) {
-        f(&mut self.lock());
+        let changes = self.edit_quiet(f);
+        self.report(changes);
+    }
+
+    /// То же без журнала (изъятие карточки при переносе на другую доску —
+    /// там запись сделает принимающая сторона).
+    fn edit_quiet(&self, f: impl FnOnce(&mut KanbanDoc)) -> Vec<CardChange> {
+        let changes = {
+            let mut doc = self.lock();
+            let before = doc.clone();
+            f(&mut doc);
+            doc.reconcile(&before, today_days())
+        };
         self.bump();
         self.structure_rev.set(self.structure_rev.get_untracked() + 1);
+        changes
     }
 
     /// Правка данных без перестройки (текст карточки по ходу набора).
@@ -117,9 +199,21 @@ impl KanbanHandle {
 
     pub fn add_column(&self, name: &str) -> String {
         let id = item_id("c");
-        let column = KanbanColumn { id: id.clone(), name: name.to_string(), color: String::new(), width: None };
+        let column = KanbanColumn { id: id.clone(), name: name.to_string(), color: String::new(), width: None, done: false };
         self.edit(|doc| doc.columns.push(column));
         id
+    }
+
+    /// Флаг «готово» у колонки: карточки в ней закрываются штампом.
+    pub fn set_column_done(&self, id: &str, done: bool) {
+        let changed = self.lock().columns.iter().any(|c| c.id == id && c.done != done);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.columns.iter_mut().find(|c| c.id == id) {
+                    c.done = done;
+                }
+            });
+        }
     }
 
     pub fn rename_column(&self, id: &str, name: &str) {
@@ -250,6 +344,87 @@ impl KanbanHandle {
         }
     }
 
+    pub fn set_repeat(&self, id: &str, repeat: Repeat) {
+        let changed = self.lock().cards.iter().any(|c| c.id == id && c.repeat != repeat);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.repeat = repeat;
+                }
+            });
+        }
+    }
+
+    /// Через сколько дней после закрытия карточки уходят в архив; `None` —
+    /// никогда. Сразу применяется к уже закрытым.
+    pub fn set_archive_after(&self, days: Option<u32>) {
+        if self.lock().archive_after == days {
+            return;
+        }
+        self.edit(|doc| doc.archive_after = days);
+    }
+
+    /// Карточка — в архив (закрывается, если открыта).
+    pub fn archive_card(&self, id: &str) {
+        self.editors.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        if self.editing.get_untracked().as_deref() == Some(id) {
+            self.editing.set(None);
+        }
+        if self.selected.get_untracked().as_deref() == Some(id) {
+            self.selected.set(None);
+        }
+        self.edit(|doc| {
+            doc.archive_card(id, today_days());
+        });
+    }
+
+    /// Карточка из архива — обратно на доску.
+    pub fn unarchive_card(&self, id: &str) {
+        let today = today_days();
+        self.edit(|doc| {
+            doc.unarchive_card(id, today);
+        });
+    }
+
+    /// Все карточки архива — обратно на доску.
+    pub fn unarchive_all(&self) {
+        let ids: Vec<String> = self.lock().archive.iter().map(|c| c.id.clone()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let today = today_days();
+        self.edit(|doc| {
+            for id in ids {
+                doc.unarchive_card(&id, today);
+            }
+        });
+    }
+
+    /// Добавить вложение карточке (повтор той же ссылки не дублируется).
+    pub fn add_file(&self, id: &str, file: CardFile) {
+        let dup = self.lock().cards.iter().any(|c| c.id == id && c.files.iter().any(|f| f.url == file.url));
+        if dup {
+            return;
+        }
+        self.edit(|doc| {
+            if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                c.files.push(file);
+            }
+        });
+    }
+
+    /// Убрать вложение по ссылке (файл в бандле остаётся до GC).
+    pub fn remove_file(&self, id: &str, url: &str) {
+        let has = self.lock().cards.iter().any(|c| c.id == id && c.files.iter().any(|f| f.url == url));
+        if has {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.files.retain(|f| f.url != url);
+                }
+            });
+        }
+    }
+
     pub fn set_tags(&self, id: &str, tags: Vec<String>) {
         let changed = self.lock().cards.iter().any(|c| c.id == id && c.tags != tags);
         if changed {
@@ -313,7 +488,7 @@ impl KanbanHandle {
         }
         self.editors.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
         let mut taken = None;
-        self.edit(|doc| {
+        self.edit_quiet(|doc| {
             if let Some(pos) = doc.cards.iter().position(|c| c.id == id) {
                 taken = Some(doc.cards.remove(pos));
             }

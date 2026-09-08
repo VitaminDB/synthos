@@ -110,6 +110,8 @@ pub struct KanbanHandle {
     /// Журнал проекта и id доски в нём (`kanban:<id>`); без него правки
     /// не журналируются (тесты, доски вне проекта).
     log: Option<(String, ActivityLogHandle)>,
+    /// Общая ревизия объектов проекта ([`super::state::NotesCtx`]).
+    project_rev: Option<RwSignal<u64>>,
 }
 
 impl KanbanHandle {
@@ -124,6 +126,7 @@ impl KanbanHandle {
             drag_h: use_signal(0.0),
             editors: Arc::new(Mutex::new(HashMap::new())),
             log: None,
+            project_rev: None,
         }
     }
 
@@ -131,6 +134,13 @@ impl KanbanHandle {
     /// `kanban:<id>`.
     pub fn with_log(mut self, id: &str, log: ActivityLogHandle) -> Self {
         self.log = Some((format!("kanban:{id}"), log));
+        self
+    }
+
+    /// Общая ревизия объектов проекта: по ней календарь и Гант пересобирают
+    /// свой слой чужих карточек.
+    pub fn with_project_rev(mut self, rev: RwSignal<u64>) -> Self {
+        self.project_rev = Some(rev);
         self
     }
 
@@ -165,6 +175,9 @@ impl KanbanHandle {
 
     fn bump(&self) {
         self.revision.set(self.revision.get_untracked() + 1);
+        if let Some(rev) = self.project_rev {
+            rev.set(rev.get_untracked() + 1);
+        }
     }
 
     /// Правка, меняющая вид доски: автосейв + перестройка. После правки —
@@ -342,6 +355,78 @@ impl KanbanHandle {
                 }
             });
         }
+    }
+
+    /// Оценка длительности в минутах; `None` — снять.
+    pub fn set_duration(&self, id: &str, duration: Option<u32>) {
+        let duration = duration.filter(|d| *d > 0);
+        let changed = self.lock().cards.iter().any(|c| c.id == id && c.duration != duration);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.duration = duration;
+                }
+            });
+        }
+    }
+
+    /// Плановое начало/конец: `yyyy-mm-dd` либо `yyyy-mm-ddThh:mm`.
+    /// `None` — снять поле.
+    pub fn set_schedule(&self, id: &str, start: Option<String>, end: Option<String>) {
+        let clean = |v: Option<String>| v.filter(|d| !d.trim().is_empty());
+        let (start, end) = (clean(start), clean(end));
+        let changed = self.lock().cards.iter().any(|c| c.id == id && (c.start != start || c.end != end));
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.start = start;
+                    c.end = end;
+                }
+            });
+        }
+    }
+
+    /// «В календарь»: начало — день `day` (и время), конец — по оценке.
+    pub fn schedule_card(&self, id: &str, day: i64, min: Option<u32>) {
+        self.edit(|doc| {
+            if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                c.schedule_at(day, min);
+            }
+        });
+    }
+
+    /// Снять план карточки (срок и оценка остаются).
+    pub fn unschedule_card(&self, id: &str) {
+        let has = self.lock().cards.iter().any(|c| c.id == id && (c.start.is_some() || c.end.is_some()));
+        if has {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.unschedule();
+                }
+            });
+        }
+    }
+
+    /// Перенести полосу карточки на `delta` дней (перетаскивание в
+    /// календаре и в Ганте).
+    pub fn shift_card_schedule(&self, id: &str, delta: i64) {
+        let movable = self.lock().cards.iter().any(|c| c.id == id && c.schedule().is_some());
+        if delta != 0 && movable {
+            self.edit(|doc| {
+                if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                    c.shift_schedule(delta);
+                }
+            });
+        }
+    }
+
+    /// Задать полосу карточки днями (растягивание кромки бара в Ганте).
+    pub fn set_card_span(&self, id: &str, start_day: i64, end_day: i64) {
+        self.edit(|doc| {
+            if let Some(c) = doc.cards.iter_mut().find(|c| c.id == id) {
+                c.set_span_days(start_day, end_day);
+            }
+        });
     }
 
     pub fn set_repeat(&self, id: &str, repeat: Repeat) {

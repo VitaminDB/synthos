@@ -102,24 +102,70 @@ use model::{CalEvent, CalView, CalendarDoc, CalendarStore, CalendarStyle};
 
 use super::activity::{ActivityLogHandle, LogEntry};
 
-/// Внешний элемент на календаре: срок карточки доски либо задача Ганта
-/// (read-only слой).
+/// Откуда взялся внешний элемент: срок карточки (точка), плановая полоса
+/// карточки или задача Ганта.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalKind {
+    Due,
+    Card,
+    Task,
+}
+
+/// Адрес внешнего элемента: объект проекта и его элемент — по нему
+/// календарь двигает карточку или задачу, не зная про доски.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalRef {
+    pub kind: ExternalKind,
+    /// id объекта (`kanban` / `gantt`).
+    pub object: String,
+    /// id карточки либо задачи.
+    pub item: String,
+}
+
+/// Внешний элемент на календаре: срок карточки доски, её плановая полоса
+/// либо задача Ганта.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternalItem {
     pub day: i64,
-    /// Последний день (задача Ганта); у срока — тот же день.
+    /// Последний день полосы; у срока — тот же день.
     pub end_day: i64,
+    /// Минуты начала/конца — полоса в сетке часов; `None` — «весь день».
+    pub time: Option<(u32, u32)>,
     pub title: String,
     pub color: String,
     /// Страница, где живёт объект.
     pub page: String,
+    pub source: ExternalRef,
 }
 
-/// Окружение виджета: хранилище, внешние элементы, открытие страницы.
+/// Запрос внешнего слоя: диапазон дней и фильтр объектов (пусто — все).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalQuery {
+    pub from: i64,
+    pub to: i64,
+    /// id досок (`kanban`); пусто — все доски проекта.
+    pub boards: Vec<String>,
+    /// Сроки карточек точками.
+    pub due: bool,
+    /// Плановые полосы карточек.
+    pub spans: bool,
+    /// Задачи диаграмм Ганта.
+    pub gantt: bool,
+}
+
+/// Окружение виджета: хранилище, внешние элементы, их перенос, открытие
+/// страницы.
 #[derive(Clone)]
 pub struct CalendarEnv {
     pub store: CalendarStoreHandle,
-    pub external: Arc<dyn Fn(i64, i64) -> Vec<ExternalItem> + Send + Sync>,
+    pub external: Arc<dyn Fn(&ExternalQuery) -> Vec<ExternalItem> + Send + Sync>,
+    /// Сдвинуть внешний элемент на `delta` дней; `false` — не вышло.
+    pub shift_external: Arc<dyn Fn(&ExternalRef, i64) -> bool + Send + Sync>,
+    /// Доски проекта для выбора в панели свойств: `(id, название страницы)`.
+    pub boards: Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>,
+    /// Ревизия объектов проекта: правка чужой карточки перерисовывает
+    /// календарь (её виджет живёт на другой странице).
+    pub project_rev: RwSignal<u64>,
     pub open_page: Arc<dyn Fn(&str) + Send + Sync>,
 }
 
@@ -383,6 +429,29 @@ impl CalendarHandle {
         // Все видны — фильтр пустой (новые календари попадают сами).
         let ids = if all.iter().all(|a| visible.contains(a)) { Vec::new() } else { visible };
         self.set_calendars(ids);
+    }
+
+    /// Доски-источники задач; пусто — все доски проекта.
+    pub fn set_boards(&self, ids: Vec<String>) {
+        if self.lock().boards == ids {
+            return;
+        }
+        self.edit(|d| d.boards = ids);
+    }
+
+    pub fn toggle_board(&self, id: &str, all: &[String]) {
+        let mut visible = {
+            let d = self.lock();
+            if d.boards.is_empty() { all.to_vec() } else { d.boards.clone() }
+        };
+        if let Some(pos) = visible.iter().position(|b| b == id) {
+            visible.remove(pos);
+        } else {
+            visible.push(id.to_string());
+        }
+        // Видны все — фильтр пустой (новые доски попадают сами).
+        let ids = if all.iter().all(|a| visible.contains(a)) { Vec::new() } else { visible };
+        self.set_boards(ids);
     }
 
     pub fn select(&self, id: Option<String>) {

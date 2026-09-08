@@ -258,9 +258,18 @@ pub fn build(env: &PromptEnv) -> String {
                  archive_after days (read archived=true, op=unarchive). \
                  op=set_style also sets column_width, lane_bg, card_bg, \
                  show_counts.\n\
+                 - Planning a card in time: duration is the estimate (1d, 2h, \
+                 90m), start/end are the planned dates; kanban op=schedule \
+                 {card, date=today|tomorrow|yyyy-mm-dd, time, duration} fills \
+                 them in one call (op=unschedule clears them). A card with a \
+                 plan shows up as a BAR in the calendar (day and week views \
+                 place it by its hours) and as a row on a Gantt chart, and \
+                 agenda lists it under Today. A due date alone is only a \
+                 point — plan the work with start+duration.\n\
                  - Charts: gantt op=create, add_task with start/end \
                  yyyy-mm-dd (after=<task> adds a dependency), update_task, \
-                 add_dep, set_zoom.\n\
+                 add_dep, set_zoom; set_boards {boards} makes the planned \
+                 cards of those boards rows of the same chart.\n\
                  - Mind maps: mindmap op=create on a page (outline=<markdown \
                  list> builds the whole map at once — a heading is the root, \
                  nested bullets are nodes), then add_node (parent=<node|root>), \
@@ -278,8 +287,10 @@ pub fn build(env: &PromptEnv) -> String {
                  note, link=<page>); list_events from/to reads a range; \
                  update_event / move_event / complete / delete_event by id or \
                  title; add_calendar makes a named colour category; op=create \
-                 puts a widget on a page, set_view and set_style change it. \
-                 Deleting a widget keeps the events.\n\
+                 puts a widget on a page, set_view and set_style change it \
+                 (set_view boards=[…] picks which boards' tasks the widget \
+                 shows; style show_kanban_spans/show_kanban_due/show_gantt \
+                 turn the layers off). Deleting a widget keeps the events.\n\
                  - Changes are saved automatically and show up in the UI at \
                  once; open shows a page to the user. Don't ask to confirm \
                  routine edits the user already requested.\n",

@@ -26,13 +26,14 @@ use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::DocumentEditor;
 use syngui::widgets::overlay::{Draggable, DropArea, DropInfo};
-use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, Image, ImageFit, ProgressBar};
+use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, Image, ImageFit, MenuItem, PopupMenu, ProgressBar, SpinBox};
 
 use crate::icons::*;
 
+use super::super::calendar::model::fmt_hm;
 use super::super::gantt::calendar::{civil_from_days, days_from_civil, parse_days, short_date, today_days};
 use super::drag_strip::DragStrip;
-use super::model::{parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Priority, Repeat};
+use super::model::{parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Moment, Priority, Repeat, DAY_MIN};
 pub use super::sinks::DRAG_TYPE_BLOCK;
 use super::{drop_block, drop_card, BoardEnv, KanbanHandle};
 
@@ -628,6 +629,125 @@ pub fn repeat_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> i
         .class("notes-kanban-field")
 }
 
+/// Оценка длительности: число и единица (часы/дни). Ноль — оценки нет;
+/// смена единицы переносит само число (2 часа → 2 дня).
+pub fn duration_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    let min = card.duration.unwrap_or(0);
+    let in_days = min > 0 && min % DAY_MIN == 0;
+    let unit = if in_days { DAY_MIN } else { 60 };
+    let value = if min == 0 { 0.0 } else { (min as f64 / unit as f64 * 10.0).round() / 10.0 };
+    let h = handle.clone();
+    let id = card.id.clone();
+    let spin = SpinBox::new()
+        .range(0.0, 999.0)
+        .step(1.0)
+        .width((width - 84.0).max(56.0))
+        .value(value)
+        .on_change(move |v: f64| h.set_duration(&id, (v > 0.0).then(|| (v * unit as f64).round().max(1.0) as u32)))
+        .class("notes-kanban-field");
+    let h = handle.clone();
+    let id = card.id.clone();
+    let units = Dropdown::with_items(vec![
+        DropdownItem::new("h", tr!("notes.kanban.duration.hours")),
+        DropdownItem::new("d", tr!("notes.kanban.duration.days")),
+    ])
+    .selected(if in_days { "d" } else { "h" })
+    .width(80.0)
+    .on_change(move |v| {
+        let unit = if v == "d" { DAY_MIN } else { 60 };
+        h.set_duration(&id, (value > 0.0).then(|| (value * unit as f64).round().max(1.0) as u32));
+    })
+    .class("notes-kanban-field");
+    Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center).child(spin).child(units)
+}
+
+/// Дата плановой полосы: `start` либо `end`. Время момента (его ставит
+/// агент) сохраняется — календарь показывает задачу в своих часах.
+fn moment_control(handle: &KanbanHandle, card: &KanbanCard, width: f32, is_start: bool) -> impl Widget {
+    let (own, other) = if is_start { (card.start_at(), card.end.clone()) } else { (card.end_at(), card.start.clone()) };
+    let min = own.and_then(|m| m.min);
+    let h = handle.clone();
+    let id = card.id.clone();
+    let mut picker = DatePicker::new()
+        .placeholder(if is_start { tr!("notes.kanban.start") } else { tr!("notes.kanban.end") })
+        .width(width)
+        .on_change(move |d: Option<Date>| {
+            let own = d.map(|d| Moment { day: days_from_civil(d.year as i64, d.month, d.day), min }.iso());
+            let (start, end) = if is_start { (own, other.clone()) } else { (other.clone(), own) };
+            h.set_schedule(&id, start, end);
+        });
+    if let Some(m) = own {
+        let (y, mo, d) = civil_from_days(m.day);
+        picker = picker.selected(Date::new(y as i32, mo, d));
+    }
+    picker.class("notes-kanban-field")
+}
+
+pub fn start_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    moment_control(handle, card, width, true)
+}
+
+pub fn end_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
+    moment_control(handle, card, width, false)
+}
+
+/// «В календарь»: меню дней (сегодня, завтра, послезавтра, по сроку) —
+/// начало встаёт на выбранный день, конец считается по оценке. Последний
+/// пункт снимает план.
+pub fn schedule_button(handle: &KanbanHandle, card: &KanbanCard) -> impl Widget {
+    let open = use_signal(false);
+    let pos = use_signal(Point::zero());
+    let planned = card.schedule().is_some();
+    let due = card.due.as_deref().and_then(parse_days);
+    let mut items = vec![
+        MenuItem::new("today", tr!("notes.kanban.schedule.today")).icon(MI_TODAY),
+        MenuItem::new("tomorrow", tr!("notes.kanban.schedule.tomorrow")).icon(MI_EVENT),
+        MenuItem::new("after", tr!("notes.kanban.schedule.after_tomorrow")).icon(MI_EVENT),
+    ];
+    if due.is_some() {
+        items.push(MenuItem::new("due", tr!("notes.kanban.schedule.on_due")).icon(MI_CALENDAR_MONTH));
+    }
+    if planned {
+        items.push(MenuItem::new("clear", tr!("notes.kanban.schedule.clear")).icon(MI_CLOSE));
+    }
+    let btn = ToolButton::new(MI_CALENDAR_ADD)
+        .tooltip(tr!("notes.kanban.schedule"))
+        .on_click_with_bounds(move |_, bounds| {
+            pos.set(Point::new(bounds.origin.x, bounds.origin.y + bounds.size.height + 4.0));
+            open.set(true);
+        })
+        .class(if planned { "notes-kanban-lane-btn selected" } else { "notes-kanban-lane-btn" });
+    let h = handle.clone();
+    let id = card.id.clone();
+    let menu = PopupMenu::new().items(items).is_open(open).position(pos).on_select(move |action| {
+        let today = today_days();
+        match action {
+            "clear" => h.unschedule_card(&id),
+            "due" => {
+                if let Some(d) = due {
+                    h.schedule_card(&id, d, None);
+                }
+            }
+            "tomorrow" => h.schedule_card(&id, today + 1, None),
+            "after" => h.schedule_card(&id, today + 2, None),
+            _ => h.schedule_card(&id, today, None),
+        }
+    });
+    Stack::new().clip(false).child(btn).child(menu)
+}
+
+/// «План 09.09 → 11.09» либо «План 09.09 10:00–12:00» — плановая полоса
+/// карточки на языке дат; `None` — карточка не в календаре.
+pub fn schedule_text(card: &KanbanCard) -> Option<String> {
+    let span = card.schedule()?;
+    let body = match span.time {
+        Some((a, b)) => format!("{} {}–{}", short_date(span.start_day), fmt_hm(a), fmt_hm(b)),
+        None if span.start_day == span.end_day => short_date(span.start_day),
+        None => format!("{} → {}", short_date(span.start_day), short_date(span.end_day)),
+    };
+    Some(format!("{} {body}", tr!("notes.kanban.planned")))
+}
+
 /// «Создана ДД.ММ · Сделана ДД.ММ» — штампы карточки; `None`, если их нет.
 pub fn dates_text(card: &KanbanCard) -> Option<String> {
     let mut parts = Vec::new();
@@ -690,6 +810,13 @@ fn card_fields(env: &BoardEnv, handle: &KanbanHandle, card: &KanbanCard, lane_wi
             Row::new()
                 .gap(4.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(duration_control(handle, card, w - 30.0))
+                .child(schedule_button(handle, card)),
+        )
+        .child(
+            Row::new()
+                .gap(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
                 .child(tags_control(handle, card, w - 30.0))
                 .child(
                     ToolButton::new(MI_DELETE)
@@ -700,6 +827,9 @@ fn card_fields(env: &BoardEnv, handle: &KanbanHandle, card: &KanbanCard, lane_wi
         );
     for f in &card.files {
         col = col.child(file_row(handle, card, f, w));
+    }
+    if let Some(text) = schedule_text(card) {
+        col = col.child(Text::new(text).max_lines(1).class("notes-kanban-dates"));
     }
     if let Some(text) = dates_text(card) {
         col = col.child(Text::new(text).max_lines(2).class("notes-kanban-dates"));

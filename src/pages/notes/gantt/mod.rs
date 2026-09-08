@@ -4,6 +4,11 @@
 //! [`GanttHandle`] держит документ (Mutex) и сигналы: `revision` — на
 //! каждую правку (автосейв + перестройка виджета), `go_today` — просьба
 //! показать «сегодня» (тулбар → элемент шкалы).
+//!
+//! [`GanttEnv`] — доски проекта: карточки выбранных досок с планом
+//! (`start`/`end`) идут строками наравне со своими задачами, и бар,
+//! который тянут мышью, пишет новые даты обратно в карточку. Так одна и та
+//! же задача видна и в календаре, и на диаграмме.
 
 pub mod calendar;
 pub mod chart;
@@ -18,6 +23,49 @@ use super::kanban::model::next_color;
 use calendar::days_to_iso;
 use model::GanttDoc;
 
+/// Карточка доски строкой диаграммы (read-only подпись, живой бар).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoardTask {
+    /// id объекта `kanban`.
+    pub board: String,
+    pub card: String,
+    pub name: String,
+    pub color: String,
+    /// Дни от эпохи, включительно.
+    pub start: i64,
+    pub end: i64,
+    /// Страница, где живёт доска.
+    pub page: String,
+}
+
+/// Окружение диаграммы: карточки досок и запись новых дат обратно.
+#[derive(Clone)]
+pub struct GanttEnv {
+    /// Запланированные карточки выбранных досок (пусто на входе — пусто на
+    /// выходе: диаграмма показывает только свои задачи).
+    pub cards: Arc<dyn Fn(&[String]) -> Vec<BoardTask> + Send + Sync>,
+    /// Новая полоса карточки после переноса/растяжения бара.
+    pub set_card_span: Arc<dyn Fn(&str, &str, i64, i64) + Send + Sync>,
+    /// Доски проекта для панели свойств: `(id, название страницы)`.
+    pub boards: Arc<dyn Fn() -> Vec<(String, String)> + Send + Sync>,
+    /// Ревизия объектов проекта: правка карточки перерисовывает диаграмму.
+    pub project_rev: RwSignal<u64>,
+    pub open_page: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl GanttEnv {
+    /// Окружение без проекта (тесты, превью шаблона).
+    pub fn detached() -> Self {
+        Self {
+            cards: Arc::new(|_| Vec::new()),
+            set_card_span: Arc::new(|_, _, _, _| {}),
+            boards: Arc::new(Vec::new),
+            project_rev: use_signal(0),
+            open_page: Arc::new(|_| {}),
+        }
+    }
+}
+
 /// Пределы масштаба шкалы (px/день).
 pub const ZOOM_MIN: f32 = 5.0;
 pub const ZOOM_MAX: f32 = 90.0;
@@ -28,11 +76,19 @@ pub struct GanttHandle {
     pub revision: RwSignal<u64>,
     /// Бамп — прокрутить шкалу к сегодняшнему дню.
     pub go_today: RwSignal<u64>,
+    /// Общая ревизия объектов проекта ([`super::state::NotesCtx`]).
+    project_rev: Option<RwSignal<u64>>,
 }
 
 impl GanttHandle {
     pub fn new(doc: GanttDoc) -> Self {
-        Self { doc: Arc::new(Mutex::new(doc)), revision: use_signal(0), go_today: use_signal(0) }
+        Self { doc: Arc::new(Mutex::new(doc)), revision: use_signal(0), go_today: use_signal(0), project_rev: None }
+    }
+
+    /// Общая ревизия объектов проекта: по ней перестраивается слой досок.
+    pub fn with_project_rev(mut self, rev: RwSignal<u64>) -> Self {
+        self.project_rev = Some(rev);
+        self
     }
 
     pub fn lock(&self) -> MutexGuard<'_, GanttDoc> {
@@ -46,6 +102,9 @@ impl GanttHandle {
     pub fn edit(&self, f: impl FnOnce(&mut GanttDoc)) {
         f(&mut self.lock());
         self.revision.set(self.revision.get_untracked() + 1);
+        if let Some(rev) = self.project_rev {
+            rev.set(rev.get_untracked() + 1);
+        }
     }
 
     pub fn add_task(&self, name: &str) -> String {
@@ -113,5 +172,18 @@ impl GanttHandle {
 
     pub fn show_today(&self) {
         self.go_today.set(self.go_today.get_untracked() + 1);
+    }
+
+    pub fn boards(&self) -> Vec<String> {
+        self.lock().boards.clone()
+    }
+
+    pub fn toggle_board(&self, id: &str) {
+        self.edit(|doc| match doc.boards.iter().position(|b| b == id) {
+            Some(pos) => {
+                doc.boards.remove(pos);
+            }
+            None => doc.boards.push(id.to_string()),
+        });
     }
 }

@@ -62,8 +62,16 @@ impl Widget for MonthGrid {
     fn mount(&self, _tree: &mut ElementTree, _parent_id: ElementId) {}
 }
 
+/// Что тащим: событие календаря либо внешнюю полосу (индекс в
+/// `data.external`).
+#[derive(Clone, Debug, PartialEq)]
+enum ChipTarget {
+    Event(String),
+    External(usize),
+}
+
 struct ChipDrag {
-    event: String,
+    target: ChipTarget,
     start: Point,
     moved: bool,
     /// День под курсором.
@@ -310,7 +318,12 @@ impl Element for MonthElement {
         let mut shown_per_day: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
         for chip in &chips {
             *shown_per_day.entry(chip.day).or_default() += 1;
-            let dragged = self.drag.as_ref().is_some_and(|d| d.moved && chip.event.as_deref() == Some(d.event.as_str()));
+            let chip_target = match (&chip.event, chip.external) {
+                (Some(id), _) => Some(ChipTarget::Event(id.clone())),
+                (None, Some(i)) => Some(ChipTarget::External(i)),
+                _ => None,
+            };
+            let dragged = self.drag.as_ref().is_some_and(|d| d.moved && chip_target.as_ref() == Some(&d.target));
             let mut rect = chip.rect;
             if dragged {
                 if let (Some(target), Some(src)) = (self.hover_day.and_then(|d| self.cell_rect(d)), self.cell_rect(chip.day)) {
@@ -427,13 +440,13 @@ impl Element for MonthElement {
                             return EventResult::Handled;
                         }
                         self.handle.select(Some(id.clone()));
-                        self.drag = Some(ChipDrag { event: id, start: *position, moved: false, day: chip.day });
+                        self.drag = Some(ChipDrag { target: ChipTarget::Event(id), start: *position, moved: false, day: chip.day });
                         ctx.capture();
                         return EventResult::Handled;
                     }
                     if let Some(i) = chip.external {
-                        let page = self.data.external[i].page.clone();
-                        (self.env.open_page)(&page);
+                        self.drag = Some(ChipDrag { target: ChipTarget::External(i), start: *position, moved: false, day: chip.day });
+                        ctx.capture();
                         return EventResult::Handled;
                     }
                 }
@@ -471,13 +484,29 @@ impl Element for MonthElement {
             }
             Event::MouseUp { button: MouseButton::Left, position } => {
                 let Some(drag) = self.drag.take() else { return EventResult::Ignored };
-                if drag.moved {
-                    if let Some(day) = self.day_at(*position).filter(|d| *d != drag.day) {
-                        self.env.store.move_event(&drag.event, day, None);
+                let dropped = self.day_at(*position).filter(|d| *d != drag.day);
+                match (&drag.target, drag.moved) {
+                    (ChipTarget::Event(id), true) => {
+                        if let Some(day) = dropped {
+                            self.env.store.move_event(id, day, None);
+                        }
                     }
-                } else {
-                    let anchor = self.chip_at(*position).map(|c| c.rect).unwrap_or(self.base.bounds);
-                    self.open_edit(&drag.event, anchor);
+                    (ChipTarget::Event(id), false) => {
+                        let anchor = self.chip_at(*position).map(|c| c.rect).unwrap_or(self.base.bounds);
+                        self.open_edit(id, anchor);
+                    }
+                    // Внешняя полоса: перенос сдвигает её задачу на столько
+                    // же дней, клик без переноса — открывает её страницу.
+                    (ChipTarget::External(i), moved) => {
+                        let Some(item) = self.data.external.get(*i) else { return EventResult::Handled };
+                        match dropped.filter(|_| moved) {
+                            Some(day) => {
+                                (self.env.shift_external)(&item.source, day - drag.day);
+                            }
+                            None if !moved => (self.env.open_page)(&item.page.clone()),
+                            None => {}
+                        }
+                    }
                 }
                 self.hover_day = None;
                 self.base.dirty |= DirtyFlags::RENDER;

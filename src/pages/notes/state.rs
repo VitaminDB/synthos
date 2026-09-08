@@ -171,6 +171,10 @@ pub struct NotesCtx {
     /// Тик перестройки блоков редактора после внешних правок модели
     /// (очередь DocOp, patch_media).
     pub doc_epoch: RwSignal<u64>,
+    /// Общая ревизия объектов проекта: доски и диаграммы бампают её на
+    /// каждую правку, а виджеты с чужими данными (календарь, Гант с
+    /// досками) по ней пересобирают свой внешний слой.
+    pub objects_rev: RwSignal<u64>,
     /// Плитка проекта на рейле: штамп открытия (None — закрыта).
     pub tile_opened_at: RwSignal<Option<u64>>,
     /// Строка дерева в режиме переименования.
@@ -235,6 +239,7 @@ impl NotesCtx {
             project_path: use_signal(path),
             tree: use_signal(Arc::new(tree)),
             tree_rev: use_signal(0),
+            objects_rev: use_signal(0),
             expanded: use_signal(expanded),
             active: use_signal(active),
             show_graph: use_signal(false),
@@ -659,13 +664,13 @@ impl NotesCtx {
         let content = project::read_text(&self.project_path.get_untracked(), &path)?;
         let obj = match kind {
             "kanban" => {
-                let handle = KanbanHandle::new(KanbanDoc::parse(&content).ok()?).with_log(id, self.activity());
+                let handle = KanbanHandle::new(KanbanDoc::parse(&content).ok()?).with_log(id, self.activity()).with_project_rev(self.objects_rev);
                 handle.sweep();
                 LiveObject::Kanban { id: id.to_string(), handle }
             }
             "gantt" => LiveObject::Gantt {
                 id: id.to_string(),
-                handle: GanttHandle::new(GanttDoc::parse(&content).ok()?),
+                handle: GanttHandle::new(GanttDoc::parse(&content).ok()?).with_project_rev(self.objects_rev),
             },
             "mindmap" => LiveObject::Mindmap {
                 id: id.to_string(),
@@ -697,12 +702,12 @@ impl NotesCtx {
                     &tr!("notes.kanban.col.done"),
                 ]);
                 let content = doc.serialize();
-                (LiveObject::Kanban { id: id.clone(), handle: KanbanHandle::new(doc).with_log(&id, self.activity()) }, content)
+                (LiveObject::Kanban { id: id.clone(), handle: KanbanHandle::new(doc).with_log(&id, self.activity()).with_project_rev(self.objects_rev) }, content)
             }
             "gantt" => {
                 let doc = GanttDoc::template();
                 let content = doc.serialize();
-                (LiveObject::Gantt { id: id.clone(), handle: GanttHandle::new(doc) }, content)
+                (LiveObject::Gantt { id: id.clone(), handle: GanttHandle::new(doc).with_project_rev(self.objects_rev) }, content)
             }
             "mindmap" => {
                 let doc = MindmapDoc::template(&tr!("notes.mindmap.root"));

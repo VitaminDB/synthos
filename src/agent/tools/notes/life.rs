@@ -351,18 +351,47 @@ pub(super) fn agenda_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             out.push_str(&format!("  {}{late}\n", task_line(r)));
         }
     };
+    // Планом карточка попадает в день не хуже срока: «начал сегодня» — это
+    // тоже сегодняшнее дело, даже если срок ещё не наступил.
+    let covers = |r: &TaskRow, day: i64| r.card.schedule().is_some_and(|s| (s.start_day..=s.end_day).contains(&day));
+    let starts_on = |r: &TaskRow, day: i64| r.card.schedule().is_some_and(|s| s.start_day == day);
     let mut overdue: Vec<&TaskRow> = open.iter().copied().filter(|r| due_of(r).is_some_and(|d| d < today)).collect();
     overdue.sort_by_key(|r| due_of(r));
+    let listed: Vec<String> = overdue.iter().map(|r| r.card.id.clone()).collect();
     section(&mut out, "Overdue", overdue, true);
-    section(&mut out, "Today", open.iter().copied().filter(|r| due_of(r) == Some(today)).collect(), false);
-    section(&mut out, "Tomorrow", open.iter().copied().filter(|r| due_of(r) == Some(today + 1)).collect(), false);
-    let mut soon: Vec<&TaskRow> = open.iter().copied().filter(|r| due_of(r).is_some_and(|d| d > today + 1 && d <= today + days)).collect();
-    soon.sort_by_key(|r| due_of(r));
+    let today_rows: Vec<&TaskRow> = open
+        .iter()
+        .copied()
+        .filter(|r| !listed.contains(&r.card.id))
+        .filter(|r| due_of(r) == Some(today) || covers(r, today))
+        .collect();
+    let today_ids: Vec<String> = today_rows.iter().map(|r| r.card.id.clone()).collect();
+    section(&mut out, "Today", today_rows, false);
+    section(
+        &mut out,
+        "Tomorrow",
+        open.iter()
+            .copied()
+            .filter(|r| !today_ids.contains(&r.card.id))
+            .filter(|r| due_of(r) == Some(today + 1) || starts_on(r, today + 1))
+            .collect(),
+        false,
+    );
+    let mut soon: Vec<&TaskRow> = open
+        .iter()
+        .copied()
+        .filter(|r| {
+            let by_due = due_of(r).is_some_and(|d| d > today + 1 && d <= today + days);
+            let by_plan = r.card.schedule().is_some_and(|s| s.start_day > today + 1 && s.start_day <= today + days);
+            by_due || by_plan
+        })
+        .collect();
+    soon.sort_by_key(|r| due_of(r).or_else(|| r.card.schedule().map(|s| s.start_day)));
     section(&mut out, &format!("Next {days} days"), soon, false);
     let important: Vec<&TaskRow> = open
         .iter()
         .copied()
-        .filter(|r| due_of(r).is_none() && matches!(r.card.priority, Some(Priority::High) | Some(Priority::Urgent)))
+        .filter(|r| due_of(r).is_none() && r.card.schedule().is_none() && matches!(r.card.priority, Some(Priority::High) | Some(Priority::Urgent)))
         .collect();
     section(&mut out, "Important without a due date", important, false);
     // События.
@@ -432,7 +461,8 @@ pub(super) fn agenda_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     }
     out.push_str(
         "---\ntasks {due=overdue|today|week|none, tag, priority} lists cards with filters; log {since=7d} shows what \
-         changed and when; journal {date=today} opens the day page; a task is done = move_card to the ✓ column.\n",
+         changed and when; journal {date=today} opens the day page; a task is done = move_card to the ✓ column. \
+         Today and Tomorrow also list cards planned for that day (kanban op=schedule {card, date, duration}).\n",
     );
     Ok(out)
 }

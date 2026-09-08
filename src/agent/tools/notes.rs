@@ -69,12 +69,14 @@ use syngui::widgets::input::document_editor::{
 use crate::pages::notes::gantt::calendar::{days_to_iso, parse_days, today_days};
 use crate::pages::notes::gantt::model::GanttDoc;
 use crate::pages::notes::gantt::GanttHandle;
-use crate::pages::notes::kanban::model::{item_id, parse_tags, DropSpot, KanbanCard, KanbanColumn, Priority, PALETTE};
+use crate::pages::notes::kanban::model::{
+    fmt_duration, item_id, parse_duration, parse_tags, DropSpot, KanbanCard, KanbanColumn, Moment, Priority, PALETTE,
+};
 use crate::pages::notes::kanban::KanbanHandle;
 use crate::pages::notes::calendar::model::{
     fmt_hm, parse_hm, CalEvent, CalView, CalendarStore, CalendarStyle, EventStyle, Repeat,
 };
-use crate::pages::notes::calendar::{CalendarHandle, CalendarStoreHandle};
+use crate::pages::notes::calendar::{CalendarHandle, CalendarStoreHandle, ExternalQuery};
 use crate::pages::notes::chart::model::{self as chart_model, ChartDoc, ChartKind, GaugeZone, LegendPos, PieLabels};
 use crate::pages::notes::chart::ChartHandle;
 use crate::pages::notes::mindmap::model::{Curve, Direction, MindmapDoc, NodeShape};
@@ -2071,6 +2073,41 @@ fn parse_due(s: &str) -> Result<Option<String>, String> {
     Ok(Some(days_to_iso(days)))
 }
 
+/// Момент плана карточки: `yyyy-mm-dd`, `yyyy-mm-ddThh:mm`, `today`,
+/// `tomorrow` (можно со временем: `today 10:00`); пусто/`none` — снять.
+fn parse_plan_moment(s: &str) -> Result<Option<String>, String> {
+    let t = s.trim();
+    let lower = t.to_ascii_lowercase();
+    if lower.is_empty() || lower == "none" || lower == "null" {
+        return Ok(None);
+    }
+    for (word, delta) in [("today", 0i64), ("tomorrow", 1)] {
+        let Some(rest) = lower.strip_prefix(word) else { continue };
+        let rest = rest.trim_start_matches(['t', ' ']).trim();
+        let min = match rest.is_empty() {
+            true => None,
+            false => Some(parse_hm(rest).ok_or_else(|| format!("bad time \"{rest}\" (hh:mm)"))?),
+        };
+        return Ok(Some(Moment { day: today_days() + delta, min }.iso()));
+    }
+    Moment::parse(t)
+        .map(|m| Some(m.iso()))
+        .ok_or_else(|| format!("bad date \"{s}\" (yyyy-mm-dd | yyyy-mm-ddThh:mm | today | tomorrow | none)"))
+}
+
+/// Оценка длительности: `1d`, `2h`, `90m`, `1d 4h`, голое число — часы;
+/// пусто/`none` — снять.
+fn parse_duration_arg(s: &str) -> Result<Option<u32>, String> {
+    let t = s.trim();
+    let lower = t.to_ascii_lowercase();
+    if lower.is_empty() || lower == "none" || lower == "null" || lower == "0" {
+        return Ok(None);
+    }
+    parse_duration(t)
+        .map(Some)
+        .ok_or_else(|| format!("bad duration \"{s}\" (1d | 2h | 90m | \"1d 4h\" | a bare number = hours | none)"))
+}
+
 /// Повтор карточки: `none | daily | weekly | monthly | yearly`.
 fn parse_repeat(s: &str) -> Result<Repeat, String> {
     let t = s.trim().to_ascii_lowercase();
@@ -2130,6 +2167,13 @@ fn card_line(c: &KanbanCard) -> String {
     }
     if let Some(d) = &c.due {
         s.push_str(&format!(" · due: {d}"));
+    }
+    if let Some(d) = c.duration {
+        s.push_str(&format!(" · duration: {}", fmt_duration(d)));
+    }
+    let span = c.span_text();
+    if !span.is_empty() {
+        s.push_str(&format!(" · planned: {span}"));
     }
     if let Some((done, total)) = c.checklist() {
         s.push_str(&format!(" · checklist {done}/{total}"));
@@ -2209,8 +2253,9 @@ create {page, columns, done_column, title, x y w h} · read {archived} · \
 set_style {column_width, lane_bg, card_bg, show_counts, archive_after} · \
 add_column {name, color, width, done} · update_column {column, name, color, width, done} · \
 delete_column {column} · \
-add_card {title = the new card's text, column, md, priority, tags, due, repeat, before} · \
-update_card {card, title, md, priority, tags, due, repeat, column, before} · \
+add_card {title = the new card's text, column, md, priority, tags, due, duration, start, end, repeat, before} · \
+update_card {card, title, md, priority, tags, due, duration, start, end, repeat, column, before} · \
+schedule {card, date = today | tomorrow | yyyy-mm-dd, time, duration} · unschedule {card} · \
 move_card {card, column | to_board, before} · delete_card {card} · archive {card} · \
 unarchive {card} · attach {card, path | attachment, name} · detach {card, file} · delete. \
 \"card\" = an existing card (id or exact title); a new card's text goes in \"title\".";
@@ -2417,6 +2462,15 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if let Some(r) = str_field(v, "repeat") {
                 card.repeat = parse_repeat(r)?;
             }
+            if let Some(d) = str_field(v, "duration") {
+                card.duration = parse_duration_arg(d)?;
+            }
+            if let Some(d) = str_field(v, "start") {
+                card.start = parse_plan_moment(d)?;
+            }
+            if let Some(d) = str_field(v, "end") {
+                card.end = parse_plan_moment(d)?;
+            }
             let before = match str_field(v, "before") {
                 Some(b) => Some(resolve_card(&handle, b)?),
                 None => None,
@@ -2464,6 +2518,23 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 handle.set_repeat(&card.id, parse_repeat(&r)?);
                 changes.push("repeat".to_string());
             }
+            if let Some(d) = raw_string(v, "duration") {
+                handle.set_duration(&card.id, parse_duration_arg(&d)?);
+                changes.push("duration".to_string());
+            }
+            if raw_string(v, "start").is_some() || raw_string(v, "end").is_some() {
+                let now = handle.card(&card.id).unwrap_or_else(|| card.clone());
+                let start = match raw_string(v, "start") {
+                    Some(d) => parse_plan_moment(&d)?,
+                    None => now.start.clone(),
+                };
+                let end = match raw_string(v, "end") {
+                    Some(d) => parse_plan_moment(&d)?,
+                    None => now.end.clone(),
+                };
+                handle.set_schedule(&card.id, start, end);
+                changes.push("plan".to_string());
+            }
             if str_field(v, "column").is_some() || str_field(v, "before").is_some() {
                 let col = match str_field(v, "column") {
                     Some(c) => resolve_column(&handle, c)?,
@@ -2483,7 +2554,10 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 changes.push(format!("moved to \"{}\"", col.name));
             }
             if changes.is_empty() {
-                return Err("nothing to update: pass title, md, priority, tags, due, repeat, column or before".to_string());
+                return Err(
+                    "nothing to update: pass title, md, priority, tags, due, duration, start, end, repeat, column or before"
+                        .to_string(),
+                );
             }
             let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
             Ok(format!("updated {}: {line}\n{}", changes.join(", "), board_text(&id, &handle, false)))
@@ -2590,6 +2664,38 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             let (id, _) = kanban_handle(ctx, v)?;
             delete_object(ctx, "kanban", &id)
         }
+        "schedule" | "unschedule" => {
+            let (id, handle) = kanban_handle(ctx, v)?;
+            let card = resolve_card(&handle, str_field(v, "card").ok_or("missing \"card\"")?)?;
+            if op == "unschedule" {
+                handle.unschedule_card(&card.id);
+                let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
+                return Ok(format!("unscheduled: {line}\n{}", board_text(&id, &handle, false)));
+            }
+            if let Some(d) = raw_string(v, "duration") {
+                handle.set_duration(&card.id, parse_duration_arg(&d)?);
+            }
+            // День и время плана: `date` (или `start`) + `time`; без них —
+            // сегодня. Конец досчитывается по оценке.
+            let iso = match str_field(v, "date").or_else(|| str_field(v, "start")) {
+                Some(d) => parse_plan_moment(d)?.ok_or("\"date\" is empty — use op=unschedule to clear the plan")?,
+                None => Moment { day: today_days(), min: None }.iso(),
+            };
+            let mut moment = Moment::parse(&iso).ok_or("bad date")?;
+            if let Some(t) = str_field(v, "time") {
+                moment.min = Some(parse_hm(t).ok_or_else(|| format!("bad time \"{t}\" (hh:mm)"))?);
+            }
+            handle.schedule_card(&card.id, moment.day, moment.min);
+            let line = handle.card(&card.id).map(|c| card_line(&c)).unwrap_or_default();
+            Ok(format!("scheduled: {line}\n{}", board_text(&id, &handle, false)))
+        }
+        "set_boards" => Err(
+            // Доски выбирает тот виджет, который их показывает; подсказка
+            // здесь — чтобы модель не искала операцию у самой доски.
+            "boards are picked on the widget that shows them: calendar op=set_view {calendar, boards} \
+             or gantt op=set_boards {gantt, boards}"
+                .to_string(),
+        ),
         other => Err(format!("unknown kanban op \"{other}\". {KANBAN_OPS_HELP}")),
     }
 }
@@ -2668,10 +2774,11 @@ fn resolve_task(handle: &GanttHandle, s: &str) -> Result<crate::pages::notes::ga
 fn gantt_text(id: &str, handle: &GanttHandle) -> String {
     let doc = handle.lock();
     let mut out = format!(
-        "gantt:{id} · tasks: {} · deps: {} · zoom: {} px/day\n",
+        "gantt:{id} · tasks: {} · deps: {} · zoom: {} px/day · boards: {}\n",
         doc.tasks.len(),
         doc.deps.len(),
-        doc.zoom
+        doc.zoom,
+        if doc.boards.is_empty() { "none".to_string() } else { doc.boards.join(", ") }
     );
     for t in &doc.tasks {
         let span = t.span_days().map(|(s, e)| e - s + 1).unwrap_or(0);
@@ -2743,7 +2850,10 @@ fn parse_date_field(v: &Json, key: &str) -> Result<Option<i64>, String> {
 
 fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let op = str_field(v, "op")
-        .ok_or("missing \"op\" (create | read | add_task | update_task | delete_task | add_dep | delete_dep | delete)")?;
+        .ok_or(
+            "missing \"op\" (create | read | add_task | update_task | delete_task | add_dep | delete_dep | \
+             set_zoom | show_today | set_boards {boards = kanban boards whose planned cards show as rows} | delete)",
+        )?;
     match op {
         "create" => {
             let pid = page_arg(ctx, v, "page")?;
@@ -2767,6 +2877,31 @@ fn gantt_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             }
             handle.set_zoom(zoom);
             Ok(format!("zoom {} px/day\n{}", fnum(zoom), gantt_text(&id, &handle)))
+        }
+        "set_boards" => {
+            let (id, handle) = gantt_handle(ctx, v)?;
+            // Доски, чьи запланированные карточки идут строками диаграммы;
+            // пустой список — только свои задачи.
+            let names = list_field(v, "boards").unwrap_or_default();
+            let known: Vec<String> = embeds::project_boards(ctx).into_iter().map(|(bid, _, _)| bid).collect();
+            let mut ids = Vec::new();
+            for n in &names {
+                let hit = known.iter().find(|b| *b == n).cloned();
+                match hit {
+                    Some(b) => ids.push(b),
+                    None => {
+                        let v = serde_json::json!({ "board": n });
+                        ids.push(kanban_handle(ctx, &v)?.0);
+                    }
+                }
+            }
+            ids.dedup();
+            handle.edit(|doc| doc.boards = ids.clone());
+            Ok(format!(
+                "chart boards: {}\n{}",
+                if ids.is_empty() { "none".to_string() } else { ids.join(", ") },
+                gantt_text(&id, &handle)
+            ))
         }
         "show_today" => {
             let (id, handle) = gantt_handle(ctx, v)?;
@@ -4501,11 +4636,15 @@ fn apply_calendar_style(handle: &CalendarHandle, v: &Json) -> Result<Vec<String>
                     s.show_gantt = flag();
                     changes.push(key.clone());
                 }
+                "show_kanban_spans" | "show_spans" => {
+                    s.show_kanban_spans = flag();
+                    changes.push("show_kanban_spans".to_string());
+                }
                 other => {
                     err = Some(format!(
                         "unknown style key \"{other}\" — preset, event_style, first_weekday, show_week_numbers, \
                          hour_from, hour_to, slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
-                         cell_bg, grid_color, text_color, show_kanban_due, show_gantt"
+                         cell_bg, grid_color, text_color, show_kanban_due, show_kanban_spans, show_gantt"
                     ));
                 }
             }
@@ -4691,6 +4830,11 @@ fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                         if d.style.show_kanban_due { " · board due dates" } else { "" },
                         if d.style.show_gantt { " · gantt tasks" } else { "" }
                     ));
+                    out.push_str(&format!(
+                        "  boards: {}{}\n",
+                        if d.boards.is_empty() { "all".to_string() } else { d.boards.join(", ") },
+                        if d.style.show_kanban_spans { " · task bars (card start/end)" } else { " · task bars off" }
+                    ));
                     drop(d);
                     out.push_str(&object_page_line(ctx, "calendar", &id));
                     out.push('\n');
@@ -4698,12 +4842,14 @@ fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             }
             let external = if bool_field(v, "include_external").unwrap_or(true) {
                 let mut items = Vec::new();
-                for it in (embeds::calendar_env(ctx).external)(from, to) {
+                let q = ExternalQuery { from, to, boards: Vec::new(), due: true, spans: true, gantt: true };
+                for it in (embeds::calendar_env(ctx).external)(&q) {
                     items.push(format!(
-                        "{} \"{}\"{} · page {} (a board due date or Gantt task, not an event — don't duplicate it as an event)",
+                        "{}{}{} \"{}\" · page {} (a board task or Gantt task, not an event — don't duplicate it as an event)",
                         days_to_iso(it.day),
-                        it.title,
+                        it.time.map(|(a, b)| format!(" {}–{}", fmt_hm(a), fmt_hm(b))).unwrap_or_default(),
                         if it.end_day != it.day { format!(" → {}", days_to_iso(it.end_day)) } else { String::new() },
+                        it.title,
                         it.page
                     ));
                 }
@@ -4735,8 +4881,22 @@ fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 handle.set_calendars(ids.clone());
                 changes.push(format!("calendars {}", if ids.is_empty() { "all".to_string() } else { ids.join(", ") }));
             }
+            if let Some(list) = list_field(v, "boards") {
+                // Доски-источники задач; пустой список — все доски проекта.
+                let known: Vec<String> = embeds::project_boards(ctx).into_iter().map(|(bid, _, _)| bid).collect();
+                let mut ids = Vec::new();
+                for n in &list {
+                    match known.iter().find(|b| *b == n).cloned() {
+                        Some(b) => ids.push(b),
+                        None => ids.push(kanban_handle(ctx, &serde_json::json!({ "board": n }))?.0),
+                    }
+                }
+                ids.dedup();
+                handle.set_boards(ids.clone());
+                changes.push(format!("boards {}", if ids.is_empty() { "all".to_string() } else { ids.join(", ") }));
+            }
             if changes.is_empty() {
-                return Err("nothing to change: pass view, anchor or calendars".to_string());
+                return Err("nothing to change: pass view, anchor, calendars or boards".to_string());
             }
             Ok(format!("{}\n{}", changes.join(", "), calendar_widget_text(&id, &handle)))
         }
@@ -4901,7 +5061,7 @@ mod tests {
 
         let err = dispatch(ctx, "kanban", &serde_json::json!({"page": &page, "column": "К выполнению", "card": "Порядок страниц"})).unwrap_err();
         assert!(err.starts_with("missing \"op\". kanban ops"), "{err}");
-        assert!(err.contains("add_card {title = the new card's text, column, md, priority, tags, due, repeat, before}"), "{err}");
+        assert!(err.contains("add_card {title = the new card's text, column, md, priority, tags, due, duration, start, end, repeat, before}"), "{err}");
 
         let out = call(
             ctx,
@@ -5792,6 +5952,78 @@ mod tests {
         let single = call(ctx, "blocks", serde_json::json!({"op": "read", "page": &page, "block": "find:Второй"}));
         assert!(single.starts_with("#2 paragraph"), "{single}");
         assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "read", "page": &page, "block": "9"})).is_err());
+    }
+
+    /// Календарь по доскам (09.09.2026): оценка длительности плюс «в
+    /// календарь» дают карточке полосу; календарь видит её отрезком и
+    /// двигает, диаграмма Ганта — своей строкой, agenda кладёт её в
+    /// «Сегодня» даже без срока.
+    #[test]
+    fn board_cards_become_calendar_bars_and_gantt_rows() {
+        use crate::pages::notes::calendar::{ExternalKind, ExternalQuery};
+        let ctx = ctx();
+        let today = today_days();
+        let iso = |d: i64| days_to_iso(today + d);
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Спринт"})));
+        let out = call(ctx, "kanban", serde_json::json!({"op": "create", "page": &page, "columns": ["Бэклог", "Готово"]}));
+        let board = out.lines().find_map(|l| l.strip_prefix("kanban:")).unwrap().split(' ').next().unwrap().to_string();
+        call(ctx, "kanban", serde_json::json!({"op": "add_card", "board": &board, "column": "Бэклог", "title": "Импорт"}));
+
+        // «Оценка 1 день» + «в календарь на завтра» — карточка получает полосу.
+        let out = call(
+            ctx,
+            "kanban",
+            serde_json::json!({"op": "schedule", "board": &board, "card": "Импорт", "date": "tomorrow", "duration": "1d"}),
+        );
+        assert!(out.contains("duration: 1d") && out.contains(&format!("planned: {}", iso(1))), "{out}");
+
+        // Календарь видит её полосой; срок не выдуман — его нет.
+        let env = embeds::calendar_env(ctx);
+        let q = ExternalQuery { from: today, to: today + 7, boards: Vec::new(), due: true, spans: true, gantt: true };
+        let items = (env.external)(&q);
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!((items[0].day, items[0].end_day, items[0].source.kind), (today + 1, today + 1, ExternalKind::Card));
+
+        // Перенос полосы в календаре двигает start/end карточки.
+        assert!((env.shift_external)(&items[0].source, 2));
+        let card = |ctx: NotesCtx| match ctx.object("kanban", &board) {
+            Some(LiveObject::Kanban { handle, .. }) => handle.card(&items[0].source.item).unwrap(),
+            _ => panic!("доска пропала"),
+        };
+        assert_eq!(card(ctx).start.as_deref(), Some(iso(3).as_str()));
+        assert_eq!(card(ctx).end.as_deref(), Some(iso(3).as_str()));
+
+        // Диаграмма Ганта показывает ту же карточку строкой и правит её даты.
+        let g = call(ctx, "gantt", serde_json::json!({"op": "create", "page": &page}));
+        let gid = g.lines().find_map(|l| l.strip_prefix("created chart gantt:")).unwrap().split(' ').next().unwrap().to_string();
+        let out = call(ctx, "gantt", serde_json::json!({"op": "set_boards", "gantt": &gid, "boards": [&board]}));
+        assert!(out.contains(&format!("boards: {board}")), "{out}");
+        let genv = embeds::gantt_env(ctx);
+        assert!((genv.cards)(&[]).is_empty(), "без выбранных досок диаграмма показывает только свои задачи");
+        let rows = (genv.cards)(&[board.clone()]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].start, rows[0].end, rows[0].name.as_str()), (today + 3, today + 3, "Импорт"));
+        (genv.set_card_span)(&board, &rows[0].card, today, today + 1);
+        assert_eq!(card(ctx).span_text(), format!("{} → {}", iso(0), iso(1)));
+
+        // Часовая полоса: время попадает в отрезок дневной сетки.
+        call(ctx, "kanban", serde_json::json!({"op": "add_card", "board": &board, "column": "Бэклог", "title": "Созвон"}));
+        call(
+            ctx,
+            "kanban",
+            serde_json::json!({"op": "schedule", "board": &board, "card": "Созвон", "date": "today", "time": "10:00", "duration": "2h"}),
+        );
+        let timed = (env.external)(&q);
+        let call_item = timed.iter().find(|i| i.title == "Созвон").expect("полоса созвона");
+        assert_eq!((call_item.day, call_item.time), (today, Some((600, 720))));
+
+        // agenda: задача со start = сегодня в «Сегодня», хотя срока нет.
+        let out = call(ctx, "agenda", serde_json::json!({}));
+        assert!(out.contains("Today (2):") && out.contains("\"Импорт\"") && out.contains("\"Созвон\""), "{out}");
+
+        // Снятие плана: полоса исчезает, карточка остаётся.
+        call(ctx, "kanban", serde_json::json!({"op": "unschedule", "board": &board, "card": "Созвон"}));
+        assert_eq!((env.external)(&q).len(), 1, "осталась только полоса «Импорта»");
     }
 
     /// Ведение жизни: колонка «готово» по названию, штампы и повтор при

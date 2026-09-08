@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use syngui::core::Color;
 
 pub use super::super::calendar::model::Repeat;
+use super::super::calendar::model::{fmt_hm, parse_hm};
 use super::super::gantt::calendar::{civil_from_days, days_from_civil, days_to_iso, parse_days};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -78,6 +79,15 @@ pub struct KanbanCard {
     /// Срок, ISO `yyyy-mm-dd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<String>,
+    /// Оценка длительности в минутах (в панели — часы/дни).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u32>,
+    /// Плановое начало: `yyyy-mm-dd` либо `yyyy-mm-ddThh:mm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// Плановый конец (включительно), тот же формат.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
     /// День появления на доске, ISO `yyyy-mm-dd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
@@ -135,6 +145,9 @@ impl KanbanCard {
             && self.priority.is_none()
             && self.tags.is_empty()
             && self.due.is_none()
+            && self.duration.is_none()
+            && self.start.is_none()
+            && self.end.is_none()
             && self.files.is_empty()
     }
 
@@ -148,6 +161,9 @@ impl KanbanCard {
             priority: None,
             tags: Vec::new(),
             due: None,
+            duration: None,
+            start: None,
+            end: None,
             created: None,
             done: None,
             repeat: Repeat::None,
@@ -164,14 +180,25 @@ impl KanbanCard {
     /// срок сдвинут на период от большего из срока и `today` (просроченная
     /// привычка не тянет за собой хвост пропущенных дат), штампы сброшены.
     pub fn next_repeat(&self, id: String, column: String, today: i64) -> Self {
-        let base = self.due.as_deref().and_then(parse_days).map(|d| d.max(today)).unwrap_or(today);
+        let prev = self.due.as_deref().and_then(parse_days);
+        let base = prev.map(|d| d.max(today)).unwrap_or(today);
+        let next_due = next_period(base, self.repeat);
         let mut next = self.clone();
         next.id = id;
         next.column = column;
-        next.due = Some(days_to_iso(next_period(base, self.repeat)));
+        next.due = Some(days_to_iso(next_due));
         next.created = None;
         next.done = None;
         next.md = uncheck(&self.md);
+        // План (начало/конец) едет за сроком: на тот же период, чтобы
+        // полоса следующей привычки встала в календарь сама.
+        if let Some(s) = self.start_at() {
+            let delta = match prev {
+                Some(p) => next_due - p,
+                None => next_period(s.day.max(today), self.repeat) - s.day,
+            };
+            next.shift_schedule(delta);
+        }
         next
     }
 
@@ -180,6 +207,236 @@ impl KanbanCard {
         let (done, total) = checklist_progress(&self.md);
         (total > 0).then_some((done, total))
     }
+
+    pub fn start_at(&self) -> Option<Moment> {
+        self.start.as_deref().and_then(Moment::parse)
+    }
+
+    pub fn end_at(&self) -> Option<Moment> {
+        self.end.as_deref().and_then(Moment::parse)
+    }
+
+    /// Полоса карточки на календаре и в Ганте. Недостающий конец берётся
+    /// из оценки, недостающее начало — отсчётом назад от конца. Без обеих
+    /// дат полосы нет: срок (`due`) остаётся точкой, как и был.
+    pub fn schedule(&self) -> Option<CardSpan> {
+        match (self.start_at(), self.end_at()) {
+            (None, None) => None,
+            (Some(s), Some(e)) => Some(span_between(s, e)),
+            (Some(s), None) => Some(span_forward(s, self.duration)),
+            (None, Some(e)) => Some(span_backward(e, self.duration)),
+        }
+    }
+
+    /// «В календарь»: начало — момент `day` (и `min`), конец — по оценке.
+    pub fn schedule_at(&mut self, day: i64, min: Option<u32>) {
+        let s = Moment { day, min };
+        let span = span_forward(s, self.duration);
+        self.start = Some(s.iso());
+        self.end = Some(Moment { day: span.end_day, min: span.time.map(|(_, e)| e) }.iso());
+    }
+
+    /// Снять план: полоса исчезает, срок и оценка остаются.
+    pub fn unschedule(&mut self) -> bool {
+        let had = self.start.is_some() || self.end.is_some();
+        self.start = None;
+        self.end = None;
+        had
+    }
+
+    /// Перенести полосу на `delta` дней (время и оценка сохраняются) —
+    /// перетаскивание в календаре и в Ганте.
+    pub fn shift_schedule(&mut self, delta: i64) -> bool {
+        if delta == 0 {
+            return false;
+        }
+        let (s, e) = (self.start_at(), self.end_at());
+        if s.is_none() && e.is_none() {
+            return false;
+        }
+        if let Some(s) = s {
+            self.start = Some(Moment { day: s.day + delta, min: s.min }.iso());
+        }
+        if let Some(e) = e {
+            self.end = Some(Moment { day: e.day + delta, min: e.min }.iso());
+        }
+        true
+    }
+
+    /// Задать полосу днями (растягивание кромки бара): время начала и
+    /// конца сохраняется, оценка следует за новой длиной.
+    pub fn set_span_days(&mut self, start_day: i64, end_day: i64) {
+        let end_day = end_day.max(start_day);
+        let s_min = self.start_at().and_then(|m| m.min);
+        let e_min = self.end_at().and_then(|m| m.min);
+        self.start = Some(Moment { day: start_day, min: s_min }.iso());
+        self.end = Some(Moment { day: end_day, min: e_min }.iso());
+        self.duration = match (start_day == end_day, s_min, e_min) {
+            (true, Some(a), Some(b)) if b > a => Some(b - a),
+            (true, Some(_), _) => self.duration.filter(|d| *d < DAY_MIN).or(Some(60)),
+            _ => Some(((end_day - start_day + 1) as u32).saturating_mul(DAY_MIN)),
+        };
+    }
+
+    /// Полоса строкой — журнал, панель свойств, вывод агенту.
+    pub fn span_text(&self) -> String {
+        let Some(span) = self.schedule() else { return String::new() };
+        match span.time {
+            Some((a, b)) => format!("{} {}–{}", days_to_iso(span.start_day), fmt_hm(a), fmt_hm(b)),
+            None if span.start_day == span.end_day => days_to_iso(span.start_day),
+            None => format!("{} → {}", days_to_iso(span.start_day), days_to_iso(span.end_day)),
+        }
+    }
+}
+
+// ─── Планирование: момент, оценка, полоса ─────────────────────────────────
+
+/// Минут в сутках — «один день» оценки.
+pub const DAY_MIN: u32 = 24 * 60;
+
+/// Момент карточки: день от эпохи и минуты с полуночи (`None` — без
+/// времени, «весь день»).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Moment {
+    pub day: i64,
+    pub min: Option<u32>,
+}
+
+impl Moment {
+    /// `yyyy-mm-dd` либо `yyyy-mm-ddThh:mm` (вместо `T` годится пробел).
+    pub fn parse(s: &str) -> Option<Self> {
+        let t = s.trim();
+        let (date, time) = match t.split_once(['T', 't', ' ']) {
+            Some((d, rest)) => (d, Some(rest)),
+            None => (t, None),
+        };
+        let day = parse_days(date)?;
+        let min = match time.map(str::trim).filter(|t| !t.is_empty()) {
+            None => None,
+            Some(t) => Some(parse_hm(t)?),
+        };
+        Some(Self { day, min })
+    }
+
+    pub fn iso(&self) -> String {
+        match self.min {
+            None => days_to_iso(self.day),
+            Some(m) => format!("{}T{}", days_to_iso(self.day), fmt_hm(m)),
+        }
+    }
+}
+
+/// Полоса карточки: дни включительно и — у однодневной задачи со временем
+/// — минуты начала/конца.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CardSpan {
+    pub start_day: i64,
+    pub end_day: i64,
+    pub time: Option<(u32, u32)>,
+}
+
+impl CardSpan {
+    pub fn days(&self) -> i64 {
+        self.end_day - self.start_day + 1
+    }
+}
+
+/// Оценка по умолчанию: час у момента со временем, сутки у «весь день».
+fn default_duration(m: Moment) -> u32 {
+    if m.min.is_some() {
+        60
+    } else {
+        DAY_MIN
+    }
+}
+
+/// Число суток, в которые укладывается оценка (минимум одни).
+fn duration_days(min: u32) -> i64 {
+    ((min.max(1) + DAY_MIN - 1) / DAY_MIN) as i64
+}
+
+fn span_forward(s: Moment, duration: Option<u32>) -> CardSpan {
+    let dur = duration.unwrap_or_else(|| default_duration(s)).max(1);
+    match s.min {
+        Some(from) if from + dur <= DAY_MIN => CardSpan { start_day: s.day, end_day: s.day, time: Some((from, from + dur)) },
+        Some(from) => CardSpan { start_day: s.day, end_day: s.day + duration_days(from + dur) - 1, time: None },
+        None => CardSpan { start_day: s.day, end_day: s.day + duration_days(dur) - 1, time: None },
+    }
+}
+
+fn span_backward(e: Moment, duration: Option<u32>) -> CardSpan {
+    let dur = duration.unwrap_or_else(|| default_duration(e)).max(1);
+    match e.min {
+        Some(to) if dur <= to => CardSpan { start_day: e.day, end_day: e.day, time: Some((to - dur, to)) },
+        _ => CardSpan { start_day: e.day - duration_days(dur) + 1, end_day: e.day, time: None },
+    }
+}
+
+fn span_between(s: Moment, e: Moment) -> CardSpan {
+    let (s, e) = if (e.day, e.min.unwrap_or(0)) < (s.day, s.min.unwrap_or(0)) { (e, s) } else { (s, e) };
+    if s.day == e.day && (s.min.is_some() || e.min.is_some()) {
+        let from = s.min.unwrap_or(0);
+        let to = e.min.unwrap_or(DAY_MIN).clamp(from + 5, DAY_MIN);
+        return CardSpan { start_day: s.day, end_day: s.day, time: Some((from, to)) };
+    }
+    CardSpan { start_day: s.day, end_day: e.day, time: None }
+}
+
+/// Оценка из строки: `1w`, `1d`, `2h`, `90m`, `1.5h`, `1d 4h`, `30 мин`,
+/// `2 дня`; голое число — часы. `None` — пусто либо мусор.
+pub fn parse_duration(s: &str) -> Option<u32> {
+    let t = s.trim().to_lowercase();
+    if t.is_empty() || t == "none" || t == "null" || t == "off" {
+        return None;
+    }
+    let mut total = 0f64;
+    let mut num = String::new();
+    let mut units = 0u32;
+    // Буква без числа перед ней — часть слова («мин», «дня»), а не единица.
+    let take = |num: &mut String, mult: f64, total: &mut f64, units: &mut u32| {
+        let Ok(v) = num.parse::<f64>() else {
+            num.clear();
+            return;
+        };
+        *total += v * mult;
+        num.clear();
+        *units += 1;
+    };
+    for ch in t.chars() {
+        match ch {
+            c if c.is_ascii_digit() => num.push(c),
+            '.' | ',' => num.push('.'),
+            'w' => take(&mut num, 7.0 * DAY_MIN as f64, &mut total, &mut units),
+            'd' | 'д' => take(&mut num, DAY_MIN as f64, &mut total, &mut units),
+            'h' | 'ч' => take(&mut num, 60.0, &mut total, &mut units),
+            'm' | 'м' => take(&mut num, 1.0, &mut total, &mut units),
+            _ => {}
+        }
+    }
+    if !num.is_empty() {
+        // Голое число — часы: «оценка 2» читается как два часа.
+        take(&mut num, 60.0, &mut total, &mut units);
+    }
+    (units > 0 && total >= 1.0).then(|| total.round().min(u32::MAX as f64) as u32)
+}
+
+/// Оценка строкой: `1d`, `2h`, `1d 4h`, `90m`; ноль — пусто.
+pub fn fmt_duration(min: u32) -> String {
+    if min == 0 {
+        return String::new();
+    }
+    let (d, h, m) = (min / DAY_MIN, (min % DAY_MIN) / 60, min % 60);
+    let mut parts = Vec::new();
+    if d > 0 {
+        parts.push(format!("{d}d"));
+    }
+    if h > 0 {
+        parts.push(format!("{h}h"));
+    }
+    if m > 0 {
+        parts.push(format!("{m}m"));
+    }
+    parts.join(" ")
 }
 
 /// Приоритет карточки: цветной бейдж в шапке.
@@ -323,6 +580,8 @@ pub enum CardChangeKind {
     Reopened,
     DueChanged,
     PriorityChanged,
+    /// Изменилась плановая полоса (начало/конец/оценка).
+    Scheduled,
     Archived,
     Restored,
     /// Родилась следующая карточка повтора (`card` — новая).
@@ -340,6 +599,7 @@ impl CardChangeKind {
             CardChangeKind::Reopened => "reopen",
             CardChangeKind::DueChanged => "due",
             CardChangeKind::PriorityChanged => "priority",
+            CardChangeKind::Scheduled => "schedule",
             CardChangeKind::Archived => "archive",
             CardChangeKind::Restored => "restore",
             CardChangeKind::Repeated => "repeat",
@@ -624,6 +884,9 @@ impl KanbanDoc {
                             card.priority.map(|x| x.key().to_string()).unwrap_or_default(),
                         );
                     }
+                    if (p.start.as_deref(), p.end.as_deref(), p.duration) != (card.start.as_deref(), card.end.as_deref(), card.duration) {
+                        change(CardChangeKind::Scheduled, p.span_text(), card.span_text());
+                    }
                 }
             }
             let in_done = self.columns.iter().any(|c| c.id == card.column && c.done);
@@ -830,6 +1093,99 @@ mod tests {
         }
         assert_eq!(chip_colors("#E8A33D").1, Color::BLACK);
         assert_eq!(chip_colors("#C03E3E").1, Color::WHITE);
+    }
+
+    /// Оценка длительности читается в минутах и печатается обратно.
+    #[test]
+    fn duration_parses_units_and_formats_back() {
+        assert_eq!(parse_duration("1d"), Some(DAY_MIN));
+        assert_eq!(parse_duration("2h"), Some(120));
+        assert_eq!(parse_duration("90m"), Some(90));
+        assert_eq!(parse_duration("1.5h"), Some(90));
+        assert_eq!(parse_duration("1d 4h"), Some(DAY_MIN + 240));
+        assert_eq!(parse_duration("30 мин"), Some(30), "русские единицы");
+        assert_eq!(parse_duration("2 дня"), Some(2 * DAY_MIN));
+        assert_eq!(parse_duration("3"), Some(180), "голое число — часы");
+        assert_eq!(parse_duration("none"), None);
+        assert_eq!(parse_duration("мусор"), None);
+        assert_eq!(fmt_duration(DAY_MIN + 240), "1d 4h");
+        assert_eq!(fmt_duration(90), "1h 30m");
+        assert_eq!(fmt_duration(0), "");
+    }
+
+    /// Момент карточки: дата с временем и без.
+    #[test]
+    fn moment_roundtrip() {
+        let day = parse_days("2026-09-09").unwrap();
+        assert_eq!(Moment::parse("2026-09-09"), Some(Moment { day, min: None }));
+        assert_eq!(Moment::parse("2026-09-09T10:30"), Some(Moment { day, min: Some(630) }));
+        assert_eq!(Moment::parse("2026-09-09 10:30"), Some(Moment { day, min: Some(630) }));
+        assert_eq!(Moment { day, min: Some(630) }.iso(), "2026-09-09T10:30");
+        assert_eq!(Moment { day, min: None }.iso(), "2026-09-09");
+        assert!(Moment::parse("мусор").is_none());
+        assert!(Moment::parse("2026-09-09T25:00").is_none());
+    }
+
+    /// Полоса карточки: оценка в днях даёт многодневную полосу, оценка в
+    /// часах — отрезок внутри дня; срок сам по себе полосой не становится.
+    #[test]
+    fn schedule_spans_days_and_hours() {
+        let d = |iso: &str| parse_days(iso).unwrap();
+        let mut c = KanbanCard::new("k".into(), "col".into());
+        c.due = Some("2026-09-12".into());
+        assert!(c.schedule().is_none(), "срок — точка, не полоса");
+
+        // «Оценка 1 день» + «в календарь на завтра» — полоса в один день.
+        c.duration = Some(DAY_MIN);
+        c.schedule_at(d("2026-09-10"), None);
+        assert_eq!(c.start.as_deref(), Some("2026-09-10"));
+        assert_eq!(c.schedule(), Some(CardSpan { start_day: d("2026-09-10"), end_day: d("2026-09-10"), time: None }));
+        assert_eq!(c.span_text(), "2026-09-10");
+
+        // Три дня — полоса до 12-го включительно.
+        c.duration = Some(3 * DAY_MIN);
+        c.schedule_at(d("2026-09-10"), None);
+        assert_eq!(c.schedule().unwrap().days(), 3);
+        assert_eq!(c.span_text(), "2026-09-10 → 2026-09-12");
+
+        // Два часа с 10:00 — отрезок внутри дня.
+        c.duration = Some(120);
+        c.schedule_at(d("2026-09-10"), Some(600));
+        assert_eq!(c.schedule(), Some(CardSpan { start_day: d("2026-09-10"), end_day: d("2026-09-10"), time: Some((600, 720)) }));
+        assert_eq!(c.span_text(), "2026-09-10 10:00–12:00");
+
+        // Перенос сохраняет время и длительность.
+        assert!(c.shift_schedule(2));
+        assert_eq!(c.schedule().unwrap().start_day, d("2026-09-12"));
+        assert_eq!(c.schedule().unwrap().time, Some((600, 720)));
+
+        // Растягивание кромки задаёт дни и пересчитывает оценку.
+        c.set_span_days(d("2026-09-12"), d("2026-09-15"));
+        assert_eq!(c.duration, Some(4 * DAY_MIN));
+        assert_eq!(c.schedule().unwrap().days(), 4);
+
+        // Только конец — полоса отсчитывается назад.
+        let mut back = KanbanCard::new("b".into(), "col".into());
+        back.end = Some("2026-09-15".into());
+        back.duration = Some(2 * DAY_MIN);
+        assert_eq!(back.schedule(), Some(CardSpan { start_day: d("2026-09-14"), end_day: d("2026-09-15"), time: None }));
+
+        assert!(c.unschedule());
+        assert!(c.schedule().is_none() && c.due.is_some(), "план снят, срок остался");
+    }
+
+    /// Повтор двигает план вместе со сроком.
+    #[test]
+    fn repeat_shifts_the_plan_with_the_due_date() {
+        let d = |iso: &str| parse_days(iso).unwrap();
+        let mut c = KanbanCard::new("k".into(), "col".into());
+        c.repeat = Repeat::Weekly;
+        c.due = Some("2026-09-10".into());
+        c.duration = Some(DAY_MIN);
+        c.schedule_at(d("2026-09-10"), None);
+        let next = c.next_repeat("k2".into(), "col".into(), d("2026-09-10"));
+        assert_eq!(next.due.as_deref(), Some("2026-09-17"));
+        assert_eq!(next.schedule().unwrap().start_day, d("2026-09-17"), "полоса едет за сроком");
     }
 
     fn doc() -> KanbanDoc {

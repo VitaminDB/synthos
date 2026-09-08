@@ -3,6 +3,11 @@
 //! Задачи с датами начала/конца (ISO `YYYY-MM-DD`, включительно), цветом и
 //! зависимостями «конец A → начало B». Масштаб шкалы хранится в файле,
 //! чтобы диаграмма открывалась в том же приближении.
+//!
+//! `boards` — доски, чьи запланированные карточки видны на диаграмме
+//! отдельными строками (`start`/`end` карточки). В отличие от календаря,
+//! который смотрит на весь проект, здесь пусто = только свои задачи:
+//! диаграмма — про один план, а не про обзор.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +24,10 @@ pub struct GanttDoc {
     /// Пикселей на день.
     #[serde(default = "default_zoom")]
     pub zoom: f32,
+    /// Доски (id объектов `kanban`), чьи запланированные карточки видны
+    /// строками диаграммы; пусто — только собственные задачи.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boards: Vec<String>,
 }
 
 fn default_version() -> u32 {
@@ -59,7 +68,7 @@ pub struct GanttDep {
 
 impl GanttDoc {
     pub fn template() -> Self {
-        Self { version: 1, tasks: Vec::new(), deps: Vec::new(), zoom: default_zoom() }
+        Self { version: 1, tasks: Vec::new(), deps: Vec::new(), zoom: default_zoom(), boards: Vec::new() }
     }
 
     pub fn parse(json: &str) -> Result<Self, serde_json::Error> {

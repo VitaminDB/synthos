@@ -31,7 +31,7 @@ use syngui::widget::context::{EventContext, UpdateContext};
 use syngui::widget::{DirtyFlags, Element, ElementId, ElementTree};
 
 use super::calendar::{civil_from_days, short_date, today_days, weekday_of};
-use super::{GanttHandle, ZOOM_MAX, ZOOM_MIN};
+use super::{BoardTask, GanttEnv, GanttHandle, ZOOM_MAX, ZOOM_MIN};
 
 pub const HEADER_H: f32 = 34.0;
 pub const ROW_H: f32 = 36.0;
@@ -43,7 +43,15 @@ const DOT_GAP: f32 = 9.0;
 /// Радиус крестика удаления на выделенной зависимости.
 const DEL_R: f32 = 7.0;
 
-/// Задача (снимок из документа).
+/// Откуда бар: своя задача диаграммы либо карточка доски.
+#[derive(Clone, Debug, PartialEq)]
+enum BarSource {
+    Task,
+    /// id объекта `kanban` и карточки.
+    Card(String, String),
+}
+
+/// Задача (снимок из документа) или карточка доски.
 #[derive(Clone, Debug, PartialEq)]
 struct Bar {
     id: String,
@@ -51,18 +59,22 @@ struct Bar {
     start: i64,
     end: i64,
     color: Option<String>,
+    source: BarSource,
 }
 
 pub struct GanttChart {
     pub handle: GanttHandle,
+    pub env: GanttEnv,
+    /// Запланированные карточки выбранных досок — строки после своих задач.
+    pub cards: Vec<BoardTask>,
     /// Счётчик «показать сегодня» (тулбар).
     pub go_today: u64,
 }
 
 impl GanttChart {
-    fn snapshot(handle: &GanttHandle) -> (Vec<Bar>, Vec<(String, String)>, f32) {
+    fn snapshot(handle: &GanttHandle, cards: &[BoardTask]) -> (Vec<Bar>, Vec<(String, String)>, f32) {
         let doc = handle.lock();
-        let bars = doc
+        let mut bars: Vec<Bar> = doc
             .tasks
             .iter()
             .filter_map(|t| {
@@ -72,9 +84,17 @@ impl GanttChart {
                     start,
                     end,
                     color: (!t.color.is_empty()).then(|| t.color.clone()),
+                    source: BarSource::Task,
                 })
             })
             .collect();
+        bars.extend(cards.iter().map(|c| Bar {
+            id: c.card.clone(),
+            start: c.start,
+            end: c.end,
+            color: (!c.color.is_empty()).then(|| c.color.clone()),
+            source: BarSource::Card(c.board.clone(), c.card.clone()),
+        }));
         let deps = doc.deps.iter().map(|d| (d.from.clone(), d.to.clone())).collect();
         (bars, deps, doc.zoom)
     }
@@ -82,7 +102,7 @@ impl GanttChart {
 
 impl Widget for GanttChart {
     fn create_element(&self) -> Box<dyn Element> {
-        let (bars, deps, zoom) = Self::snapshot(&self.handle);
+        let (bars, deps, zoom) = Self::snapshot(&self.handle, &self.cards);
         let origin_day = bars.iter().map(|b| b.start).min().unwrap_or(today_days()) - 3;
         Box::new(GanttElement {
             id: ElementId::new(),
@@ -91,6 +111,8 @@ impl Widget for GanttChart {
             classes: Vec::new(),
             mss: MssFields::new(),
             handle: self.handle.clone(),
+            env: self.env.clone(),
+            cards: self.cards.clone(),
             bars,
             deps,
             px_per_day: zoom,
@@ -140,6 +162,8 @@ pub struct GanttElement {
     classes: Vec<String>,
     mss: MssFields,
     handle: GanttHandle,
+    env: GanttEnv,
+    cards: Vec<BoardTask>,
     bars: Vec<Bar>,
     deps: Vec<(String, String)>,
     px_per_day: f32,
@@ -232,7 +256,7 @@ impl GanttElement {
     }
 
     fn hit_dot(&self, p: Point) -> Option<usize> {
-        (0..self.bars.len()).find(|&i| dist(p, self.dot_center(i)) <= DOT_R + 3.0)
+        (0..self.bars.len()).find(|&i| self.bars[i].source == BarSource::Task && dist(p, self.dot_center(i)) <= DOT_R + 3.0)
     }
 
     /// Строка под курсором (для показа коннектора).
@@ -282,8 +306,13 @@ impl GanttElement {
         }
         let Some(bar) = self.bars.get(drag.row_idx) else { return };
         let start = bar.start + drag.delta.0;
-        let end = bar.end + drag.delta.1;
-        self.handle.set_task_dates(&bar.id, start, end.max(start));
+        let end = (bar.end + drag.delta.1).max(start);
+        // Карточка доски правится в доске: новая полоса едет в её
+        // `start`/`end`, и её же видит календарь.
+        match &bar.source {
+            BarSource::Task => self.handle.set_task_dates(&bar.id, start, end),
+            BarSource::Card(board, card) => (self.env.set_card_span)(board, card, start, end),
+        }
     }
 
     fn scroll_to_today(&mut self) {
@@ -304,7 +333,9 @@ impl Element for GanttElement {
     fn update(&mut self, widget: &dyn Widget, ctx: &mut UpdateContext) {
         let Some(w) = widget.as_any().downcast_ref::<GanttChart>() else { return };
         self.handle = w.handle.clone();
-        let (bars, deps, zoom) = GanttChart::snapshot(&self.handle);
+        self.env = w.env.clone();
+        self.cards = w.cards.clone();
+        let (bars, deps, zoom) = GanttChart::snapshot(&self.handle, &self.cards);
         if bars != self.bars || deps != self.deps {
             let grew = bars.len() != self.bars.len();
             self.bars = bars;
@@ -444,7 +475,8 @@ impl Element for GanttElement {
             }
             // Коннектор зависимости — у строки под курсором и у источника
             // тянущейся связи.
-            let show_dot = hover_row == Some(idx) || self.link.map(|(i, _)| i == idx).unwrap_or(false);
+            let show_dot = self.bars[idx].source == BarSource::Task
+                && (hover_row == Some(idx) || self.link.map(|(i, _)| i == idx).unwrap_or(false));
             if show_dot {
                 let c = self.dot_center(idx);
                 list.push_rect(

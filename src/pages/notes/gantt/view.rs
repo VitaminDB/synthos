@@ -2,6 +2,10 @@
 //! слева колонка задач из обычных виджетов (цветная метка, название,
 //! удаление), справа — шкала времени ([`super::chart`]). Строки колонки и
 //! шкалы одной высоты, поэтому подписи и бары совпадают.
+//!
+//! После своих задач идут строки запланированных карточек выбранных досок
+//! (`GanttDoc::boards`): подпись read-only с кнопкой «открыть страницу», а
+//! бар живой — тянется и пишет новые даты в карточку.
 
 use syngui::core::Color;
 use syngui::input::CursorIcon;
@@ -13,20 +17,25 @@ use crate::icons::*;
 
 use super::chart::{GanttChart, HEADER_H, ROW_H};
 use super::model::GanttTask;
-use super::GanttHandle;
+use super::{BoardTask, GanttEnv, GanttHandle};
 
 const LABEL_W: f32 = 200.0;
 
-pub fn view(handle: GanttHandle) -> impl Widget {
+pub fn view(env: GanttEnv, handle: GanttHandle) -> impl Widget {
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.revision.get();
+        let _ = env.project_rev.get();
         let go_today = handle.go_today.get();
-        vec![build(handle.clone(), go_today)]
+        vec![build(env.clone(), handle.clone(), go_today)]
     })
 }
 
-fn build(handle: GanttHandle, go_today: u64) -> Box<dyn Widget> {
-    let tasks: Vec<GanttTask> = handle.lock().tasks.clone();
+fn build(env: GanttEnv, handle: GanttHandle, go_today: u64) -> Box<dyn Widget> {
+    let (tasks, boards): (Vec<GanttTask>, Vec<String>) = {
+        let doc = handle.lock();
+        (doc.tasks.clone(), doc.boards.clone())
+    };
+    let cards = (env.cards)(&boards);
 
     let mut labels = Column::new()
         .gap(0.0)
@@ -45,7 +54,10 @@ fn build(handle: GanttHandle, go_today: u64) -> Box<dyn Widget> {
     for t in &tasks {
         labels = labels.child(task_row(&handle, t));
     }
-    if tasks.is_empty() {
+    for c in &cards {
+        labels = labels.child(card_row(&env, c));
+    }
+    if tasks.is_empty() && cards.is_empty() {
         labels = labels.child(
             DecoratedBox::new()
                 .style("height", StyleValue::px(ROW_H))
@@ -60,7 +72,7 @@ fn build(handle: GanttHandle, go_today: u64) -> Box<dyn Widget> {
         .child(
             DecoratedBox::new()
                 .class("grow")
-                .child(GanttChart { handle: handle.clone(), go_today }.class("notes-gantt-chart")),
+                .child(GanttChart { handle: handle.clone(), env: env.clone(), cards, go_today }.class("notes-gantt-chart")),
         );
 
     Box::new(
@@ -70,6 +82,39 @@ fn build(handle: GanttHandle, go_today: u64) -> Box<dyn Widget> {
             .child(toolbar(&handle))
             .child(DecoratedBox::new().class("grow").child(ScrollView::new().vertical().child(body))),
     )
+}
+
+/// Строка карточки доски: метка цвета, название read-only, «открыть
+/// страницу доски» — сама карточка правится там, а не здесь.
+fn card_row(env: &GanttEnv, c: &BoardTask) -> impl Widget {
+    let open = env.open_page.clone();
+    let page = c.page.clone();
+    let mut dot = DecoratedBox::new().class("notes-kanban-dot");
+    if c.color.is_empty() {
+        dot = dot.class("notes-kanban-dot empty");
+    } else {
+        dot = dot.style("background-color", Color::from_hex(&c.color));
+    }
+    DecoratedBox::new()
+        .style("height", StyleValue::px(ROW_H))
+        .class("notes-gantt-row")
+        .child(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(dot)
+                .child(
+                    DecoratedBox::new()
+                        .class("grow")
+                        .child(Text::new(c.name.clone()).max_lines(1).class("notes-gantt-task-name")),
+                )
+                .child(
+                    ToolButton::new(MI_OPEN_IN_NEW)
+                        .tooltip(tr!("notes.embed.open"))
+                        .on_click(move || open(&page))
+                        .class("notes-kanban-lane-btn"),
+                ),
+        )
 }
 
 fn toolbar(handle: &GanttHandle) -> impl Widget {

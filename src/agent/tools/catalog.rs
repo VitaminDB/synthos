@@ -671,8 +671,12 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 add_column {name, color, width, done} | update_column {column, \
                 name, color, width, done} | delete_column {column} | add_card \
                 {title = the new card's text, column, md, priority, tags, due, \
-                repeat, before} | update_card {card, title, md, priority, tags, \
-                due, repeat, column, before} | move_card {card, column | \
+                duration, start, end, repeat, before} | update_card {card, \
+                title, md, priority, tags, due, duration, start, end, repeat, \
+                column, before} | schedule {card, date = today | tomorrow | \
+                yyyy-mm-dd, time, duration} (put the card on the calendar: \
+                start = that day, end = start + duration) | unschedule {card} | \
+                move_card {card, column | \
                 to_board, before} | delete_card {card} | archive | unarchive \
                 {card} (to/from the board's archive) | attach {card, path | \
                 attachment, name} | detach {card, file} (a file or image on a \
@@ -681,7 +685,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 title. \
                 gantt: create | read | \
                 add_task | update_task | delete_task | add_dep | delete_dep | \
-                set_zoom | show_today | delete. log: filter by action (done | \
+                set_zoom | show_today | set_boards {boards} (board cards with a \
+                plan become chart rows) | delete. log: filter by action (done | \
                 move | add | delete | due | priority | archive | restore | repeat \
                 | create | rename)."
         })),
@@ -1139,6 +1144,39 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 today, tomorrow or none. tasks: filter — overdue | today | \
                 tomorrow | week | month | 14d | none | any | yyyy-mm-dd | \
                 from..to."
+        })),
+        ("duration", json!({
+            "type": ["string", "number"],
+            "description": "kanban add_card/update_card/schedule: how long the \
+                task is expected to take — 1d, 2h, 90m, \"1d 4h\"; a bare \
+                number means hours, \"none\" clears it. With a start date it \
+                gives the card an end date, so the card shows as a bar in the \
+                calendar and on a Gantt chart."
+        })),
+        ("start", json!({
+            "type": "string",
+            "description": "kanban add_card/update_card: planned start — \
+                yyyy-mm-dd, yyyy-mm-ddThh:mm, today, tomorrow (\"today 10:00\" \
+                works too), \"none\" clears it. Together with end (or duration) \
+                it puts the card on the calendar as a bar."
+        })),
+        ("end", json!({
+            "type": "string",
+            "description": "kanban add_card/update_card: planned end, same \
+                formats as start; without it the end comes from duration."
+        })),
+        ("time", json!({
+            "type": "string",
+            "description": "kanban schedule: time of day HH:MM for the planned \
+                start; without it the card takes whole days."
+        })),
+        ("boards", json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "calendar set_view: boards whose planned cards the \
+                calendar shows as bars (ids, or the page holding the board); \
+                empty means every board of the project. gantt set_boards: the \
+                same, but empty means only the chart's own tasks."
         })),
         ("since", json!({
             "type": "string",

@@ -469,6 +469,10 @@ pub struct CalendarDoc {
     /// Видимые календари (id); пусто — все.
     #[serde(default)]
     pub calendars: Vec<String>,
+    /// Доски-источники задач (id объектов `kanban`); пусто — все доски
+    /// проекта. Их карточки видны полосами наравне с событиями.
+    #[serde(default)]
+    pub boards: Vec<String>,
     #[serde(default)]
     pub style: CalendarStyle,
 }
@@ -507,10 +511,14 @@ pub struct CalendarStyle {
     pub slot_min: u32,
     #[serde(default)]
     pub compact: bool,
-    /// Слой сроков карточек канбана / задач Ганта проекта (read-only);
+    /// Слой сроков карточек канбана / задач Ганта проекта;
     /// у новых виджетов включён — иначе календарь молчит о сроках задач.
     #[serde(default = "default_true_style")]
     pub show_kanban_due: bool,
+    /// Плановые полосы карточек (`start`/`end`): день и неделя рисуют их
+    /// отрезками, а не точками.
+    #[serde(default = "default_true_style")]
+    pub show_kanban_spans: bool,
     #[serde(default = "default_true_style")]
     pub show_gantt: bool,
     /// Имя пресета стиля (для панели свойств).
@@ -552,6 +560,7 @@ impl Default for CalendarStyle {
             slot_min: default_slot_min(),
             compact: false,
             show_kanban_due: true,
+            show_kanban_spans: true,
             show_gantt: true,
             preset: String::new(),
         }
@@ -593,7 +602,7 @@ impl CalendarStyle {
 
 impl CalendarDoc {
     pub fn template(view: CalView, today: i64) -> Self {
-        Self { version: 1, view, anchor: days_to_iso(today), calendars: Vec::new(), style: CalendarStyle::default() }
+        Self { version: 1, view, anchor: days_to_iso(today), calendars: Vec::new(), boards: Vec::new(), style: CalendarStyle::default() }
     }
 
     pub fn parse(json: &str) -> Result<Self, serde_json::Error> {

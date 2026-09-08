@@ -244,6 +244,11 @@ pub const MI_DATE_RANGE: &str          = "\u{E916}";
 pub const MI_CALENDAR_MONTH: &str      = "\u{EBCC}";
 pub const MI_CALENDAR_VIEW_WEEK: &str  = "\u{EFE8}";
 pub const MI_CALENDAR_VIEW_DAY: &str   = "\u{E936}";
+/// Планирование карточки: «в календарь» (calendar_add_on), день меню
+/// (event), оценка длительности (schedule).
+pub const MI_CALENDAR_ADD: &str        = "\u{EFE9}";
+pub const MI_EVENT: &str               = "\u{E878}";
+pub const MI_SCHEDULE: &str            = "\u{E8B5}";
 /// Графики заметок: линии / столбцы / круговая / радар (лучи из центра) /
 /// шкала-спидометр. Столбцы — `MI_BAR_CHART`, шкала — `MI_SPEED`, радар —
 /// `MI_HUB`.

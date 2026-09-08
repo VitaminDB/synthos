@@ -58,12 +58,15 @@ pub fn mindmap_env(ctx: NotesCtx) -> super::mindmap::view::MapEnv {
     }
 }
 
-/// Окружение календаря: хранилище событий проекта, слой сроков досок и
-/// задач Ганта (read-only), открытие страницы.
+/// Окружение календаря: хранилище событий проекта, слой задач досок и
+/// Ганта, их перенос, список досок для панели свойств, открытие страницы.
 pub fn calendar_env(ctx: NotesCtx) -> super::calendar::CalendarEnv {
     super::calendar::CalendarEnv {
         store: ctx.calendar_store(),
-        external: Arc::new(move |from, to| external_items(ctx, from, to)),
+        external: Arc::new(move |q| external_items(ctx, q)),
+        shift_external: Arc::new(move |r, delta| shift_external(ctx, r, delta)),
+        boards: Arc::new(move || project_boards(ctx).into_iter().map(|(id, _, title)| (id, title)).collect()),
+        project_rev: ctx.objects_rev,
         open_page: Arc::new(move |id| {
             ctx.activate(id);
             crate::rail::navigate("notes");
@@ -71,32 +74,129 @@ pub fn calendar_env(ctx: NotesCtx) -> super::calendar::CalendarEnv {
     }
 }
 
-/// Сроки карточек досок и задачи Ганта всех страниц в диапазоне дней.
-fn external_items(ctx: NotesCtx, from: i64, to: i64) -> Vec<super::calendar::ExternalItem> {
-    use super::calendar::ExternalItem;
+/// Окружение диаграммы Ганта: карточки выбранных досок строками, запись
+/// новых дат обратно в карточку, список досок, открытие страницы.
+pub fn gantt_env(ctx: NotesCtx) -> super::gantt::GanttEnv {
+    super::gantt::GanttEnv {
+        cards: Arc::new(move |boards| board_tasks(ctx, boards)),
+        set_card_span: Arc::new(move |board, card, start, end| {
+            if let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", board) {
+                handle.set_card_span(card, start, end);
+            }
+        }),
+        boards: Arc::new(move || project_boards(ctx).into_iter().map(|(id, _, title)| (id, title)).collect()),
+        project_rev: ctx.objects_rev,
+        open_page: Arc::new(move |id| {
+            ctx.activate(id);
+            crate::rail::navigate("notes");
+        }),
+    }
+}
+
+/// Запланированные карточки указанных досок — строки диаграммы Ганта.
+fn board_tasks(ctx: NotesCtx, boards: &[String]) -> Vec<super::gantt::BoardTask> {
+    use super::gantt::BoardTask;
+    let mut out = Vec::new();
+    if boards.is_empty() {
+        return out;
+    }
+    for (oid, page_id, _) in project_boards(ctx) {
+        if !boards.contains(&oid) {
+            continue;
+        }
+        let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", &oid) else { continue };
+        let doc = handle.lock();
+        for c in &doc.cards {
+            let Some(span) = c.schedule() else { continue };
+            out.push(BoardTask {
+                board: oid.clone(),
+                card: c.id.clone(),
+                name: c.title.clone(),
+                color: doc.columns.iter().find(|col| col.id == c.column).map(|col| col.color.clone()).unwrap_or_default(),
+                start: span.start_day,
+                end: span.end_day,
+                page: page_id.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// Доски проекта: `(id доски, id страницы, название страницы)` в порядке
+/// дерева.
+pub fn project_boards(ctx: NotesCtx) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for pid in ctx.tree.get_untracked().all_ids() {
+        for (kind, oid) in super::state::object_refs(&ctx.page_markdown(&pid)) {
+            if kind == "kanban" && !out.iter().any(|(id, _, _)| *id == oid) {
+                out.push((oid, pid.clone(), ctx.title_of(&pid)));
+            }
+        }
+    }
+    out
+}
+
+/// Задачи досок (плановые полосы и сроки) и задачи Ганта всех страниц в
+/// диапазоне дней запроса.
+fn external_items(ctx: NotesCtx, q: &super::calendar::ExternalQuery) -> Vec<super::calendar::ExternalItem> {
+    use super::calendar::{ExternalItem, ExternalKind, ExternalRef};
     use super::gantt::calendar::parse_days;
+    let (from, to) = (q.from, q.to);
     let mut out = Vec::new();
     for pid in ctx.tree.get_untracked().all_ids() {
         for (kind, oid) in super::state::object_refs(&ctx.page_markdown(&pid)) {
             match (kind.as_str(), ctx.object(&kind, &oid)) {
                 ("kanban", Some(LiveObject::Kanban { handle, .. })) => {
+                    if !q.boards.is_empty() && !q.boards.contains(&oid) {
+                        continue;
+                    }
                     let doc = handle.lock();
                     for c in &doc.cards {
-                        let Some(day) = c.due.as_deref().and_then(parse_days) else { continue };
-                        if day < from || day > to {
-                            continue;
-                        }
                         let color = doc.columns.iter().find(|col| col.id == c.column).map(|col| col.color.clone()).unwrap_or_default();
-                        out.push(ExternalItem { day, end_day: day, title: c.title.clone(), color, page: pid.clone() });
+                        let item = |kind, day, end_day, time| ExternalItem {
+                            day,
+                            end_day,
+                            time,
+                            title: c.title.clone(),
+                            color: color.clone(),
+                            page: pid.clone(),
+                            source: ExternalRef { kind, object: oid.clone(), item: c.id.clone() },
+                        };
+                        // Есть план — полоса; срок точкой рисуется, только
+                        // если он вне полосы (иначе одна задача дважды).
+                        let span = q.spans.then(|| c.schedule()).flatten();
+                        if let Some(s) = span {
+                            if s.end_day >= from && s.start_day <= to {
+                                out.push(item(ExternalKind::Card, s.start_day, s.end_day, s.time));
+                            }
+                        }
+                        if q.due {
+                            let Some(day) = c.due.as_deref().and_then(parse_days) else { continue };
+                            let covered = span.is_some_and(|s| (s.start_day..=s.end_day).contains(&day));
+                            if !covered && day >= from && day <= to {
+                                out.push(item(ExternalKind::Due, day, day, None));
+                            }
+                        }
                     }
                 }
                 ("gantt", Some(LiveObject::Gantt { handle, .. })) => {
+                    if !q.gantt {
+                        continue;
+                    }
                     for t in &handle.lock().tasks {
                         let Some((s, e)) = t.span_days() else { continue };
                         if e < from || s > to {
                             continue;
                         }
-                        out.push(ExternalItem { day: s, end_day: e, title: t.name.clone(), color: t.color.clone(), page: pid.clone() });
+                        out.push(ExternalItem {
+                            day: s,
+                            end_day: e,
+                            time: None,
+                            title: t.name.clone(),
+                            color: t.color.clone(),
+                            page: pid.clone(),
+                            source: ExternalRef { kind: ExternalKind::Task, object: oid.clone(), item: t.id.clone() },
+                        });
                     }
                 }
                 _ => {}
@@ -104,6 +204,35 @@ fn external_items(ctx: NotesCtx, from: i64, to: i64) -> Vec<super::calendar::Ext
         }
     }
     out
+}
+
+/// Перенос внешнего элемента на `delta` дней: срок карточки, её плановая
+/// полоса либо задача Ганта.
+fn shift_external(ctx: NotesCtx, r: &super::calendar::ExternalRef, delta: i64) -> bool {
+    use super::calendar::ExternalKind;
+    use super::gantt::calendar::{days_to_iso, parse_days};
+    if delta == 0 {
+        return false;
+    }
+    match r.kind {
+        ExternalKind::Due | ExternalKind::Card => {
+            let Some(LiveObject::Kanban { handle, .. }) = ctx.object("kanban", &r.object) else { return false };
+            if r.kind == ExternalKind::Card {
+                handle.shift_card_schedule(&r.item, delta);
+                return true;
+            }
+            let Some(day) = handle.card(&r.item).and_then(|c| c.due.as_deref().and_then(parse_days)) else { return false };
+            handle.set_due(&r.item, Some(days_to_iso(day + delta)));
+            true
+        }
+        ExternalKind::Task => {
+            let Some(LiveObject::Gantt { handle, .. }) = ctx.object("gantt", &r.object) else { return false };
+            let span = handle.lock().tasks.iter().find(|t| t.id == r.item).and_then(|t| t.span_days());
+            let Some((s, e)) = span else { return false };
+            handle.set_task_dates(&r.item, s + delta, e + delta);
+            true
+        }
+    }
 }
 
 /// Карта → вложенный список на месте врезки (на всех страницах, где она
@@ -147,7 +276,7 @@ impl EmbedFactory for NotesEmbedFactory {
         }
         if let Some(id) = target.strip_prefix("gantt:") {
             let LiveObject::Gantt { handle, .. } = ctx.object("gantt", id.trim())? else { return None };
-            return Some(sized(Box::new(super::gantt::view::view(handle)), height));
+            return Some(sized(Box::new(super::gantt::view::view(gantt_env(ctx), handle)), height));
         }
         if let Some(id) = target.strip_prefix("mindmap:") {
             let LiveObject::Mindmap { handle, id: oid } = ctx.object("mindmap", id.trim())? else { return None };

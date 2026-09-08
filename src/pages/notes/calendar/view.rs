@@ -17,7 +17,7 @@ use super::model::{days_in_month, range_of, CalView, CalendarDoc, CalendarStore,
 use super::month::MonthGrid;
 use super::timegrid::TimeGrid;
 use super::year::YearGrid;
-use super::{CalendarEnv, CalendarHandle, ExternalItem};
+use super::{CalendarEnv, CalendarHandle, ExternalItem, ExternalQuery};
 use crate::pages::notes::gantt::calendar::civil_from_days;
 
 /// Снимок для сеток (клонируется в виджет на каждую перестройку).
@@ -45,7 +45,14 @@ pub fn snapshot(env: &CalendarEnv, handle: &CalendarHandle) -> GridData {
     let (today, now_min) = crate::agent::time::local_now();
     let range = range_of(doc.view, doc.anchor_days(), doc.style.first_weekday);
     let occurrences = store.occurrences(range.0, range.1, &doc.calendars);
-    let external = if doc.style.show_kanban_due || doc.style.show_gantt { (env.external)(range.0, range.1) } else { Vec::new() };
+    let external = (env.external)(&ExternalQuery {
+        from: range.0,
+        to: range.1,
+        boards: doc.boards.clone(),
+        due: doc.style.show_kanban_due,
+        spans: doc.style.show_kanban_spans,
+        gantt: doc.style.show_gantt,
+    });
     GridData {
         doc,
         store,
@@ -100,6 +107,7 @@ pub fn view(env: CalendarEnv, id: String, handle: CalendarHandle) -> impl Widget
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = handle.structure_rev.get();
         let _ = env.store.revision.get();
+        let _ = env.project_rev.get();
         let _ = handle.selected.get();
         let _ = handle.selected_day.get();
         let _ = handle.tick.get();

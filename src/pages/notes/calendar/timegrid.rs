@@ -1,14 +1,16 @@
 //! Сетка часов — неделя (7 колонок) и день (1 колонка): шапка с днями,
 //! ряд «весь день», часы `hour_from..hour_to` слотами `slot_min`, линия
 //! «сейчас» в сегодняшней колонке, события полосами с упаковкой
-//! пересечений по дорожкам, внешний слой (сроки досок, задачи Ганта) в
-//! ряду «весь день».
+//! пересечений по дорожкам, внешний слой (задачи досок и Ганта): полоса с
+//! часами встаёт в сетку наравне с событием, без часов — в ряд «весь
+//! день».
 //!
 //! Жесты: клик по пустому слоту — выбор дня, двойной — новое событие в
-//! слоте; клик по событию — попап правки; drag тела — перенос (день и
-//! время со снапом к слоту), drag нижней кромки — длительность; мутации
-//! на MouseUp. События вне диапазона часов помечаются стрелками у верха/
-//! низа колонки.
+//! слоте; клик по событию — попап правки, по внешней полосе — её
+//! страница; drag тела — перенос (день и время со снапом к слоту), drag
+//! нижней кромки — длительность; внешняя полоса переносится только по
+//! дням (`shift_external`); мутации на MouseUp. События вне диапазона
+//! часов помечаются стрелками у верха/низа колонки.
 
 use std::any::Any;
 use std::time::{Duration, Instant};
@@ -71,8 +73,16 @@ enum DragMode {
     Resize,
 }
 
+/// Что тащим: событие календаря либо внешнюю полосу (индекс в
+/// `data.external`).
+#[derive(Clone, Debug, PartialEq)]
+enum DragTarget {
+    Event(String),
+    External(usize),
+}
+
 struct EventDrag {
-    event: String,
+    target: DragTarget,
     mode: DragMode,
     start: Point,
     moved: bool,
@@ -83,7 +93,7 @@ struct EventDrag {
     time: (u32, u32),
 }
 
-/// Прямоугольник события в сетке.
+/// Прямоугольник события или внешней полосы в сетке.
 #[derive(Clone, Debug)]
 struct Slot {
     rect: Rect,
@@ -91,6 +101,16 @@ struct Slot {
     external: Option<usize>,
     day: i64,
     all_day: bool,
+}
+
+impl Slot {
+    fn target(&self) -> Option<DragTarget> {
+        match (&self.event, self.external) {
+            (Some(id), _) => Some(DragTarget::Event(id.clone())),
+            (None, Some(i)) => Some(DragTarget::External(i)),
+            _ => None,
+        }
+    }
 }
 
 pub struct TimeElement {
@@ -122,7 +142,7 @@ impl TimeElement {
             .iter()
             .map(|&d| {
                 self.data.occurrences.iter().filter(|o| o.day == d && o.time.is_none()).count()
-                    + self.data.external.iter().filter(|e| d >= e.day && d <= e.end_day).count()
+                    + self.data.external.iter().filter(|e| e.time.is_none() && d >= e.day && d <= e.end_day).count()
             })
             .max()
             .unwrap_or(0)
@@ -186,7 +206,7 @@ impl TimeElement {
                 row += 1;
             }
             for (i, e) in self.data.external.iter().enumerate() {
-                if day < e.day || day > e.end_day || row >= 4 {
+                if e.time.is_some() || day < e.day || day > e.end_day || row >= 4 {
                     continue;
                 }
                 out.push(Slot {
@@ -198,17 +218,26 @@ impl TimeElement {
                 });
                 row += 1;
             }
-            // По часам, с предпросмотром переноса.
-            let timed: Vec<(String, (u32, u32))> = self
+            // По часам — события и внешние полосы со временем, вместе в
+            // одной упаковке дорожек: задача доски не наезжает на встречу.
+            let timed: Vec<(Option<String>, Option<usize>, (u32, u32))> = self
                 .data
                 .occurrences
                 .iter()
                 .filter(|o| o.day == day)
-                .filter_map(|o| o.time.map(|t| (o.event.clone(), t)))
+                .filter_map(|o| o.time.map(|t| (Some(o.event.clone()), None, t)))
+                .chain(
+                    self.data
+                        .external
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.day == day)
+                        .filter_map(|(i, e)| e.time.map(|t| (None, Some(i), t))),
+                )
                 .collect();
-            let intervals: Vec<(u32, u32)> = timed.iter().map(|(_, t)| *t).collect();
+            let intervals: Vec<(u32, u32)> = timed.iter().map(|(_, _, t)| *t).collect();
             let packed = lanes(&intervals);
-            for (k, (id, (s, e))) in timed.iter().enumerate() {
+            for (k, (id, ext, (s, e))) in timed.iter().enumerate() {
                 let (lane, of) = packed[k];
                 let s = (*s as i64).clamp(from_min, to_min - 5) as u32;
                 let e = (*e as i64).clamp(s as i64 + 5, to_min) as u32;
@@ -217,7 +246,7 @@ impl TimeElement {
                     Point::new(x + 2.0 + lane as f32 * lane_w, self.y_of(s)),
                     Size::new((lane_w - 2.0).max(6.0), (self.y_of(e) - self.y_of(s)).max(self.slot_h() * 0.5)),
                 );
-                out.push(Slot { rect, event: Some(id.clone()), external: None, day, all_day: false });
+                out.push(Slot { rect, event: id.clone(), external: *ext, day, all_day: false });
             }
         }
         out
@@ -229,7 +258,7 @@ impl TimeElement {
 
     /// Прямоугольник с учётом предпросмотра переноса/растяжения.
     fn preview_rect(&self, slot: &Slot) -> Rect {
-        let Some(d) = self.drag.as_ref().filter(|d| d.moved && slot.event.as_deref() == Some(d.event.as_str())) else {
+        let Some(d) = self.drag.as_ref().filter(|d| d.moved && slot.target().as_ref() == Some(&d.target)) else {
             return slot.rect;
         };
         let mut r = slot.rect;
@@ -253,20 +282,31 @@ impl TimeElement {
         if !d.moved {
             return;
         }
+        // Внешняя полоса живёт в доске или Ганте: её переносим целиком по
+        // дням, время задачи остаётся её собственным.
+        let id = match &d.target {
+            DragTarget::External(i) => {
+                if let Some(item) = self.data.external.get(*i) {
+                    (self.env.shift_external)(&item.source, d.d_days);
+                }
+                return;
+            }
+            DragTarget::Event(id) => id.clone(),
+        };
         match d.mode {
             DragMode::Move => {
                 let day = d.day + d.d_days;
-                let start = if self.data.store.event(&d.event).is_some_and(|e| e.all_day) {
+                let start = if self.data.store.event(&id).is_some_and(|e| e.all_day) {
                     None
                 } else {
                     Some(((d.time.0 as i64 + d.d_min).clamp(0, 24 * 60 - 5)) as u32)
                 };
-                self.env.store.move_event(&d.event, day, start);
+                self.env.store.move_event(&id, day, start);
             }
             DragMode::Resize => {
                 let slot_min = self.data.doc.style.slot_min as i64;
                 let new_end = ((d.time.1 as i64 + d.d_min).max(d.time.0 as i64 + slot_min)).min(24 * 60) as u32;
-                self.env.store.update_event(&d.event, |e| e.end = Some(new_end));
+                self.env.store.update_event(&id, |e| e.end = Some(new_end));
             }
         }
     }
@@ -380,7 +420,7 @@ impl Element for TimeElement {
         // События.
         for slot in self.slots() {
             let rect = self.preview_rect(&slot);
-            let dragged = self.drag.as_ref().is_some_and(|d| d.moved && slot.event.as_deref() == Some(d.event.as_str()));
+            let dragged = self.drag.as_ref().is_some_and(|d| d.moved && slot.target().as_ref() == Some(&d.target));
             let (color, title, done, selected, sub) = match (&slot.event, slot.external) {
                 (Some(id), _) => {
                     let e = self.data.store.event(id);
@@ -391,7 +431,8 @@ impl Element for TimeElement {
                 }
                 (None, Some(i)) => {
                     let ext = &self.data.external[i];
-                    (color_of(&ext.color).unwrap_or(pal.muted).with_alpha(0.7), format!("◆ {}", ext.title), false, false, String::new())
+                    let sub = ext.time.map(|(s, e)| format!("{}–{}", fmt_hm(s), fmt_hm(e))).unwrap_or_default();
+                    (color_of(&ext.color).unwrap_or(pal.muted).with_alpha(0.7), format!("◆ {}", ext.title), false, false, sub)
                 }
                 _ => continue,
             };
@@ -463,24 +504,26 @@ impl Element for TimeElement {
                 if !self.base.bounds.contains(*position) {
                     return EventResult::Ignored;
                 }
-                if let Some(slot) = self.slot_at(*position) {
-                    if let Some(id) = slot.event {
-                        let time = self.data.occurrences.iter().find(|o| o.event == id && o.day == slot.day).and_then(|o| o.time).unwrap_or((0, 0));
-                        let mode = if !slot.all_day && position.y > slot.rect.origin.y + slot.rect.size.height - EDGE_PX {
-                            DragMode::Resize
-                        } else {
-                            DragMode::Move
-                        };
-                        self.handle.select(Some(id.clone()));
-                        self.drag = Some(EventDrag { event: id, mode, start: *position, moved: false, d_days: 0, d_min: 0, day: slot.day, time });
-                        ctx.capture();
-                        return EventResult::Handled;
-                    }
-                    if let Some(i) = slot.external {
-                        let page = self.data.external[i].page.clone();
-                        (self.env.open_page)(&page);
-                        return EventResult::Handled;
-                    }
+                if let Some(target) = self.slot_at(*position).and_then(|slot| slot.target().map(|t| (slot, t))) {
+                    let (slot, target) = target;
+                    let (time, mode) = match &target {
+                        DragTarget::Event(id) => {
+                            let time = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.day).and_then(|o| o.time).unwrap_or((0, 0));
+                            let mode = if !slot.all_day && position.y > slot.rect.origin.y + slot.rect.size.height - EDGE_PX {
+                                DragMode::Resize
+                            } else {
+                                DragMode::Move
+                            };
+                            self.handle.select(Some(id.clone()));
+                            (time, mode)
+                        }
+                        // Внешнюю полосу за кромку не растягиваем: её длина
+                        // — оценка задачи, она правится в её карточке.
+                        DragTarget::External(_) => ((0, 0), DragMode::Move),
+                    };
+                    self.drag = Some(EventDrag { target, mode, start: *position, moved: false, d_days: 0, d_min: 0, day: slot.day, time });
+                    ctx.capture();
+                    return EventResult::Handled;
                 }
                 let Some(day) = self.day_at(position.x) else { return EventResult::Ignored };
                 let in_hours = position.y >= self.grid_top();
@@ -535,10 +578,19 @@ impl Element for TimeElement {
                 if d.moved {
                     self.commit_drag();
                 } else {
-                    let id = d.event.clone();
+                    let target = d.target.clone();
                     self.drag = None;
-                    let anchor = self.slot_at(*position).map(|s| s.rect).unwrap_or(self.base.bounds);
-                    self.open_edit(&id, anchor);
+                    match target {
+                        DragTarget::Event(id) => {
+                            let anchor = self.slot_at(*position).map(|s| s.rect).unwrap_or(self.base.bounds);
+                            self.open_edit(&id, anchor);
+                        }
+                        DragTarget::External(i) => {
+                            if let Some(page) = self.data.external.get(i).map(|e| e.page.clone()) {
+                                (self.env.open_page)(&page);
+                            }
+                        }
+                    }
                 }
                 self.base.dirty |= DirtyFlags::RENDER;
                 EventResult::Handled

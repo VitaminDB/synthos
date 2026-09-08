@@ -419,6 +419,11 @@ document-editor {
 .notes-kanban-lane-btn {
     font-size: 14px;
 }
+/* «В календарь»: у запланированной карточки кнопка акцентная — видно, что
+ * полоса уже стоит, не открывая меню. */
+.notes-kanban-lane-btn.selected {
+    color: var(--primary);
+}
 /* Кромка колонки: узкая, подсвечивается под курсором. */
 .notes-kanban-resize {
     width: 6px;

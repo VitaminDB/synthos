@@ -16,7 +16,7 @@ use syngui::widgets::input::document_editor::{DocLayout, DocumentEditor, Documen
 
 use super::model::{range_of, CalEvent, CalView, CalendarDoc, CalendarStore};
 use super::view::view;
-use super::{CalendarEnv, CalendarHandle, CalendarStoreHandle};
+use super::{CalendarEnv, CalendarHandle, CalendarStoreHandle, ExternalItem, ExternalKind, ExternalRef};
 use crate::pages::notes::gantt::calendar::parse_days;
 
 struct Mono;
@@ -29,16 +29,47 @@ impl TextMeasure for Mono {
     }
 }
 
+/// Слой задач досок для теста: что отдавать сетке и какие переносы она
+/// попросила (доски здесь нет — календарь знает только `ExternalRef`).
+#[derive(Clone, Default)]
+struct External {
+    items: Arc<std::sync::Mutex<Vec<ExternalItem>>>,
+    shifts: Arc<std::sync::Mutex<Vec<(String, i64)>>>,
+}
+
+impl External {
+    fn env_pair(&self) -> (Arc<dyn Fn(&super::ExternalQuery) -> Vec<ExternalItem> + Send + Sync>, Arc<dyn Fn(&ExternalRef, i64) -> bool + Send + Sync>) {
+        let items = self.items.clone();
+        let shifts = self.shifts.clone();
+        (
+            Arc::new(move |_| items.lock().unwrap().clone()),
+            Arc::new(move |r, delta| {
+                shifts.lock().unwrap().push((r.item.clone(), delta));
+                true
+            }),
+        )
+    }
+}
+
 struct Factory {
     handles: HashMap<String, CalendarHandle>,
     store: CalendarStoreHandle,
+    external: External,
 }
 
 impl EmbedFactory for Factory {
     fn build(&self, target: &str, ectx: &EmbedCtx) -> Option<Box<dyn Widget>> {
         let id = target.trim().strip_prefix("calendar:")?;
         let handle = self.handles.get(id)?.clone();
-        let env = CalendarEnv { store: self.store.clone(), external: Arc::new(|_, _| Vec::new()), open_page: Arc::new(|_| {}) };
+        let (external, shift_external) = self.external.env_pair();
+        let env = CalendarEnv {
+            store: self.store.clone(),
+            external,
+            shift_external,
+            boards: Arc::new(Vec::new),
+            project_rev: syngui::signal::use_signal(0),
+            open_page: Arc::new(|_| {}),
+        };
         let body = view(env, id.to_string(), handle);
         Some(Box::new(
             DecoratedBox::new()
@@ -57,18 +88,19 @@ struct World {
     epoch: u64,
     handles: HashMap<String, CalendarHandle>,
     store: CalendarStoreHandle,
+    external: External,
     md: String,
 }
 
 impl World {
-    fn new(md: &str, handles: HashMap<String, CalendarHandle>, store: CalendarStoreHandle) -> Self {
+    fn new(md: &str, handles: HashMap<String, CalendarHandle>, store: CalendarStoreHandle, external: External) -> Self {
         let page = DocumentEditorHandle::new();
-        let mut h = TestHarness::new(Box::new(Self::editor(md, &page, &handles, &store, 0)));
+        let mut h = TestHarness::new(Box::new(Self::editor(md, &page, &handles, &store, &external, 0)));
         h.tree.text_measure = Some(Arc::new(Mono));
         h.rebuild();
         h.apply_mss(".grow { flex-grow: 1; }");
         h.layout(1200.0, 800.0);
-        Self { h, page, epoch: 0, handles, store, md: md.to_string() }
+        Self { h, page, epoch: 0, handles, store, external, md: md.to_string() }
     }
 
     fn editor(
@@ -76,19 +108,20 @@ impl World {
         page: &DocumentEditorHandle,
         handles: &HashMap<String, CalendarHandle>,
         store: &CalendarStoreHandle,
+        external: &External,
         epoch: u64,
     ) -> DocumentEditor {
         DocumentEditor::new()
             .markdown(md)
             .handle(page)
-            .embeds(Arc::new(Factory { handles: handles.clone(), store: store.clone() }))
+            .embeds(Arc::new(Factory { handles: handles.clone(), store: store.clone(), external: external.clone() }))
             .model_epoch(epoch)
             .layout(DocLayout { free: true, ..DocLayout::default() })
     }
 
     fn settle(&mut self) {
         self.epoch += 1;
-        let w = Self::editor(&self.md, &self.page, &self.handles, &self.store, self.epoch);
+        let w = Self::editor(&self.md, &self.page, &self.handles, &self.store, &self.external, self.epoch);
         self.h.update_widget(Box::new(w));
         self.h.rebuild();
         self.h.apply_mss(".grow { flex-grow: 1; }");
@@ -121,6 +154,16 @@ fn day(iso: &str) -> i64 {
 }
 
 fn world(view: CalView, events: Vec<CalEvent>) -> (World, CalendarHandle, CalendarStoreHandle) {
+    let (w, h, s, _) = world_with(view, events, Vec::new());
+    (w, h, s)
+}
+
+/// То же плюс слой задач досок (`external`).
+fn world_with(
+    view: CalView,
+    events: Vec<CalEvent>,
+    external: Vec<ExternalItem>,
+) -> (World, CalendarHandle, CalendarStoreHandle, External) {
     let mut store = CalendarStore::template("Личное");
     let cal = store.calendars[0].id.clone();
     for mut e in events {
@@ -131,7 +174,22 @@ fn world(view: CalView, events: Vec<CalEvent>) -> (World, CalendarHandle, Calend
     let handle = CalendarHandle::new(CalendarDoc::template(view, day(D)));
     let mut handles = HashMap::new();
     handles.insert("c1".to_string(), handle.clone());
-    (World::new("![[calendar:c1]]{h=480}\n", handles, store.clone()), handle, store)
+    let ext = External::default();
+    *ext.items.lock().unwrap() = external;
+    (World::new("![[calendar:c1]]{h=480}\n", handles, store.clone(), ext.clone()), handle, store, ext)
+}
+
+/// Полоса задачи доски на календаре.
+fn card_bar(title: &str, from: i64, to: i64, time: Option<(u32, u32)>) -> ExternalItem {
+    ExternalItem {
+        day: from,
+        end_day: to,
+        time,
+        title: title.to_string(),
+        color: "#4F8CFF".to_string(),
+        page: "p1".to_string(),
+        source: ExternalRef { kind: ExternalKind::Card, object: "b1".to_string(), item: "k1".to_string() },
+    }
 }
 
 /// Центр ячейки дня в месячной сетке (шапка 22 px, 6 строк).
@@ -215,6 +273,51 @@ fn week_drag_moves_event_by_day_and_resize_extends_it() {
     let ev = s.event(&id).unwrap();
     assert_eq!(ev.end, Some(13 * 60), "конец растянут");
     assert_eq!(ev.start, Some(11 * 60));
+}
+
+/// Задача доски с часами рисуется отрезком в сетке часов дневного вида —
+/// раньше «День» молчал о задачах: у карточки был только срок-точка.
+#[test]
+fn day_view_draws_a_timed_card_bar_in_the_hour_grid() {
+    let bar = card_bar("Импорт", day(D), day(D), Some((10 * 60, 12 * 60)));
+    let (mut w, _handle, _store, _ext) = world_with(CalView::Day, vec![], vec![bar]);
+    let grid = w.grid("notes-calendar-timegrid");
+    let y_of = |min: u32| grid.origin.y + 32.0 + 22.0 + (min as f32 - 8.0 * 60.0) / 30.0 * 24.0;
+    let mut list = syngui::render::DisplayList::new();
+    w.h.tree.build_display_list(w.h.root_id, &mut list, Rect::new(Point::zero(), syngui::core::Size::new(1200.0, 800.0)));
+    let (top, height) = (y_of(10 * 60), y_of(12 * 60) - y_of(10 * 60));
+    let found = list.iter_all_commands().any(|c| match c {
+        syngui::render::DrawCommand::Rect { rect, .. } => {
+            (rect.origin.y - top).abs() < 1.0 && (rect.size.height - height).abs() < 1.0 && rect.size.width > 100.0
+        }
+        _ => false,
+    });
+    assert!(found, "полоса задачи 10:00–12:00 не нарисована в сетке часов (top {top}, h {height})");
+}
+
+/// Полоса задачи доски переносится по дням: календарь просит сдвинуть её
+/// на столько же дней, а сама карточка живёт в доске.
+#[test]
+fn week_card_bar_drag_shifts_the_task_by_days() {
+    let bar = card_bar("Импорт", day(D), day(D), Some((10 * 60, 12 * 60)));
+    let (mut w, handle, _store, ext) = world_with(CalView::Week, vec![], vec![bar]);
+    let grid = w.grid("notes-calendar-timegrid");
+    let (from, _) = range_of(CalView::Week, handle.anchor(), 0);
+    let col_w = (grid.size.width - 48.0) / 7.0;
+    let col_x = |d: i64| grid.origin.x + 48.0 + (d - from) as f32 * col_w;
+    let y_of = |min: u32| grid.origin.y + 32.0 + 22.0 + (min as f32 - 8.0 * 60.0) / 30.0 * 24.0;
+    let body = Point::new(col_x(day(D)) + col_w / 2.0, y_of(10 * 60) + 20.0);
+    w.drag(body, Point::new(body.x + 2.0 * col_w, body.y));
+    assert_eq!(*ext.shifts.lock().unwrap(), vec![("k1".to_string(), 2)], "перенос на два дня вперёд");
+
+    // Многодневная полоса «весь день» тащится из своего ряда.
+    ext.shifts.lock().unwrap().clear();
+    *ext.items.lock().unwrap() = vec![card_bar("Отпуск", day(D), day("2026-09-05"), None)];
+    w.settle();
+    let grid = w.grid("notes-calendar-timegrid");
+    let allday = Point::new(col_x(day(D)) + col_w / 2.0, grid.origin.y + 32.0 + 3.0 + 8.0);
+    w.drag(allday, Point::new(allday.x - col_w, allday.y));
+    assert_eq!(*ext.shifts.lock().unwrap(), vec![("k1".to_string(), -1)], "перенос на день назад");
 }
 
 #[test]

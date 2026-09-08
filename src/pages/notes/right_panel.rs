@@ -232,6 +232,12 @@ fn block_props(ctx: NotesCtx, props: BlockProps) -> impl Widget {
             col = col.child(mindmap_props(ctx, handle));
         }
     }
+    // Диаграмма Ганта: доски, чьи запланированные карточки видны строками.
+    if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("gantt:")) {
+        if let Some(LiveObject::Gantt { handle, .. }) = ctx.object("gantt", oid.trim()) {
+            col = col.child(gantt_props(ctx, handle));
+        }
+    }
     // Календарь: событие, вид, стиль, календари проекта.
     if let Some(oid) = props.embed.as_deref().and_then(|t| t.strip_prefix("calendar:")) {
         if let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", oid.trim()) {
@@ -439,6 +445,9 @@ fn kanban_props(ctx: NotesCtx, handle: KanbanHandle) -> impl Widget {
             col = col
                 .child(Text::new(tr!("notes.kanban.card")).class("notes-links-section"))
                 .child(Text::new(title).max_lines(2).class("notes-props-card-title"));
+            if let Some(text) = kanban::view::schedule_text(&card) {
+                col = col.child(Text::new(text).max_lines(1).class("notes-props-hint"));
+            }
             if let Some(text) = kanban::view::dates_text(&card) {
                 col = col.child(Text::new(text).max_lines(2).class("notes-props-hint"));
             }
@@ -448,6 +457,10 @@ fn kanban_props(ctx: NotesCtx, handle: KanbanHandle) -> impl Widget {
                     kanban::view::priority_control(&handle, &card, 140.0),
                 ))
                 .child(field_row(tr!("notes.kanban.due"), kanban::view::due_control(&handle, &card, 140.0)))
+                .child(field_row(tr!("notes.kanban.duration"), kanban::view::duration_control(&handle, &card, 180.0)))
+                .child(field_row(tr!("notes.kanban.start"), kanban::view::start_control(&handle, &card, 140.0)))
+                .child(field_row(tr!("notes.kanban.end"), kanban::view::end_control(&handle, &card, 140.0)))
+                .child(field_row(tr!("notes.kanban.schedule"), kanban::view::schedule_button(&handle, &card)))
                 .child(field_row(tr!("notes.kanban.repeat"), kanban::view::repeat_control(&handle, &card, 140.0)))
                 .child(Text::new(tr!("notes.kanban.tags")).class("notes-props-row-label"))
                 .child(kanban::view::tags_control(&handle, &card, 200.0));
@@ -1559,6 +1572,45 @@ fn values_labels(labels: &[String]) -> String {
 }
 
 /// Свойства календаря: выбранное событие, вид, стиль, календари проекта.
+/// Диаграмма Ганта: доски-источники строк. Своих задач тут нет — они
+/// правятся прямо на диаграмме.
+fn gantt_props(ctx: NotesCtx, handle: super::gantt::GanttHandle) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = handle.revision.get();
+        let _ = ctx.objects_rev.get();
+        let chosen = handle.boards();
+        let boards = super::embeds::project_boards(ctx);
+        let mut chips = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center);
+        for (id, _, page) in &boards {
+            let on = chosen.contains(id);
+            let h = handle.clone();
+            let id = id.clone();
+            chips = chips.child(
+                GestureDetector::new()
+                    .cursor(syngui::input::CursorIcon::Pointer)
+                    .on_click(move || h.toggle_board(&id))
+                    .child(
+                        DecoratedBox::new()
+                            .class(if on { "notes-calendar-chip selected" } else { "notes-calendar-chip" })
+                            .child(Text::new(page.clone()).max_lines(1).class("notes-calendar-chip-text")),
+                    ),
+            );
+        }
+        if boards.is_empty() {
+            chips = chips.child(Text::new(tr!("notes.props.calendar.no_boards")).max_lines(1).class("notes-props-hint"));
+        }
+        vec![Box::new(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .class("notes-props")
+                .child(Text::new(tr!("notes.props.gantt.title")).class("notes-links-section"))
+                .child(field_row(tr!("notes.props.calendar.boards"), chips))
+                .child(Text::new(tr!("notes.props.gantt.boards_hint")).max_lines(3).class("notes-props-hint")),
+        )]
+    })
+}
+
 fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
     let store = ctx.calendar_store();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
@@ -1574,7 +1626,7 @@ fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
         if let Some(e) = selected.as_deref().and_then(|id| data.event(id)).cloned() {
             col = col.child(calendar_event_props(&store, &handle, &data, e));
         }
-        col = col.child(calendar_view_props(&handle, &doc, &data));
+        col = col.child(calendar_view_props(ctx, &handle, &doc, &data));
         col = col.child(calendar_style_props(&handle, &doc.style));
         col = col.child(calendar_list_props(&store, &data));
         vec![Box::new(col)]
@@ -1666,6 +1718,7 @@ fn calendar_event_props(
 }
 
 fn calendar_view_props(
+    ctx: NotesCtx,
     handle: &CalendarHandle,
     doc: &super::calendar::model::CalendarDoc,
     data: &super::calendar::model::CalendarStore,
@@ -1732,7 +1785,30 @@ fn calendar_view_props(
     let h = handle.clone();
     let kanban = switch_row(tr!("notes.props.calendar.show_kanban"), style.show_kanban_due, move |on| h.set_style(|s| s.show_kanban_due = on));
     let h = handle.clone();
+    let spans = switch_row(tr!("notes.props.calendar.show_spans"), style.show_kanban_spans, move |on| h.set_style(|s| s.show_kanban_spans = on));
+    let h = handle.clone();
     let gantt = switch_row(tr!("notes.props.calendar.show_gantt"), style.show_gantt, move |on| h.set_style(|s| s.show_gantt = on));
+
+    // Доски-источники задач: чипы-переключатели; пустой фильтр = все.
+    let project_boards = super::embeds::project_boards(ctx);
+    let board_ids: Vec<String> = project_boards.iter().map(|(id, _, _)| id.clone()).collect();
+    let mut boards = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    for (id, _, page) in &project_boards {
+        let visible = doc.boards.is_empty() || doc.boards.contains(id);
+        let h = handle.clone();
+        let id_click = id.clone();
+        let all = board_ids.clone();
+        let chip = DecoratedBox::new().class(if visible { "notes-calendar-chip selected" } else { "notes-calendar-chip" });
+        boards = boards.child(
+            GestureDetector::new()
+                .cursor(syngui::input::CursorIcon::Pointer)
+                .on_click(move || h.toggle_board(&id_click, &all))
+                .child(chip.child(Text::new(page.clone()).max_lines(1).class("notes-calendar-chip-text"))),
+        );
+    }
+    if project_boards.is_empty() {
+        boards = boards.child(Text::new(tr!("notes.props.calendar.no_boards")).max_lines(1).class("notes-props-hint"));
+    }
 
     // Фильтр календарей: чипы-переключатели; пустой фильтр = все.
     let all: Vec<String> = data.calendars.iter().map(|c| c.id.clone()).collect();
@@ -1766,7 +1842,9 @@ fn calendar_view_props(
         .child(field_row(tr!("notes.props.calendar.hours"), hours))
         .child(field_row(tr!("notes.props.calendar.slot"), slot))
         .child(compact)
+        .child(field_row(tr!("notes.props.calendar.boards"), boards))
         .child(kanban)
+        .child(spans)
         .child(gantt)
 }
 

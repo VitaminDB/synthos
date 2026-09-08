@@ -181,7 +181,9 @@ pub fn build(env: &PromptEnv) -> String {
                  write nothing after it and call no other tool in that \
                  turn; the answer arrives as the user's next message (the \
                  option labels, or the typed text). One question per call, \
-                 2–6 short options.\n",
+                 2–6 short options. The question is Markdown: put code in a \
+                 fenced block with a language tag (```rust … ```), never \
+                 indented.\n",
             );
         }
         // Правила заметок — тоже только при активном инструменте.

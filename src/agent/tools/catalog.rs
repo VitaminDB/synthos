@@ -309,7 +309,7 @@ pub(super) fn build_all() -> Vec<Tool> {
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "The question shown above the options."
+                        "description": "The question shown above the options. Markdown: **bold**, lists, and fenced code blocks with a language tag (```rust … ```) render with syntax highlighting."
                     },
                     "options": {
                         "type": "array",

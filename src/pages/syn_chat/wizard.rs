@@ -15,10 +15,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use syngui::async_runtime::run_on_main_thread;
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::{Chip, Reactive, Tooltip};
+use syngui::widgets::visual::markdown_view::linearize_markdown_source;
+use syngui::widgets::{Chip, Flex, ProgressBar, Reactive, Tooltip};
 
+use super::message_bubble::bubble_markdown;
 use crate::agent::tools::wizard::{answer_text, parse_spec, WizardSpec};
-use crate::icons::{MI_CHECK, MI_HELP_OUTLINE, MI_SEND, MI_TIMER};
+use crate::icons::{
+    MI_CHECK, MI_CHECK_BOX, MI_CHECK_BOX_OUTLINE_BLANK, MI_HELP_OUTLINE, MI_SEND, MI_TIMER,
+};
 use crate::syn_chat::session;
 use crate::syn_chat::state::{ChatMsg, SynChatCtx, WizardDraft};
 
@@ -146,16 +150,35 @@ fn arm_timer(ctx: &SynChatCtx, msg_idx: usize, spec: &WizardSpec) {
     });
 }
 
-/// Свёрнутая панель: вопрос и пометка (отвечено / пропущено / время вышло).
+/// Свёрнутая панель: вопрос одной строкой и пометка (отвечено /
+/// пропущено / время вышло).
 fn collapsed(spec: &WizardSpec, status: String) -> impl Widget {
     mgui! {
         DecoratedBox::new().class("wizard-card wizard-card-collapsed") => [
             Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Icon::new(MI_HELP_OUTLINE).class("wizard-icon"),
-                Text::new(spec.question.clone()).class("wizard-question-collapsed"),
+                Text::new(question_summary(&spec.question)).class("wizard-question-collapsed"),
                 Text::new(status).class("wizard-status"),
             ]
         ]
+    }
+}
+
+/// Вопрос одной строкой для свёрнутой панели: разметка снята, берётся
+/// первая непустая строка, длинная обрезается с многоточием.
+pub fn question_summary(question: &str) -> String {
+    const MAX_CHARS: usize = 96;
+    let plain = linearize_markdown_source(question);
+    let line = plain
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if line.chars().count() > MAX_CHARS {
+        let cut: String = line.chars().take(MAX_CHARS - 1).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        line.to_string()
     }
 }
 
@@ -186,28 +209,52 @@ fn with_tip<W: Widget + 'static>(w: W, tip: &str) -> Box<dyn Widget> {
     }
 }
 
+/// Подписи длиннее этого — варианты столбиком на всю ширину карточки,
+/// иначе — в строку с переносом (короткие ответы читаются как чипы).
+const WIDE_LABEL_CHARS: usize = 36;
+
+/// Последние секунды отсчёта подсвечиваются.
+const URGENT_SECS: u64 = 10;
+
 /// Живая панель: вопрос, варианты, поле, подвал с таймером и кнопками.
 fn live(msg_idx: usize, spec: &WizardSpec, draft: &WizardDraft) -> impl Widget {
     let mut items: Vec<Box<dyn Widget>> = Vec::new();
+
+    // Шапка: значок в кружке и вопрос той же MarkdownView, что у ответов
+    // ассистента — код с подсветкой, списки, жирный, а не сырой текст.
     items.push(Box::new(mgui! {
-        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
-            Icon::new(MI_HELP_OUTLINE).class("wizard-icon"),
-            DecoratedBox::new().class("grow") => [
-                Text::new(spec.question.clone()).class("wizard-question"),
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
+            DecoratedBox::new().class("wizard-icon-badge") => [
+                Padding::all(5.0) => [
+                    Icon::new(MI_HELP_OUTLINE).class("wizard-icon"),
+                ],
+            ],
+            DecoratedBox::new().class("grow wizard-question") => [
+                bubble_markdown(&spec.question, "msg-bubble-md wizard-question-md"),
             ],
         ]
     }));
 
     // Варианты: одиночный выбор — кнопки, клик отправляет сразу;
-    // множественный — чипы-переключатели и «Отправить».
+    // множественный — чипы-флажки и «Отправить». Короткие подписи — в
+    // строку с переносом, длинные — столбиком на всю ширину.
+    let stacked = !spec.allow_multiple
+        && spec.options.iter().any(|o| o.label.chars().count() > WIDE_LABEL_CHARS);
     let mut options: Vec<Box<dyn Widget>> = Vec::new();
     for (i, o) in spec.options.iter().enumerate() {
         let selected = draft.selected.contains(&i);
         let spec_c = spec.clone();
         let draft_c = draft.clone();
+        let option_class = match (stacked, selected) {
+            (true, true) => "wizard-option wizard-option-wide selected",
+            (true, false) => "wizard-option wizard-option-wide",
+            (false, true) => "wizard-option selected",
+            (false, false) => "wizard-option",
+        };
         let option: Box<dyn Widget> = if spec.allow_multiple {
             with_tip(
                 Chip::new(o.label.clone())
+                    .icon(if selected { MI_CHECK_BOX } else { MI_CHECK_BOX_OUTLINE_BLANK })
                     .selected(selected)
                     .on_click(move || {
                         update_draft(msg_idx, |d| {
@@ -230,7 +277,7 @@ fn live(msg_idx: usize, spec: &WizardSpec, draft: &WizardDraft) -> impl Widget {
                             d.custom_open = true;
                         })
                     })
-                    .class(if selected { "wizard-option selected" } else { "wizard-option" }),
+                    .class(option_class),
                 &o.tooltip,
             )
         } else {
@@ -241,19 +288,30 @@ fn live(msg_idx: usize, spec: &WizardSpec, draft: &WizardDraft) -> impl Widget {
                         d.selected = vec![i];
                         submit(msg_idx, &spec_c, &d);
                     })
-                    .class("wizard-option"),
+                    .class(option_class),
                 &o.tooltip,
             )
         };
         options.push(option);
     }
     if !options.is_empty() {
-        items.push(Box::new(
-            Column::new()
-                .gap(6.0)
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .children(options),
-        ));
+        let list: Box<dyn Widget> = if stacked {
+            Box::new(
+                Column::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .children(options),
+            )
+        } else {
+            Box::new(
+                Flex::row()
+                    .wrap()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .children(options),
+            )
+        };
+        items.push(list);
     }
 
     // Поле свободного ответа: общее — всегда; у варианта «свой» — после
@@ -280,12 +338,24 @@ fn live(msg_idx: usize, spec: &WizardSpec, draft: &WizardDraft) -> impl Widget {
         ));
     }
 
-    // Подвал: таймер · «Пропустить» (если не обязателен) · «Отправить».
+    // Подвал под тонкой линией: полоса остатка времени · таймер ·
+    // «Нужен ответ» · «Пропустить» (если не обязателен) · «Отправить».
+    let mut footer_rows: Vec<Box<dyn Widget>> = Vec::new();
     let mut footer = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center);
     if let Some(deadline) = draft.deadline {
         let left = deadline.saturating_sub(unix_now());
-        footer = footer.child(Icon::new(MI_TIMER).class("wizard-footer-icon"));
-        footer = footer.child(Text::new(tr!("chat.msg.wizard.timer", n = left)).class("wizard-footer-text"));
+        let total = spec.timeout_sec.unwrap_or(0).max(1);
+        footer_rows.push(Box::new(
+            ProgressBar::with_value(left as f32 / total as f32).class("wizard-timer-bar"),
+        ));
+        let urgent = left <= URGENT_SECS;
+        footer = footer.child(
+            Icon::new(MI_TIMER).class(if urgent { "wizard-footer-icon urgent" } else { "wizard-footer-icon" }),
+        );
+        footer = footer.child(
+            Text::new(tr!("chat.msg.wizard.timer", n = left))
+                .class(if urgent { "wizard-footer-text urgent" } else { "wizard-footer-text" }),
+        );
     }
     if spec.required {
         footer = footer.child(Text::new(tr!("chat.msg.wizard.required")).class("wizard-footer-text"));
@@ -311,12 +381,38 @@ fn live(msg_idx: usize, spec: &WizardSpec, draft: &WizardDraft) -> impl Widget {
                 .class("code-editor-dialog-btn-primary"),
         );
     }
-    items.push(Box::new(footer));
+    footer_rows.push(Box::new(footer));
+    items.push(Box::new(DecoratedBox::new().class("wizard-footer").child(
+        Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(footer_rows),
+    )));
 
     DecoratedBox::new().class("wizard-card").child(
         Column::new()
-            .gap(10.0)
+            .gap(12.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(items),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::question_summary;
+
+    #[test]
+    fn summary_takes_first_plain_line_and_truncates() {
+        assert_eq!(question_summary("**Какой** период?"), "Какой период?");
+        assert_eq!(
+            question_summary("Что делает код?\n\n```rust\nfn main() {}\n```"),
+            "Что делает код?"
+        );
+        assert_eq!(question_summary("\n\n  \n# Заголовок\nтекст"), "Заголовок");
+        let long = "а".repeat(200);
+        let s = question_summary(&long);
+        assert_eq!(s.chars().count(), 96);
+        assert!(s.ends_with('…'));
+        assert_eq!(question_summary(""), "");
+    }
 }

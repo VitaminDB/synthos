@@ -566,7 +566,9 @@ fn edit_box(msg_idx: usize, body: String) -> impl Widget {
     }
 }
 
-fn bubble_markdown(body: &str, class: &'static str) -> impl Widget {
+/// MarkdownView ответа ассистента: подсветка кода под тему, кнопка
+/// копирования. Тем же рисуется вопрос визарда (`wizard::live`).
+pub(super) fn bubble_markdown(body: &str, class: &'static str) -> impl Widget {
     let normalized = normalize_assistant_markdown(body);
     MarkdownView::new(normalized)
         .with_syntax_theme(syntax_theme())

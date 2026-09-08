@@ -227,6 +227,21 @@ document-editor {
     font-size: 12px;
     border-radius: 8px;
 }
+/* Точный цвет: ColorPicker берёт цвета попапа из своего MSS, а без класса
+ * падал на светлые умолчания виджета (белая палитра в тёмной теме) и на
+ * высоту 40px рядом с 28-пиксельными соседями. */
+.notes-props-color {
+    height: 28px;
+    font-size: 11px;
+    border-radius: 8px;
+    background-color: var(--bg-panel);
+    color: var(--text);
+    border-color: var(--border);
+    accent-color: var(--primary);
+    --popup-background: var(--bg-shell);
+    --popup-color: var(--text);
+    --popup-border: var(--border);
+}
 .notes-props-row-label {
     font-size: 12px;
     color: var(--text-muted);

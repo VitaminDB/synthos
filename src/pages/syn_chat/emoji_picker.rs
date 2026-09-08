@@ -12,7 +12,7 @@ use syngui::prelude::*;
 use syngui::widgets::{GestureDetector, PopupAnchor, PopupPanel, Reactive};
 
 use crate::context::AppCtx;
-use crate::pages::notes::icon_picker::EMOJI_GROUPS;
+use crate::pages::notes::icon_picker::{icon_cell, EMOJI_GROUPS};
 use crate::syn_chat::state::SynChatCtx;
 
 const PANEL_W: f32 = 348.0;
@@ -93,11 +93,7 @@ fn grid(glyphs: Vec<String>) -> Column {
                 GestureDetector::new()
                     .cursor(CursorIcon::Pointer)
                     .on_click(move || insert(&glyph))
-                    .child(
-                        DecoratedBox::new()
-                            .class("notes-icon-cell")
-                            .child(Center::new().child(Text::new(shown).class("notes-icon-glyph emoji"))),
-                    ),
+                    .child(icon_cell(&shown)),
             );
         }
         col = col.child(row);

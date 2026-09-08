@@ -743,34 +743,57 @@ fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_op
 /// текст уже стримится в карточку — тем же стилем, что настоящая
 /// `.tool-call-card`, которая заменит превью по завершении вызова.
 fn streaming_tool_preview(raw: &str) -> Box<dyn Widget> {
-    let (icon, label) = match extract_streaming_tool_name(raw) {
-        Some(name) => tool_visuals(&name),
+    let name = extract_streaming_tool_name(raw);
+    let (icon, label) = match &name {
+        Some(name) => tool_visuals(name),
         None => (MI_TERMINAL.to_string(), tr!("chat.msg.tool.unknown")),
     };
-    let header = mgui! {
-        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Icon::new(icon).class("tool-call-icon"),
-            Text::new(label).class("tool-call-name"),
-            DecoratedBox::new().class("grow"),
-            Text::new(tr!("chat.msg.tool.writing")).class("tool-call-hint"),
-        ]
-    };
-    let text = raw.trim_start();
-    let body: Box<dyn Widget> = if text.is_empty() {
-        Box::new(Text::new("•••").class("msg-typing"))
+    let ctx = use_context::<SynChatCtx>();
+    let open = ctx.streaming_tool_open.get();
+    // Свёрнутая карточка обязана сама рассказать, что происходит: имя
+    // инструмента в шапке без тела ни о чём не говорит.
+    let hint = if open {
+        tr!("chat.msg.tool.writing")
     } else {
-        Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
-            MarkdownView::new(fence_plain_text(text, "json"))
-                .with_copy_code(false)
-                .with_syntax_theme(syntax_theme())
-                .class("tool-call-args"),
-        ))
+        tr!("chat.msg.tool.preparing", tool = name.clone().unwrap_or_else(|| label.clone()))
     };
-    Box::new(DecoratedBox::new().class("tool-call-card").child(
+    let mut header_children: Vec<Box<dyn Widget>> = vec![
+        Box::new(Icon::new(icon).class("tool-call-icon")),
+        Box::new(Text::new(label).class("tool-call-name")),
+        Box::new(DecoratedBox::new().class("grow")),
+        Box::new(Text::new(hint).max_lines(1).class("tool-call-hint")),
+        Box::new(Icon::new(if open { MI_EXPAND_LESS } else { MI_EXPAND_MORE }).class("tool-call-chevron")),
+    ];
+    let header = GestureDetector::new()
+        .on_click(move || {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.streaming_tool_open.set(!ctx.streaming_tool_open.get_untracked());
+        })
+        .child(
+            Row::new()
+                .gap(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .children(std::mem::take(&mut header_children)),
+        );
+    let text = raw.trim_start();
+    let mut children: Vec<Box<dyn Widget>> = vec![Box::new(header)];
+    if open {
+        children.push(if text.is_empty() {
+            Box::new(Text::new("•••").class("msg-typing"))
+        } else {
+            Box::new(DecoratedBox::new().class("tool-call-args-wrap").child(
+                MarkdownView::new(fence_plain_text(text, "json"))
+                    .with_copy_code(false)
+                    .with_syntax_theme(syntax_theme())
+                    .class("tool-call-args"),
+            ))
+        });
+    }
+    Box::new(DecoratedBox::new().class("tool-call-card tool-call-streaming").child(
         Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .children(vec![Box::new(header) as Box<dyn Widget>, body]),
+            .children(children),
     ))
 }
 

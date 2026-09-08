@@ -165,6 +165,11 @@ pub struct SynChatCtx {
     /// показом тела целиком, в `full` — доразворотом длинного вывода
     /// (см. `pages::syn_chat::message_bubble::TOOL_RESULT_PREVIEW_LINES`).
     pub tool_body_open: RwSignal<HashMap<usize, bool>>,
+    /// Раскрыто ли превью команды, которую модель ещё пишет. Своё поле, а
+    /// не ключ в `tool_body_open`: у превью нет индекса сообщения, а
+    /// перестраивается оно на каждую дельту стрима — состояние должно
+    /// пережить перестройку.
+    pub streaming_tool_open: RwSignal<bool>,
     /// Раскрытие маркеров компактификации. Ключ — номер итерации
     /// (`CompactionMarker.iteration`, стабилен в отличие от индекса).
     /// Эфемерно, не persist'ится. Дефолт — закрыт.
@@ -296,6 +301,7 @@ impl SynChatCtx {
             thinking_open: use_signal(HashMap::new()),
             tool_group_open: use_signal(HashMap::new()),
             tool_body_open: use_signal(HashMap::new()),
+            streaming_tool_open: use_signal(true),
             compaction_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
             highlight_msg: use_signal(None),

@@ -5954,6 +5954,36 @@ mod tests {
         assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "read", "page": &page, "block": "9"})).is_err());
     }
 
+    /// Панель свойств помнится за страницей и уезжает в бандл: у каждой
+    /// страницы своё положение разделителя и свой «скрыта».
+    #[test]
+    fn props_panel_state_is_per_page() {
+        let ctx = ctx();
+        let a = page_id(&call(ctx, "create", serde_json::json!({"title": "Холст"})));
+        let b = page_id(&call(ctx, "create", serde_json::json!({"title": "Заметка"})));
+        assert_eq!(ctx.props_panel(&a), (None, false), "новая страница — без своих значений");
+
+        ctx.set_props_panel(&a, 0.72, true);
+        ctx.set_props_panel(&b, 0.5, false);
+        assert_eq!(ctx.props_panel(&a), (Some(0.72), true));
+        assert_eq!(ctx.props_panel(&b), (Some(0.5), false));
+
+        // Положение квантуется — перетаскивание разделителя не поднимает
+        // ревизию дерева на каждый пиксель.
+        let rev = ctx.tree_rev.get_untracked();
+        ctx.set_props_panel(&a, 0.7201, true);
+        assert_eq!(ctx.tree_rev.get_untracked(), rev, "тот же квант — без правки дерева");
+        ctx.set_props_panel(&a, 0.75, true);
+        assert!(ctx.tree_rev.get_untracked() > rev);
+
+        // Пережило запись и чтение проекта.
+        let json = ctx.tree.get_untracked().serialize();
+        let back = crate::pages::notes::project::ProjectTree::parse(&json).unwrap();
+        assert_eq!(back.layout_of(&a).props_ratio, Some(0.75));
+        assert!(back.layout_of(&a).props_hidden);
+        assert!(!back.layout_of(&b).props_hidden);
+    }
+
     /// Календарь по доскам (09.09.2026): оценка длительности плюс «в
     /// календарь» дают карточке полосу; календарь видит её отрезком и
     /// двигает, диаграмма Ганта — своей строкой, agenda кладёт её в

@@ -90,7 +90,8 @@ fn card(ctx: NodeEditorCtx, node_id: NodeId) -> impl Widget {
                 ColorPicker::new()
                     .color(initial)
                     .width(280.0)
-                    .on_change(move |c| picked.set(c)),
+                    .on_change(move |c| picked.set(c))
+                    .class("node-tint-dialog-picker"),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
                     Button::new(tr!("nodes.dialog.tint.reset"))
                         .leading_icon(MI_REMOVE_CIRCLE_OUTLINE)

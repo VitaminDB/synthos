@@ -18,6 +18,14 @@
     animation: bubble-pop-in var(--duration-med) var(--ease-standard);
 }
 
+/* Превью команды, которую модель ещё пишет: карточка живёт внутри бабла,
+ * который жмётся по содержимому, — без нижней границы она схлопывалась до
+ * первых символов JSON, хотя место в ленте есть. Верхняя граница остаётся
+ * от `.tool-call-card` (90%). */
+.tool-call-card.tool-call-streaming {
+    min-width: 420px;
+}
+
 .tool-call-card:hover {
     border-color: var(--primary);
     background-color: var(--surface-hover);

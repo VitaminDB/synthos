@@ -33,6 +33,21 @@
     line-height: 1.45;
 }
 
+/* Сам ColorPicker: без класса он рисует попап белым по светлым
+ * умолчаниям виджета — в тёмной теме карточка и палитра расходились. */
+.node-tint-dialog-picker {
+    background-color: var(--bg-panel);
+    color: var(--text);
+    border-color: var(--border);
+    accent-color: var(--primary);
+    border-radius: 10px;
+    height: 32px;
+    font-size: 13px;
+    --popup-background: var(--bg-shell);
+    --popup-color: var(--text);
+    --popup-border: var(--border);
+}
+
 .node-tint-dialog-btn-primary {
     background-color: var(--primary);
     color: var(--on-primary);

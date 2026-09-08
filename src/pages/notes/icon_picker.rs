@@ -25,14 +25,29 @@ pub fn is_material_glyph(s: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Иконка страницы: Material-глиф либо эмодзи.
-pub fn render_icon(icon: &str, class: &str) -> impl Widget {
-    let inner: Box<dyn Widget> = if is_material_glyph(icon) {
+/// Глиф без обёртки: Material-иконка либо эмодзи-текст.
+fn glyph_widget(icon: &str, class: &str) -> Box<dyn Widget> {
+    if is_material_glyph(icon) {
         Box::new(Icon::new(icon.to_string()).class(class))
     } else {
         Box::new(Text::new(icon.to_string()).class(format!("{class} emoji")))
-    };
-    Stack::new().clip(false).children(vec![inner])
+    }
+}
+
+/// Иконка страницы: Material-глиф либо эмодзи.
+pub fn render_icon(icon: &str, class: &str) -> impl Widget {
+    Stack::new().clip(false).children(vec![glyph_widget(icon, class)])
+}
+
+/// Ячейка сетки выбора: глиф по центру и **с обрезкой по ячейке**. Атлас
+/// рисует эмодзи по кодпоинтам, без шейпера, поэтому широкий глиф вылезал
+/// за свою клетку 34×32 и наезжал на соседние.
+pub fn icon_cell(glyph: &str) -> impl Widget {
+    DecoratedBox::new().class("notes-icon-cell").child(
+        Stack::new()
+            .clip(true)
+            .children(vec![Box::new(Center::new().child(render_icon(glyph, "notes-icon-glyph"))) as Box<dyn Widget>]),
+    )
 }
 
 /// Открыть панель для страницы, привязав к прямоугольнику иконки.
@@ -122,11 +137,7 @@ fn grid(ctx: NotesCtx, glyphs: &[&'static str]) -> Column {
                 GestureDetector::new()
                     .cursor(CursorIcon::Pointer)
                     .on_click(move || pick(ctx, glyph))
-                    .child(
-                        DecoratedBox::new()
-                            .class("notes-icon-cell")
-                            .child(Center::new().child(render_icon(glyph, "notes-icon-glyph"))),
-                    ),
+                    .child(icon_cell(glyph)),
             );
         }
         col = col.child(row);
@@ -155,12 +166,12 @@ pub const EMOJI_GROUPS: &[(&str, &[&str])] = &[
         "😇", "🤗", "🤫", "😬", "🙄", "😢", "😡", "🤖", "👻", "💀", "👽", "🎃", "😺", "🙈", "🙉",
     ]),
     ("notes.icon.group.people", &[
-        "👋", "👍", "👎", "👏", "🙏", "💪", "✍️", "👀", "🧠", "❤️", "🧑‍💻", "👨‍🔬", "👩‍🎨", "🧑‍🏫", "🧑‍🚀",
-        "🧙", "🦸", "👶", "👪", "🗣️", "👤", "👥", "🫶", "🤝", "✌️", "🤞", "👌", "🫡", "💃", "🏃",
+        "👋", "👍", "👎", "👏", "🙏", "💪", "✍", "👀", "🧠", "❤", "🧑", "👨", "👩", "👵", "👷",
+        "🧙", "🦸", "👶", "👪", "🗣", "👤", "👥", "🫶", "🤝", "✌", "🤞", "👌", "🫡", "💃", "🏃",
     ]),
     ("notes.icon.group.nature", &[
         "🌱", "🌿", "🌳", "🌲", "🌴", "🌵", "🍀", "🌸", "🌺", "🌻", "🌹", "🍁", "🍂", "🌍", "🌙",
-        "☀️", "⭐", "🌈", "⚡", "🔥", "💧", "🌊", "❄️", "🐶", "🐱", "🦊", "🐻", "🐼", "🦁", "🐯",
+        "☀", "⭐", "🌈", "⚡", "🔥", "💧", "🌊", "❄", "🐶", "🐱", "🦊", "🐻", "🐼", "🦁", "🐯",
         "🦄", "🐝", "🦋", "🐢", "🐬", "🐙", "🦉", "🐦", "🐘", "🦒",
     ]),
     ("notes.icon.group.food", &[
@@ -169,23 +180,23 @@ pub const EMOJI_GROUPS: &[(&str, &[&str])] = &[
     ]),
     ("notes.icon.group.activity", &[
         "⚽", "🏀", "🏈", "🎾", "🏐", "🎱", "🏓", "🥊", "🏆", "🥇", "🎯", "🎮", "🎲", "🧩", "🎨",
-        "🎬", "🎤", "🎧", "🎸", "🎹", "🥁", "🎻", "🎭", "🎪", "🎟️", "🏋️", "🧘", "🚴", "⛷️", "🏄",
+        "🎬", "🎤", "🎧", "🎸", "🎹", "🥁", "🎻", "🎭", "🎪", "🎟", "🏋", "🧘", "🚴", "⛷", "🏄",
     ]),
     ("notes.icon.group.travel", &[
-        "🚗", "🚕", "🚌", "🚲", "🛵", "🚀", "✈️", "🚁", "⛵", "🚂", "🚇", "🗺️", "🧭", "🏠", "🏢",
-        "🏫", "🏥", "🏦", "🏭", "🏰", "🗼", "🗽", "⛰️", "🏕️", "🏖️", "🌋", "🏝️", "🛤️", "🌉", "🎡",
+        "🚗", "🚕", "🚌", "🚲", "🛵", "🚀", "✈", "🚁", "⛵", "🚂", "🚇", "🗺", "🧭", "🏠", "🏢",
+        "🏫", "🏥", "🏦", "🏭", "🏰", "🗼", "🗽", "⛰", "🏕", "🏖", "🌋", "🏝", "🛤", "🌉", "🎡",
     ]),
     ("notes.icon.group.objects", &[
-        "💡", "🔦", "🔋", "🔌", "💻", "🖥️", "⌨️", "🖱️", "📱", "📷", "🎥", "📺", "📻", "⏰", "⌛",
-        "📚", "📖", "📝", "📌", "📎", "✂️", "📐", "📏", "🔑", "🔒", "🔓", "🔨", "🛠️", "⚙️", "🧲",
-        "🧪", "🔬", "🔭", "💊", "💉", "🧬", "📦", "📫", "📁", "📂", "🗂️", "🗒️", "🗓️", "📅", "📊",
-        "📈", "📉", "💰", "💳", "🧾", "🛒", "🎁", "🎈", "🏷️", "🔖", "🧵", "🧶", "🪄", "🔮", "🧸",
+        "💡", "🔦", "🔋", "🔌", "💻", "🖥", "⌨", "🖱", "📱", "📷", "🎥", "📺", "📻", "⏰", "⌛",
+        "📚", "📖", "📝", "📌", "📎", "✂", "📐", "📏", "🔑", "🔒", "🔓", "🔨", "🛠", "⚙", "🧲",
+        "🧪", "🔬", "🔭", "💊", "💉", "🧬", "📦", "📫", "📁", "📂", "🗂", "🗒", "🗓", "📅", "📊",
+        "📈", "📉", "💰", "💳", "🧾", "🛒", "🎁", "🎈", "🏷", "🔖", "🧵", "🧶", "🪄", "🔮", "🧸",
     ]),
     ("notes.icon.group.symbols", &[
-        "✅", "❌", "⚠️", "❓", "❗", "💯", "🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫", "⚪", "🟥",
-        "🟧", "🟨", "🟩", "🟦", "🟪", "⬛", "⬜", "🔺", "🔻", "🔶", "🔷", "▶️", "⏸️", "⏹️", "🔁",
-        "➕", "➖", "✖️", "➗", "♾️", "💠", "🔰", "⭕", "🚫", "♻️", "🔔", "🔕", "📣", "💬", "💭",
-        "🏁", "🚩", "🎌", "🏳️", "🏴", "🔝", "🔙", "🔜", "🆕", "🆗", "🆒", "🆓", "🔞", "㊙️", "🈶",
+        "✅", "❌", "⚠", "❓", "❗", "💯", "🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫", "⚪", "🟥",
+        "🟧", "🟨", "🟩", "🟦", "🟪", "⬛", "⬜", "🔺", "🔻", "🔶", "🔷", "▶", "⏸", "⏹", "🔁",
+        "➕", "➖", "✖", "➗", "♾", "💠", "🔰", "⭕", "🚫", "♻", "🔔", "🔕", "📣", "💬", "💭",
+        "🏁", "🚩", "🎌", "🏳", "🏴", "🔝", "🔙", "🔜", "🆕", "🆗", "🆒", "🆓", "🔞", "㊙", "🈶",
     ]),
 ];
 
@@ -203,3 +214,40 @@ const MATERIAL_ICONS: &[&str] = &[
     MI_SAVE, MI_ATTACH_FILE, MI_PICTURE_AS_PDF, MI_SEARCH, MI_FILTER_ALT, MI_LAUNCH, MI_DOWNLOAD,
     MI_CLOUD_DOWNLOAD, MI_DEPLOYED_CODE, MI_FOLDER_ZIP, MI_APPS, MI_MERGE_TYPE,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Атлас syngui растеризует эмодзи **по кодпоинтам**, без шейпера:
+    /// ZWJ-последовательность (🧑+ZWJ+💻) и вариационный селектор рисуются
+    /// лишними глифами и наезжают на соседние клетки сетки. В наборе
+    /// должны быть только односимвольные эмодзи.
+    #[test]
+    fn emoji_set_has_no_composite_sequences() {
+        let mut seen: Vec<&str> = Vec::new();
+        for (_, list) in EMOJI_GROUPS {
+            for g in *list {
+                let chars: Vec<char> = g.chars().collect();
+                assert_eq!(chars.len(), 1, "составной эмодзи {g:?}: {:?}", chars.iter().map(|c| *c as u32).collect::<Vec<_>>());
+                let c = chars[0] as u32;
+                assert!(c != 0x200D && !(0xFE00..=0xFE0F).contains(&c), "служебный кодпоинт в {g:?}");
+                assert!(!seen.contains(g), "дубль {g:?}");
+                seen.push(g);
+            }
+        }
+        assert!(seen.len() > 200, "набор подозрительно мал: {}", seen.len());
+    }
+
+    /// Material-глифы отличаются от эмодзи по Private Use Area — от этого
+    /// зависит, рисовать `Icon` или цветной текст.
+    #[test]
+    fn material_glyphs_are_told_apart_from_emoji() {
+        assert!(is_material_glyph(MI_DESCRIPTION));
+        assert!(!is_material_glyph("😀"));
+        assert!(!is_material_glyph(""));
+        for g in MATERIAL_ICONS {
+            assert!(is_material_glyph(g), "не PUA: {g:?}");
+        }
+    }
+}

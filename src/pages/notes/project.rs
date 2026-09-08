@@ -69,6 +69,13 @@ pub struct PageLayout {
     /// Фон страницы `#rrggbb` / `#rrggbbaa`; пусто — как в теме.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub bg: String,
+    /// Правая панель свойств этой страницы: положение разделителя.
+    /// `None` — как было на прошлой странице (общая настройка).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props_ratio: Option<f32>,
+    /// Правая панель свойств скрыта на этой странице.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub props_hidden: bool,
 }
 
 /// Фон холста свободной раскладки.
@@ -105,6 +112,8 @@ impl Default for PageLayout {
             snap: true,
             snap_step: default_snap_step(),
             bg: String::new(),
+            props_ratio: None,
+            props_hidden: false,
         }
     }
 }
@@ -674,6 +683,29 @@ fn migrate_dir(dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Vec<PageNode> 
 mod tests {
     use super::*;
 
+    /// Правая панель свойств помнится за страницей и уезжает в бандл:
+    /// у страницы без своих значений в файле её ключей нет вовсе.
+    #[test]
+    fn props_panel_state_lives_in_the_page_node() {
+        let def = PageLayout::default();
+        assert_eq!((def.props_ratio, def.props_hidden), (None, false));
+
+        let mut tree = sample_tree();
+        let json = tree.serialize();
+        assert!(!json.contains("props_ratio") && !json.contains("props_hidden"), "дефолт не пишется:\n{json}");
+
+        tree.find_mut("a").unwrap().layout.props_ratio = Some(0.72);
+        tree.find_mut("a").unwrap().layout.props_hidden = true;
+        let json = tree.serialize();
+        assert!(json.contains("props_ratio") && json.contains("props_hidden"), "{json}");
+        let back = ProjectTree::parse(&json).unwrap();
+        assert_eq!(back.layout_of("a").props_ratio, Some(0.72));
+        assert!(back.layout_of("a").props_hidden);
+        // Соседняя страница своего состояния не получает.
+        assert_eq!(back.layout_of("b").props_ratio, None);
+        assert!(!back.layout_of("b").props_hidden);
+    }
+
     #[test]
     fn page_layout_defaults_and_roundtrip() {
         // Привязка включена по умолчанию с шагом 5 px (запрос UX).
@@ -697,6 +729,7 @@ mod tests {
             snap: false,
             snap_step: 2.0,
             bg: "#243149".to_string(),
+            ..PageLayout::default()
         };
         let json = tree.serialize();
         assert!(json.contains("\"bg\": \"#243149\""), "{json}");

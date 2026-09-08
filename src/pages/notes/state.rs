@@ -447,6 +447,31 @@ impl NotesCtx {
         self.bump_doc_epoch();
     }
 
+    /// Правая панель свойств страницы: `(положение разделителя, скрыта)`.
+    pub fn props_panel(&self, id: &str) -> (Option<f32>, bool) {
+        let l = self.tree.get_untracked().layout_of(id);
+        (l.props_ratio, l.props_hidden)
+    }
+
+    /// Запомнить панель свойств за страницей. Мимо `set_page_layout`:
+    /// ширина панели к содержимому страницы отношения не имеет, и
+    /// перестраивать по ней редактор (`doc_epoch`) незачем. Положение
+    /// квантуется — иначе каждый пиксель перетаскивания разделителя
+    /// поднимал бы ревизию дерева.
+    pub fn set_props_panel(&self, id: &str, ratio: f32, hidden: bool) {
+        let ratio = (ratio.clamp(0.05, 0.95) * 200.0).round() / 200.0;
+        let cur = self.tree.get_untracked().layout_of(id);
+        if cur.props_ratio == Some(ratio) && cur.props_hidden == hidden {
+            return;
+        }
+        self.edit_tree(|t| {
+            if let Some(n) = t.find_mut(id) {
+                n.layout.props_ratio = Some(ratio);
+                n.layout.props_hidden = hidden;
+            }
+        });
+    }
+
     /// Раскладка активной страницы в терминах редактора.
     pub fn active_doc_layout(&self) -> DocLayout {
         let Some(id) = self.active.get() else { return DocLayout::default() };

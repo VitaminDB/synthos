@@ -230,6 +230,37 @@ CodeEditor {
  *
  * Сам shadow popup рисует внутри (push_shadow с blur=12, см. menu.rs:349) —
  * MSS управлять им сейчас нельзя, тень одинаковая во всех темах. */
+/* ToolButton — иконочная кнопка без класса брала свои дефолты (#374151
+ * глиф, #F3F4F6 подложка под курсором): в тёмной теме крестик тонул в
+ * панели, а наведение вспыхивало почти белым. Фон только на :hover —
+ * базовый background-color сделал бы «чип» под каждой иконкой в шапках. */
+ToolButton {
+    color: var(--text-muted);
+    accent-color: var(--primary);
+    border-radius: 8px;
+}
+
+ToolButton:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
+/* ColorPicker — поле в линию с остальными form-контролами, палитра — на
+ * фоне панели через `--popup-*` (как у Dropdown). Без правила виджет
+ * рисовал белый попап с тёмным текстом в любой теме. */
+ColorPicker {
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-color: var(--border-soft);
+    accent-color: var(--primary);
+    border-radius: 10px;
+    height: 32px;
+    font-size: 13px;
+    --popup-background: var(--bg-shell);
+    --popup-color: var(--text);
+    --popup-border: var(--border);
+}
+
 PopupMenu {
     background-color:            var(--bg-shell);
     color:                       var(--text);

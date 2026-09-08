@@ -36,6 +36,44 @@ use super::mindmap::MindmapHandle;
 use super::project::{PageGrid, PageLayout};
 use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 
+/// Правая панель свойств помнится за каждой страницей: её ширина и
+/// «скрыта ли» лежат в узле дерева (`PageLayout`, то есть в бандле), а не
+/// в общих настройках приложения — у карты-холста и у текстовой заметки
+/// нужды в панели разные.
+///
+/// Эффект работает в обе стороны через один и тот же сигнал каркаса:
+/// сменилась активная страница — вливаем её значения; тронул пользователь
+/// — пишем обратно. Развести направления помогает `applied` — id страницы,
+/// чьи значения сейчас лежат в сигналах.
+pub fn install_props_panel_memory() {
+    let ctx = use_context::<NotesCtx>();
+    let app = use_context::<crate::context::AppCtx>();
+    let (_, visible) = app.panels.notes;
+    let ratio = app.notes_right_split_ratio;
+    let applied: RwSignal<Option<String>> = use_signal(None);
+
+    create_effect(move || {
+        let Some(id) = ctx.active.get() else { return };
+        // Подписка на оба сигнала нужна в любой ветке, иначе после смены
+        // страницы эффект перестал бы слышать перетаскивание разделителя.
+        let (r, v) = (ratio.get(), visible.get());
+        if applied.get_untracked().as_deref() != Some(id.as_str()) {
+            let (stored, hidden) = ctx.props_panel(&id);
+            applied.set(Some(id));
+            if visible.get_untracked() != !hidden {
+                visible.set(!hidden);
+            }
+            if let Some(stored) = stored {
+                if (ratio.get_untracked() - stored).abs() > f32::EPSILON {
+                    ratio.set(stored);
+                }
+            }
+            return;
+        }
+        ctx.set_props_panel(&id, r, !v);
+    });
+}
+
 pub fn header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     let tab = ctx.right_tab;
@@ -724,7 +762,7 @@ fn color_picker(current: Option<&str>, fallback: (u8, u8, u8), on_pick: impl Fn(
     let initial = current
         .map(|h| ColorValue::from_color(syngui::core::Color::from_hex(h)))
         .unwrap_or_else(|| ColorValue::new(fallback.0, fallback.1, fallback.2));
-    ColorPicker::new().color(initial).width(96.0).on_change(move |c| on_pick(c.to_hex()))
+    ColorPicker::new().color(initial).width(96.0).on_change(move |c| on_pick(c.to_hex())).class("notes-props-color")
 }
 
 /// Свойства интеллект-карты: выбранный узел и оформление карты.
@@ -2118,7 +2156,8 @@ fn layout_props(ctx: NotesCtx, id: String) -> impl Widget {
         .width(96.0)
         .on_change(move |c| {
             ctx.set_page_layout(&picker_id, PageLayout { bg: c.to_hex(), ..ctx.page_layout(&picker_id) });
-        });
+        })
+        .class("notes-props-color");
     let bg_row = field_row(
         tr!("notes.props.layout.bg"),
         Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).child(bg_swatches).child(picker),

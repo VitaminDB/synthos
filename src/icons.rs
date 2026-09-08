@@ -41,6 +41,10 @@ pub const MI_FORMAT_LIST_NUMBERED: &str = "\u{E242}";
 pub const MI_FORMAT_ALIGN_LEFT: &str   = "\u{E236}";
 pub const MI_FORMAT_ALIGN_CENTER: &str = "\u{E234}";
 pub const MI_FORMAT_ALIGN_RIGHT: &str  = "\u{E237}";
+/// Material Icons «format_indent_increase/decrease» — вложить блок в
+/// соседа сверху и вынуть обратно (меню блока в заметках).
+pub const MI_FORMAT_INDENT_INCREASE: &str = "\u{E23E}";
+pub const MI_FORMAT_INDENT_DECREASE: &str = "\u{E23D}";
 pub const MI_LAYERS: &str              = "\u{E53B}";
 pub const MI_PUSH_PIN: &str            = "\u{F10D}";
 pub const MI_TABLE_ROWS: &str          = "\u{F101}";

@@ -1,5 +1,12 @@
 //! Действие `blocks`: блоки страницы как структура — список, вставка,
 //! замена, перенос, удаление, атрибуты, закрепление на холсте.
+//!
+//! Операции адресуют блоки верхнего уровня. Вложенные (содержимое
+//! toggle, выноски, цитаты, пункта списка) видны в `op=list` строками
+//! `#3.0`, а двигают их `op=nest` (блок уходит внутрь соседа сверху или
+//! указанного `into`) и `op=unnest` (обратно наружу): в markdown такое
+//! вложение — строки цитаты `> `, и написать его подряд, забыв префикс,
+//! легче лёгкого — тогда таблица лежит рядом с toggle, а не внутри.
 
 use super::*;
 
@@ -88,7 +95,7 @@ fn resolve_block_list(model: &DocModel, v: &Json) -> Result<Vec<usize>, String> 
 
 pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let op = str_field(v, "op")
-        .ok_or("missing \"op\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin)")?;
+        .ok_or("missing \"op\" (list | read | insert | set_markdown | delete | move | nest | unnest | set_attrs | pin | unpin)")?;
     let id = page_arg(ctx, v, "page")?;
     let mut model = load_model(ctx, &id);
     let block_arg = |model: &DocModel| -> Result<usize, String> {
@@ -201,6 +208,98 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             store_model(ctx, &id, &model)?;
             Ok(format!("moved: {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, at), page_line(ctx, &id)))
         }
+        "nest" => {
+            let i = block_arg(&model)?;
+            let into = match ref_field(v, "into").or_else(|| ref_field(v, "parent")) {
+                Some(r) => resolve_block(&model, &r)?,
+                // Умолчание — сосед сверху: так пишут toggle и таблицу
+                // подряд, забыв «> » перед строками таблицы.
+                None => i.checked_sub(1).ok_or(
+                    "block #0 has no block above it — pass \"into\" (the toggle, callout, quote or list item that takes it in)",
+                )?,
+            };
+            if into == i {
+                return Err("a block cannot be nested into itself".to_string());
+            }
+            if model.blocks[into].kind.children().is_none() {
+                return Err(format!(
+                    "{} cannot hold other blocks — only a toggle, callout, quote or list item can",
+                    block_line(into, &model.blocks[into])
+                ));
+            }
+            let mut block = model.blocks.remove(i);
+            // Координаты холста живут только у блоков верхнего уровня.
+            free::clear(&mut block.attrs);
+            let at = if into > i { into - 1 } else { into };
+            // Иначе вложенный блок исчезает внутри свёрнутого toggle.
+            if let BlockKind::Toggle { collapsed, .. } = &mut model.blocks[at].kind {
+                *collapsed = false;
+            }
+            let child = match model.blocks[at].kind.children_mut() {
+                Some(children) => {
+                    children.push(block);
+                    children.len() - 1
+                }
+                None => return Err("the target block cannot hold other blocks".to_string()),
+            };
+            store_model(ctx, &id, &model)?;
+            Ok(format!(
+                "nested #{i} into #{at} as #{at}.{child}\n{}\n{}\n",
+                blocks_text(&model).trim_end(),
+                page_line(ctx, &id)
+            ))
+        }
+        "unnest" => {
+            // Ссылка ребёнка — либо «3.0» из op=list, либо block + child.
+            let raw = ref_field(v, "block").ok_or("missing \"block\" (the container, e.g. the toggle: index from blocks op=list)")?;
+            // Путь «3.0» разбирается только когда обе половины — числа:
+            // у find:<текст> точка бывает частью искомого фрагмента.
+            let path = raw.trim().trim_start_matches('#').split_once('.').and_then(|(p, c)| {
+                match (p.trim().parse::<usize>(), c.trim().parse::<usize>()) {
+                    (Ok(_), Ok(ci)) => Some((p.trim().to_string(), ci)),
+                    _ => None,
+                }
+            });
+            let (parent_ref, mut child) = match path {
+                Some((p, c)) => (p, Some(c)),
+                None => (raw.clone(), None),
+            };
+            let i = resolve_block(&model, &parent_ref)?;
+            if child.is_none() {
+                child = match v.get("child") {
+                    Some(Json::String(s)) if matches!(s.trim().to_ascii_lowercase().as_str(), "all" | "*") => None,
+                    Some(_) => Some(usize_field(v, "child").ok_or("\"child\" takes the index of the nested block (or \"all\")")?),
+                    None => None,
+                };
+            }
+            let count = model.blocks[i].kind.children().map(|c| c.len()).unwrap_or(0);
+            let Some(children) = model.blocks[i].kind.children_mut() else {
+                return Err(format!(
+                    "{} holds no blocks — nothing to take out",
+                    block_line(i, &model.blocks[i])
+                ));
+            };
+            if count == 0 {
+                return Err(format!("block #{i} is empty — nothing to take out"));
+            }
+            let taken: Vec<DocBlock> = match child {
+                Some(k) if k >= count => {
+                    return Err(format!("block #{i} holds {count} blocks — #{i}.{k} does not exist"))
+                }
+                Some(k) => vec![children.remove(k)],
+                None => children.drain(..).collect(),
+            };
+            let n = taken.len();
+            for (k, b) in taken.into_iter().enumerate() {
+                model.blocks.insert(i + 1 + k, b);
+            }
+            store_model(ctx, &id, &model)?;
+            Ok(format!(
+                "took {n} block(s) out of #{i} — they follow it on the page\n{}\n{}\n",
+                blocks_text(&model).trim_end(),
+                page_line(ctx, &id)
+            ))
+        }
         "set_attrs" => {
             let i = block_arg(&model)?;
             let pairs = attrs_arg(v)?;
@@ -281,7 +380,7 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             Ok(format!("unpinned — the block flows in the column again\n{}\n{}\n", block_line(i, &model.blocks[i]), page_line(ctx, &id)))
         }
         other => Err(format!(
-            "unknown blocks op \"{other}\" (list | read | insert | set_markdown | delete | move | set_attrs | pin | unpin | arrange)"
+            "unknown blocks op \"{other}\" (list | read | insert | set_markdown | delete | move | nest | unnest | set_attrs | pin | unpin | arrange)"
         )),
     }
 }

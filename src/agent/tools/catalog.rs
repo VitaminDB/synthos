@@ -381,7 +381,8 @@ pub(super) fn build_all() -> Vec<Tool> {
                 content at a position), open (show a page to the user), \
                 attach (file or chat attachment → media block), blocks \
                 (op=list | read | insert | set_markdown | delete | move | \
-                set_attrs | pin | unpin — blocks by index, coordinates x y w h, \
+                nest | unnest | set_attrs | pin | unpin — blocks by index, \
+                coordinates x y w h, \
                 text style color/bg/size/align/weight), shape (op=create | \
                 update | delete | connect — rect/ellipse/triangle/diamond, \
                 lines and arrows with absolute end points, connect draws an \
@@ -403,6 +404,17 @@ pub(super) fn build_all() -> Vec<Tool> {
                 rewriting a whole page. Pages are addressed by id (12 hex) \
                 or exact title; blocks by index from blocks op=list; boards \
                 and charts by id, or implicitly when the page has one. \
+                NESTING. What a toggle hides — and what a callout, a quote or \
+                a list item holds — are its nested blocks, written in markdown \
+                as quote lines: EVERY line of the content, table rows \
+                included, starts with \"> \". A \"> [!toggle] Payment \
+                schedule\" line followed by a bare table is two blocks side by \
+                side, and the toggle then collapses nothing. Write the whole \
+                thing as quote lines (\"> [!toggle] Payment schedule\", \">\", \
+                \"> | # | Date |\", \"> | --- | --- |\", \"> | 1 | 2025-06 |\"), \
+                or fix a page that already has them apart with blocks op=nest \
+                (the block goes inside the one above it). blocks op=list shows \
+                nested blocks as \"#3.0\" under their container. \
                 LAYOUT. A new page is a free canvas, but as long as none of \
                 its blocks is pinned they flow in one centred column and \
                 the page reads as a plain document — keep it that way and \
@@ -653,7 +665,11 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("op", json!({
             "type": "string",
             "description": "blocks: list | read | insert | set_markdown | delete | \
-                move | set_attrs | pin | unpin | arrange (stack blocks in a \
+                move | nest (put the block inside the one above it, or into=<block>: \
+                a toggle, callout, quote or list item — that is how a table \
+                ends up under a toggle) | unnest (take a nested block back out: \
+                block=<container>, child=<index> or \"all\") | \
+                set_attrs | pin | unpin | arrange (stack blocks in a \
                 column on a free page: unplaced ones by default, only=all for \
                 every block; x y start the column, w sets the width, gap the \
                 spacing). shape: create | update | delete | \
@@ -704,6 +720,18 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 blocks op=read also takes several at once: \"0,2,5-7\" or \
                 \"all\" (every block of the page with its markdown and \
                 attributes) — never read blocks one call at a time."
+        })),
+        ("into", json!({
+            "type": "string",
+            "description": "blocks op=nest: the block that takes the other one \
+                in (index or find:<text>) — a toggle, callout, quote or list \
+                item. Omit for the block right above."
+        })),
+        ("child", json!({
+            "type": "string",
+            "description": "blocks op=unnest: which nested block to take out — \
+                its index inside the container (the \"3.0\" numbering of \
+                op=list) or \"all\" (default)."
         })),
         ("md", json!({
             "type": "string",

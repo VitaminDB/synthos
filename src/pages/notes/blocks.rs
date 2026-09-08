@@ -190,6 +190,14 @@ fn row(ctx: NotesCtx, b: &BlockOutline, depth: usize, selected: bool) -> Box<dyn
                     ctx.doc_op(DocOp::Select(id));
                     ctx.doc_op(DocOp::Move { down: true });
                 }
+                "nest" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Indent { outdent: false });
+                }
+                "unnest" => {
+                    ctx.doc_op(DocOp::Select(id));
+                    ctx.doc_op(DocOp::Indent { outdent: true });
+                }
                 "del" => ctx.doc_op(DocOp::DeleteBlock(id)),
                 _ => {}
             })

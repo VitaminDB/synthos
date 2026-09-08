@@ -164,6 +164,41 @@ fn blocks_ops_through_the_tool() {
     assert!(ctx.page(&page).unwrap().handle.history_state().get_untracked().0);
 }
 
+/// Живой случай (08.09.2026, страница «Долги и кредиты»): модель написала
+/// `> [!toggle] Полная таблица графика` и таблицу отдельным блоком — toggle
+/// сворачивал пустоту. `op=nest` убирает таблицу внутрь, `op=unnest`
+/// возвращает; в `op=list` вложенное видно строкой `#0.0`.
+#[test]
+fn nest_puts_a_table_inside_a_toggle() {
+    let ctx = ctx();
+    let md = "> [!toggle] Полная таблица графика\n\n| Платёж | Дата |\n| --- | --- |\n| 1 | 2025-06 |\n";
+    let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Долги", "content": md})));
+    let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+    assert!(listed.contains("#0 toggle \"Полная таблица графика\"") && listed.contains("#1 table"), "{listed}");
+
+    // Без "into" блок уходит в соседа сверху — как раз этот случай.
+    let out = call(ctx, "blocks", serde_json::json!({"op": "nest", "page": &page, "block": 1}));
+    assert!(out.contains("nested #1 into #0 as #0.0") && out.contains("  #0.0 table"), "{out}");
+    let stored = ctx.page_markdown(&page);
+    assert!(stored.contains("> [!toggle]{open} Полная таблица графика") && stored.contains("> | Платёж | Дата |"), "{stored}");
+
+    // Вложенный блок операциям верхнего уровня недоступен — ошибка учит,
+    // как его достать.
+    let err = dispatch(ctx, "blocks", &serde_json::json!({"op": "set_markdown", "page": &page, "block": "0.0", "md": "x"})).unwrap_err();
+    assert!(err.contains("nested inside block #0") && err.contains("op=unnest block=0 child=0"), "{err}");
+
+    // Таблица не контейнер; сама в себя тоже не вкладывается.
+    call(ctx, "blocks", serde_json::json!({"op": "insert", "page": &page, "md": "| A |\n| --- |\n| 1 |"}));
+    let err = dispatch(ctx, "blocks", &serde_json::json!({"op": "nest", "page": &page, "block": 1, "into": 1})).unwrap_err();
+    assert!(err.contains("cannot be nested into itself"), "{err}");
+    let err = dispatch(ctx, "blocks", &serde_json::json!({"op": "nest", "page": &page, "block": 0, "into": 1})).unwrap_err();
+    assert!(err.contains("cannot hold other blocks"), "{err}");
+
+    let out = call(ctx, "blocks", serde_json::json!({"op": "unnest", "page": &page, "block": "0.0"}));
+    assert!(out.contains("took 1 block(s) out of #0") && out.contains("#1 table"), "{out}");
+    assert!(!ctx.page_markdown(&page).contains("> |"), "{}", ctx.page_markdown(&page));
+}
+
 /// Переход поток → холст сохраняет расположение: блоки получают
 /// координаты колонкой в порядке документа, подсказка про свободную
 /// раскладку исчезает; `create layout=free` с контентом рождает страницу

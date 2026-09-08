@@ -367,6 +367,10 @@ fn items() -> Vec<MenuItem> {
 /// Действия над блоком — общие для меню документа и строки панели «Блоки».
 /// Буфер обмена работает над выделенными блоками (рамка, Ctrl+клик), без
 /// выделения — над текущим; «Вставить» ставит блоки из буфера следом.
+///
+/// «Вложить в блок выше» / «Вынуть из блока» — то же, что Tab / Shift+Tab,
+/// но работает и для блоков без каретки: таблицу или картинку иначе не
+/// убрать внутрь toggle (в markdown её содержимое — строки цитаты `> `).
 pub fn block_action_items() -> Vec<MenuItem> {
     vec![
         MenuItem::new("copy", tr!("app.copy")).icon(MI_CONTENT_COPY),
@@ -376,6 +380,8 @@ pub fn block_action_items() -> Vec<MenuItem> {
         MenuItem::new("dup", tr!("notes.menu.duplicate")).icon(MI_CONTENT_COPY),
         MenuItem::new("up", tr!("notes.menu.move_up")).icon(MI_ARROW_UPWARD),
         MenuItem::new("down", tr!("notes.menu.move_down")).icon(MI_ARROW_DOWNWARD),
+        MenuItem::new("nest", tr!("notes.menu.nest")).icon(MI_FORMAT_INDENT_INCREASE),
+        MenuItem::new("unnest", tr!("notes.menu.unnest")).icon(MI_FORMAT_INDENT_DECREASE),
         MenuItem::separator(),
         MenuItem::new("del", tr!("notes.menu.delete_block")).icon(MI_DELETE),
     ]
@@ -458,6 +464,8 @@ pub fn handle(ctx: NotesCtx, id: &str) {
         "dup" => ctx.doc_op(DocOp::Duplicate),
         "up" => ctx.doc_op(DocOp::Move { down: false }),
         "down" => ctx.doc_op(DocOp::Move { down: true }),
+        "nest" => ctx.doc_op(DocOp::Indent { outdent: false }),
+        "unnest" => ctx.doc_op(DocOp::Indent { outdent: true }),
         "del" => ctx.doc_op(DocOp::Delete),
         _ => {}
     }

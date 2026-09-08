@@ -115,6 +115,16 @@ pub(super) fn resolve_block(model: &DocModel, s: &str) -> Result<usize, String> 
     if let Ok(i) = t.trim_start_matches('#').parse::<usize>() {
         return (i < n).then_some(i).ok_or_else(|| format!("block #{i} does not exist — the page has {n} blocks (blocks op=list)"));
     }
+    // «#3.0» — вложенный блок из op=list: операции работают с верхним
+    // уровнем, ребёнка сначала вынимают наружу.
+    if let Some((parent, child)) = t.trim_start_matches('#').split_once('.') {
+        if let (Ok(p), Ok(c)) = (parent.trim().parse::<usize>(), child.trim().parse::<usize>()) {
+            return Err(format!(
+                "#{p}.{c} is nested inside block #{p} — take it out with blocks op=unnest block={p} child={c}, \
+                 or rewrite the whole container with blocks op=set_markdown block={p}"
+            ));
+        }
+    }
     let needle = t.strip_prefix("find:").unwrap_or(t).trim().to_lowercase();
     if needle.is_empty() {
         return Err("empty block reference — pass an index from blocks op=list or find:<text>".to_string());
@@ -366,8 +376,27 @@ pub(super) fn blocks_text(model: &DocModel) -> String {
     for (i, b) in model.blocks.iter().enumerate() {
         out.push_str(&block_line(i, b));
         out.push('\n');
+        push_children(&mut out, &i.to_string(), b, 1);
     }
     out
+}
+
+/// Дети контейнера — строками `#3.0` с отступом. Без них не видно, что
+/// таблица уже лежит внутри toggle: у вложенного блока нет ни своего
+/// индекса верхнего уровня, ни геометрии (она бывает только у корня).
+fn push_children(out: &mut String, path: &str, b: &DocBlock, depth: usize) {
+    let Some(children) = b.kind.children() else { return };
+    for (j, c) in children.iter().enumerate() {
+        let p = format!("{path}.{j}");
+        let label = props::label_of(c).replace(['\n', '"'], " ");
+        out.push_str(&"  ".repeat(depth));
+        out.push_str(&format!("#{p} {}", kind_label(c)));
+        if !label.trim().is_empty() && !matches!(c.kind, BlockKind::Shape { .. } | BlockKind::Embed { .. }) {
+            out.push_str(&format!(" \"{}\"", label.trim()));
+        }
+        out.push('\n');
+        push_children(out, &p, c, depth + 1);
+    }
 }
 
 /// Разобрать фрагмент markdown в блоки; геометрия — первому (`last=false`)

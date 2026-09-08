@@ -703,6 +703,25 @@ mod tests {
         assert!(!back.layout_of("b").props_hidden);
     }
 
+    /// Проекты, записанные до отказа от режима «поток», несут в раскладке
+    /// поле `free`. Читаться они должны как холст, а не падать разбором.
+    #[test]
+    fn legacy_free_flag_is_ignored() {
+        let json = r#"{
+            "version": 1,
+            "roots": [{
+                "id": "a",
+                "title": "Стр",
+                "children": [],
+                "layout": { "free": false, "grid": "lines", "snap": false }
+            }]
+        }"#;
+        let tree = ProjectTree::parse(json).expect("старый tree.json должен читаться");
+        let l = tree.layout_of("a");
+        assert_eq!(l.grid, PageGrid::Lines);
+        assert!(!l.snap);
+    }
+
     #[test]
     fn page_layout_defaults_and_roundtrip() {
         // Привязка включена по умолчанию с шагом 5 px (запрос UX).

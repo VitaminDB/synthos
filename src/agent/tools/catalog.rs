@@ -477,7 +477,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "create: page title (made unique among siblings). \
                 update: new title. kanban/gantt op=create: optional heading \
-                above the object. kanban add_card/update_card: card title. \
+                above the object. kanban add_card: the new card's text \
+                (required); update_card: new title. \
                 mindmap op=create/from_list: text of the root node. chart: \
                 heading drawn inside the chart itself."
         })),
@@ -601,11 +602,21 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 set_style | from_list | delete. calendar: create | read | set_view | \
                 set_style | add_event | update_event | move_event | delete_event | \
                 complete | list_events | add_calendar | update_calendar | \
-                delete_calendar | delete. kanban: create | read | set_style | add_column | \
-                update_column | delete_column | add_card | update_card | \
-                move_card | delete_card | archive | unarchive (card to/from the \
-                board's archive) | attach | detach (a file or image on a card: \
-                path or chat attachment → thumbnail / paperclip) | delete. \
+                delete_calendar | delete. kanban (board=<id> or page=<page \
+                with one board> for every op but create): create {page, \
+                columns, done_column, title} | read {archived} | set_style \
+                {column_width, lane_bg, card_bg, show_counts, archive_after} | \
+                add_column {name, color, width, done} | update_column {column, \
+                name, color, width, done} | delete_column {column} | add_card \
+                {title = the new card's text, column, md, priority, tags, due, \
+                repeat, before} | update_card {card, title, md, priority, tags, \
+                due, repeat, column, before} | move_card {card, column | \
+                to_board, before} | delete_card {card} | archive | unarchive \
+                {card} (to/from the board's archive) | attach {card, path | \
+                attachment, name} | detach {card, file} (a file or image on a \
+                card → thumbnail / paperclip) | delete. card is always an \
+                EXISTING card (id or exact title); a new card's text goes in \
+                title. \
                 gantt: create | read | \
                 add_task | update_task | delete_task | add_dep | delete_dep | \
                 set_zoom | show_today | delete. log: filter by action (done | \
@@ -1045,7 +1056,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("card", json!({
             "type": "string",
             "description": "kanban update_card/move_card/delete_card/archive/\
-                unarchive/attach/detach: card id or exact title. log: only \
+                unarchive/attach/detach: an EXISTING card — id or exact title. \
+                Not for add_card: a new card's text goes in title. log: only \
                 this card's history."
         })),
         ("priority", json!({

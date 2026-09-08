@@ -225,8 +225,11 @@ pub fn build(env: &PromptEnv) -> String {
                  appends to the day page (Journal / yyyy-mm / yyyy-mm-dd; a \
                  [[yyyy-mm-dd]] link opens it).\n\
                  - Boards: kanban op=create on a page (columns optional; \
-                 index/after/before and x y w h place it), then add_card / \
-                 update_card / move_card; cards carry a title, a markdown \
+                 index/after/before and x y w h place it), then add_card \
+                 {column, title, md, priority, tags, due, repeat} — the new \
+                 card's text is title; update_card / move_card / delete_card \
+                 / archive take card=<id or exact title of an EXISTING card>. \
+                 Cards carry a title, a markdown \
                  body (a `- [ ]` checklist shows progress), priority \
                  low|medium|high|urgent, tags, a due date yyyy-mm-dd, repeat \
                  daily|weekly|monthly|yearly (closing spawns the next one) and \
@@ -390,6 +393,7 @@ mod tests {
         assert!(s.contains("Notes (`notes`)"), "{s}");
         assert!(s.contains("find/replace"), "{s}");
         assert!(s.contains("kanban op=create"), "{s}");
+        assert!(s.contains("add_card {column, title, md, priority, tags, due, repeat}"), "{s}");
         assert!(s.contains("shape op=connect"), "{s}");
         assert!(s.contains("blocks op=pin"), "{s}");
         assert!(s.contains("mindmap op=create"), "{s}");

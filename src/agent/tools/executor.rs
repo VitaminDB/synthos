@@ -90,6 +90,11 @@ pub enum ToolError {
     Unknown(String),
     #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
+    /// JSON разобрался, но аргументы не сошлись: нет поля, неизвестный op,
+    /// страница/карточка не нашлась. Без слова «JSON» — оно уводило модель
+    /// (и пользователя) искать битый синтаксис там, где не хватало поля.
+    #[error("Invalid arguments: {0}")]
+    Args(String),
     #[error("Missing required field \"{0}\"")]
     MissingField(&'static str),
     #[error("Failed to spawn process: {0}")]
@@ -211,7 +216,7 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
             name,
             invalid_args: matches!(
                 e,
-                ToolError::BadArgs(_) | ToolError::MissingField(_) | ToolError::Unknown(_)
+                ToolError::BadArgs(_) | ToolError::Args(_) | ToolError::MissingField(_) | ToolError::Unknown(_)
             ),
             content: e.to_string(),
             error: true,
@@ -337,6 +342,25 @@ mod tests {
     #[test]
     fn truncate_noop_when_short() {
         assert_eq!(truncate_output("ok", MAX_OUTPUT_BYTES), "ok");
+    }
+
+    /// Ошибка аргументов после успешного разбора JSON не должна называться
+    /// «Invalid arguments JSON» — модель шла чинить синтаксис, а не поле.
+    #[tokio::test(flavor = "current_thread")]
+    async fn notes_argument_error_has_no_json_word() {
+        let e = ToolError::Args("missing \"op\"".to_string());
+        assert_eq!(e.to_string(), "Invalid arguments: missing \"op\"");
+        let call = ChatToolCall {
+            id: "c1".to_string(),
+            kind: "function".to_string(),
+            function: crate::agent::schema::ChatToolCallFunction {
+                name: Some("notes".to_string()),
+                arguments: Some("{\"action\":\"kanban\"".to_string()),
+            },
+        };
+        let out = execute(&call).await;
+        assert!(out.error && out.invalid_args, "{out:?}");
+        assert!(out.content.starts_with("Invalid arguments JSON: "), "{}", out.content);
     }
 
     #[test]

@@ -276,6 +276,38 @@ Guard'ы вызовов такое не видят: петля живёт вну
 петле сработал лишь на 18672-м токене — на MTP-декоде гибрида одинаковый
 текст выходит разной нарезкой токенов, поэтому мера — символы.
 
+## Два лишних хода на `notes kanban add_card` (08.09.2026)
+
+Чат «MyLife», qwen3.8-27b, temperature 1.0, thinking off: «добавь задачу для
+synthos — не могу перемещать страницы по порядку в Заметках». Модель нашла
+доску (`list` → `read`) и собрала вызов
+`{"action":"kanban","board":…,"column":"К выполнению","card":"<текст>","priority":"medium","tags":[…]}`
+— без `op` и с текстом карточки в `card`. Ответ инструмента: «Invalid
+arguments JSON: missing "op" (create | read | … | delete)». Модель добавила
+`op=add_card`, но `card` оставила — «Invalid arguments JSON: missing "title"».
+Третий заход прошёл. Пользователь прочитал это как «неполный JSON».
+
+**Корни.** (1) Схема `notes` — одна плоская сумка из ~90 полей, а сигнатуры
+операций доски нигде не собраны: `op` перечислял имена, `card` описывался
+как «card id or exact title» — модель и положила туда заголовок новой
+карточки. (2) Все ошибки `notes::dispatch` уходили как
+`ToolError::BadArgs` с префиксом «Invalid arguments JSON», хотя JSON был
+целым: слово «JSON» уводит и модель, и пользователя искать битый синтаксис.
+
+**Правка.** `ToolError::Args` («Invalid arguments: …», тот же
+`invalid_args=true`) для ошибок после разбора JSON; у `kanban` ошибка без
+`op` и с неизвестным `op` отдаёт шпаргалку `KANBAN_OPS_HELP` — каждая
+операция со своими полями; `add_card` принимает `card` как заголовок, если
+`title` не задан (другого смысла у поля в этой операции нет); в схеме
+описание `op` для kanban — те же сигнатуры, `card` помечен как «существующая
+карточка, не для add_card», `title` — «текст новой карточки (обязателен)»;
+в системном промпте — `add_card {column, title, md, priority, tags, due,
+repeat}` и `card=<id|title существующей>`. Тесты:
+`kanban_add_card_tolerates_card_as_title_and_explains_ops`,
+`notes_argument_error_has_no_json_word`, `notes_rules_only_with_notes_tool`.
+Отдельно: у чата стояла temperature 1.0 (дефолт 0.6) — при ней модель
+чаще угадывает имена полей вместо того, чтобы читать схему.
+
 ## Как проверять
 
 ```

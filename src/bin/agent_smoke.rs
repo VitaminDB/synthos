@@ -126,7 +126,7 @@ fn verdict(msgs: &[ChatMsg], from: usize) -> Verdict {
             }
             ChatMsgKind::ToolResult { .. } => {
                 if m.body.starts_with("Missing required field")
-                    || m.body.starts_with("Invalid arguments JSON")
+                    || m.body.starts_with("Invalid arguments")
                     || m.body.starts_with("Unknown tool")
                 {
                     v.bad_args += 1;

@@ -105,7 +105,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     });
     rx.await
         .map_err(|e| ToolError::Spawn(e.to_string()))?
-        .map_err(ToolError::BadArgs)
+        .map_err(ToolError::Args)
 }
 
 /// Диспетчер действий; вынесен из `run`, чтобы тесты звали его с
@@ -2199,11 +2199,24 @@ fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
     out
 }
 
+/// Шпаргалка операций доски с их полями — уходит модели вместо голого
+/// списка имён, когда `op` пропущен или неизвестен. Живой чат (MyLife,
+/// 08.09.2026): модель дважды подряд собирала `add_card` без `op` и с текстом
+/// карточки в `card`; список имён ей не помог, сигнатуры — помогают.
+const KANBAN_OPS_HELP: &str = "kanban ops (every op but create addresses the board by board=<id> \
+or page=<page with one board>): \
+create {page, columns, done_column, title, x y w h} · read {archived} · \
+set_style {column_width, lane_bg, card_bg, show_counts, archive_after} · \
+add_column {name, color, width, done} · update_column {column, name, color, width, done} · \
+delete_column {column} · \
+add_card {title = the new card's text, column, md, priority, tags, due, repeat, before} · \
+update_card {card, title, md, priority, tags, due, repeat, column, before} · \
+move_card {card, column | to_board, before} · delete_card {card} · archive {card} · \
+unarchive {card} · attach {card, path | attachment, name} · detach {card, file} · delete. \
+\"card\" = an existing card (id or exact title); a new card's text goes in \"title\".";
+
 fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
-    let op = str_field(v, "op").ok_or(
-        "missing \"op\" (create | read | set_style | add_column | update_column | delete_column | add_card | \
-         update_card | move_card | delete_card | archive | unarchive | attach | detach | delete)",
-    )?;
+    let op = str_field(v, "op").ok_or_else(|| format!("missing \"op\". {KANBAN_OPS_HELP}"))?;
     match op {
         "create" => {
             let pid = page_arg(ctx, v, "page")?;
@@ -2384,7 +2397,11 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 Some(c) => resolve_column(&handle, c)?,
                 None => handle.lock().columns.first().cloned().ok_or("the board has no columns")?,
             };
-            let title = str_field(v, "title").ok_or("missing \"title\"")?;
+            // Текст новой карточки модель кладёт в "card" — в остальных op так
+            // адресуют существующую, а у add_card другого смысла у поля нет.
+            let title = str_field(v, "title")
+                .or_else(|| str_field(v, "card"))
+                .ok_or("missing \"title\" — the new card's text (\"card\" names an existing card in update_card/move_card/delete_card)")?;
             let mut card = KanbanCard::new(item_id("k"), column.id.clone());
             card.title = title.to_string();
             card.md = raw_string(v, "md").unwrap_or_default().trim().to_string();
@@ -2573,11 +2590,7 @@ fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             let (id, _) = kanban_handle(ctx, v)?;
             delete_object(ctx, "kanban", &id)
         }
-        other => Err(format!(
-            "unknown kanban op \"{other}\" (create | read | set_style | add_column | update_column | \
-             delete_column | add_card | update_card | move_card | delete_card | archive | unarchive | \
-             attach | detach | delete)"
-        )),
+        other => Err(format!("unknown kanban op \"{other}\". {KANBAN_OPS_HELP}")),
     }
 }
 
@@ -4875,6 +4888,35 @@ mod tests {
     fn page_id(out: &str) -> String {
         let line = out.lines().find(|l| l.starts_with("page: ")).expect("page line");
         line[6..18].to_string()
+    }
+
+    /// Живой чат MyLife (08.09.2026): модель дважды собирала `add_card` без
+    /// `op` и с текстом карточки в `card`. Ошибка без `op` называет сигнатуры
+    /// операций, а `card` у `add_card` принимается как заголовок.
+    #[test]
+    fn kanban_add_card_tolerates_card_as_title_and_explains_ops() {
+        let ctx = ctx();
+        let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Доска"})));
+        call(ctx, "kanban", serde_json::json!({"op": "create", "page": &page, "columns": ["К выполнению", "Готово"]}));
+
+        let err = dispatch(ctx, "kanban", &serde_json::json!({"page": &page, "column": "К выполнению", "card": "Порядок страниц"})).unwrap_err();
+        assert!(err.starts_with("missing \"op\". kanban ops"), "{err}");
+        assert!(err.contains("add_card {title = the new card's text, column, md, priority, tags, due, repeat, before}"), "{err}");
+
+        let out = call(
+            ctx,
+            "kanban",
+            serde_json::json!({"op": "add_card", "page": &page, "column": "К выполнению", "card": "Порядок страниц", "priority": "medium", "tags": ["Баг", "Заметки"]}),
+        );
+        assert!(out.contains("added card to \"К выполнению\"") && out.contains("\"Порядок страниц\"") && out.contains("tags: Баг, Заметки"), "{out}");
+        // Явный title важнее: "card" тогда — просто лишнее поле.
+        let out = call(ctx, "kanban", serde_json::json!({"op": "add_card", "page": &page, "title": "Заголовок", "card": "Не заголовок"}));
+        assert!(out.contains("\"Заголовок\"") && !out.contains("\"Не заголовок\""), "{out}");
+
+        let err = dispatch(ctx, "kanban", &serde_json::json!({"op": "add_card", "page": &page})).unwrap_err();
+        assert!(err.starts_with("missing \"title\"") && err.contains("existing card"), "{err}");
+        let err = dispatch(ctx, "kanban", &serde_json::json!({"op": "add_kard", "page": &page, "title": "x"})).unwrap_err();
+        assert!(err.starts_with("unknown kanban op \"add_kard\". kanban ops") && err.contains("update_card {card, title"), "{err}");
     }
 
     /// Повторный `create` с тем же названием обязан сказать, что страница

@@ -48,6 +48,7 @@ fn panel_body() -> impl Widget {
                         .cross_axis_alignment(CrossAxisAlignment::Center)
                         .class("input-toolbar-left") => [
                         attach_button(),
+                        emoji_button(),
                         pending_hint_reactive(),
                     ],
                     Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
@@ -85,13 +86,32 @@ fn attach_button() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 's
     }
 }
 
+/// Смайлик: панель эмодзи (`super::emoji_picker`), выбор вставляется в
+/// позицию каретки поля ввода.
+fn emoji_button() -> impl Widget {
+    DecoratedBox::new().class("input-attach-wrap").child(
+        ToolButton::new(MI_INSERT_EMOTICON)
+            .tooltip(tr!("chat.input.emoji.tooltip"))
+            .on_click_with_bounds(|_, bounds| {
+                let ctx = use_context::<SynChatCtx>();
+                ctx.emoji_anchor.set(bounds);
+                ctx.emoji_open.set(!ctx.emoji_open.get_untracked());
+            })
+            .class("input-attach input-emoji"),
+    )
+}
+
 fn editor_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
         let _gen = ctx.input_gen.get();
+        // Вставка из панели эмодзи: бамп пересобирает редактор, тот
+        // вычерпывает очередь в позицию каретки.
+        let _insert_gen = ctx.input_insert_gen.get();
         let initial = ctx.input.get_untracked();
         let editor = MultilineTextEdit::new()
             .text(initial)
+            .insert_queue(ctx.input_insert.clone())
             .placeholder(tr!("chat.input.placeholder"))
             .rows(2)
             .max_rows(8)

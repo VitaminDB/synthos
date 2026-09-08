@@ -698,6 +698,9 @@ pub struct AppConfig {
     /// перетаскивании. Пусто — порядок только по `created_at`.
     #[serde(default)]
     pub rail_order: Vec<String>,
+    /// Недавние эмодзи панели ввода чата, свежие первыми (до 16).
+    #[serde(default)]
+    pub chat_recent_emoji: Vec<String>,
     /// Устаревшее: одиночный системный prompt Syn-чата. С библиотекой
     /// пресетов (`syn_chat::prompt_presets`, файл `syn_system_prompts.json`)
     /// больше не пишется; читается один раз при первом запуске без файла
@@ -1197,6 +1200,7 @@ impl Default for AppConfig {
             notes_tile_opened_at: None,
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
+            chat_recent_emoji: Vec::new(),
             syn_chat_system_prompt: String::new(),
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             model_profiles: std::collections::BTreeMap::new(),

@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use syngui::prelude::*;
 
@@ -115,6 +115,14 @@ pub struct SynChatCtx {
     pub pending_archive: RwSignal<Option<ChatMeta>>,
     /// Поколение поля ввода — для пересоздания editor после очистки.
     pub input_gen: RwSignal<u64>,
+    /// Очередь вставок в позицию каретки поля ввода (панель эмодзи):
+    /// `MultilineTextEdit::insert_queue` вычерпывает её при пересборке
+    /// редактора, которую вызывает бамп `input_insert_gen`.
+    pub input_insert: Arc<Mutex<Vec<String>>>,
+    pub input_insert_gen: RwSignal<u64>,
+    /// Панель эмодзи над кнопкой в панели ввода: открыта ли и её якорь.
+    pub emoji_open: RwSignal<bool>,
+    pub emoji_anchor: RwSignal<Rect>,
     /// Кол-во токенов в `input` (вычисляется debounced'но в фоне).
     pub input_tokens: RwSignal<usize>,
     /// Поколение worker'ов tokenize — для отсева устаревших ответов.
@@ -268,6 +276,10 @@ impl SynChatCtx {
             pending_archive: use_signal(None),
             turn_cap_reached: use_signal(false),
             input_gen: use_signal(0),
+            input_insert: Arc::new(Mutex::new(Vec::new())),
+            input_insert_gen: use_signal(0),
+            emoji_open: use_signal(false),
+            emoji_anchor: use_signal(Rect::zero()),
             input_tokens: use_signal(0),
             input_tok_gen: Arc::new(AtomicU64::new(0)),
             pending: use_signal(false),

@@ -433,6 +433,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let panels = context::PanelsCtx::from_config(&saved.panels);
     let rail_separators = use_signal(saved.rail_separators.clone());
     let rail_order = use_signal(saved.rail_order.clone());
+    let chat_recent_emoji = use_signal(saved.chat_recent_emoji.clone());
     let hf_left_split_ratio = use_signal(saved.hf_left_split_ratio);
     let hf_right_split_ratio = use_signal(saved.hf_right_split_ratio);
     let settings_left_split_ratio = use_signal(saved.settings_left_split_ratio);
@@ -478,6 +479,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         panels,
         rail_separators,
         rail_order,
+        chat_recent_emoji,
         hf_left_split_ratio,
         hf_right_split_ratio,
         settings_left_split_ratio,
@@ -573,6 +575,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let panels = ctx.panels;
     let rail_separators = ctx.rail_separators;
     let rail_order = ctx.rail_order;
+    let chat_recent_emoji = ctx.chat_recent_emoji;
     let hf_left_split = ctx.hf_left_split_ratio;
     let hf_right_split = ctx.hf_right_split_ratio;
     let settings_left_split = ctx.settings_left_split_ratio;
@@ -730,6 +733,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             panels: panels.to_config(),
             rail_separators: rail_separators.get(),
             rail_order: rail_order.get(),
+            chat_recent_emoji: chat_recent_emoji.get(),
             // Syn-чат поля. Они автосохраняются отдельным
             // `install_syn_chat_autosave` (per-chat params), но дефолты для
             // новых чатов и last_syn_model — здесь, через AppConfig.

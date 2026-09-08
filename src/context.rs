@@ -426,6 +426,9 @@ pub struct AppCtx {
     /// Ручной порядок плиток рейла (ключи `rail::RailEntry::key`). Persist:
     /// `AppConfig.rail_order`.
     pub rail_order: RwSignal<Vec<String>>,
+    /// Недавние эмодзи панели ввода чата, свежие первыми. Persist:
+    /// `AppConfig.chat_recent_emoji`.
+    pub chat_recent_emoji: RwSignal<Vec<String>>,
     /// Разделители страниц HuggingFace и настроек (persist в `AppConfig`).
     pub hf_left_split_ratio: RwSignal<f32>,
     pub hf_right_split_ratio: RwSignal<f32>,

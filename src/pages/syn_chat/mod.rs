@@ -38,6 +38,7 @@ pub mod chat_header;
 pub mod chat_pane;
 pub mod clear_dialog;
 pub mod compaction_marker;
+pub mod emoji_picker;
 pub mod input_panel;
 pub mod left_panel;
 pub mod media_audio;
@@ -93,6 +94,9 @@ pub fn view() -> impl Widget {
             // prompt_dialog).
             prompt_window::window(),
             prompt_window::dialog(),
+            // Панель эмодзи над кнопкой в панели ввода (источник —
+            // SynChatCtx.emoji_open / emoji_anchor).
+            emoji_picker::view(),
         ]
     }
 }

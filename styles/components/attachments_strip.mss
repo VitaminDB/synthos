@@ -211,6 +211,11 @@ ToolButton.input-attach:hover {
     color: var(--primary);
 }
 
+/* Смайлик рядом со скрепкой — тот же вид (`ToolButton.input-attach`). */
+.chat-emoji-picker {
+    background-color: var(--bg-panel);
+}
+
 /* Подпись под полосой: количество файлов, суммарный вес и оценка того,
  * сколько контекста они займут. */
 .attachments-strip-summary {

@@ -280,3 +280,4 @@ pub const MI_GESTURE: &str             = "\u{E155}"; // кривая Безье
 pub const MI_REDO: &str                = "\u{E15A}"; // кривая со стрелкой
 pub const MI_UNDO: &str                = "\u{E166}";
 pub const MI_SWAP_CALLS: &str          = "\u{E15D}"; // двусторонняя кривая
+pub const MI_INSERT_EMOTICON: &str     = "\u{E24E}"; // смайлик — панель эмодзи в чате

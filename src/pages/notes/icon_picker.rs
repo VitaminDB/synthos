@@ -147,7 +147,9 @@ fn material_grid(ctx: NotesCtx) -> impl Widget {
     DecoratedBox::new().class("notes-icon-grid").child(grid(ctx, MATERIAL_ICONS))
 }
 
-const EMOJI_GROUPS: &[(&str, &[&str])] = &[
+/// Группы эмодзи (ключ названия в каталоге, список). Общие с панелью
+/// эмодзи чата (`pages::syn_chat::emoji_picker`).
+pub const EMOJI_GROUPS: &[(&str, &[&str])] = &[
     ("notes.icon.group.smileys", &[
         "😀", "😄", "😁", "😂", "🙂", "😉", "😍", "🤩", "😎", "🤔", "🤨", "😐", "😴", "🤯", "🥳",
         "😇", "🤗", "🤫", "😬", "🙄", "😢", "😡", "🤖", "👻", "💀", "👽", "🎃", "😺", "🙈", "🙉",

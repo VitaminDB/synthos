@@ -425,3 +425,22 @@ fn week_all_day_multi_day_event_spans_columns() {
     let bar = bar.expect("полоса на три колонки");
     assert!((bar.size.width - (col_w * 3.0 - 4.0)).abs() < 1.5, "ширина {} при колонке {col_w}", bar.size.width);
 }
+
+/// Событие за пределами часов вида не сплющивается в полоску у края:
+/// диапазон часов расширяется под него, настройка стиля не меняется.
+#[test]
+fn hours_extend_to_fit_late_event() {
+    let mut e = CalEvent::new("", "Отбой", day(D));
+    e.start = Some(22 * 60 + 30);
+    e.end = Some(23 * 60);
+    e.all_day = false;
+    let (mut w, handle, _store) = world(CalView::Day, vec![e]);
+    let grid = w.grid("notes-calendar-timegrid");
+    // 8:00..23:00 — 15 часов по два слота × 24 px.
+    let expected_h = 32.0 + 22.0 + 15.0 * 2.0 * 24.0 + 8.0;
+    assert!((grid.size.height - expected_h).abs() < 1.0, "высота сетки {} вместо {expected_h}", grid.size.height);
+    let top = grid.origin.y + 32.0 + 22.0 + (22.5 - 8.0) * 2.0 * 24.0;
+    let bar = rects(&mut w).into_iter().find(|r| (r.origin.y - top).abs() < 1.0 && (r.size.height - 24.0).abs() < 1.0 && r.size.width > 100.0);
+    assert!(bar.is_some(), "полоса 22:30–23:00 в своём слоте");
+    assert_eq!(handle.style().hour_to, 20, "настройка часов не тронута");
+}

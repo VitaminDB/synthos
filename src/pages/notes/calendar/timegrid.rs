@@ -12,8 +12,9 @@
 //! страница; drag тела — перенос (дни и время со снапом к слоту, событие
 //! сдвигается на разницу — повтор не прыгает началом в день броска), drag
 //! нижней кромки — длительность; внешняя полоса переносится только по
-//! дням (`shift_external`); мутации на MouseUp. События вне диапазона
-//! часов помечаются стрелками у верха/низа колонки.
+//! дням (`shift_external`); мутации на MouseUp. Часы вида — настройка
+//! стиля, расширенная под события с часами в видимых днях: событие в
+//! 22:30 получает свой слот, а не полоску у нижнего края.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -145,9 +146,28 @@ impl TimeElement {
         if self.data.doc.style.compact { 18.0 } else { 24.0 }
     }
 
-    fn slots_count(&self) -> u32 {
+    /// Часы сетки: `hour_from..hour_to` стиля, расширенные под события и
+    /// задачи с часами в видимых днях (настройка стиля не меняется).
+    fn hours(&self) -> (u32, u32) {
         let s = &self.data.doc.style;
-        ((s.hour_to - s.hour_from) * 60 / s.slot_min).max(1)
+        let (mut from, mut to) = (s.hour_from, s.hour_to);
+        let (d0, d1) = self.data.range;
+        let times = self
+            .data
+            .occurrences
+            .iter()
+            .filter_map(|o| o.time)
+            .chain(self.data.external.iter().filter(|e| e.day >= d0 && e.day <= d1).filter_map(|e| e.time));
+        for (st, en) in times {
+            from = from.min(st / 60);
+            to = to.max(en.div_ceil(60)).min(24);
+        }
+        (from, to.max(from + 1))
+    }
+
+    fn slots_count(&self) -> u32 {
+        let (from, to) = self.hours();
+        ((to - from) * 60 / self.data.doc.style.slot_min).max(1)
     }
 
     /// Отрезки «весь день» (события без времени, внешние без часов).
@@ -179,14 +199,14 @@ impl TimeElement {
     }
 
     fn y_of(&self, min: u32) -> f32 {
-        let s = &self.data.doc.style;
-        self.grid_top() + (min as f32 - (s.hour_from * 60) as f32) / s.slot_min as f32 * self.slot_h()
+        let from = self.hours().0;
+        self.grid_top() + (min as f32 - (from * 60) as f32) / self.data.doc.style.slot_min as f32 * self.slot_h()
     }
 
     fn min_at(&self, y: f32) -> i64 {
-        let s = &self.data.doc.style;
+        let from = self.hours().0;
         let slots = ((y - self.grid_top()) / self.slot_h()).floor() as i64;
-        (s.hour_from * 60) as i64 + slots * s.slot_min as i64
+        (from * 60) as i64 + slots * self.data.doc.style.slot_min as i64
     }
 
     fn day_at(&self, x: f32) -> Option<i64> {
@@ -200,9 +220,9 @@ impl TimeElement {
         let mut out = Vec::new();
         let mut more = Vec::new();
         let col_w = self.col_w();
-        let style = &self.data.doc.style;
-        let event_style = style.event_style;
-        let (from_min, to_min) = ((style.hour_from * 60) as i64, (style.hour_to * 60) as i64);
+        let event_style = self.data.doc.style.event_style;
+        let (hour_from, hour_to) = self.hours();
+        let (from_min, to_min) = ((hour_from * 60) as i64, (hour_to * 60) as i64);
         let allday_top = self.base.bounds.origin.y + HEADER_H + 3.0;
         // Весь день.
         let segs = self.allday_segments();
@@ -420,6 +440,7 @@ impl Element for TimeElement {
         c.set_color(pal.grid);
         c.draw_line(b.origin.x, b.origin.y + HEADER_H, b.origin.x + b.size.width, b.origin.y + HEADER_H);
         c.draw_line(b.origin.x, grid_top, b.origin.x + b.size.width, grid_top);
+        let (hour_from, hour_to) = self.hours();
         let per_hour = (60 / style.slot_min).max(1);
         for i in 0..=slots_n {
             let y = grid_top + i as f32 * slot_h;
@@ -427,7 +448,7 @@ impl Element for TimeElement {
             c.set_color(if hour_line { pal.grid } else { pal.grid.with_alpha(pal.grid.a * 0.45) });
             c.draw_line(b.origin.x + GUTTER_W, y, b.origin.x + b.size.width, y);
             if hour_line && i < slots_n {
-                let minute = style.hour_from * 60 + i / per_hour * 60;
+                let minute = hour_from * 60 + i / per_hour * 60;
                 list.push_text_styled_singleline(
                     &fmt_hm(minute),
                     Rect::new(Point::new(b.origin.x + 4.0, y + 2.0), Size::new(GUTTER_W - 8.0, font + 2.0)),
@@ -552,26 +573,8 @@ impl Element for TimeElement {
             }
             paint::draw_more(list, m.rect, m.n, font, if hovered { pal.accent } else { pal.muted });
         }
-        // События вне диапазона часов — стрелки у верха/низа колонки.
-        let (from_min, to_min) = (style.hour_from * 60, style.hour_to * 60);
-        for &day in &days {
-            let x = self.col_x(day);
-            let mut above = false;
-            let mut below = false;
-            for o in self.data.occurrences.iter().filter(|o| o.day == day) {
-                if let Some((s, e)) = o.time {
-                    above |= e <= from_min;
-                    below |= s >= to_min;
-                }
-            }
-            if above {
-                list.push_text_styled_singleline("▲", Rect::new(Point::new(x + col_w - 16.0, grid_top + 2.0), Size::new(14.0, 12.0)), pal.accent, 9.0, TextAlign::CENTER, TextDecoration::None, 700, None);
-            }
-            if below {
-                list.push_text_styled_singleline("▼", Rect::new(Point::new(x + col_w - 16.0, grid_top + slots_n as f32 * slot_h - 14.0), Size::new(14.0, 12.0)), pal.accent, 9.0, TextAlign::CENTER, TextDecoration::None, 700, None);
-            }
-        }
         // Линия «сейчас».
+        let (from_min, to_min) = (hour_from * 60, hour_to * 60);
         if days.contains(&self.data.today) && (from_min..=to_min).contains(&self.data.now_min) {
             let x = self.col_x(self.data.today);
             let y = self.y_of(self.data.now_min);

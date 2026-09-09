@@ -1755,3 +1755,13 @@ app.quit.reason.graphs.many = "{n} niezapisanych grafów"
 app.quit.reason.downloads.one = "{n} aktywne pobieranie"
 app.quit.reason.downloads.few = "{n} aktywne pobierania"
 app.quit.reason.downloads.many = "{n} aktywnych pobierań"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Otwórz czat w pływającym oknie (przeciągnij, aby oderwać)"
+chat.header.dock.tooltip = "Przywróć czat na stronę"
+chat.detached.title = "Czat jest otwarty w pływającym oknie"
+chat.detached.hint = "Przeciągaj okno za tytuł i zmieniaj rozmiar za krawędzie. Przycisk „—” zwija je do awatara w lewym dolnym rogu."
+chat.detached.show = "Pokaż okno"
+chat.detached.dock = "Wróć na stronę"
+chat.window.title = "Czat"
+chat.window.fab.tooltip = "Rozwiń czat „{name}”"

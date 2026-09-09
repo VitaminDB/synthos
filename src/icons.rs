@@ -235,6 +235,8 @@ pub const MI_OPEN_IN_NEW: &str         = "\u{E89E}";
 pub const MI_INSERT_DRIVE_FILE: &str   = "\u{E24D}";
 /// «visibility» уже есть выше; «fullscreen» — раскрыть превью на всё окно.
 pub const MI_FULLSCREEN: &str          = "\u{E5D0}";
+/// «close_fullscreen» — вернуть оторванный чат на страницу.
+pub const MI_CLOSE_FULLSCREEN: &str    = "\u{F1CF}";
 
 // --- Оболочка: плитки рейла, общая шапка, архив
 /// «vertical_split» / «view_sidebar» — тогглы левой и правой панели в шапке.

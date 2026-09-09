@@ -31,6 +31,7 @@ pub fn styles() -> &'static str {
         include_str!("../styles/components/workspace_frame.mss"),
         "\n",
         include_str!("../styles/components/message_area.mss"),
+        include_str!("../styles/components/chat_float_window.mss"),
         "\n",
         include_str!("../styles/components/message_bubble.mss"),
         "\n",

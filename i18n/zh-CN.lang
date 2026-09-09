@@ -1731,3 +1731,13 @@ app.quit.reason.terminals.other = "{n} 个终端正在运行命令"
 app.quit.reason.files.other = "{n} 个未保存的文件"
 app.quit.reason.graphs.other = "{n} 个未保存的图"
 app.quit.reason.downloads.other = "{n} 项进行中的下载"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "在浮动窗口中打开聊天（拖动以分离）"
+chat.header.dock.tooltip = "将聊天放回页面"
+chat.detached.title = "聊天已在浮动窗口中打开"
+chat.detached.hint = "拖动标题栏移动窗口，拖动边缘调整大小。“—”按钮会将其收起为左下角的头像。"
+chat.detached.show = "显示窗口"
+chat.detached.dock = "返回页面"
+chat.window.title = "聊天"
+chat.window.fab.tooltip = "展开聊天“{name}”"

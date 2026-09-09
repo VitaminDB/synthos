@@ -1740,3 +1740,13 @@ app.quit.reason.graphs.one = "{n} grafo non salvato"
 app.quit.reason.graphs.other = "{n} grafi non salvati"
 app.quit.reason.downloads.one = "{n} download attivo"
 app.quit.reason.downloads.other = "{n} download attivi"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Apri la chat in una finestra mobile (trascina per staccarla)"
+chat.header.dock.tooltip = "Riporta la chat nella pagina"
+chat.detached.title = "La chat è aperta in una finestra mobile"
+chat.detached.hint = "Trascina la finestra dal titolo e ridimensionala dai bordi. Il pulsante «—» la riduce a un avatar in basso a sinistra."
+chat.detached.show = "Mostra finestra"
+chat.detached.dock = "Torna alla pagina"
+chat.window.title = "Chat"
+chat.window.fab.tooltip = "Espandi la chat «{name}»"

@@ -1750,3 +1750,13 @@ app.quit.reason.graphs.one = "{n} graphe non enregistré"
 app.quit.reason.graphs.other = "{n} graphes non enregistrés"
 app.quit.reason.downloads.one = "{n} téléchargement actif"
 app.quit.reason.downloads.other = "{n} téléchargements actifs"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Ouvrir la discussion dans une fenêtre flottante (faites glisser pour la détacher)"
+chat.header.dock.tooltip = "Ramener la discussion sur la page"
+chat.detached.title = "La discussion est ouverte dans une fenêtre flottante"
+chat.detached.hint = "Déplacez la fenêtre par son titre et redimensionnez-la par les bords. Le bouton « — » la réduit en avatar en bas à gauche."
+chat.detached.show = "Afficher la fenêtre"
+chat.detached.dock = "Revenir à la page"
+chat.window.title = "Discussion"
+chat.window.fab.tooltip = "Déployer la discussion « {name} »"

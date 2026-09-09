@@ -188,7 +188,14 @@ pub fn open(entry: &RailEntry) {
             if chat.active_chat_id.get_untracked().as_deref() != Some(m.id.as_str()) {
                 registry::select(&m.id);
             }
-            navigate("syn_chat");
+            // Оторванный чат живёт в плавающем окне поверх любой страницы:
+            // плитка переключает окно на этот чат и разворачивает его, не
+            // уводя со страницы, где работает пользователь.
+            if chat.chat_detached.get_untracked() {
+                chat.chat_window_minimized.set(false);
+            } else {
+                navigate("syn_chat");
+            }
         }
         RailEntry::Notes(_) => navigate("notes"),
         RailEntry::Separator(_) => {}
@@ -230,9 +237,10 @@ pub fn is_active(entry: &RailEntry) -> bool {
             route == "nodes" && use_context::<EditorWorkspace>().active.get() == Some(t.id)
         }
         RailEntry::Chat(m) => {
-            route == "syn_chat"
-                && use_context::<SynChatCtx>().active_chat_id.get().as_deref()
-                    == Some(m.id.as_str())
+            let chat = use_context::<SynChatCtx>();
+            let same = chat.active_chat_id.get().as_deref() == Some(m.id.as_str());
+            // В плавающем окне чат «открыт» с любой страницы.
+            same && (chat.chat_detached.get() || route == "syn_chat")
         }
         RailEntry::Notes(_) => route == "notes",
         RailEntry::Separator(_) => false,

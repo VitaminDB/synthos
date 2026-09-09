@@ -1733,3 +1733,13 @@ app.quit.reason.terminals.other = "コマンド実行中のターミナル {n} �
 app.quit.reason.files.other = "未保存のファイル {n} 件"
 app.quit.reason.graphs.other = "未保存のグラフ {n} 件"
 app.quit.reason.downloads.other = "進行中のダウンロード {n} 件"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "チャットをフローティングウィンドウで開く（ドラッグで切り離し）"
+chat.header.dock.tooltip = "チャットをページに戻す"
+chat.detached.title = "チャットはフローティングウィンドウで開いています"
+chat.detached.hint = "タイトルをドラッグして移動し、端をドラッグしてサイズを変更できます。「—」ボタンで左下のアバターに折りたたみます。"
+chat.detached.show = "ウィンドウを表示"
+chat.detached.dock = "ページに戻す"
+chat.window.title = "チャット"
+chat.window.fab.tooltip = "チャット「{name}」を展開"

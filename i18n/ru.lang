@@ -1990,3 +1990,13 @@ app.quit.reason.graphs.many = "{n} несохранённых графов"
 app.quit.reason.downloads.one = "{n} активная загрузка"
 app.quit.reason.downloads.few = "{n} активные загрузки"
 app.quit.reason.downloads.many = "{n} активных загрузок"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Открыть чат в плавающем окне (потяните, чтобы оторвать)"
+chat.header.dock.tooltip = "Вернуть чат на страницу"
+chat.detached.title = "Чат открыт в плавающем окне"
+chat.detached.hint = "Окно можно таскать за заголовок и растягивать за края. Кнопка «—» сворачивает его в аватар слева внизу."
+chat.detached.show = "Показать окно"
+chat.detached.dock = "Вернуть на страницу"
+chat.window.title = "Чат"
+chat.window.fab.tooltip = "Развернуть чат «{name}»"

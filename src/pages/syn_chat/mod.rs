@@ -24,7 +24,9 @@
 //! и persist'ятся в `AppConfig.syn_chat_{left,right}_split_ratio`;
 //! видимость панелей — `AppCtx.panels.syn_chat` → `AppConfig.panels`.
 //! Диалог архива (`archive_dialog`) смонтирован в shell'е — плитку чата
-//! закрывают с любой страницы.
+//! закрывают с любой страницы. Там же — плавающее окно чата и его
+//! кнопка-аватар (`float_window`): оторванный чат живёт поверх любой
+//! страницы, а `chat_pane` в это время показывает плейсхолдер.
 
 use syngui::mgui;
 use syngui::prelude::*;
@@ -39,6 +41,7 @@ pub mod chat_pane;
 pub mod clear_dialog;
 pub mod compaction_marker;
 pub mod emoji_picker;
+pub mod float_window;
 pub mod input_panel;
 pub mod left_panel;
 pub mod media_audio;

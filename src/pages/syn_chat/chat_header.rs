@@ -6,12 +6,16 @@
 //! disabled, пока идёт генерация или в ленте нет кандидатов на сжатие.
 //! Корзина переносит чат в архив (Настройки → Архив) — насовсем удаляют
 //! только оттуда. «Очистить» удаляет все сообщения, оставляя чат
-//! (подтверждение — `clear_dialog`).
+//! (подтверждение — `clear_dialog`). Стрелка слева от них отрывает чат в
+//! плавающее окно (`float_window`): клик — окно на прежнем месте, drag —
+//! туда, где отпустили; в оторванном состоянии та же кнопка возвращает
+//! чат на страницу.
 
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::containers::GestureDetector;
+use syngui::widgets::overlay::Draggable;
 use syngui::widgets::TextField;
 
 use crate::components::chat_item::{initials_from_title, tone_for};
@@ -19,6 +23,8 @@ use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::expand;
 use crate::icons::*;
 use crate::syn_chat::{registry, SynChatCtx, SynModelRegistry};
+
+use super::float_window;
 
 pub fn center() -> impl Widget {
     let identity: Box<dyn Widget> = Box::new(DecoratedBox::new().child(identity_reactive()));
@@ -78,6 +84,8 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
 
         let row = mgui! {
             Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                detach_button(id.clone()),
+                panel_header::action_divider(),
                 ToolButton::new(MI_COMPRESS)
                     .tooltip(tr!("chat.header.compact.tooltip"))
                     .disabled(!can_compact)
@@ -105,6 +113,34 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
         };
         expand(Box::new(row))
     }
+}
+
+/// Кнопка отрыва чата в плавающее окно. Кнопка внутри `Draggable`, поэтому
+/// `press_passthrough`: иначе она забрала бы MouseDown себе, и ни клик, ни
+/// перетаскивание до `Draggable` не дошли бы (тот же приём, что у плиток
+/// рейла). Пока чат оторван — подсвечена и возвращает чат на страницу.
+fn detach_button(id: String) -> impl Widget {
+    let detached = use_context::<SynChatCtx>().chat_detached.get();
+    let (icon, tooltip) = if detached {
+        (MI_CLOSE_FULLSCREEN, tr!("chat.header.dock.tooltip"))
+    } else {
+        (MI_OPEN_IN_NEW, tr!("chat.header.detach.tooltip"))
+    };
+    let btn = ToolButton::new(icon)
+        .tooltip(tooltip.clone())
+        .active(detached)
+        .press_passthrough()
+        .class("panel-header-action");
+    Draggable::new(float_window::TEAR_OFF_DRAG_TYPE, id)
+        .label(tooltip)
+        .on_click(move || {
+            if detached {
+                float_window::dock();
+            } else {
+                float_window::detach();
+            }
+        })
+        .child(btn)
 }
 
 /// Название чата: клик переводит в поле правки, Enter сохраняет

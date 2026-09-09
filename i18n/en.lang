@@ -1970,3 +1970,13 @@ app.quit.reason.graphs.one = "{n} unsaved graph"
 app.quit.reason.graphs.other = "{n} unsaved graphs"
 app.quit.reason.downloads.one = "{n} active download"
 app.quit.reason.downloads.other = "{n} active downloads"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Open the chat in a floating window (drag to tear it off)"
+chat.header.dock.tooltip = "Return the chat to the page"
+chat.detached.title = "The chat is open in a floating window"
+chat.detached.hint = "Drag the window by its title and resize it by the edges. The “—” button collapses it into an avatar at the bottom left."
+chat.detached.show = "Show window"
+chat.detached.dock = "Return to page"
+chat.window.title = "Chat"
+chat.window.fab.tooltip = "Expand chat “{name}”"

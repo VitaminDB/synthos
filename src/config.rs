@@ -653,6 +653,17 @@ pub struct AppConfig {
     /// Положение правого разделителя (центр ↔ панель параметров).
     #[serde(default = "default_syn_chat_right_split_ratio")]
     pub syn_chat_right_split_ratio: f32,
+    /// Чат оторван в плавающее окно (`pages::syn_chat::float_window`);
+    /// окно свёрнуто в кнопку-аватар; позиция и размер окна. Позиция и
+    /// размер `None` — окно ещё ни разу не двигали/растягивали.
+    #[serde(default)]
+    pub syn_chat_detached: bool,
+    #[serde(default)]
+    pub syn_chat_window_minimized: bool,
+    #[serde(default)]
+    pub syn_chat_window_pos: Option<(f32, f32)>,
+    #[serde(default)]
+    pub syn_chat_window_size: Option<(f32, f32)>,
     /// Разделители страницы HuggingFace: список моделей ↔ README ↔ файлы.
     #[serde(default = "default_hf_left_split_ratio")]
     pub hf_left_split_ratio: f32,
@@ -1186,6 +1197,10 @@ impl Default for AppConfig {
             search_recent: Vec::new(),
             syn_chat_left_split_ratio: default_syn_chat_left_split_ratio(),
             syn_chat_right_split_ratio: default_syn_chat_right_split_ratio(),
+            syn_chat_detached: false,
+            syn_chat_window_minimized: false,
+            syn_chat_window_pos: None,
+            syn_chat_window_size: None,
             hf_left_split_ratio: default_hf_left_split_ratio(),
             hf_right_split_ratio: default_hf_right_split_ratio(),
             settings_left_split_ratio: default_settings_left_split_ratio(),

@@ -1747,3 +1747,13 @@ app.quit.reason.graphs.one = "{n} ungespeicherter Graph"
 app.quit.reason.graphs.other = "{n} ungespeicherte Graphen"
 app.quit.reason.downloads.one = "{n} aktiver Download"
 app.quit.reason.downloads.other = "{n} aktive Downloads"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Chat in einem schwebenden Fenster öffnen (ziehen zum Abreißen)"
+chat.header.dock.tooltip = "Chat zur Seite zurückbringen"
+chat.detached.title = "Der Chat ist in einem schwebenden Fenster geöffnet"
+chat.detached.hint = "Ziehen Sie das Fenster an der Titelleiste und ändern Sie die Größe an den Rändern. Die Schaltfläche „—“ klappt es zu einem Avatar unten links zusammen."
+chat.detached.show = "Fenster anzeigen"
+chat.detached.dock = "Zur Seite zurück"
+chat.window.title = "Chat"
+chat.window.fab.tooltip = "Chat „{name}“ ausklappen"

@@ -1746,3 +1746,13 @@ app.quit.reason.graphs.one = "{n} kaydedilmemiş grafik"
 app.quit.reason.graphs.other = "{n} kaydedilmemiş grafik"
 app.quit.reason.downloads.one = "{n} etkin indirme"
 app.quit.reason.downloads.other = "{n} etkin indirme"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Sohbeti kayan pencerede aç (ayırmak için sürükleyin)"
+chat.header.dock.tooltip = "Sohbeti sayfaya geri getir"
+chat.detached.title = "Sohbet kayan bir pencerede açık"
+chat.detached.hint = "Pencereyi başlığından sürükleyin ve kenarlarından boyutlandırın. “—” düğmesi onu sol alttaki bir avatara küçültür."
+chat.detached.show = "Pencereyi göster"
+chat.detached.dock = "Sayfaya dön"
+chat.window.title = "Sohbet"
+chat.window.fab.tooltip = "“{name}” sohbetini genişlet"

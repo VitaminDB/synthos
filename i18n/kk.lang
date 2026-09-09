@@ -1740,3 +1740,13 @@ app.quit.reason.graphs.one = "{n} сақталмаған граф"
 app.quit.reason.graphs.other = "{n} сақталмаған граф"
 app.quit.reason.downloads.one = "{n} белсенді жүктеу"
 app.quit.reason.downloads.other = "{n} белсенді жүктеу"
+
+# Плавающее окно чата (pages::syn_chat::float_window)
+chat.header.detach.tooltip = "Чатты қалқымалы терезеде ашу (ажырату үшін сүйреңіз)"
+chat.header.dock.tooltip = "Чатты бетке қайтару"
+chat.detached.title = "Чат қалқымалы терезеде ашық"
+chat.detached.hint = "Терезені тақырыбынан сүйреп, шеттерінен өлшемін өзгертуге болады. «—» түймесі оны төменгі сол жақтағы аватарға жинайды."
+chat.detached.show = "Терезені көрсету"
+chat.detached.dock = "Бетке қайтару"
+chat.window.title = "Чат"
+chat.window.fab.tooltip = "«{name}» чатын жаю"

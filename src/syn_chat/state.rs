@@ -25,6 +25,13 @@ use crate::syn_chat::telemetry::AgentRun;
 /// Размер плавающего окна системного промпта при первом открытии.
 pub const PROMPT_WINDOW_DEFAULT_SIZE: Size = Size::new(760.0, 540.0);
 
+/// Размер плавающего окна чата при первом отрыве
+/// (`pages::syn_chat::float_window`).
+pub const CHAT_WINDOW_DEFAULT_SIZE: Size = Size::new(560.0, 680.0);
+/// Где встаёт окно чата, если позиция ещё не сохранена: отступ от левого
+/// верхнего угла, чтобы заголовок точно был в пределах вьюпорта.
+pub const CHAT_WINDOW_DEFAULT_POS: Point = Point::new(160.0, 120.0);
+
 /// Сообщение в очереди отправки: написано, пока шёл ход, и уйдёт модели,
 /// когда чат освободится. Живёт вне ленты (`SynChatCtx::queue`) — в
 /// `messages` оно попало бы в автосейв, в промпт и в fingerprint чата.
@@ -151,6 +158,17 @@ pub struct SynChatCtx {
     pub prompt_window_open: RwSignal<bool>,
     pub prompt_window_pos: RwSignal<Point>,
     pub prompt_window_size: RwSignal<Size>,
+    /// Чат оторван от страницы в плавающее окно
+    /// (`pages::syn_chat::float_window`): лента и ввод живут в окне поверх
+    /// любой страницы, а центральная колонка страницы показывает
+    /// плейсхолдер. Окно одно — в нём всегда активный чат.
+    pub chat_detached: RwSignal<bool>,
+    /// Окно свёрнуто в кнопку-аватар слева внизу (кнопка «—» окна).
+    pub chat_window_minimized: RwSignal<bool>,
+    /// Позиция и размер окна чата; переживают закрытие и перезапуск
+    /// (`AppConfig.syn_chat_window_*`).
+    pub chat_window_pos: RwSignal<Point>,
+    pub chat_window_size: RwSignal<Size>,
     /// Модальный диалог над панелью «Система»: создать / переименовать /
     /// удалить пресет. `None` — закрыт.
     pub prompt_dialog: RwSignal<Option<PromptDialog>>,
@@ -297,6 +315,18 @@ impl SynChatCtx {
             prompt_window_open: use_signal(false),
             prompt_window_pos: use_signal(Point::new(120.0, 120.0)),
             prompt_window_size: use_signal(PROMPT_WINDOW_DEFAULT_SIZE),
+            chat_detached: use_signal(cfg.syn_chat_detached),
+            chat_window_minimized: use_signal(cfg.syn_chat_window_minimized),
+            chat_window_pos: use_signal(
+                cfg.syn_chat_window_pos
+                    .map(|(x, y)| Point::new(x, y))
+                    .unwrap_or(CHAT_WINDOW_DEFAULT_POS),
+            ),
+            chat_window_size: use_signal(
+                cfg.syn_chat_window_size
+                    .map(|(w, h)| Size::new(w, h))
+                    .unwrap_or(CHAT_WINDOW_DEFAULT_SIZE),
+            ),
             prompt_dialog: use_signal(None),
             thinking_open: use_signal(HashMap::new()),
             tool_group_open: use_signal(HashMap::new()),

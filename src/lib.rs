@@ -597,6 +597,10 @@ fn install_config_autosave(ctx: &AppCtx) {
     let syn_chat_ctx = use_context::<syn_chat::SynChatCtx>();
     let syn_chat_left_split = syn_chat_ctx.left_split_ratio;
     let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
+    let chat_detached = syn_chat_ctx.chat_detached;
+    let chat_window_minimized = syn_chat_ctx.chat_window_minimized;
+    let chat_window_pos = syn_chat_ctx.chat_window_pos;
+    let chat_window_size = syn_chat_ctx.chat_window_size;
 
     create_effect(move || {
         let (notes_active_state, notes_expanded_state, notes_tile_state) = notes_ctx.persist();
@@ -727,6 +731,18 @@ fn install_config_autosave(ctx: &AppCtx) {
             // ширины в config.json.
             syn_chat_left_split_ratio: syn_chat_left_split.get(),
             syn_chat_right_split_ratio: syn_chat_right_split.get(),
+            // Плавающее окно чата: оторвано ли, свёрнуто ли, где и какого
+            // размера — чтобы после перезапуска чат остался там, где был.
+            syn_chat_detached: chat_detached.get(),
+            syn_chat_window_minimized: chat_window_minimized.get(),
+            syn_chat_window_pos: {
+                let p = chat_window_pos.get();
+                Some((p.x, p.y))
+            },
+            syn_chat_window_size: {
+                let s = chat_window_size.get();
+                Some((s.width, s.height))
+            },
             hf_left_split_ratio: hf_left_split.get(),
             hf_right_split_ratio: hf_right_split.get(),
             settings_left_split_ratio: settings_left_split.get(),
@@ -989,12 +1005,16 @@ fn build_app() -> impl Widget {
             DecoratedBox::new().clip(true).class("shell") => [
                 Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                     titlebar::view(),
-                    DecoratedBox::new().class("grow").child(mgui! {
-                        Row::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                            components::nav_rail::view(),
-                            DecoratedBox::new().class("grow").child(routes),
-                        ]
-                    }),
+                    // Хост дропа иконки отрыва чата: окно встаёт туда,
+                    // где отпустили (`pages::syn_chat::float_window`).
+                    DecoratedBox::new().class("grow").child(
+                        pages::syn_chat::float_window::tear_off_host(mgui! {
+                            Row::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                                components::nav_rail::view(),
+                                DecoratedBox::new().class("grow").child(routes),
+                            ]
+                        }),
+                    ),
                     DecoratedBox::new().class("window-statusbar"),
                 ]
             ]
@@ -1010,6 +1030,11 @@ fn build_app() -> impl Widget {
             components::quit_dialog::view(),
             pages::syn_chat::archive_dialog::view(),
             pages::syn_chat::clear_dialog::view(),
+            // Плавающее окно чата и кнопка-аватар свёрнутого окна — поверх
+            // любой страницы (источник — SynChatCtx.chat_detached /
+            // chat_window_minimized).
+            pages::syn_chat::float_window::window(),
+            pages::syn_chat::float_window::fab(),
             components::voice_fab::view(),
             search::panel::view(),
             notification_view,

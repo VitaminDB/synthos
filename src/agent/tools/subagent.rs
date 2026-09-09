@@ -562,6 +562,11 @@ fn generate_subagent_turn(
             Some(tool_schemas)
         },
     )?;
+    let prompt = crate::syn_chat::session::prompt_for_model(
+        &model.tokenizer,
+        params.enable_thinking,
+        prompt,
+    );
     let prompt_ids = model.tokenizer.encode(&prompt)?;
 
     // План KV-ринга — тот же, что у основного цикла (`RingPlan`), а не «cap
@@ -617,7 +622,7 @@ fn generate_subagent_turn(
         // ChatML: ATEM-вызовы Muse не разбирались, и родителю уходил сырой
         // текст с заголовками каналов вместо ответа.
         let channel = ChannelIds::detect(&model.tokenizer).is_some();
-        if channel {
+        if StreamParser::has_native_stops(&model.tokenizer) {
             runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
         } else {
             crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
@@ -626,7 +631,7 @@ fn generate_subagent_turn(
             runner.add_stop_sequence(if channel { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
         }
 
-        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
+        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking, &prompt);
         let mut raw_text = String::new();
         let mut clean_text = String::new();
         let mut think_text = String::new();

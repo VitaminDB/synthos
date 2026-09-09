@@ -49,6 +49,7 @@ use crate::syn_chat::state::{
 };
 use crate::syn_chat::system_prompt::{self, PromptEnv};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
+use synaptix_tokenizer::{Gemma4Ids, Gemma4StreamParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
 /// ≈ 60 fps — UI получает свежий хвост, не задыхаясь от 100+ updates/s.
@@ -1499,16 +1500,33 @@ pub fn schedule_tokenize() {
 ///   со своими адресатами (`to=self` / `to=user` / `to=<функция>`), а
 ///   разделители — спецтокены, невидимые в декодированном тексте
 ///   (см. [`crate::syn_chat::channel_parser`]).
+/// - [`Self::Gemma`] — Gemma-4: размышления в `<|channel>thought…<channel|>`,
+///   вызовы в `<|tool_call>call:имя{…}<tool_call|>` со строками в кавычках
+///   `<|"|>`; всё это спецтокены, в тексте их нет — разбор по id живёт в
+///   движке (`synaptix_tokenizer::parsers::gemma4`). Без него в ленту
+///   утекало `call:notes{action:read,page:all}` текстом (MyLife, 09.09.2026).
 pub(crate) enum StreamParser {
     ChatML { think: ThinkParser, tools: ToolCallParser },
     Channel(ChannelParser),
+    Gemma(Gemma4StreamParser),
 }
 
 impl StreamParser {
     /// Канальный разбор — если словарь модели знает `<|start|>`/`<|message|>`.
-    pub(crate) fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool) -> Self {
-        match ChannelIds::detect(tokenizer) {
-            Some(ids) => Self::Channel(ChannelParser::new(ids)),
+    ///
+    /// Gemma-4 — если словарь знает `<|tool_call>` и `<|"|>`. `prompt` —
+    /// отрендеренный промпт хода: у Gemma после результата инструмента при
+    /// включённых размышлениях он кончается `<|channel>thought⏎`, и модель
+    /// начинает прямо с размышлений, без заголовка канала в потоке.
+    pub(crate) fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool, prompt: &str) -> Self {
+        if let Some(ids) = ChannelIds::detect(tokenizer) {
+            return Self::Channel(ChannelParser::new(ids));
+        }
+        match gemma4_ids(tokenizer) {
+            Some(ids) => Self::Gemma(Gemma4StreamParser::new(
+                ids,
+                prompt.ends_with("<|channel>thought\n"),
+            )),
             None => Self::ChatML {
                 // Qwen3-VL / Qwen3-Thinking chat-template подаёт открывающий
                 // `<think>` прямо в prompt — модель не пишет open-тег сама,
@@ -1525,6 +1543,12 @@ impl StreamParser {
 
     pub(crate) fn is_channel(&self) -> bool {
         matches!(self, Self::Channel(_))
+    }
+
+    /// Протокол хода завершается собственными спецтокенами модели (они уже
+    /// в `eos_ids` бандла), стоп на `<|im_end|>` ему не нужен.
+    pub(crate) fn has_native_stops(tokenizer: &LlmTokenizer) -> bool {
+        ChannelIds::detect(tokenizer).is_some() || gemma4_ids(tokenizer).is_some()
     }
 
     /// Очередной токен → (текст ответа, размышления, live-текст tool-вызова).
@@ -1544,6 +1568,10 @@ impl StreamParser {
                 let split = p.feed(id, delta);
                 (split.body, split.thinking, split.tool)
             }
+            Self::Gemma(p) => {
+                let split = p.feed(id, delta);
+                (split.body, split.thinking, split.tool)
+            }
         }
     }
 
@@ -1553,6 +1581,7 @@ impl StreamParser {
         match self {
             Self::ChatML { tools, .. } => tools.calls_count() > 0 && tools.is_outside(),
             Self::Channel(p) => p.has_closed_call(),
+            Self::Gemma(p) => p.has_closed_call(),
         }
     }
 
@@ -1560,8 +1589,61 @@ impl StreamParser {
         match self {
             Self::ChatML { tools, .. } => tools.finish().0,
             Self::Channel(p) => p.finish(),
+            Self::Gemma(p) => p
+                .finish()
+                .into_iter()
+                .map(|c| RawToolCall { arguments_json: c.arguments_json(), name: c.name })
+                .collect(),
         }
     }
+}
+
+/// Id маркеров протокола Gemma-4 в словаре модели. Признак — каждый маркер
+/// кодируется ровно одним токеном; у ChatML-моделей таких строк в словаре
+/// нет, и токенайзер разбирает их на куски.
+fn gemma4_ids(tokenizer: &LlmTokenizer) -> Option<Gemma4Ids> {
+    Gemma4Ids::detect_with(|s| match tokenizer.encode(s) {
+        Ok(ids) if ids.len() == 1 => Some(ids[0]),
+        _ => None,
+    })
+}
+
+/// Промпт хода с поправкой под протокол модели: у Gemma-4 при включённых
+/// размышлениях — [`gemma4_restore_empty_thinking`]; остальным отдаётся как
+/// есть.
+pub(crate) fn prompt_for_model(tokenizer: &LlmTokenizer, enable_thinking: bool, prompt: String) -> String {
+    if enable_thinking && gemma4_ids(tokenizer).is_some() {
+        gemma4_restore_empty_thinking(&prompt)
+    } else {
+        prompt
+    }
+}
+
+/// Gemma-4 при включённых размышлениях продолжает ход после результата
+/// инструмента с открытого шаблоном `<|channel>thought⏎`; если модель думать
+/// не стала, она сразу пишет `<channel|>`, и в токенах хода остаётся пустой
+/// канал. Шаблон же пустые размышления не рендерит вовсе, и промпт
+/// следующего хода расходится с предыдущим ровно на этом месте — а
+/// префикс-KV движка живёт только концом прошлого промпта, так что весь
+/// контекст префиллился заново (22 с на 11k ток., живой прогон 09.09.2026).
+/// Возвращаем пустой канал после каждого `<tool_response|>`, за которым идёт
+/// не размышление и не конец промпта.
+fn gemma4_restore_empty_thinking(prompt: &str) -> String {
+    const CLOSE: &str = "<tool_response|>";
+    const EMPTY_THOUGHT: &str = "<|channel>thought\n<channel|>";
+    let mut out = String::with_capacity(prompt.len() + 64);
+    let mut rest = prompt;
+    while let Some(pos) = rest.find(CLOSE) {
+        let after = pos + CLOSE.len();
+        out.push_str(&rest[..after]);
+        let tail = &rest[after..];
+        if !tail.is_empty() && !tail.starts_with("<|channel>") && !tail.starts_with("<|tool_response>") {
+            out.push_str(EMPTY_THOUGHT);
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Заметка в историю после хода, который не дал ни вызова, ни текста.
@@ -1874,7 +1956,7 @@ async fn run_agent_loop(
                 }
                 None => &history,
             };
-            model.tokenizer.apply_chat_template_ex_tools(
+            let rendered = model.tokenizer.apply_chat_template_ex_tools(
                 for_prompt,
                 true,
                 params.enable_thinking,
@@ -1883,7 +1965,8 @@ async fn run_agent_loop(
                 } else {
                     Some(&tool_schemas)
                 },
-            )?
+            )?;
+            prompt_for_model(&model.tokenizer, params.enable_thinking, rendered)
         };
         let prompt_ids = model.tokenizer.encode(&prompt)?;
         log::info!(
@@ -1977,10 +2060,11 @@ async fn run_agent_loop(
             }
             let mut runner = LlmGeneration::new(&model.model, opts);
             let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
-            if channel_mode {
-                // Канальный протокол завершает ход `<|eot|>`, а он уже в eos_ids
-                // бандла — своих стопов добавлять не нужно (и `<|im_end|>` в
-                // этом словаре всё равно нет).
+            if StreamParser::has_native_stops(&model.tokenizer) {
+                // Канальный протокол завершает ход `<|eot|>`, Gemma-4 —
+                // `<turn|>`/`<|tool_response>`; всё это уже в eos_ids бандла,
+                // своих стопов добавлять не нужно (и `<|im_end|>` в этих
+                // словарях всё равно нет).
                 runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
             } else {
                 set_qwen3_stops(&mut runner, &model.tokenizer);
@@ -1994,7 +2078,8 @@ async fn run_agent_loop(
             }
 
             // Разбор потока — по протоколу модели (ChatML или канальный).
-            let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking);
+            let mut parser =
+                StreamParser::for_model(&model.tokenizer, params.enable_thinking, &prompt);
             // Текст ответа за этот turn вне tool_call-блоков. Реплика для
             // истории собирается из него и разобранных вызовов
             // (`assistant_turn_message`) — сырой поток модели в историю не идёт.
@@ -2916,13 +3001,13 @@ pub(crate) fn generate_summary(
     opts.max_new_tokens = plan.max_new;
 
     let mut runner = LlmGeneration::new(&model.model, opts);
-    if ChannelIds::detect(&model.tokenizer).is_some() {
+    if StreamParser::has_native_stops(&model.tokenizer) {
         runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
     } else {
         set_qwen3_stops(&mut runner, &model.tokenizer);
     }
 
-    let mut parser = StreamParser::for_model(&model.tokenizer, false);
+    let mut parser = StreamParser::for_model(&model.tokenizer, false, &prompt);
     let mut clean = String::new();
     let abort_cb = abort.clone();
     let res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |id, delta| {
@@ -3403,6 +3488,12 @@ fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
 /// Полный набор stop-токенов для Qwen3 ChatML: EOS из конфига + `<|im_end|>`.
 pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTokenizer) {
     let mut stops: Vec<u32> = tokenizer.eos_ids().to_vec();
+    if StreamParser::has_native_stops(tokenizer) {
+        // Muse Glimmer / Gemma-4: `<|im_end|>` в словаре нет, ход закрывают
+        // их собственные токены из eos_ids.
+        runner.set_stop_tokens(stops);
+        return;
+    }
     match tokenizer.encode(IM_END_TOKEN) {
         Ok(ids) if ids.len() == 1 => {
             if !stops.contains(&ids[0]) {
@@ -3714,6 +3805,93 @@ fn prepare_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Сквозной рендер шаблона Gemma-4 с настоящими схемами инструментов и
+    /// историей «вызов → результат»: объявления в системном ходе, вызов в
+    /// нотации `call:notes{…}` со строками в `<|"|>`, ответ инструмента в
+    /// `<|tool_response>`. Нужен бандл — запускать вручную:
+    /// `cargo test --release --lib gemma4_template_round_trip -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn gemma4_template_round_trip() {
+        use synaptix_tokenizer::templates::chat_template::RenderOptions;
+        use synaptix_tokenizer::{ChatTemplate, Message as TokMessage, MessageRole};
+        use synaptix_tokenizer::{ToolCall as TokToolCall, ToolCallFunction as TokToolCallFunction};
+
+        let bundle = std::path::Path::new("/home/master/Storage/syn_models/gemma-4-26b-a4b-it.syn");
+        let Some(src) = synaptix::facade::arch::read_model_file(bundle, "chat_template.jinja") else {
+            eprintln!("нет бандла {} — пропуск", bundle.display());
+            return;
+        };
+        let tmpl = ChatTemplate::from_source(String::from_utf8(src).unwrap());
+        let tools: Vec<serde_json::Value> = ["notes", "bash"]
+            .iter()
+            .map(|k| serde_json::to_value(Tool::by_key(k).unwrap().to_chat_tool()).unwrap())
+            .collect();
+        let args = r#"{"action":"read","page":"Моя Жизнь","blocks":true,"limit":3}"#;
+        let msgs = vec![
+            TokMessage::system("Ты ассистент."),
+            TokMessage::user("прочитай все заметки"),
+            TokMessage::assistant_with_reasoning(
+                "",
+                None,
+                vec![TokToolCall {
+                    id: None,
+                    call_type: "function".into(),
+                    function: TokToolCallFunction { name: "notes".into(), arguments: args.into() },
+                }],
+            ),
+            TokMessage {
+                role: MessageRole::Tool,
+                content: "# Моя Жизнь\n- пункт".into(),
+                name: Some("notes".into()),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                reasoning_content: None,
+            },
+        ];
+        let opts = RenderOptions::new()
+            .with_generation_prompt(true)
+            .with_var("enable_thinking", serde_json::Value::Bool(false))
+            .with_var("tools", serde_json::Value::Array(tools));
+        let out = tmpl.render(&msgs, &opts).expect("render");
+        eprintln!("{out}");
+        assert!(out.contains("<|tool>declaration:notes{"), "объявление notes");
+        assert!(out.contains("<|tool>declaration:bash{"), "объявление bash");
+        assert!(
+            out.contains("<|tool_call>call:notes{action:<|\"|>read<|\"|>,blocks:true,limit:3,page:<|\"|>Моя Жизнь<|\"|>}<tool_call|>"),
+            "вызов в нотации Gemma: {out}"
+        );
+        assert!(out.contains("<|tool_response>response:notes{value:<|\"|># Моя Жизнь\n- пункт<|\"|>}<tool_response|>"), "ответ инструмента");
+        assert!(out.ends_with("<tool_response|>"), "после результата модель продолжает ход без заголовка: {out:?}");
+    }
+
+    /// Пустой канал размышлений возвращается только там, где после
+    /// результата инструмента модель продолжила ход без размышлений; конец
+    /// промпта и непустые размышления не трогаются.
+    #[test]
+    fn gemma4_empty_thinking_restored_after_tool_response() {
+        let p = "<|tool_call>call:bash{}<tool_call|><|tool_response>response:bash{value:<|\"|>ok<|\"|>}<tool_response|>Ответ.<turn|>\n<|turn>user\nещё<turn|>\n<|turn>model\n";
+        let fixed = gemma4_restore_empty_thinking(p);
+        assert_eq!(
+            fixed,
+            "<|tool_call>call:bash{}<tool_call|><|tool_response>response:bash{value:<|\"|>ok<|\"|>}<tool_response|><|channel>thought\n<channel|>Ответ.<turn|>\n<|turn>user\nещё<turn|>\n<|turn>model\n"
+        );
+        // Конец промпта (генерация начнётся с `<|channel>thought⏎` от шаблона).
+        let p = "…<tool_response|><|channel>thought\n";
+        assert_eq!(gemma4_restore_empty_thinking(p), p);
+        let p = "…<tool_response|>";
+        assert_eq!(gemma4_restore_empty_thinking(p), p);
+        // Непустые размышления шаблон отрендерил сам.
+        let p = "…<tool_response|><|channel>thought\nмысль\n<channel|>Ответ.";
+        assert_eq!(gemma4_restore_empty_thinking(p), p);
+        // Несколько результатов подряд (несколько вызовов в одном ходе).
+        let p = "…<tool_response|><|tool_response>response:x{value:1}<tool_response|><|tool_call>call:y{}<tool_call|>";
+        assert_eq!(
+            gemma4_restore_empty_thinking(p),
+            "…<tool_response|><|tool_response>response:x{value:1}<tool_response|><|channel>thought\n<channel|><|tool_call>call:y{}<tool_call|>"
+        );
+    }
 
     fn queued(id: u64, chat: &str) -> QueuedMsg {
         QueuedMsg {

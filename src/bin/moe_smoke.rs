@@ -140,6 +140,9 @@ fn config_from_bundle(path: &PathBuf) -> anyhow::Result<MoeConfig> {
             .unwrap_or(true),
         chunk: MoeConfig::qwen4_exp(hidden).chunk,
         skip_below: 0.0,
+        router_key: None,
+        per_expert_scale: None,
+        activation: synaptix_llm_common::Activation::Silu,
     })
 }
 

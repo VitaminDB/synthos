@@ -6810,6 +6810,7 @@ dependencies = [
  "synaptix-kernels-cuda",
  "synaptix-llm-common",
  "synaptix-llm-gemma3",
+ "synaptix-llm-gemma4",
  "synaptix-llm-llama",
  "synaptix-llm-muse-glimmer",
  "synaptix-llm-qwen3",
@@ -7064,6 +7065,22 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-config",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-llm-common",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-llm-gemma4"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
  "synaptix-core",
  "synaptix-io",
  "synaptix-llm-common",

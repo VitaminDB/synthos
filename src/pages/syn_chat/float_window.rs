@@ -31,6 +31,7 @@ use syngui::widgets::FloatingWindow;
 
 use crate::components::chat_item::{display_title, initials_from_title, tone_for};
 use crate::components::workspace_frame::expand;
+use crate::context::AppCtx;
 use crate::icons::MI_CHAT;
 use crate::rail;
 use crate::syn_chat::SynChatCtx;
@@ -139,9 +140,21 @@ fn active_title(ctx: &SynChatCtx) -> Option<(String, String)> {
 
 // ─────────────────────────── кнопка-аватар ───────────────────────────
 
-/// Свёрнутое окно: аватар активного чата в левом нижнем углу, по образцу
-/// голосового FAB справа (`components::voice_fab::fab_button`). Portal
-/// позиционирует кнопку сам, минуя раскладку оболочки.
+/// Ширина нав-рейла (`.nav-rail { width: 72px }`), высота статусбара
+/// (`.window-statusbar { height: 4px }`) и воздух вокруг оболочки в
+/// restored-режиме (`.window-backdrop { padding: 30px }`): Portal считает
+/// отступы от края вьюпорта, а кнопка должна стоять правее рейла — над
+/// кнопкой настроек она её перекрывала.
+const RAIL_WIDTH: f32 = 72.0;
+const STATUSBAR_HEIGHT: f32 = 4.0;
+const SHELL_AIR_RESTORED: f32 = 30.0;
+const FAB_GAP: f32 = 12.0;
+
+/// Свёрнутое окно: аватар активного чата в левом нижнем углу контента,
+/// правее рейла, по образцу голосового FAB справа
+/// (`components::voice_fab::fab_button`). Portal позиционирует кнопку сам,
+/// минуя раскладку оболочки; отступы пересчитываются при maximize —
+/// воздух вокруг оболочки исчезает, и кнопка подтягивается к углу.
 pub fn fab() -> impl Widget {
     let open = use_signal(false);
     create_effect(move || {
@@ -151,15 +164,19 @@ pub fn fab() -> impl Widget {
             open.set(want);
         }
     });
-    Portal::new()
-        .is_open(open)
-        .anchor(PortalAnchor::BottomStart {
-            margin_bottom: 16.0,
-            margin_left: 16.0,
-        })
-        .modal(false)
-        .backdrop(false)
-        .child(fab_button())
+    DecoratedBox::new().child(move || {
+        let maximized = use_context::<AppCtx>().appearance.window_state.get().maximized;
+        let air = if maximized { 0.0 } else { SHELL_AIR_RESTORED };
+        Portal::new()
+            .is_open(open)
+            .anchor(PortalAnchor::BottomStart {
+                margin_bottom: air + STATUSBAR_HEIGHT + FAB_GAP,
+                margin_left: air + RAIL_WIDTH + FAB_GAP,
+            })
+            .modal(false)
+            .backdrop(false)
+            .child(fab_button())
+    })
 }
 
 fn fab_button() -> impl Widget {

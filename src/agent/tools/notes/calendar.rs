@@ -166,18 +166,41 @@ fn apply_calendar_style(handle: &CalendarHandle, v: &Json) -> Result<Vec<String>
                     s.preset.clear();
                     changes.push(key.clone());
                 }
-                "first_weekday" | "hour_from" | "hour_to" | "slot_min" => {
+                "first_weekday" | "slot_min" => {
                     let Ok(n) = val.trim().parse::<u32>() else {
                         err = Some(format!("bad \"{key}\" \"{val}\" — a whole number"));
                         return;
                     };
                     match key.as_str() {
                         "first_weekday" => s.first_weekday = n,
-                        "hour_from" => s.hour_from = n,
-                        "hour_to" => s.hour_to = n,
                         _ => s.slot_min = n,
                     }
                     changes.push(format!("{key}={n}"));
+                }
+                // Границы окна суток: «HH:MM» либо целый час («6» = 06:00
+                // — так же, как в старых ключах hour_from/hour_to).
+                "day_from" | "day_to" | "hour_from" | "hour_to" => {
+                    let t = val.trim();
+                    let Some(min) = parse_hm(t).or_else(|| t.parse::<u32>().ok().filter(|h| *h <= 24).map(|h| h * 60)) else {
+                        err = Some(format!("bad \"{key}\" \"{val}\" (HH:MM or a whole hour)"));
+                        return;
+                    };
+                    if key == "day_from" || key == "hour_from" {
+                        s.from_min = min;
+                        if s.full_day {
+                            s.to_min = min;
+                        }
+                    } else {
+                        s.to_min = min;
+                    }
+                    changes.push(format!("{key}={}", fmt_hm(min.min(24 * 60 - 1))));
+                }
+                "full_day" => {
+                    s.full_day = flag();
+                    if s.full_day {
+                        s.to_min = s.from_min;
+                    }
+                    changes.push(key.clone());
                 }
                 "font_size" => match val.trim().parse::<f32>() {
                     Ok(n) => {
@@ -209,7 +232,7 @@ fn apply_calendar_style(handle: &CalendarHandle, v: &Json) -> Result<Vec<String>
                 other => {
                     err = Some(format!(
                         "unknown style key \"{other}\" — preset, event_style, first_weekday, show_week_numbers, \
-                         hour_from, hour_to, slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
+                         day_from, day_to, full_day, slot_min, compact, font_size, weekend_tint, today_color, header_bg, \
                          cell_bg, grid_color, text_color, show_kanban_due, show_kanban_spans, show_gantt"
                     ));
                 }
@@ -384,13 +407,14 @@ pub(super) fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 if let Ok((id, handle)) = calendar_handle(ctx, v) {
                     let d = handle.lock();
                     out.push_str(&format!(
-                        "calendar:{id} · view: {} · anchor: {} · calendars: {} · first weekday: {} · hours {}–{} · slot {} min · events as {}{}{}\n",
+                        "calendar:{id} · view: {} · anchor: {} · calendars: {} · first weekday: {} · day window {}–{}{} · slot {} min · events as {}{}{}\n",
                         d.view.key(),
                         d.anchor,
                         if d.calendars.is_empty() { "all".to_string() } else { d.calendars.join(", ") },
                         d.style.first_weekday,
-                        d.style.hour_from,
-                        d.style.hour_to,
+                        fmt_hm(d.style.window().0),
+                        fmt_hm((d.style.window().0 + d.style.window().1) % (24 * 60)),
+                        if d.style.window().1 >= 24 * 60 { " (24 h)" } else { "" },
                         d.style.slot_min,
                         d.style.event_style.key(),
                         if d.style.show_kanban_due { " · board due dates" } else { "" },

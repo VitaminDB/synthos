@@ -571,8 +571,16 @@ fn calendar_through_the_tool() {
     {
         let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", &widget) else { panic!() };
         let st = handle.style();
-        assert_eq!((st.hour_from, st.hour_to, st.slot_min, st.show_kanban_due), (7, 22, 15, true));
+        assert_eq!((st.from_min, st.to_min, st.slot_min, st.show_kanban_due), (7 * 60, 22 * 60, 15, true), "старые ключи часов — это минуты окна");
         assert_eq!(st.preset, "light");
+    }
+    // Окно суток со сдвигом: «HH:MM» и полные сутки от начала.
+    call(ctx, "calendar", serde_json::json!({"op": "set_style", "calendar": &widget, "style": {"day_from": "06:30", "full_day": true}}));
+    {
+        let Some(LiveObject::Calendar { handle, .. }) = ctx.object("calendar", &widget) else { panic!() };
+        let st = handle.style();
+        assert_eq!((st.from_min, st.full_day), (6 * 60 + 30, true));
+        assert_eq!(st.window(), (6 * 60 + 30, 24 * 60));
     }
     assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "set_style", "calendar": &widget, "style": {"nope": 1}})).is_err());
     let first = store.lock().calendars[0].id.clone();

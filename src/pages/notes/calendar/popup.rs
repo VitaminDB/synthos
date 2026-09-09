@@ -37,8 +37,11 @@ pub fn event_popup(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
     PopupPanel::new()
         .is_open(handle.popup_open)
         .anchor_rect(handle.popup_anchor)
-        .min_width(320.0)
-        .max_width(380.0)
+        // Ширина с запасом под пару полей в строке: «дата — конечная
+        // дата» и «повтор — до» иначе не влезали, и плейсхолдер ломался
+        // на две строки.
+        .min_width(340.0)
+        .max_width(420.0)
         .on_close(move || h_close.draft.set(None))
         .class("notes-calendar-popup")
         .child(body(env, handle))

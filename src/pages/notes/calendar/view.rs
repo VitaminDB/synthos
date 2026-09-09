@@ -44,10 +44,14 @@ pub fn snapshot(env: &CalendarEnv, handle: &CalendarHandle) -> GridData {
     let store = env.store.lock().clone();
     let (today, now_min) = crate::agent::time::local_now();
     let range = range_of(doc.view, doc.anchor_days(), doc.style.first_weekday);
-    let occurrences = store.occurrences(range.0, range.1, &doc.calendars);
+    // Окно суток со сдвигом тянет в колонку дня ночь следующей даты:
+    // сетке нужен ещё один день данных за краем диапазона.
+    let night = matches!(doc.view, CalView::Day | CalView::Week) && doc.style.wraps();
+    let fetch_to = range.1 + i64::from(night);
+    let occurrences = store.occurrences(range.0, fetch_to, &doc.calendars);
     let external = (env.external)(&ExternalQuery {
         from: range.0,
-        to: range.1,
+        to: fetch_to,
         boards: doc.boards.clone(),
         due: doc.style.show_kanban_due,
         spans: doc.style.show_kanban_spans,

@@ -331,8 +331,8 @@ fn now_line_is_drawn_in_todays_column() {
     let (mut w, handle, _store) = world(CalView::Day, vec![]);
     handle.set_anchor(today);
     handle.set_style(|s| {
-        s.hour_from = 0;
-        s.hour_to = 24;
+        s.from_min = 0;
+        s.to_min = 24 * 60;
     });
     w.settle();
     let _ = e;
@@ -442,5 +442,87 @@ fn hours_extend_to_fit_late_event() {
     let top = grid.origin.y + 32.0 + 22.0 + (22.5 - 8.0) * 2.0 * 24.0;
     let bar = rects(&mut w).into_iter().find(|r| (r.origin.y - top).abs() < 1.0 && (r.size.height - 24.0).abs() < 1.0 && r.size.width > 100.0);
     assert!(bar.is_some(), "полоса 22:30–23:00 в своём слоте");
-    assert_eq!(handle.style().hour_to, 20, "настройка часов не тронута");
+    assert_eq!(handle.style().to_min, 20 * 60, "настройка часов не тронута");
+}
+
+/// Окно суток со сдвигом: сетка идёт 06:00 → 06:00, и колонка дня
+/// показывает ночь следующей даты — событие в 02:00 стоит в её хвосте,
+/// а не пропадает и не жмётся к кромке.
+#[test]
+fn shifted_day_window_shows_night_of_next_date() {
+    let mut e = CalEvent::new("", "Ночная", day(D) + 1);
+    e.start = Some(2 * 60);
+    e.end = Some(3 * 60);
+    e.all_day = false;
+    let (mut w, handle, _store) = world(CalView::Day, vec![e]);
+    handle.set_style(|s| {
+        s.full_day = true;
+        s.from_min = 6 * 60;
+        s.to_min = 6 * 60;
+    });
+    w.settle();
+    let grid = w.grid("notes-calendar-timegrid");
+    // Сутки целиком: 48 слотов по 30 мин × 24 px плюс шапка, ряд «весь
+    // день» и нижний отступ.
+    let expected_h = 32.0 + 22.0 + 48.0 * 24.0 + 8.0;
+    assert!((grid.size.height - expected_h).abs() < 1.0, "высота сетки {} вместо {expected_h}", grid.size.height);
+    // 02:00 следующей даты — это 20 часов от начала окна.
+    let top = grid.origin.y + 32.0 + 22.0 + 20.0 * 2.0 * 24.0;
+    let bar = rects(&mut w).into_iter().find(|r| (r.origin.y - top).abs() < 1.0 && (r.size.height - 48.0).abs() < 1.0 && r.size.width > 100.0);
+    assert!(bar.is_some(), "полоса 02:00–03:00 в ночном хвосте колонки");
+}
+
+/// Задача без времени остаётся в шапке и при окне со сдвигом: ряд «весь
+/// день» живёт по календарным датам колонок.
+#[test]
+fn timeless_event_stays_in_allday_row_with_shifted_window() {
+    let mut e = CalEvent::new("", "Без часов", day(D));
+    e.all_day = true;
+    let (mut w, handle, _store) = world(CalView::Day, vec![e]);
+    handle.set_style(|s| {
+        s.full_day = true;
+        s.from_min = 6 * 60;
+        s.to_min = 6 * 60;
+    });
+    w.settle();
+    let grid = w.grid("notes-calendar-timegrid");
+    let allday_top = grid.origin.y + 32.0 + 3.0;
+    let rects = rects(&mut w);
+    let bar = rects.iter().find(|r| (r.origin.y - allday_top).abs() < 1.0 && (r.size.height - 16.0).abs() < 1.0 && r.size.width > 100.0);
+    assert!(bar.is_some(), "полоса «весь день» в шапке");
+    let grid_top = grid.origin.y + 32.0 + 22.0;
+    let in_grid = rects.iter().any(|r| r.origin.y > grid_top + 1.0 && (r.size.height - 48.0).abs() < 1.0 && r.size.width > 100.0);
+    assert!(!in_grid, "в сетке часов её быть не должно");
+}
+
+/// Ночное окно 22:00 → 06:00 и перенос за полночь: сетка длиной восемь
+/// часов, а событие, утащенное вниз через полночь, меняет дату — раньше
+/// оно упиралось в 23:55.
+#[test]
+fn night_window_drag_past_midnight_moves_event_to_the_next_date() {
+    let mut e = CalEvent::new("", "Поздняя", day(D));
+    e.start = Some(23 * 60);
+    e.end = Some(23 * 60 + 30);
+    e.all_day = false;
+    let (mut w, handle, store) = world(CalView::Day, vec![e]);
+    handle.set_style(|s| {
+        s.from_min = 22 * 60;
+        s.to_min = 6 * 60;
+    });
+    w.settle();
+    let id = store.lock().events[0].id.clone();
+    let grid = w.grid("notes-calendar-timegrid");
+    // Восемь часов по два слота × 24 px.
+    let expected_h = 32.0 + 22.0 + 16.0 * 24.0 + 8.0;
+    assert!((grid.size.height - expected_h).abs() < 1.0, "высота сетки {} вместо {expected_h}", grid.size.height);
+    let col_w = grid.size.width - 48.0;
+    // 23:00 — час от начала окна.
+    let y = grid.origin.y + 32.0 + 22.0 + 2.0 * 24.0;
+    let body = Point::new(grid.origin.x + 48.0 + col_w / 2.0, y + 12.0);
+    // На четыре слота вниз — за полночь, в 01:00 следующей даты.
+    w.drag(body, Point::new(body.x, body.y + 4.0 * 24.0));
+    let s = store.lock();
+    let ev = s.event(&id).unwrap();
+    assert_eq!(ev.date, "2026-09-04", "событие переехало на следующую дату");
+    assert_eq!((ev.start, ev.end), (Some(60), Some(90)), "01:00–01:30");
 }

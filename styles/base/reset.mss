@@ -141,6 +141,30 @@ DatePicker:hover {
     border-color: var(--primary);
 }
 
+/* TimePicker — поле и колонки часов/минут в теме приложения. Без правила
+ * попап падает на белые умолчания виджета (см. time_picker.rs), как это
+ * было у DatePicker. `--popup-*` красят список: фон и рамка попапа,
+ * наведение и выбранная строка. */
+TimePicker {
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    font-size: 14px;
+    accent-color: var(--primary);
+    --popup-background: var(--bg-shell);
+    --popup-color: var(--text);
+    --popup-border: var(--border);
+    --popup-hover-background: var(--surface-hover);
+    --popup-selected-background: var(--surface-selected);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+TimePicker:hover {
+    border-color: var(--primary);
+}
+
 /* Slider — тоже без глобального правила жил на дефолтах syngui: трек
  * #D1D5DB и заливка #3B82F6, то есть светлая полоса и синий «не из темы»
  * (см. slider.rs::build_display_list). Раскладка свойств там такая:

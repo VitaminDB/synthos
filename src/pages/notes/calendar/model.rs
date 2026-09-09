@@ -501,11 +501,23 @@ pub struct CalendarStyle {
     pub event_style: EventStyle,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
-    /// Часы дневного/недельного вида.
-    #[serde(default = "default_hour_from")]
-    pub hour_from: u32,
-    #[serde(default = "default_hour_to")]
-    pub hour_to: u32,
+    /// Окно суток дневного/недельного вида в минутах от полуночи.
+    /// Конец не позже начала — окно идёт через полночь: 06:00 → 06:00
+    /// это сутки со сдвигом, 22:00 → 06:00 — ночная смена.
+    #[serde(default = "default_from_min")]
+    pub from_min: u32,
+    #[serde(default = "default_to_min")]
+    pub to_min: u32,
+    /// Полные сутки: окно ровно 24 часа от `from_min`, конец зеркалит
+    /// начало.
+    #[serde(default)]
+    pub full_day: bool,
+    /// Целые часы окна — формат документов до 09.09.2026. Читаются и
+    /// разворачиваются в минуты (`sanitize`), обратно не пишутся.
+    #[serde(default, rename = "hour_from", skip_serializing)]
+    legacy_hour_from: Option<u32>,
+    #[serde(default, rename = "hour_to", skip_serializing)]
+    legacy_hour_to: Option<u32>,
     /// Слот в минутах.
     #[serde(default = "default_slot_min")]
     pub slot_min: u32,
@@ -532,11 +544,11 @@ fn default_font_size() -> f32 {
 fn default_true_style() -> bool {
     true
 }
-fn default_hour_from() -> u32 {
-    8
+fn default_from_min() -> u32 {
+    8 * 60
 }
-fn default_hour_to() -> u32 {
-    20
+fn default_to_min() -> u32 {
+    20 * 60
 }
 fn default_slot_min() -> u32 {
     30
@@ -555,8 +567,11 @@ impl Default for CalendarStyle {
             text_color: String::new(),
             event_style: EventStyle::Chip,
             font_size: default_font_size(),
-            hour_from: default_hour_from(),
-            hour_to: default_hour_to(),
+            from_min: default_from_min(),
+            to_min: default_to_min(),
+            full_day: false,
+            legacy_hour_from: None,
+            legacy_hour_to: None,
             slot_min: default_slot_min(),
             compact: false,
             show_kanban_due: true,
@@ -573,11 +588,35 @@ impl CalendarStyle {
         if !self.font_size.is_finite() || !(8.0..=24.0).contains(&self.font_size) {
             self.font_size = default_font_size();
         }
-        self.hour_from = self.hour_from.min(23);
-        self.hour_to = self.hour_to.clamp(self.hour_from + 1, 24);
+        if let Some(h) = self.legacy_hour_from.take() {
+            self.from_min = h.min(23) * 60;
+        }
+        if let Some(h) = self.legacy_hour_to.take() {
+            self.to_min = h.clamp(1, 24) * 60;
+        }
+        self.from_min = self.from_min.min(23 * 60 + 55) / 5 * 5;
+        self.to_min = self.to_min.clamp(5, 24 * 60) / 5 * 5;
         if ![5, 10, 15, 20, 30, 60].contains(&self.slot_min) {
             self.slot_min = default_slot_min();
         }
+    }
+
+    /// Окно суток: начало в минутах от полуночи и длина в минутах.
+    /// Конец, не превышающий начала, означает переход через полночь —
+    /// колонка дня получает ночной хвост следующей даты.
+    pub fn window(&self) -> (u32, u32) {
+        let from = self.from_min.min(24 * 60 - 1);
+        if self.full_day {
+            return (from, 24 * 60);
+        }
+        let len = (self.to_min + 24 * 60 - from) % (24 * 60);
+        (from, if len == 0 { 24 * 60 } else { len })
+    }
+
+    /// Окно уходит за полночь: в колонке дня видна часть следующего.
+    pub fn wraps(&self) -> bool {
+        let (from, len) = self.window();
+        from + len > 24 * 60
     }
 
     /// Пресеты оформления: тема (пусто), светлый, контраст, пастель.
@@ -786,11 +825,27 @@ mod tests {
         let l = lanes(&[(540, 600), (570, 630), (700, 760)]);
         assert_eq!(l, [(0, 2), (1, 2), (0, 1)]);
         let mut st = CalendarStyle::default();
-        st.hour_to = 3;
-        st.hour_from = 5;
+        st.from_min = 5 * 60 + 3;
+        st.to_min = 3 * 60;
         st.slot_min = 7;
         st.sanitize();
-        assert_eq!((st.hour_from, st.hour_to, st.slot_min), (5, 6, 30));
+        assert_eq!((st.from_min, st.to_min, st.slot_min), (5 * 60, 3 * 60, 30));
+        // Конец не позже начала — окно через полночь: 05:00 → 03:00.
+        assert_eq!(st.window(), (5 * 60, 22 * 60));
+        assert!(st.wraps());
+        st.full_day = true;
+        assert_eq!(st.window(), (5 * 60, 24 * 60), "полные сутки — 24 часа от начала");
+        st.full_day = false;
+        st.to_min = 20 * 60;
+        st.from_min = 8 * 60;
+        assert_eq!(st.window(), (8 * 60, 12 * 60));
+        assert!(!st.wraps());
+        // Документы до 09.09.2026 хранили целые часы — они разворачиваются
+        // в минуты и обратно не пишутся.
+        let doc = CalendarDoc::parse(r#"{"version":1,"view":"day","anchor":"2026-09-03","style":{"hour_from":6,"hour_to":21}}"#).unwrap();
+        assert_eq!((doc.style.from_min, doc.style.to_min), (6 * 60, 21 * 60));
+        assert!(!doc.serialize().contains("hour_from"), "старый ключ обратно не пишется");
+
         st.apply_preset("light");
         assert_eq!(st.preset, "light");
         assert!(!st.header_bg.is_empty());

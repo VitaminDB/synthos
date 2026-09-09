@@ -1,20 +1,30 @@
 //! Сетка часов — неделя (7 колонок) и день (1 колонка): шапка с днями,
 //! ряд «весь день» (полосы по дорожкам через колонки — [`layout`], не
-//! влезло — «ещё n» со списком дня), часы `hour_from..hour_to` слотами
+//! влезло — «ещё n» со списком дня), окно суток стиля слотами
 //! `slot_min`, линия «сейчас» в сегодняшней колонке, события полосами с
 //! упаковкой пересечений по дорожкам, внешний слой (задачи досок и
 //! Ганта) подложкой с полоской: полоса с часами встаёт в сетку наравне с
 //! событием, без часов — в ряд «весь день». Текст полос режется по ширине
 //! с многоточием и клипом.
 //!
+//! Окно суток задаётся началом и концом (`CalendarStyle::window`): при
+//! конце не позже начала оно идёт через полночь (06:00 → 06:00 — сутки
+//! со сдвигом), и колонка дня получает ночной хвост следующей даты.
+//! Внутри сетка считает не абсолютные минуты, а смещение от начала окна
+//! ([`TimeElement::place`] и обратное [`TimeElement::absolute`]);
+//! `Slot::date` — календарная дата вхождения, у ночного хвоста она на
+//! день больше колонки, где стоит полоса. События и задачи без времени
+//! остаются в ряду «весь день» по своей дате.
+//!
 //! Жесты: клик по пустому слоту — выбор дня, двойной — новое событие в
 //! слоте; клик по событию — попап правки, по внешней полосе — её
 //! страница; drag тела — перенос (дни и время со снапом к слоту, событие
 //! сдвигается на разницу — повтор не прыгает началом в день броска), drag
 //! нижней кромки — длительность; внешняя полоса переносится только по
-//! дням (`shift_external`); мутации на MouseUp. Часы вида — настройка
+//! дням (`shift_external`); мутации на MouseUp. Окно вида — настройка
 //! стиля, расширенная под события с часами в видимых днях: событие в
-//! 22:30 получает свой слот, а не полоску у нижнего края.
+//! 22:30 получает свой слот, а не полоску у нижнего края; полные сутки
+//! и окно через полночь не расширяются — расширять некуда.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -31,7 +41,7 @@ use syngui::widget::context::{EventContext, TextMeasure, UpdateContext};
 use syngui::widget::{DirtyFlags, Element, ElementId, ElementTree};
 
 use super::layout::{self, ItemRef, Segment};
-use super::model::{fmt_hm, lanes};
+use super::model::{fmt_hm, lanes, Occurrence};
 use super::paint::{self, Bar, Look};
 use super::view::{color_of, day_weekday, GridData, Palette};
 use super::{CalendarEnv, CalendarHandle, ElementBase};
@@ -99,9 +109,10 @@ struct EventDrag {
 struct Slot {
     rect: Rect,
     item: ItemRef,
-    /// День вхождения (для часов — своя колонка; «весь день» — первый
-    /// видимый день полосы).
-    day: i64,
+    /// Календарная дата вхождения: у ночного хвоста окна со сдвигом она
+    /// на день больше колонки, в которой стоит полоса. Для полос «весь
+    /// день» — первый видимый день.
+    date: i64,
     all_day: bool,
     look: Look,
     flat_left: bool,
@@ -146,33 +157,74 @@ impl TimeElement {
         if self.data.doc.style.compact { 18.0 } else { 24.0 }
     }
 
-    /// Часы сетки: `hour_from..hour_to` стиля, расширенные под события и
-    /// задачи с часами в видимых днях (настройка стиля не меняется).
-    fn hours(&self) -> (u32, u32) {
+    /// Окно суток сетки: начало и длина в минутах — настройка стиля,
+    /// расширенная до целых часов под события и задачи с часами в
+    /// видимых днях (сама настройка не меняется). Полные сутки и окно
+    /// через полночь не расширяются: расширять некуда.
+    fn win(&self) -> (u32, u32) {
         let s = &self.data.doc.style;
-        let (mut from, mut to) = (s.hour_from, s.hour_to);
+        let (from, len) = s.window();
+        if from + len >= 24 * 60 {
+            return (from, len);
+        }
         let (d0, d1) = self.data.range;
+        let (mut f, mut t) = (from, from + len);
         let times = self
             .data
             .occurrences
             .iter()
+            .filter(|o| o.day >= d0 && o.day <= d1)
             .filter_map(|o| o.time)
             .chain(self.data.external.iter().filter(|e| e.day >= d0 && e.day <= d1).filter_map(|e| e.time));
         for (st, en) in times {
-            from = from.min(st / 60);
-            to = to.max(en.div_ceil(60)).min(24);
+            f = f.min(st / 60 * 60);
+            t = t.max((en.div_ceil(60) * 60).min(24 * 60));
         }
-        (from, to.max(from + 1))
+        (f, (t - f).max(s.slot_min))
+    }
+
+    /// Окно захватывает ночь следующей даты.
+    fn wraps(&self) -> bool {
+        let (from, len) = self.win();
+        from + len > 24 * 60
+    }
+
+    /// Колонка и смещение от начала окна для времени `min` даты `day`:
+    /// время раньше начала окна уходит в ночной хвост предыдущей
+    /// колонки, а без перехода через полночь прижимается к началу окна
+    /// (как раньше — событие вне часов вида жмётся к кромке).
+    fn place(&self, day: i64, min: u32) -> (i64, i64) {
+        let (from, _) = self.win();
+        let off = min as i64 - from as i64;
+        if off >= 0 {
+            (day, off)
+        } else if self.wraps() {
+            (day - 1, off + 24 * 60)
+        } else {
+            (day, 0)
+        }
+    }
+
+    /// Обратное к [`Self::place`]: дата и минуты суток по колонке и
+    /// смещению — ночной хвост принадлежит следующей дате.
+    fn absolute(&self, col: i64, off: i64) -> (i64, u32) {
+        let (from, _) = self.win();
+        let total = from as i64 + off;
+        (col + total.div_euclid(24 * 60), total.rem_euclid(24 * 60) as u32)
     }
 
     fn slots_count(&self) -> u32 {
-        let (from, to) = self.hours();
-        ((to - from) * 60 / self.data.doc.style.slot_min).max(1)
+        let (_, len) = self.win();
+        (len / self.data.doc.style.slot_min).max(1)
     }
 
     /// Отрезки «весь день» (события без времени, внешние без часов).
+    /// Вхождения за краем диапазона колонок (их тянет ночной хвост) в
+    /// ряд не идут: он живёт по календарным датам колонок.
     fn allday_segments(&self) -> Vec<Segment> {
-        let mut segs = layout::segments(&self.data.occurrences, &self.data.external);
+        let (d0, d1) = self.data.range;
+        let occ: Vec<Occurrence> = self.data.occurrences.iter().filter(|o| o.day >= d0 && o.day <= d1).cloned().collect();
+        let mut segs = layout::segments(&occ, &self.data.external);
         segs.retain(|s| s.time.is_none());
         segs
     }
@@ -198,15 +250,15 @@ impl TimeElement {
         self.base.bounds.origin.x + GUTTER_W + (day - self.data.range.0) as f32 * self.col_w()
     }
 
-    fn y_of(&self, min: u32) -> f32 {
-        let from = self.hours().0;
-        self.grid_top() + (min as f32 - (from * 60) as f32) / self.data.doc.style.slot_min as f32 * self.slot_h()
+    /// Y смещения от начала окна.
+    fn y_of(&self, off: i64) -> f32 {
+        self.grid_top() + off as f32 / self.data.doc.style.slot_min as f32 * self.slot_h()
     }
 
-    fn min_at(&self, y: f32) -> i64 {
-        let from = self.hours().0;
+    /// Смещение от начала окна по координате.
+    fn off_at(&self, y: f32) -> i64 {
         let slots = ((y - self.grid_top()) / self.slot_h()).floor() as i64;
-        (from * 60) as i64 + slots * self.data.doc.style.slot_min as i64
+        slots * self.data.doc.style.slot_min as i64
     }
 
     fn day_at(&self, x: f32) -> Option<i64> {
@@ -221,8 +273,8 @@ impl TimeElement {
         let mut more = Vec::new();
         let col_w = self.col_w();
         let event_style = self.data.doc.style.event_style;
-        let (hour_from, hour_to) = self.hours();
-        let (from_min, to_min) = ((hour_from * 60) as i64, (hour_to * 60) as i64);
+        let (_, len) = self.win();
+        let max_off = len as i64;
         let allday_top = self.base.bounds.origin.y + HEADER_H + 3.0;
         // Весь день.
         let segs = self.allday_segments();
@@ -238,7 +290,7 @@ impl TimeElement {
             out.push(Slot {
                 rect: Rect::new(Point::new(x0, allday_top + p.lane as f32 * ALLDAY_ROW_H), Size::new((x1 - x0).max(4.0), ALLDAY_ROW_H - 2.0)),
                 item: s.item.clone(),
-                day: self.data.range.0 + run.col0 as i64,
+                date: self.data.range.0 + run.col0 as i64,
                 all_day: true,
                 look: Look::of(event_style, s.is_event(), true, s.multi_day()),
                 flat_left,
@@ -259,30 +311,40 @@ impl TimeElement {
         // одной упаковке дорожек: задача доски не наезжает на встречу.
         for day in self.days() {
             let x = self.col_x(day);
-            let timed: Vec<(ItemRef, (u32, u32))> = self
+            // Колонка собирает вхождения своей даты и — у окна со
+            // сдвигом — ночной хвост следующей: событие в 02:00 при
+            // старте 06:00 стоит внизу предыдущей колонки.
+            let timed: Vec<(ItemRef, i64, (i64, i64))> = self
                 .data
                 .occurrences
                 .iter()
-                .filter(|o| o.day == day)
-                .filter_map(|o| o.time.map(|t| (ItemRef::Event(o.event.clone()), t)))
-                .chain(self.data.external.iter().enumerate().filter(|(_, e)| e.day == day).filter_map(|(i, e)| e.time.map(|t| (ItemRef::External(i), t))))
+                .filter_map(|o| o.time.map(|t| (ItemRef::Event(o.event.clone()), o.day, t)))
+                .chain(self.data.external.iter().enumerate().filter_map(|(i, e)| e.time.map(|t| (ItemRef::External(i), e.day, t))))
+                .filter_map(|(item, date, (st, en))| {
+                    let (col, off) = self.place(date, st);
+                    if col != day || off >= max_off {
+                        return None;
+                    }
+                    let dur = (en as i64 - st as i64).max(5);
+                    let s = off.clamp(0, max_off - 5);
+                    let e = (off + dur).clamp(s + 5, max_off);
+                    Some((item, date, (s, e)))
+                })
                 .collect();
-            let intervals: Vec<(u32, u32)> = timed.iter().map(|(_, t)| *t).collect();
+            let intervals: Vec<(u32, u32)> = timed.iter().map(|(_, _, (s, e))| (*s as u32, *e as u32)).collect();
             let packed = lanes(&intervals);
-            for (k, (item, (s, e))) in timed.iter().enumerate() {
+            for (k, (item, date, (s, e))) in timed.iter().enumerate() {
                 let (lane, of) = packed[k];
-                let s = (*s as i64).clamp(from_min, to_min - 5) as u32;
-                let e = (*e as i64).clamp(s as i64 + 5, to_min) as u32;
                 let lane_w = (col_w - 4.0) / of as f32;
                 let rect = Rect::new(
-                    Point::new(x + 2.0 + lane as f32 * lane_w, self.y_of(s)),
-                    Size::new((lane_w - 2.0).max(6.0), (self.y_of(e) - self.y_of(s)).max(self.slot_h() * 0.5)),
+                    Point::new(x + 2.0 + lane as f32 * lane_w, self.y_of(*s)),
+                    Size::new((lane_w - 2.0).max(6.0), (self.y_of(*e) - self.y_of(*s)).max(self.slot_h() * 0.5)),
                 );
                 let is_event = matches!(item, ItemRef::Event(_));
                 out.push(Slot {
                     rect,
                     item: item.clone(),
-                    day,
+                    date: *date,
                     all_day: false,
                     look: if is_event { Look::Filled } else { Look::Tinted },
                     flat_left: false,
@@ -314,8 +376,10 @@ impl TimeElement {
                 }
             }
             DragMode::Resize => {
-                let new_end = (d.time.1 as i64 + d.d_min).max(d.time.0 as i64 + self.data.doc.style.slot_min as i64) as u32;
-                r.size.height = (self.y_of(new_end) - r.origin.y).max(self.slot_h() * 0.5);
+                let slot_min = self.data.doc.style.slot_min as i64;
+                let new_end = (d.time.1 as i64 + d.d_min).max(d.time.0 as i64 + slot_min);
+                let dur = (new_end - d.time.0 as i64) as f32 / slot_min as f32 * self.slot_h();
+                r.size.height = dur.max(self.slot_h() * 0.5);
             }
         }
         r
@@ -343,11 +407,18 @@ impl TimeElement {
             DragMode::Move => {
                 // На разницу дней от собственной даты события: повтор и
                 // многодневное не прыгают началом в колонку броска.
+                // Уход за полночь (окно со сдвигом это позволяет) —
+                // ещё день сдвига, а не упор в 23:55.
                 let Some(ev) = self.data.store.event(&id) else { return };
                 let Some((start_day, _)) = ev.span() else { return };
-                let start = if ev.all_day { None } else { Some(((d.time.0 as i64 + d.d_min).clamp(0, 24 * 60 - 5)) as u32) };
+                let (over, start) = if ev.all_day {
+                    (0, None)
+                } else {
+                    let abs = d.time.0 as i64 + d.d_min;
+                    (abs.div_euclid(24 * 60), Some(abs.rem_euclid(24 * 60) as u32))
+                };
                 if d.d_days != 0 || d.d_min != 0 {
-                    self.env.store.move_event(&id, start_day + d.d_days, start);
+                    self.env.store.move_event(&id, start_day + d.d_days + over, start);
                 }
             }
             DragMode::Resize => {
@@ -440,15 +511,16 @@ impl Element for TimeElement {
         c.set_color(pal.grid);
         c.draw_line(b.origin.x, b.origin.y + HEADER_H, b.origin.x + b.size.width, b.origin.y + HEADER_H);
         c.draw_line(b.origin.x, grid_top, b.origin.x + b.size.width, grid_top);
-        let (hour_from, hour_to) = self.hours();
-        let per_hour = (60 / style.slot_min).max(1);
+        let (win_from, win_len) = self.win();
         for i in 0..=slots_n {
             let y = grid_top + i as f32 * slot_h;
-            let hour_line = i % per_hour == 0;
+            // Час — по абсолютному времени, а не по счёту слотов: окно
+            // может начинаться в 06:30, и линии часов остаются на часах.
+            let minute = (win_from + i * style.slot_min) % (24 * 60);
+            let hour_line = minute % 60 == 0;
             c.set_color(if hour_line { pal.grid } else { pal.grid.with_alpha(pal.grid.a * 0.45) });
             c.draw_line(b.origin.x + GUTTER_W, y, b.origin.x + b.size.width, y);
             if hour_line && i < slots_n {
-                let minute = hour_from * 60 + i / per_hour * 60;
                 list.push_text_styled_singleline(
                     &fmt_hm(minute),
                     Rect::new(Point::new(b.origin.x + 4.0, y + 2.0), Size::new(GUTTER_W - 8.0, font + 2.0)),
@@ -482,7 +554,7 @@ impl Element for TimeElement {
                 ItemRef::Event(id) => {
                     let e = self.data.store.event(id);
                     let color = e.map(|e| self.data.store.color_of(e)).and_then(|c| color_of(&c)).unwrap_or(pal.accent);
-                    let occ = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.day);
+                    let occ = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.date);
                     (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), self.data.selected.as_deref() == Some(id.as_str()), occ.and_then(|o| o.time))
                 }
                 ItemRef::External(i) => {
@@ -573,11 +645,14 @@ impl Element for TimeElement {
             }
             paint::draw_more(list, m.rect, m.n, font, if hovered { pal.accent } else { pal.muted });
         }
-        // Линия «сейчас».
-        let (from_min, to_min) = (hour_from * 60, hour_to * 60);
-        if days.contains(&self.data.today) && (from_min..=to_min).contains(&self.data.now_min) {
-            let x = self.col_x(self.data.today);
-            let y = self.y_of(self.data.now_min);
+        // Линия «сейчас»: у окна со сдвигом ночь попадает в колонку
+        // предыдущего дня — 03:00 при старте 06:00 рисуется в хвосте
+        // вчерашней колонки.
+        let raw = self.data.now_min as i64 - win_from as i64;
+        let (now_col, now_off) = if raw >= 0 { (self.data.today, raw) } else { (self.data.today - 1, raw + 24 * 60) };
+        if days.contains(&now_col) && (0..=win_len as i64).contains(&now_off) {
+            let x = self.col_x(now_col);
+            let y = self.y_of(now_off);
             list.push_rect(Rect::new(Point::new(x, y - 1.0), Size::new(col_w, 2.0)), pal.today.with_alpha(0.9), [1.0; 4]);
             list.push_rect(Rect::new(Point::new(x - 3.0, y - 3.5), Size::new(7.0, 7.0)), pal.today, [3.5; 4]);
         }
@@ -602,7 +677,7 @@ impl Element for TimeElement {
                         let slot = &slots[i];
                         let (time, mode) = match &slot.item {
                             ItemRef::Event(id) => {
-                                let time = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.day).and_then(|o| o.time).unwrap_or((0, 0));
+                                let time = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.date).and_then(|o| o.time).unwrap_or((0, 0));
                                 let mode = if !slot.all_day && position.y > slot.rect.origin.y + slot.rect.size.height - EDGE_PX {
                                     DragMode::Resize
                                 } else {
@@ -623,18 +698,23 @@ impl Element for TimeElement {
                 }
                 let Some(day) = self.day_at(position.x) else { return EventResult::Ignored };
                 let in_hours = position.y >= self.grid_top();
-                let start = if in_hours { self.min_at(position.y).clamp(0, 24 * 60 - 5) as u32 } else { 0 };
+                let (_, len) = self.win();
+                let slot_min = self.data.doc.style.slot_min as i64;
+                let off = if in_hours { self.off_at(position.y).clamp(0, (len as i64 - slot_min).max(0)) } else { 0 };
+                // Ночной хвост принадлежит следующей дате: событие,
+                // созданное в 01:00 при старте 06:00, ложится на завтра.
+                let (target_day, start) = if in_hours { self.absolute(day, off) } else { (day, 0) };
                 let now = Instant::now();
-                let double = self.last_click.as_ref().is_some_and(|(t, d, s)| *d == day && *s == start && now.duration_since(*t) < DOUBLE_CLICK);
-                self.last_click = Some((now, day, start));
+                let double = self.last_click.as_ref().is_some_and(|(t, d, s)| *d == target_day && *s == start && now.duration_since(*t) < DOUBLE_CLICK);
+                self.last_click = Some((now, target_day, start));
                 self.handle.select(None);
                 if double {
                     let cal = self.data.doc.calendars.first().cloned().or_else(|| self.data.store.calendars.first().map(|c| c.id.clone())).unwrap_or_default();
                     let anchor = Rect::new(
-                        Point::new(self.col_x(day), if in_hours { self.y_of(start) } else { self.base.bounds.origin.y + HEADER_H }),
+                        Point::new(self.col_x(day), if in_hours { self.y_of(off) } else { self.base.bounds.origin.y + HEADER_H }),
                         Size::new(self.col_w(), self.slot_h()),
                     );
-                    self.handle.open_new(&cal, day, in_hours.then_some(start), self.data.doc.style.slot_min, anchor);
+                    self.handle.open_new(&cal, target_day, in_hours.then_some(start), self.data.doc.style.slot_min, anchor);
                 } else if self.handle.selected_day.get_untracked() != Some(day) {
                     self.handle.selected_day.set(Some(day));
                 }

@@ -736,12 +736,14 @@ document-editor {
     accent-color: var(--primary);
     background-color: var(--bg-chat);
 }
+/* Отступ панели: до 09.09.2026 PopupPanel игнорировал padding из MSS, и
+ * поля попапа касались краёв окна (см. popup_panel.rs::padding). */
 .notes-calendar-popup {
     background-color: var(--bg-shell);
     border-radius: 12px;
     border-width: 1px;
     border-color: var(--border);
-    padding: 12px;
+    padding: 14px;
 }
 .notes-calendar-popup-title {
     font-size: 14px;

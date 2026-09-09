@@ -1761,7 +1761,8 @@ fn calendar_view_props(
     doc: &super::calendar::model::CalendarDoc,
     data: &super::calendar::model::CalendarStore,
 ) -> impl Widget {
-    use syngui::widgets::input::{DatePicker, Date};
+    use syngui::widgets::input::time_picker::Time;
+    use syngui::widgets::input::{Date, DatePicker, TimePicker};
     let style = doc.style.clone();
     let h = handle.clone();
     let view = Dropdown::new()
@@ -1795,18 +1796,58 @@ fn calendar_view_props(
         .class("notes-props-field");
     let h = handle.clone();
     let week_numbers = switch_row(tr!("notes.props.calendar.week_numbers"), style.show_week_numbers, move |on| h.set_style(|s| s.show_week_numbers = on));
+    // Полные сутки — окно ровно 24 часа от начала: конец зеркалит
+    // начало, и вместо второго пикера стоит подпись «+24 ч».
+    let h = handle.clone();
+    let full_day = switch_row(tr!("notes.props.calendar.full_day"), style.full_day, move |on| {
+        h.set_style(move |s| {
+            s.full_day = on;
+            if on {
+                s.to_min = s.from_min;
+            }
+        })
+    });
+    let time_of = |min: u32| Time::new(min / 60, min % 60);
     let h1 = handle.clone();
-    let h2 = handle.clone();
-    let hours = Row::new()
+    let mut hours = Row::new()
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(
-            SpinBox::new().range(0.0, 23.0).step(1.0).width(72.0).value(style.hour_from as f64).on_change(move |v| h1.set_style(|s| s.hour_from = v as u32)).class("notes-props-field"),
-        )
-        .child(Text::new("–").class("notes-props-hint"))
-        .child(
-            SpinBox::new().range(1.0, 24.0).step(1.0).width(72.0).value(style.hour_to as f64).on_change(move |v| h2.set_style(|s| s.hour_to = v as u32)).class("notes-props-field"),
+            TimePicker::new()
+                .use_24h(true)
+                .minute_step(30)
+                .width(84.0)
+                .selected(time_of(style.from_min))
+                .on_change(move |t| {
+                    if let Some(t) = t {
+                        h1.set_style(move |s| {
+                            s.from_min = t.minutes();
+                            if s.full_day {
+                                s.to_min = s.from_min;
+                            }
+                        });
+                    }
+                })
+                .class("notes-props-field"),
         );
+    if style.full_day {
+        hours = hours.child(Text::new(tr!("notes.props.calendar.plus_day")).class("notes-props-hint"));
+    } else {
+        let h2 = handle.clone();
+        hours = hours.child(Text::new("–").class("notes-props-hint")).child(
+            TimePicker::new()
+                .use_24h(true)
+                .minute_step(30)
+                .width(84.0)
+                .selected(time_of(style.to_min))
+                .on_change(move |t| {
+                    if let Some(t) = t {
+                        h2.set_style(move |s| s.to_min = t.minutes());
+                    }
+                })
+                .class("notes-props-field"),
+        );
+    }
     let h = handle.clone();
     let slot = Dropdown::new()
         .width(96.0)
@@ -1877,6 +1918,7 @@ fn calendar_view_props(
         .child(field_row(tr!("notes.props.calendar.calendars"), chips))
         .child(field_row(tr!("notes.props.calendar.first_weekday"), first))
         .child(week_numbers)
+        .child(full_day)
         .child(field_row(tr!("notes.props.calendar.hours"), hours))
         .child(field_row(tr!("notes.props.calendar.slot"), slot))
         .child(compact)

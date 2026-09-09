@@ -72,6 +72,31 @@ fn closed_window_has_no_body() {
     assert!(harness.find_by_class("message-area").is_empty(), "лента в закрытом окне не строится");
 }
 
+/// Окно берёт тень и рамку из MSS (`FloatingWindow` раньше рисовал
+/// захардкоженную тень): двухслойная тень, вторая — `--glass-shadow` темы,
+/// радиус 14px. Ловит и парсер: `var()` внутри списка теней должен
+/// раскрываться.
+#[test]
+fn window_style_has_layered_shadow_and_rounder_corners() {
+    // Закрытое окно: стиль применяется и к нему, а живая лента требует AppCtx.
+    let ctx = isolated_ctx("float-style");
+    ctx.chat_detached.set(false);
+
+    let mut harness = TestHarness::new(Box::new(
+        Stack::new().fit(StackFit::Expand).child(float_window::window()),
+    ));
+    let engine = harness.apply_mss(synthos::styles::styles());
+    settle(&mut harness, &engine);
+
+    let win = harness.find_by_class("chat-float-window")[0];
+    let mss = harness.element_mss(win).expect("mss окна");
+    let shadows = mss.box_shadow.as_ref().expect("box-shadow из стиля");
+    assert_eq!(shadows.as_slice().len(), 2, "ближняя тень + тень темы");
+    assert!(shadows.as_slice().iter().all(|s| !s.inset && s.blur_radius > 0.0));
+    assert_eq!(mss.border_radius_uniform(100.0, 0.0), 14.0, "радиус углов окна");
+    assert_eq!(mss.border_width_or(0.0), 1.0, "рамка 1px");
+}
+
 #[test]
 fn detach_at_puts_title_under_cursor_and_keeps_window_inside_host() {
     let ctx = isolated_ctx("float-detach-at");

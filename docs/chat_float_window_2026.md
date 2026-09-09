@@ -51,6 +51,18 @@
   `install_config_autosave`.
 * Стили — `styles/components/chat_float_window.mss`
   (`.chat-float-window`, `.chat-detached-*`, `.fab-chat-corner`).
+  `FloatingWindow` берёт тень (`box-shadow`, список с `var(--glass-shadow)`
+  темы) и толщину рамки из MSS — раньше тень была захардкожена в syngui.
+
+## Выделение текста в окне
+
+Клик по свободному месту снимает выделение в `MarkdownView`. MouseDown в
+syngui доставляется позиционно (hit-test) или, внутри overlay, обходом
+поддерева до первого обработчика — блок с выделением клика вне себя не
+видел. Теперь `MarkdownView` объявляет себя владельцем выделения
+(`EventContext::claim_text_selection`), а `ElementTree` перед обычной
+доставкой шлёт владельцу MouseDown вне его границ
+(`notify_text_selection_owner`); блок по нему сбрасывает выделение.
 
 ## Тесты
 

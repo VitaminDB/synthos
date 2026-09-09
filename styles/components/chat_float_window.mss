@@ -3,13 +3,16 @@
 
 /* Окно. padding — рамка вокруг ленты: с нулём квадратные углы ленты
  * вылезали бы за скруглённые углы окна. min-* — нижняя граница ресайза
- * мышью; стартовый размер — `CHAT_WINDOW_DEFAULT_SIZE`. */
+ * мышью; стартовый размер — `CHAT_WINDOW_DEFAULT_SIZE`.
+ * Тень двухслойная: ближняя даёт контур на светлом фоне, дальняя
+ * (`--glass-shadow`, темы задают её сами) — отрыв от страницы. */
 .chat-float-window {
     background-color: var(--bg-panel);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    padding: 6px;
+    border-radius: 14px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18), var(--glass-shadow);
+    padding: 8px;
     min-width: 360px;
     min-height: 320px;
     font-size: 13px;

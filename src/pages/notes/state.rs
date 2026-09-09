@@ -234,7 +234,7 @@ impl NotesCtx {
             }
         }
         autosave::mark_saved(project::TREE_PATH, 0);
-        Self {
+        let ctx = Self {
             project_title: use_signal(project::project_title(&path)),
             project_path: use_signal(path),
             tree: use_signal(Arc::new(tree)),
@@ -265,7 +265,13 @@ impl NotesCtx {
             icon_picker_open: use_signal(false),
             doc_menu_open: use_signal(false),
             doc_menu_pos: use_signal(Point::zero()),
+        };
+        // Восстановленная (или первая) страница загружается сразу: иначе
+        // дерево её подсвечивает, а редактор показывает «пусто» до клика.
+        if let Some(id) = ctx.active.get_untracked() {
+            ctx.page(&id);
         }
+        ctx
     }
 
     // ─── Дерево ───────────────────────────────────────────────────────────
@@ -663,9 +669,12 @@ impl NotesCtx {
         self.active.set(Some(id.to_string()));
     }
 
+    /// Активная страница; если её ещё нет в пуле (id пришёл из конфига
+    /// или дерева, минуя [`Self::activate`]) — подгружается из бандла.
     pub fn active_page(&self) -> Option<LivePage> {
         let id = self.active.get()?;
-        self.pages.get().into_iter().find(|p| p.id == id)
+        let _ = self.pages.get();
+        self.page(&id)
     }
 
     /// Операция над документом активной страницы (контекстное меню).
@@ -702,10 +711,15 @@ impl NotesCtx {
                 id: id.to_string(),
                 handle: MindmapHandle::new(MindmapDoc::parse(&content).ok()?),
             },
-            "calendar" => LiveObject::Calendar {
-                id: id.to_string(),
-                handle: CalendarHandle::new(CalendarDoc::parse(&content).ok()?),
-            },
+            "calendar" => {
+                // Якорь — состояние сессии, не проекта: открытый календарь
+                // показывает сегодня, а не день, на котором его оставили
+                // (или создали) в прошлый раз. Сохранённое значение —
+                // только запасное, если сегодняшнее вычислить не вышло.
+                let mut doc = CalendarDoc::parse(&content).ok()?;
+                doc.anchor = days_to_iso(super::gantt::calendar::today_days());
+                LiveObject::Calendar { id: id.to_string(), handle: CalendarHandle::new(doc) }
+            }
             "chart" => LiveObject::Chart {
                 id: id.to_string(),
                 handle: ChartHandle::new(ChartDoc::parse(&content).ok()?),
@@ -944,6 +958,77 @@ pub fn object_refs(md: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Конфиг над временным проектом (файла ещё нет — `new_or_restore`
+    /// создаст пустой).
+    fn temp_cfg() -> AppConfig {
+        let dir = std::env::temp_dir().join(format!("synthos-notes-state-{}", project::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        AppConfig {
+            notes_project_path: dir.join("p.syn").display().to_string(),
+            notes_vault_path: dir.join("no-vault").display().to_string(),
+            ..AppConfig::default()
+        }
+    }
+
+    /// При открытии заметок первая (или сохранённая в конфиге) страница
+    /// подсвечена в дереве — и редактор должен показывать её сразу, а не
+    /// «пусто» до первого клика по ней.
+    #[test]
+    fn active_page_is_loaded_right_after_restore() {
+        let cfg = temp_cfg();
+        let path = project::resolve_project_path(&cfg.notes_project_path);
+        let mut tree = ProjectTree::new();
+        let first = PageNode::new("Первая");
+        let second = PageNode::new("Вторая");
+        let (first_id, second_id) = (first.id.clone(), second.id.clone());
+        tree.insert(None, None, first);
+        tree.insert(None, None, second);
+        project::create(
+            &path,
+            &tree,
+            vec![(project::page_path(&first_id), "Привет".as_bytes().to_vec()), (project::page_path(&second_id), "Вторая страница".as_bytes().to_vec())],
+        )
+        .unwrap();
+
+        // Без сохранённого id — первая страница дерева.
+        let ctx = NotesCtx::new_or_restore(&cfg);
+        assert_eq!(ctx.active.get_untracked().as_deref(), Some(first_id.as_str()));
+        let live = ctx.active_page().expect("первая страница загружена без клика");
+        assert_eq!(live.markdown().trim(), "Привет");
+
+        // С сохранённым id — именно она.
+        let cfg2 = AppConfig { notes_active: Some(second_id.clone()), ..cfg.clone() };
+        let ctx2 = NotesCtx::new_or_restore(&cfg2);
+        assert_eq!(ctx2.active.get_untracked().as_deref(), Some(second_id.as_str()));
+        assert_eq!(ctx2.active_page().expect("сохранённая страница загружена").markdown().trim(), "Вторая страница");
+
+        // Активной поставили страницу мимо `activate` — `active_page` дозагрузит.
+        ctx2.active.set(Some(first_id.clone()));
+        assert_eq!(ctx2.active_page().expect("дозагрузка по id").markdown().trim(), "Привет");
+    }
+
+    /// Виджет календаря хранит якорь в JSON; при загрузке из бандла он
+    /// сбрасывается на сегодня — иначе «День» открывал дату, на которой
+    /// календарь оставили (или создали) в прошлый раз.
+    #[test]
+    fn calendar_widget_opens_on_today_not_on_saved_anchor() {
+        let cfg = temp_cfg();
+        let ctx = NotesCtx::new_or_restore(&cfg);
+        let path = project::resolve_project_path(&cfg.notes_project_path);
+        let today = super::super::gantt::calendar::today_days();
+        let id = project::new_id();
+        let stale = CalendarDoc::template(CalView::Day, today - 6);
+        project::apply_ops(&path, &[project::WriteOp::Put { path: project::object_path("calendar", &id), bytes: stale.serialize().into_bytes() }]).unwrap();
+
+        let LiveObject::Calendar { handle, .. } = ctx.object("calendar", &id).unwrap() else { panic!("calendar") };
+        assert_eq!(handle.anchor(), today);
+        assert_eq!(handle.view(), CalView::Day);
+        // Навигация в сессии — обычная: якорь двигается и остаётся в пуле.
+        handle.step(1);
+        let LiveObject::Calendar { handle: again, .. } = ctx.object("calendar", &id).unwrap() else { panic!("calendar") };
+        assert_eq!(again.anchor(), today + 1);
+    }
 
     #[test]
     fn object_refs_parse() {

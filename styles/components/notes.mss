@@ -784,6 +784,20 @@ document-editor {
 .notes-calendar-chip-text {
     font-size: 11px;
 }
+/* Дни недели повтора в попапе события: семь узких чипов в одну строку. */
+.notes-calendar-day-chip {
+    width: 28px;
+    height: 22px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    color: var(--text-muted);
+}
+.notes-calendar-day-chip.selected {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: var(--on-primary);
+}
 /* Список дня («ещё n»): строки с маркером цвета, временем и названием. */
 .notes-calendar-day-title {
     font-size: 13px;

@@ -71,6 +71,9 @@ fn event_line(store: &CalendarStore, e: &CalEvent) -> String {
     }
     if e.repeat != Repeat::None {
         s.push_str(&format!(" · repeat {}", e.repeat.key()));
+        if !e.days.is_any() {
+            s.push_str(&format!(" on {}", e.days.label()));
+        }
         if let Some(u) = &e.until {
             s.push_str(&format!(" until {u}"));
         }
@@ -323,8 +326,51 @@ fn apply_event_fields(ctx: NotesCtx, store: &CalendarStore, e: &mut CalEvent, v:
         changes.push("done".to_string());
     }
     if let Some(r) = str_field(v, "repeat") {
-        e.repeat = Repeat::parse(r).ok_or_else(|| format!("bad repeat \"{r}\" (none | daily | weekly | monthly | yearly)"))?;
+        // `weekdays` / `weekends` — сокращения: ежедневный повтор плюс маска
+        // дней недели (одно событие вместо дюжины отдельных).
+        match r.trim().to_ascii_lowercase().as_str() {
+            "weekdays" | "workdays" | "будни" => {
+                e.repeat = Repeat::Daily;
+                e.days = Weekdays::WEEKDAYS;
+            }
+            "weekends" | "weekend" | "выходные" => {
+                e.repeat = Repeat::Daily;
+                e.days = Weekdays::WEEKENDS;
+            }
+            _ => {
+                e.repeat = Repeat::parse(r).ok_or_else(|| {
+                    format!("bad repeat \"{r}\" (none | daily | weekly | monthly | yearly | weekdays | weekends)")
+                })?;
+                if e.repeat == Repeat::None {
+                    e.days = Weekdays::default();
+                }
+            }
+        }
         changes.push("repeat".to_string());
+    }
+    // Дни недели повтора: `only_days` оставляет перечисленные, `skip_days`
+    // выбрасывает их. Пустой список (или "none"/"all") снимает фильтр.
+    // `days` — та же маска: у события это ничего другого значить не может,
+    // а модель нет-нет да и напишет короткое имя.
+    let only = list_field(v, "only_days").or_else(|| list_field(v, "days"));
+    if let Some(list) = &only {
+        e.days = Weekdays::parse_list(list)?;
+        changes.push("only_days".to_string());
+    }
+    if let Some(list) = list_field(v, "skip_days") {
+        let skip = Weekdays::parse_list(&list)?;
+        // Считаем от целой недели (или от only_days этого же вызова), а не
+        // от прежней маски: «skip_days: [sun]» — это «все дни, кроме вс».
+        let base = if only.is_some() { e.days } else { Weekdays::default() };
+        e.days = if skip.is_any() { Weekdays::default() } else { base.without(skip) };
+        changes.push("skip_days".to_string());
+    }
+    if !e.days.is_any() && e.repeat == Repeat::None {
+        return Err(
+            "only_days/skip_days need a repeat: pass repeat=daily (or weekly/monthly/yearly) \
+             — one repeating event with a weekday filter replaces a dozen single ones"
+                .to_string(),
+        );
     }
     if let Some(raw) = raw_string(v, "until") {
         e.until = if raw.trim().is_empty() || raw.eq_ignore_ascii_case("none") {
@@ -538,7 +584,7 @@ pub(super) fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if changes.is_empty() {
                 return Err(
                     "nothing to update: pass title, date, end_date, start_time, end_time, all_day, calendar, \
-                     color, note, done, repeat, until or link"
+                     color, note, done, repeat, only_days, skip_days, until or link"
                         .to_string(),
                 );
             }

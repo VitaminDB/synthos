@@ -409,7 +409,11 @@ pub(super) fn agenda_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 e.id,
                 cal,
                 if e.done { " · done" } else { "" },
-                if e.repeat != Repeat::None { format!(" · repeat {}", e.repeat.key()) } else { String::new() }
+                if e.repeat != Repeat::None {
+                    format!(" · repeat {}{}", e.repeat.key(), if e.days.is_any() { String::new() } else { format!(" on {}", e.days.label()) })
+                } else {
+                    String::new()
+                }
             ))
         })
         .collect();

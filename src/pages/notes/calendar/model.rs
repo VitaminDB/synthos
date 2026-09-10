@@ -75,6 +75,162 @@ impl Repeat {
     }
 }
 
+/// Дни недели повтора: биты 0…6, понедельник — бит 0. Пусто — фильтра нет
+/// (повтор идёт каждый свой день). Так одно событие «каждый день, кроме
+/// выходных» заменяет дюжину отдельных.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Weekdays(u8);
+
+impl Weekdays {
+    /// Ключи в порядке битов: понедельник первый (как `weekday_of`).
+    pub const KEYS: [&'static str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const FULL: u8 = 0b0111_1111;
+    pub const WEEKDAYS: Weekdays = Weekdays(0b0001_1111);
+    pub const WEEKENDS: Weekdays = Weekdays(0b0110_0000);
+
+    /// Маска из битов; все семь дней — то же самое, что «любой день».
+    pub fn from_bits(bits: u8) -> Self {
+        let b = bits & Self::FULL;
+        Weekdays(if b == Self::FULL { 0 } else { b })
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Фильтра нет — повтор идёт по всем дням.
+    pub fn is_any(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Разрешён ли день недели (0 — понедельник).
+    pub fn has(self, weekday: u32) -> bool {
+        self.is_any() || self.0 & (1 << (weekday % 7)) != 0
+    }
+
+    /// Разрешён ли календарный день (номер дня, как в `parse_days`).
+    pub fn allows(self, day: i64) -> bool {
+        self.has(weekday_of(day) as u32)
+    }
+
+    /// Переключить день: из «любых» разворачивается вся неделя, снятый
+    /// последний день возвращает «любые».
+    pub fn toggled(self, weekday: u32) -> Self {
+        let base = if self.is_any() { Self::FULL } else { self.0 };
+        let next = base ^ (1 << (weekday % 7));
+        if next & Self::FULL == 0 {
+            Weekdays(0)
+        } else {
+            Self::from_bits(next)
+        }
+    }
+
+    pub fn keys(self) -> Vec<&'static str> {
+        (0..7).filter(|i| self.0 & (1 << i) != 0).map(|i| Self::KEYS[i as usize]).collect()
+    }
+
+    /// `mon,wed,fri` — для строк инструмента и логов.
+    pub fn label(self) -> String {
+        self.keys().join(",")
+    }
+
+    /// Один токен: `mon` / `monday` / `пн` / `1`…`7` (1 — понедельник),
+    /// либо группа `weekdays` / `weekends` / `all`.
+    pub fn parse_token(s: &str) -> Option<Self> {
+        let t = s.trim().trim_matches(|c: char| c == '"' || c == '\'').to_lowercase();
+        if t.is_empty() {
+            return None;
+        }
+        let group = match t.as_str() {
+            "weekdays" | "weekday" | "workdays" | "workday" | "business" | "будни" | "рабочие" => Some(Self::WEEKDAYS),
+            "weekends" | "weekend" | "выходные" => Some(Self::WEEKENDS),
+            "all" | "any" | "every" | "everyday" | "daily" | "none" | "любые" | "все" => Some(Weekdays(0)),
+            _ => None,
+        };
+        if group.is_some() {
+            return group;
+        }
+        if let Ok(n) = t.parse::<u32>() {
+            return (1..=7).contains(&n).then(|| Weekdays(1 << (n - 1)));
+        }
+        const RU: [&str; 7] = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+        const RU_FULL: [&str; 7] = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"];
+        // `monday` → `mon`, `mo` → `mon`, «среда» → «ср»; однобуквенные
+        // сокращения неоднозначны и не разбираются.
+        let idx = Self::KEYS
+            .iter()
+            .position(|k| t.starts_with(k))
+            .or_else(|| RU.iter().position(|k| t.starts_with(k)))
+            .or_else(|| RU_FULL.iter().position(|k| k.starts_with(t.as_str())))
+            .or_else(|| (t.chars().count() >= 2).then(|| Self::KEYS.iter().position(|k| k.starts_with(t.as_str()))).flatten());
+        idx.map(|i| Weekdays(1 << i))
+    }
+
+    /// Строка из нескольких дней: `mon,wed` / `пн вт` / `weekdays`.
+    pub fn parse(s: &str) -> Option<Self> {
+        let mut bits = 0u8;
+        let mut seen = false;
+        for part in s.split([',', ';', '/', '|', ' ', '\t']).filter(|p| !p.trim().is_empty()) {
+            let w = Self::parse_token(part)?;
+            bits |= w.0;
+            seen = true;
+        }
+        seen.then(|| Self::from_bits(bits))
+    }
+
+    /// Список из инструмента: строки-дни либо группы; пустой список —
+    /// «любые дни».
+    pub fn parse_list<S: AsRef<str>>(items: &[S]) -> Result<Self, String> {
+        let mut bits = 0u8;
+        for it in items {
+            let w = Self::parse(it.as_ref()).ok_or_else(|| {
+                format!("bad weekday \"{}\" (mon | tue | wed | thu | fri | sat | sun, 1…7, weekdays, weekends)", it.as_ref())
+            })?;
+            if w.is_any() && items.len() == 1 {
+                return Ok(Weekdays(0));
+            }
+            bits |= w.0;
+        }
+        Ok(Self::from_bits(bits))
+    }
+
+    /// Убрать дни `other` (для `skip_days`): из «любых» сперва
+    /// разворачивается вся неделя.
+    pub fn without(self, other: Self) -> Self {
+        if other.is_any() {
+            return self;
+        }
+        let base = if self.is_any() { Self::FULL } else { self.0 };
+        Self::from_bits(base & !other.0)
+    }
+}
+
+impl Serialize for Weekdays {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        self.keys().serialize(ser)
+    }
+}
+
+impl<'de> Deserialize<'de> for Weekdays {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bits(u8),
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(match Raw::deserialize(de)? {
+            Raw::Bits(b) => Weekdays::from_bits(b),
+            Raw::One(s) => Weekdays::parse(&s).unwrap_or_default(),
+            Raw::Many(v) => {
+                let bits = v.iter().filter_map(|s| Weekdays::parse(s)).fold(0u8, |a, w| a | w.0);
+                Weekdays::from_bits(bits)
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CalEvent {
     pub id: String,
@@ -104,6 +260,10 @@ pub struct CalEvent {
     pub color: String,
     #[serde(default, skip_serializing_if = "Repeat::is_none")]
     pub repeat: Repeat,
+    /// Дни недели повтора (пусто — любые): «каждый день, кроме выходных» —
+    /// это `repeat: daily` плюс `only_days: пн…пт`.
+    #[serde(default, rename = "only_days", skip_serializing_if = "Weekdays::is_any")]
+    pub days: Weekdays,
     /// Последняя дата повтора (включительно).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
@@ -127,6 +287,7 @@ impl CalEvent {
             note: String::new(),
             color: String::new(),
             repeat: Repeat::None,
+            days: Weekdays::default(),
             until: None,
             link: None,
         }
@@ -208,6 +369,7 @@ impl CalendarStore {
             if let Some(en) = e.end {
                 e.end = Some(en.min(24 * 60));
             }
+            e.days = Weekdays::from_bits(e.days.bits());
         }
     }
 
@@ -295,6 +457,18 @@ impl CalendarStore {
             };
             match e.repeat {
                 Repeat::None => push(s),
+                // Фильтр по дням недели превращает и еженедельный повтор в
+                // обход по дням: «каждую неделю по пн/ср/пт» — это те же
+                // дни маски, а не одно вхождение в неделю.
+                Repeat::Daily | Repeat::Weekly if !e.days.is_any() => {
+                    let mut d = s.max(from - len);
+                    while d <= to && d <= until {
+                        if d >= s && e.days.allows(d) {
+                            push(d);
+                        }
+                        d += 1;
+                    }
+                }
                 Repeat::Daily => {
                     let mut d = s.max(from - len);
                     while d <= to && d <= until {
@@ -325,7 +499,7 @@ impl CalendarStore {
                             if d > to || d > until {
                                 break;
                             }
-                            if d >= s {
+                            if d >= s && e.days.allows(d) {
                                 push(d);
                             }
                         } else if days_from_civil(y, m, 1) > to {
@@ -345,7 +519,7 @@ impl CalendarStore {
                             if d > to || d > until {
                                 break;
                             }
-                            if d >= s {
+                            if d >= s && e.days.allows(d) {
                                 push(d);
                             }
                         } else if days_from_civil(y, m0, 1) > to {
@@ -759,6 +933,76 @@ mod tests {
         assert_eq!(parse_hm("09:05"), Some(545));
         assert_eq!(parse_hm("24:00"), None);
         assert_eq!(fmt_hm(545), "09:05");
+    }
+
+    #[test]
+    fn weekday_mask_filters_repeats() {
+        let mut s = CalendarStore::template("Личное");
+        let cal = s.calendars[0].id.clone();
+        let d = |iso: &str| parse_days(iso).unwrap();
+        // 2026-09-14 — понедельник: одно событие «каждый будний день» вместо
+        // десяти отдельных.
+        let mut work = CalEvent::new(&cal, "Планёрка", d("2026-09-14"));
+        work.repeat = Repeat::Daily;
+        work.days = Weekdays::WEEKDAYS;
+        work.until = Some("2026-09-25".into());
+        s.add_event(work);
+        let occ = s.occurrences(d("2026-09-14"), d("2026-09-30"), &[]);
+        assert_eq!(occ.len(), 10, "две рабочие недели");
+        assert!(occ.iter().all(|o| weekday_of(o.day) < 5), "выходных быть не должно");
+        assert_eq!(occ.last().unwrap().day, d("2026-09-25"), "until обрывает повтор");
+
+        // Еженедельный повтор с маской — это дни маски каждую неделю.
+        let mut gym = CalEvent::new(&cal, "Зал", d("2026-09-14"));
+        gym.repeat = Repeat::Weekly;
+        gym.days = Weekdays::parse("mon,wed").unwrap();
+        s.add_event(gym);
+        let days: Vec<i64> = s
+            .occurrences(d("2026-09-14"), d("2026-09-27"), &[])
+            .iter()
+            .filter(|o| s.event(&o.event).unwrap().title == "Зал")
+            .map(|o| o.day - d("2026-09-14"))
+            .collect();
+        assert_eq!(days, [0, 2, 7, 9]);
+
+        // Месячный повтор пропускает вхождение, попавшее под фильтр.
+        let mut pay = CalEvent::new(&cal, "Оплата", d("2026-09-05"));
+        pay.repeat = Repeat::Monthly;
+        pay.days = Weekdays::WEEKDAYS;
+        s.add_event(pay);
+        let sept = s.occurrences(d("2026-09-01"), d("2026-09-30"), &[]);
+        assert!(!sept.iter().any(|o| s.event(&o.event).unwrap().title == "Оплата"), "5 сентября — суббота");
+        let oct = s.occurrences(d("2026-10-01"), d("2026-10-31"), &[]);
+        assert_eq!(oct.iter().filter(|o| s.event(&o.event).unwrap().title == "Оплата").count(), 1, "5 октября — понедельник");
+    }
+
+    #[test]
+    fn weekdays_parse_and_roundtrip() {
+        assert_eq!(Weekdays::parse("weekdays"), Some(Weekdays::WEEKDAYS));
+        assert_eq!(Weekdays::parse("выходные"), Some(Weekdays::WEEKENDS));
+        assert_eq!(Weekdays::parse("пн, ср, пт").unwrap().label(), "mon,wed,fri");
+        assert_eq!(Weekdays::parse("Monday tue 3").unwrap().label(), "mon,tue,wed");
+        assert_eq!(Weekdays::parse("суббота").unwrap().label(), "sat");
+        assert!(Weekdays::parse("mon,funday").is_none());
+        // Все семь дней — это отсутствие фильтра.
+        assert!(Weekdays::parse("mon tue wed thu fri sat sun").unwrap().is_any());
+        assert!(Weekdays::WEEKENDS.has(5) && !Weekdays::WEEKENDS.has(0));
+        assert_eq!(Weekdays::default().without(Weekdays::WEEKENDS), Weekdays::WEEKDAYS);
+        assert!(Weekdays::WEEKDAYS.toggled(5).toggled(6).is_any(), "вся неделя — снова «любые»");
+
+        let mut e = CalEvent::new("c", "t", parse_days("2026-09-14").unwrap());
+        e.repeat = Repeat::Daily;
+        e.days = Weekdays::WEEKDAYS;
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains(r#""only_days":["mon","tue","wed","thu","fri"]"#), "{json}");
+        let back: CalEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.days, Weekdays::WEEKDAYS);
+        // Старые файлы без поля читаются как «любые дни».
+        let old = CalendarStore::parse(r#"{"events":[{"id":"x","calendar":"c","title":"t","date":"2026-01-01","repeat":"daily"}]}"#).unwrap();
+        assert!(old.events[0].days.is_any());
+        // Строкой тоже: "weekends" в руках человека, правившего JSON.
+        let str_form = CalendarStore::parse(r#"{"events":[{"id":"x","calendar":"c","title":"t","date":"2026-01-01","repeat":"daily","only_days":"weekends"}]}"#).unwrap();
+        assert_eq!(str_form.events[0].days, Weekdays::WEEKENDS);
     }
 
     #[test]

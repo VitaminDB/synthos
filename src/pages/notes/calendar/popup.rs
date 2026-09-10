@@ -17,7 +17,7 @@ use syngui::widgets::{Dropdown, DropdownItem, GestureDetector, ToolButton};
 use crate::icons::*;
 use crate::pages::notes::gantt::calendar::{civil_from_days, days_from_civil, days_to_iso, parse_days};
 
-use super::model::{CalEvent, Repeat};
+use super::model::{CalEvent, Repeat, Weekdays};
 use super::{CalendarEnv, CalendarHandle};
 
 const PRESET_COLORS: &[&str] = &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6", "#2EC4B6"];
@@ -198,6 +198,10 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
         );
     }
 
+    // Повтор и дни недели: попап не перестраивается на правку черновика,
+    // поэтому строка дней смотрит на свои сигналы, а не на сам черновик.
+    let repeat_sig = use_signal(e.repeat);
+    let days_sig = use_signal(e.days);
     let h = handle.clone();
     let repeat = Dropdown::new()
         .width(140.0)
@@ -205,9 +209,13 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
         .selected(e.repeat.key())
         .on_change(move |v| {
             if let Some(r) = Repeat::parse(v) {
+                repeat_sig.set(r);
                 h.draft.update(|dr| {
                     if let Some(dr) = dr {
                         dr.event.repeat = r;
+                        if r == Repeat::None {
+                            dr.event.days = Weekdays::default();
+                        }
                     }
                 });
             }
@@ -224,6 +232,42 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
     if let Some(d) = e.until.as_deref().and_then(date_of) {
         until = until.selected(d);
     }
+
+    // Дни недели повтора: маска-фильтр (все включены — «любой день»),
+    // чтобы «каждый будний день» было одним событием, а не дюжиной.
+    let h = handle.clone();
+    // Две буквы: «Пн», «Mo» — семь чипов должны влезать в строку попапа.
+    let names: Vec<String> = (0..7).map(|wd| super::view::locale().weekday_short(wd).chars().take(2).collect()).collect();
+    let days = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if repeat_sig.get() == Repeat::None {
+            return Vec::new();
+        }
+        let mask = days_sig.get();
+        let mut chips = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center);
+        for wd in 0..7u32 {
+            let on = mask.has(wd);
+            let h = h.clone();
+            chips = chips.child(
+                GestureDetector::new()
+                    .cursor(syngui::input::CursorIcon::Pointer)
+                    .on_click(move || {
+                        let next = days_sig.get_untracked().toggled(wd);
+                        days_sig.set(next);
+                        h.draft.update(|dr| {
+                            if let Some(dr) = dr {
+                                dr.event.days = next;
+                            }
+                        });
+                    })
+                    .child(
+                        DecoratedBox::new()
+                            .class(if on { "notes-calendar-day-chip selected" } else { "notes-calendar-day-chip" })
+                            .child(Center::new().child(Text::new(names[wd as usize].clone()).max_lines(1).class("notes-calendar-chip-text"))),
+                    ),
+            );
+        }
+        vec![Box::new(row(tr!("notes.calendar.event.days"), chips))]
+    });
 
     // Заметка — plain-редактор; текст стекает в черновик по ревизии ручки.
     let note_handle = DocumentEditorHandle::new();
@@ -323,6 +367,7 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
         .child(row(tr!("notes.calendar.event.calendar"), calendar))
         .child(row(tr!("notes.props.color"), colors))
         .child(row(tr!("notes.calendar.event.repeat"), Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).child(repeat).child(until)))
+        .child(days)
         .child(note)
         .child(buttons)
 }

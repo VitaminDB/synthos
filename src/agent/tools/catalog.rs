@@ -1050,9 +1050,25 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("repeat", json!({
             "type": "string",
             "description": "calendar and kanban add_card/update_card: none | \
-                daily | weekly | monthly | yearly. A repeating card, when moved \
+                daily | weekly | monthly | yearly. calendar also takes the \
+                shorthands weekdays (= daily, Mon–Fri) and weekends (= daily, \
+                Sat–Sun). A repeating card, when moved \
                 to the done column, creates the next one with the due date \
                 shifted by one period (habits, recurring chores)."
+        })),
+        ("only_days", json!({
+            "type": ["array", "string"],
+            "description": "calendar add_event/update_event: keep only these \
+                weekdays of a repeating event — mon | tue | wed | thu | fri | \
+                sat | sun (1…7 or weekdays/weekends work too). ONE event with \
+                repeat=daily, only_days and until replaces a dozen single \
+                events; empty or \"all\" clears the filter."
+        })),
+        ("skip_days", json!({
+            "type": ["array", "string"],
+            "description": "calendar add_event/update_event: drop these \
+                weekdays from a repeating event, e.g. [\"sat\", \"sun\"] on a \
+                daily one. The mirror of only_days."
         })),
         ("from", json!({
             "type": "string",
@@ -1225,8 +1241,10 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "log: user | agent — who made the change."
         })),
         ("days", json!({
-            "type": "integer",
-            "description": "agenda: how many days ahead to include (default 7)."
+            "type": ["integer", "array", "string"],
+            "description": "agenda: how many days ahead to include (default 7). \
+                calendar add_event/update_event: an alias of only_days (the \
+                weekdays of a repeating event)."
         })),
         ("done_days", json!({
             "type": "integer",

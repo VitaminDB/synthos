@@ -535,6 +535,29 @@ fn calendar_through_the_tool() {
     );
     assert!(out.contains("09:30–10:00") && out.contains("repeat weekly until 2026-09-30"), "{out}");
     call(ctx, "calendar", serde_json::json!({"op": "add_event", "title": "Отпуск", "date": "2026-09-10", "end_date": "2026-09-12"}));
+
+    // Будни одним событием: repeat=weekdays вместо дюжины отдельных дат.
+    let out = call(
+        ctx,
+        "calendar",
+        serde_json::json!({"op": "add_event", "title": "Зарядка", "date": "2026-09-14", "repeat": "weekdays", "until": "2026-09-25"}),
+    );
+    assert!(out.contains("repeat daily on mon,tue,wed,thu,fri until 2026-09-25"), "{out}");
+    // 19–20 сентября — суббота и воскресенье: вхождений нет.
+    let weekend = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-19", "to": "2026-09-20"}));
+    assert!(!weekend.contains("Зарядка"), "{weekend}");
+    let monday = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-21", "to": "2026-09-21"}));
+    assert!(monday.contains("Зарядка"), "{monday}");
+    // skip_days считается от целой недели, а не от прежней маски.
+    let out = call(ctx, "calendar", serde_json::json!({"op": "update_event", "event": "Зарядка", "skip_days": ["вс"]}));
+    assert!(out.contains("repeat daily on mon,tue,wed,thu,fri,sat"), "{out}");
+    let out = call(ctx, "calendar", serde_json::json!({"op": "update_event", "event": "Зарядка", "only_days": ["mon", "wed", "fri"]}));
+    assert!(out.contains("repeat daily on mon,wed,fri"), "{out}");
+    // Фильтр без повтора — ошибка с подсказкой, а не молчаливое «каждый день».
+    let err = dispatch(ctx, "calendar", &serde_json::json!({"op": "add_event", "title": "Разово", "date": "2026-09-14", "only_days": ["mon"]})).unwrap_err();
+    assert!(err.contains("need a repeat"), "{err}");
+    let err = dispatch(ctx, "calendar", &serde_json::json!({"op": "update_event", "event": "Зарядка", "only_days": ["funday"]})).unwrap_err();
+    assert!(err.contains("bad weekday"), "{err}");
     let out = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-01", "to": "2026-09-30"}));
     assert!(out.contains("Стендап") && out.contains("Отпуск") && out.contains("2026-09-10 → 2026-09-12"), "{out}");
     let narrow = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-11", "to": "2026-09-11"}));
@@ -564,7 +587,7 @@ fn calendar_through_the_tool() {
     assert!(out.contains("done"), "{out}");
     assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "move_event", "event": "Отпуск"})).is_err());
     call(ctx, "calendar", serde_json::json!({"op": "delete_event", "event": "Отпуск"}));
-    assert_eq!(store.lock().events.len(), 1);
+    assert_eq!(store.lock().events.len(), 2, "остались «Стендап» и «Зарядка»");
 
     // Стиль виджета и слои; удаление виджета не трогает события.
     call(ctx, "calendar", serde_json::json!({"op": "set_style", "calendar": &widget, "style": {"preset": "light", "hour_from": 7, "hour_to": 22, "slot_min": 15, "show_kanban_due": true}}));
@@ -588,7 +611,7 @@ fn calendar_through_the_tool() {
     assert!(dispatch(ctx, "calendar", &serde_json::json!({"op": "delete_calendar", "calendar": "Работа"})).is_err(), "последний календарь");
     let out = call(ctx, "calendar", serde_json::json!({"op": "delete", "calendar": &widget}));
     assert!(out.contains("the events stay"), "{out}");
-    assert_eq!(store.lock().events.len(), 1, "события остаются в проекте");
+    assert_eq!(store.lock().events.len(), 2, "события остаются в проекте");
 }
 
 /// Каждый ключ, который читает инструмент, обязан быть в схеме — иначе

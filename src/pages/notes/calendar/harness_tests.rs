@@ -14,7 +14,7 @@ use syngui::testing::TestHarness;
 use syngui::widget::context::TextMeasure;
 use syngui::widgets::input::document_editor::{DocLayout, DocumentEditor, DocumentEditorHandle, EmbedCtx, EmbedFactory};
 
-use super::model::{range_of, CalEvent, CalView, CalendarDoc, CalendarStore};
+use super::model::{range_of, CalEvent, CalView, CalendarDoc, CalendarStore, Repeat, Weekdays};
 use super::view::view;
 use super::{CalendarEnv, CalendarHandle, CalendarStoreHandle, ExternalItem, ExternalKind, ExternalRef};
 use crate::pages::notes::gantt::calendar::parse_days;
@@ -218,6 +218,36 @@ fn month_click_selects_day_and_double_click_opens_new_event() {
     assert!(draft.event.all_day);
     w.settle();
     assert!(!w.h.find_by_type_name("PopupPanel").is_empty(), "попап смонтирован");
+}
+
+/// Дни недели повтора в попапе: семь чипов есть только у повторяющегося
+/// события и правят черновик — «каждый будний день» одним событием.
+#[test]
+fn event_popup_weekday_chips_filter_the_repeat() {
+    let mut e = CalEvent::new("", "Планёрка", day("2026-09-14"));
+    e.repeat = Repeat::Daily;
+    let (mut w, handle, store) = world(CalView::Month, vec![e]);
+    let anchor = Rect::new(Point::new(300.0, 200.0), Size::new(20.0, 20.0));
+
+    // Разовое событие: строки дней нет.
+    let mut once = store.lock().events[0].clone();
+    once.repeat = Repeat::None;
+    handle.open_edit(once, anchor);
+    w.settle();
+    assert!(w.h.find_by_class("notes-calendar-day-chip").is_empty(), "без повтора дни недели не нужны");
+
+    handle.open_edit(store.lock().events[0].clone(), anchor);
+    w.settle();
+    // Выключаем субботу и воскресенье — остаются будни.
+    for wd in [5usize, 6] {
+        let chips = w.h.find_by_class("notes-calendar-day-chip");
+        assert_eq!(chips.len(), 7, "по чипу на день недели");
+        let b = w.h.element_bounds(chips[wd]);
+        w.click(Point::new(b.origin.x + b.size.width / 2.0, b.origin.y + b.size.height / 2.0));
+        w.settle();
+    }
+    let draft = handle.draft.get_untracked().expect("черновик");
+    assert_eq!(draft.event.days, Weekdays::WEEKDAYS, "маска черновика: пн–пт");
 }
 
 #[test]

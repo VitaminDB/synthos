@@ -87,7 +87,7 @@ use crate::pages::notes::kanban::model::{
 };
 use crate::pages::notes::kanban::KanbanHandle;
 use crate::pages::notes::calendar::model::{
-    fmt_hm, parse_hm, CalEvent, CalView, CalendarStore, CalendarStyle, EventStyle, Repeat,
+    fmt_hm, parse_hm, CalEvent, CalView, CalendarStore, CalendarStyle, EventStyle, Repeat, Weekdays,
 };
 use crate::pages::notes::calendar::{CalendarHandle, CalendarStoreHandle, ExternalQuery};
 use crate::pages::notes::chart::model::{self as chart_model, ChartDoc, ChartKind, GaugeZone, LegendPos, PieLabels};

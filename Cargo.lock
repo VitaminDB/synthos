@@ -7433,6 +7433,7 @@ dependencies = [
  "wgpu",
  "wide",
  "winit",
+ "wl-clipboard-rs",
  "x11rb",
  "zbus",
 ]

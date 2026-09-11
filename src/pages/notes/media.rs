@@ -35,8 +35,8 @@ pub fn resolver(ctx: NotesCtx) -> Arc<NotesMediaResolver> {
     Arc::new(NotesMediaResolver { project_path: ctx.project_path.get_untracked() })
 }
 
-/// Папка кэша распакованных вложений проекта.
-pub fn assets_cache_dir(project_path: &Path) -> PathBuf {
+/// Кэш synthos: `$XDG_CACHE_HOME/synthos`, иначе `~/.cache/synthos`.
+fn cache_root() -> PathBuf {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -44,13 +44,145 @@ pub fn assets_cache_dir(project_path: &Path) -> PathBuf {
             let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
             home.join(".cache")
         });
+    base.join("synthos")
+}
+
+/// Папка проекта в кэше: имя файла + хэш пути.
+fn project_key(project_path: &Path) -> String {
     let mut h = DefaultHasher::new();
     project_path.hash(&mut h);
     let stem = project::project_title(project_path)
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect::<String>();
-    base.join("synthos").join("notes-assets").join(format!("{stem}-{:08x}", h.finish() as u32))
+    format!("{stem}-{:08x}", h.finish() as u32)
+}
+
+/// Папка кэша распакованных вложений проекта.
+pub fn assets_cache_dir(project_path: &Path) -> PathBuf {
+    cache_root().join("notes-assets").join(project_key(project_path))
+}
+
+/// Папка выгрузок вложений карточек проекта (пути в буфере обмена).
+pub fn export_dir(project_path: &Path) -> PathBuf {
+    cache_root().join("notes-export").join(project_key(project_path))
+}
+
+/// Сколько живёт выгрузка карточки, которую больше не копировали.
+const EXPORT_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+/// Метка последней выгрузки в папке карточки: по её времени чистятся старые.
+const EXPORT_STAMP: &str = ".copied";
+
+/// Вложения карточки на диске под исходными именами — для путей в буфере
+/// обмена: `~/.cache/synthos/notes-export/<проект>/<карточка>/<имя>`.
+/// Файл — жёсткая ссылка на распакованный кэш (копия, если ссылка не
+/// вышла) и только для чтения: правка «на месте» не испортит кэш. Папка
+/// повторяет вложения ровно (лишнее от прошлых выгрузок убирается),
+/// выгрузки старше недели удаляются. Картинки из содержимого — под
+/// именем `<sha>.<ext>`. Ключ результата — ссылка `asset:…`.
+pub fn export_card_files(project_path: &Path, card: &super::kanban::model::KanbanCard) -> HashMap<String, PathBuf> {
+    let assets = super::kanban::clip::card_assets(card);
+    let mut out = HashMap::new();
+    if assets.is_empty() {
+        return out;
+    }
+    let root = export_dir(project_path);
+    prune_exports(&root);
+    let dir = root.join(safe_file_name(&card.id));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("notes: папка выгрузки {} не создана: {e}", dir.display());
+        return out;
+    }
+    let mut used = HashSet::new();
+    for (url, name) in assets {
+        let Some(src) = asset_file(project_path, &url) else { continue };
+        let name = unique_file_name(&safe_file_name(&name), &mut used);
+        let dst = dir.join(&name);
+        if link_readonly(&src, &dst) {
+            out.insert(url, dst);
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name != EXPORT_STAMP && !used.contains(&name) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let _ = std::fs::write(dir.join(EXPORT_STAMP), b"");
+    out
+}
+
+/// Удалить выгрузки карточек, которые не копировали дольше [`EXPORT_TTL`].
+fn prune_exports(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let now = std::time::SystemTime::now();
+    for e in entries.flatten() {
+        let path = e.path();
+        let stamp = std::fs::metadata(path.join(EXPORT_STAMP)).or_else(|_| e.metadata()).and_then(|m| m.modified());
+        let stale = stamp.ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > EXPORT_TTL);
+        if stale && path.is_dir() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Имя файла без разделителей пути и ведущих точек (не скрытый, не `..`).
+fn safe_file_name(name: &str) -> String {
+    let s: String = name.trim().chars().map(|c| if c == '/' || c == '\\' || c.is_control() { '_' } else { c }).collect();
+    let s = s.trim_start_matches('.');
+    if s.is_empty() { "file".to_string() } else { s.to_string() }
+}
+
+/// Имя, ещё не занятое в папке: `имя (2).ext`, `имя (3).ext`…
+fn unique_file_name(name: &str, used: &mut HashSet<String>) -> String {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.to_string(), String::new()),
+    };
+    let mut candidate = name.to_string();
+    let mut n = 2;
+    while used.contains(&candidate) {
+        candidate = format!("{stem} ({n}){ext}");
+        n += 1;
+    }
+    used.insert(candidate.clone());
+    candidate
+}
+
+/// `dst` — тот же файл, что `src`: жёсткая ссылка либо копия, только чтение.
+fn link_readonly(src: &Path, dst: &Path) -> bool {
+    if same_file(src, dst) {
+        return true;
+    }
+    let _ = std::fs::remove_file(dst);
+    if std::fs::hard_link(src, dst).is_err() {
+        if let Err(e) = std::fs::copy(src, dst) {
+            log::warn!("notes: вложение не выгружено в {}: {e}", dst.display());
+            return false;
+        }
+    }
+    if let Ok(meta) = std::fs::metadata(dst) {
+        let mut perm = meta.permissions();
+        perm.set_readonly(true);
+        let _ = std::fs::set_permissions(dst, perm);
+    }
+    true
+}
+
+#[cfg(unix)]
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_file(_a: &Path, _b: &Path) -> bool {
+    false
 }
 
 /// `asset:<sha>.<ext>` → имя файла вложения.
@@ -404,5 +536,40 @@ mod tests {
         collect_blob_refs_in(&md, &mut set);
         assert!(set.contains(&sha));
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn export_names_links_and_prune() {
+        let mut used = HashSet::new();
+        assert_eq!(unique_file_name("a.pdf", &mut used), "a.pdf");
+        assert_eq!(unique_file_name("a.pdf", &mut used), "a (2).pdf");
+        assert_eq!(unique_file_name("a.pdf", &mut used), "a (3).pdf");
+        assert_eq!(unique_file_name("README", &mut used), "README");
+        assert_eq!(safe_file_name("../x/y\u{7}.txt"), "_x_y_.txt");
+        assert_eq!(safe_file_name("  "), "file");
+
+        let dir = std::env::temp_dir().join(format!("synthos-export-{}", project::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.bin");
+        std::fs::write(&src, b"data").unwrap();
+        let dst = dir.join("имя файла.bin");
+        assert!(link_readonly(&src, &dst));
+        assert!(same_file(&src, &dst), "жёсткая ссылка на кэш");
+        assert!(std::fs::metadata(&dst).unwrap().permissions().readonly());
+        assert!(link_readonly(&src, &dst), "повтор — без ошибок");
+
+        // Выгрузка старше недели удаляется, свежая остаётся.
+        let root = dir.join("export");
+        for (name, days) in [("old", 8u64), ("fresh", 1)] {
+            let d = root.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            let stamp = std::fs::File::create(d.join(EXPORT_STAMP)).unwrap();
+            let age = std::time::Duration::from_secs(days * 24 * 3600);
+            stamp.set_modified(std::time::SystemTime::now() - age).unwrap();
+        }
+        prune_exports(&root);
+        assert!(!root.join("old").exists());
+        assert!(root.join("fresh").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

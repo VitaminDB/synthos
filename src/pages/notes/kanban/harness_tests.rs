@@ -4,11 +4,12 @@
 //! MouseMove → DragMove → Drop → DragEnd). Запуск:
 //! `cargo test --features testing kanban::harness_tests`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use syngui::core::{Point, Rect, Size};
-use syngui::input::{Event, MouseButton};
+use syngui::input::{Event, Key, MouseButton};
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::render::DisplayList;
@@ -19,6 +20,7 @@ use syngui::widgets::input::document_editor::{
     BlockId, DocLayout, DocOp, DocumentEditor, DocumentEditorHandle, EmbedCtx, EmbedFactory,
 };
 
+use super::clip::CopyKind;
 use super::model::{DropSpot, KanbanCard, KanbanDoc};
 use super::sinks::DRAG_TYPE_BLOCK;
 use super::view::view;
@@ -39,11 +41,18 @@ struct Factory {
     page: DocumentEditorHandle,
 }
 
+thread_local! {
+    /// Что доска клала в буфер: `(карточка, вид)`.
+    static COPIED: RefCell<Vec<(String, CopyKind)>> = const { RefCell::new(Vec::new()) };
+    /// Что отдаст «буфер» при вставке.
+    static PASTE: RefCell<Option<KanbanCard>> = const { RefCell::new(None) };
+}
+
 impl Factory {
     fn env(&self) -> BoardEnv {
         let map = self.handles.clone();
         let page = self.page.clone();
-        BoardEnv::detached(
+        let mut env = BoardEnv::detached(
             Arc::new(move |id| map.get(id).cloned()),
             // Как `sinks::take_page_block`: markdown блока + удаление.
             Arc::new(move |payload| {
@@ -52,7 +61,10 @@ impl Factory {
                 page.queue_op(DocOp::DeleteBlock(id));
                 Some(md)
             }),
-        )
+        );
+        env.copy_card = Arc::new(|card, _column, kind| COPIED.with(|c| c.borrow_mut().push((card.id.clone(), kind))));
+        env.paste_card = Arc::new(|| PASTE.with(|p| p.borrow_mut().take()));
+        env
     }
 }
 
@@ -334,4 +346,66 @@ fn page_block_dragged_by_its_handle_becomes_a_card() {
     let page = w.page.serialize();
     assert!(!page.contains("Импорт Excel"), "блок должен уйти со страницы:\n{page}");
     assert!(page.contains("![[kanban:b1]]"), "доска на месте:\n{page}");
+}
+
+// ─── Буфер обмена ─────────────────────────────────────────────────────────
+
+/// Прямоугольники карточек сверху вниз.
+fn card_rects(w: &World) -> Vec<Rect> {
+    let mut rects: Vec<Rect> = w.draggables().iter().map(|id| w.bounds(*id)).collect();
+    rects.sort_by(|a, b| a.origin.y.partial_cmp(&b.origin.y).unwrap());
+    rects
+}
+
+fn pasted(title: &str) -> KanbanCard {
+    let mut c = KanbanCard::new("px".into(), String::new());
+    c.title = title.into();
+    c
+}
+
+/// Правый клик в точке и выбор пункта меню `index` (сверху, с нуля):
+/// у меню отступ 4, пункты по 32.
+fn menu_pick(w: &mut World, at: Point, index: usize) {
+    w.h.send_event(&Event::MouseDown { button: MouseButton::Right, position: at });
+    w.h.layout(1200.0, 800.0);
+    // Меню узнаёт размер поверхности при отрисовке — до неё кликов нет.
+    w.h.paint();
+    let item = Point::new(at.x + 20.0, at.y + 4.0 + 32.0 * index as f32 + 16.0);
+    w.h.send_event(&Event::MouseDown { button: MouseButton::Left, position: item });
+    w.h.send_event(&Event::MouseUp { button: MouseButton::Left, position: item });
+}
+
+#[test]
+fn right_click_on_card_opens_its_menu_and_paste_lands_after_it() {
+    let (mut w, handle) = one_board(&["Первая", "Вторая"]);
+    let first = card_rects(&w)[0];
+    PASTE.with(|p| *p.borrow_mut() = Some(pasted("Из буфера")));
+    // Пункты: «Копировать ▸», «Вставить карточку».
+    menu_pick(&mut w, center(first), 1);
+    assert_eq!(column_ids(&handle, 0), ["k0", "px", "k1"], "вставка — после карточки под курсором");
+    assert_eq!(handle.selected.get_untracked().as_deref(), Some("px"), "вставленная выбрана");
+}
+
+#[test]
+fn right_click_on_empty_column_area_pastes_to_its_end() {
+    let (mut w, handle) = one_board(&["Первая"]);
+    let card = card_rects(&w)[0];
+    let board_x0 = w.lane_body(card.origin.x - 40.0, 0).origin.x - 8.0;
+    let doing = w.lane_body(board_x0, 1);
+    PASTE.with(|p| *p.borrow_mut() = Some(pasted("В конец")));
+    menu_pick(&mut w, Point::new(doing.origin.x + 30.0, doing.origin.y + 40.0), 0);
+    assert_eq!(column_ids(&handle, 1), ["px"]);
+    assert_eq!(column_ids(&handle, 0), ["k0"]);
+}
+
+#[test]
+fn ctrl_c_in_card_editor_without_selection_copies_whole_card() {
+    let (mut w, handle) = one_board(&["Задача"]);
+    handle.start_editing("k0");
+    w.settle();
+    COPIED.with(|c| c.borrow_mut().clear());
+    w.h.tree.modifiers.ctrl = true;
+    w.h.send_event(&Event::KeyDown(Key::C));
+    w.h.tree.modifiers.ctrl = false;
+    assert_eq!(COPIED.with(|c| c.borrow().clone()), [("k0".to_string(), CopyKind::Full)]);
 }

@@ -16,6 +16,7 @@
 //! Карточка правится одним редактором: первый блок-заголовок (`## …`) —
 //! её заголовок, остальное — содержимое ([`compose_card`] / [`split_card`]).
 
+pub mod clip;
 pub mod drag_strip;
 #[cfg(all(test, feature = "testing"))]
 mod harness_tests;
@@ -50,9 +51,13 @@ pub type IngestFile = Arc<dyn Fn(&std::path::Path) -> Option<CardFile> + Send + 
 pub type OpenFile = Arc<dyn Fn(&CardFile) + Send + Sync>;
 /// Диалог выбора файла → вложение бандла (`None` — отмена).
 pub type PickFile = Arc<dyn Fn() -> Option<CardFile> + Send + Sync>;
+/// Карточку — в буфер обмена в виде `CopyKind` (`&str` — имя её колонки).
+pub type CopyCard = Arc<dyn Fn(&KanbanCard, &str, clip::CopyKind) + Send + Sync>;
+/// Буфер обмена → карточка для вставки (`None` — вставлять нечего).
+pub type PasteCard = Arc<dyn Fn() -> Option<KanbanCard> + Send + Sync>;
 
-/// Окружение доски: другие доски, страница, на которой она врезана, и
-/// вложения (файлы бандла).
+/// Окружение доски: другие доски, страница, на которой она врезана,
+/// вложения (файлы бандла) и буфер обмена.
 #[derive(Clone)]
 pub struct BoardEnv {
     pub boards: Boards,
@@ -61,10 +66,12 @@ pub struct BoardEnv {
     pub ingest_file: IngestFile,
     pub open_file: OpenFile,
     pub pick_file: PickFile,
+    pub copy_card: CopyCard,
+    pub paste_card: PasteCard,
 }
 
 impl BoardEnv {
-    /// Окружение без проекта (тесты): нет соседних досок и вложений.
+    /// Окружение без проекта (тесты): нет соседних досок, вложений и буфера.
     pub fn detached(boards: Boards, take_block: TakeBlock) -> Self {
         Self {
             boards,
@@ -73,6 +80,8 @@ impl BoardEnv {
             ingest_file: Arc::new(|_| None),
             open_file: Arc::new(|_| {}),
             pick_file: Arc::new(|| None),
+            copy_card: Arc::new(|_, _, _| {}),
+            paste_card: Arc::new(|| None),
         }
     }
 }
@@ -89,6 +98,20 @@ pub fn env(ctx: super::state::NotesCtx) -> BoardEnv {
         ingest_file: Arc::new(move |path| super::media::ingest_card_file(ctx, path)),
         open_file: Arc::new(move |file| super::media::open_card_file(ctx, file)),
         pick_file: Arc::new(move || super::media::pick_card_file(ctx)),
+        copy_card: Arc::new(move |card, column, kind| {
+            if clip::copy_card(&ctx.project_path.get_untracked(), card, column, kind) {
+                let msg =
+                    if kind == clip::CopyKind::Files { tr!("notes.kanban.copied_files") } else { tr!("notes.kanban.copied") };
+                use_context::<crate::context::AppCtx>().notifications.info(msg);
+            }
+        }),
+        paste_card: Arc::new(move || {
+            let card = clip::paste_card(&ctx.project_path.get_untracked());
+            if card.is_none() {
+                use_context::<crate::context::AppCtx>().notifications.info(tr!("notes.kanban.paste_empty"));
+            }
+            card
+        }),
     }
 }
 

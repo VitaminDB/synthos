@@ -49,6 +49,9 @@ pub fn body() -> impl Widget {
                 ctx.doc_menu_pos.set(pos);
                 ctx.doc_menu_open.set(true);
             })
+            // Ctrl+C/V над выделенной доской с выбранной карточкой — карточка,
+            // а не блок `![[kanban:…]]`.
+            .on_clipboard_key(move |key, blocks| super::kanban::clip::page_clipboard_key(ctx, key, blocks))
             .on_drop_file(move |file, token| {
                 super::media::ingest_dropped_file(ctx, page_id.clone(), file, token);
             })

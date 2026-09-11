@@ -24,8 +24,8 @@ use syngui::core::Color;
 use syngui::input::{CursorIcon, DragData};
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
-use syngui::widgets::input::document_editor::DocumentEditor;
-use syngui::widgets::overlay::{Draggable, DropArea, DropInfo};
+use syngui::widgets::input::document_editor::{ClipboardKey, DocumentEditor};
+use syngui::widgets::overlay::{ContextMenu, Draggable, DropArea, DropInfo};
 use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, Image, ImageFit, MenuItem, PopupMenu, ProgressBar, SpinBox};
 
 use crate::icons::*;
@@ -35,6 +35,7 @@ use super::super::gantt::calendar::{civil_from_days, days_from_civil, parse_days
 use super::drag_strip::DragStrip;
 use super::model::{parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Moment, Priority, Repeat, DAY_MIN};
 pub use super::sinks::DRAG_TYPE_BLOCK;
+use super::clip::{self, CopyKind};
 use super::{drop_block, drop_card, BoardEnv, KanbanHandle};
 
 pub const DRAG_TYPE_CARD: &str = "notes-kanban-card";
@@ -175,16 +176,27 @@ fn lane(
             width,
         ));
     }
-    // Клик по пустому месту колонки закрывает правку и снимает выбор.
+    // Клик по пустому месту колонки закрывает правку и снимает выбор;
+    // правый — «Вставить карточку» в конец колонки.
     let h_blur = handle.clone();
-    let cards_area = GestureDetector::new()
-        .on_click(move || {
-            if let Some(id) = h_blur.editing.get_untracked() {
-                h_blur.finish_editing(&id);
-            }
-            h_blur.select(None);
+    let h_paste = handle.clone();
+    let env_paste = env.clone();
+    let end_paste = DropSpot::end(&col_id);
+    let cards_area = ContextMenu::new()
+        .items(vec![MenuItem::new("paste", tr!("notes.kanban.paste_card")).icon(MI_CONTENT_PASTE)])
+        .on_select(move |_| {
+            clip::paste_at(&env_paste, &h_paste, &end_paste);
         })
-        .child(ScrollView::new().vertical().child(cards));
+        .child(
+            GestureDetector::new()
+                .on_click(move || {
+                    if let Some(id) = h_blur.editing.get_untracked() {
+                        h_blur.finish_editing(&id);
+                    }
+                    h_blur.select(None);
+                })
+                .child(ScrollView::new().vertical().child(cards)),
+        );
 
     // Хвост: полоса «+» — новая карточка.
     let h_tail_add = handle.clone();
@@ -373,6 +385,7 @@ fn card(
         let (editor, source) = handle.card_editor(&id);
         let h_blur = handle.clone();
         let id_blur = id.clone();
+        let (env_copy, h_copy, id_copy) = (env.clone(), handle.clone(), id.clone());
         let body = Column::new()
             .gap(6.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -385,16 +398,27 @@ fn card(
                     .heading_placeholder(tr!("notes.kanban.title_hint"))
                     .placeholder(tr!("notes.kanban.body_hint"))
                     .on_focus_lost(move || h_blur.finish_editing(&id_blur))
+                    // Ctrl+C без выделенного текста — карточка целиком.
+                    .on_clipboard_key(move |key, blocks| {
+                        key == ClipboardKey::Copy
+                            && blocks.is_empty()
+                            && clip::copy_by_id(&env_copy, &h_copy, &id_copy, CopyKind::Full)
+                    })
                     .class("notes-kanban-card-editor"),
             )
             .child(card_fields(env, handle, c, lane_width));
-        return Box::new(shell.child(
-            Row::new()
-                .gap(8.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .child(accent_bar)
-                .child(DecoratedBox::new().class("grow").child(body)),
-        ));
+        return card_menu(
+            env,
+            handle,
+            c,
+            shell.child(
+                Row::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .child(accent_bar)
+                    .child(DecoratedBox::new().class("grow").child(body)),
+            ),
+        );
     }
 
     let has_title = !c.title.trim().is_empty();
@@ -430,12 +454,53 @@ fn card(
     let h_click = handle.clone();
     let id_click = id.clone();
     let label = if has_title { title } else { c.md.lines().next().unwrap_or_default().to_string() };
-    Box::new(
+    card_menu(
+        env,
+        handle,
+        c,
         Draggable::new(DRAG_TYPE_CARD, format!("{board}|{id}"))
             .label(label)
             .on_click(move || h_click.start_editing(&id_click))
             .on_drag_start(|bounds| CARD_DRAG_H.store(bounds.size.height.to_bits(), Ordering::Relaxed))
             .child(content),
+    )
+}
+
+/// Меню карточки (правый клик): «Копировать ▸» — виды копии (пути и файлы
+/// — только при вложениях), «Вставить карточку» — после неё. Без него
+/// правый клик доставался меню страницы, и «Копировать» уносил блок доски
+/// `![[kanban:…]]` целиком.
+fn card_menu<W: Widget + 'static>(env: &BoardEnv, handle: &KanbanHandle, c: &KanbanCard, child: W) -> Box<dyn Widget> {
+    let has_files = !clip::card_assets(c).is_empty();
+    let kinds: Vec<MenuItem> = CopyKind::ALL
+        .iter()
+        .map(|k| {
+            let item = MenuItem::new(format!("copy:{}", k.key()), k.label());
+            let item = if *k == CopyKind::Full { item.shortcut("Ctrl+C") } else { item };
+            item.disabled(k.needs_files() && !has_files)
+        })
+        .collect();
+    let items = vec![
+        MenuItem::new("copy", tr!("notes.kanban.copy")).icon(MI_CONTENT_COPY).children(kinds),
+        MenuItem::new("paste", tr!("notes.kanban.paste_card")).icon(MI_CONTENT_PASTE),
+    ];
+    let env = env.clone();
+    let h = handle.clone();
+    let id = c.id.clone();
+    Box::new(
+        ContextMenu::new()
+            .items(items)
+            .on_select(move |action| {
+                if let Some(kind) = action.strip_prefix("copy:").and_then(CopyKind::parse) {
+                    clip::copy_by_id(&env, &h, &id, kind);
+                } else if action == "paste" {
+                    let spot = h.lock().spot_after(&id);
+                    if let Some(spot) = spot {
+                        clip::paste_at(&env, &h, &spot);
+                    }
+                }
+            })
+            .child(child),
     )
 }
 

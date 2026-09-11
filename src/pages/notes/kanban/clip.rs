@@ -33,6 +33,10 @@ pub enum CopyKind {
     /// Заголовок, свойства, текст и список вложений путями.
     Full,
     TitleBody,
+    /// Заголовок, текст и список вложений путями (без свойств).
+    TitleBodyPaths,
+    /// Заголовок и список всех вложений путями — и картинок из текста.
+    TitlePaths,
     Body,
     /// Пути вложений одной строкой, в кавычках для шелла.
     Paths,
@@ -41,12 +45,23 @@ pub enum CopyKind {
 }
 
 impl CopyKind {
-    pub const ALL: [CopyKind; 5] = [CopyKind::Full, CopyKind::TitleBody, CopyKind::Body, CopyKind::Paths, CopyKind::Files];
+    /// В порядке пунктов меню.
+    pub const ALL: [CopyKind; 7] = [
+        CopyKind::Full,
+        CopyKind::TitleBody,
+        CopyKind::TitleBodyPaths,
+        CopyKind::TitlePaths,
+        CopyKind::Body,
+        CopyKind::Paths,
+        CopyKind::Files,
+    ];
 
     pub fn key(self) -> &'static str {
         match self {
             CopyKind::Full => "full",
             CopyKind::TitleBody => "title_body",
+            CopyKind::TitleBodyPaths => "title_body_paths",
+            CopyKind::TitlePaths => "title_paths",
             CopyKind::Body => "body",
             CopyKind::Paths => "paths",
             CopyKind::Files => "files",
@@ -61,15 +76,17 @@ impl CopyKind {
         match self {
             CopyKind::Full => tr!("notes.kanban.copy.full"),
             CopyKind::TitleBody => tr!("notes.kanban.copy.title_body"),
+            CopyKind::TitleBodyPaths => tr!("notes.kanban.copy.title_body_paths"),
+            CopyKind::TitlePaths => tr!("notes.kanban.copy.title_paths"),
             CopyKind::Body => tr!("notes.kanban.copy.body"),
             CopyKind::Paths => tr!("notes.kanban.copy.paths"),
             CopyKind::Files => tr!("notes.kanban.copy.files"),
         }
     }
 
-    /// Без вложений копировать нечего.
+    /// Без вложений вид пуст либо совпадает с таким же без путей.
     pub fn needs_files(self) -> bool {
-        matches!(self, CopyKind::Paths | CopyKind::Files)
+        matches!(self, CopyKind::TitleBodyPaths | CopyKind::TitlePaths | CopyKind::Paths | CopyKind::Files)
     }
 }
 
@@ -80,7 +97,7 @@ pub type FilePaths = HashMap<String, PathBuf>;
 /// затем картинки из содержимого (`asset:<sha>.<ext>` в markdown); без
 /// повторов.
 pub fn card_assets(card: &KanbanCard) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = card.files.iter().map(|f| (f.url.clone(), f.label())).collect();
+    let mut out = file_entries(card);
     for url in body_assets(&card.md) {
         if !out.iter().any(|(u, _)| *u == url) {
             let name = url.strip_prefix("asset:").unwrap_or(&url).to_string();
@@ -138,7 +155,10 @@ pub fn card_text(card: &KanbanCard, column: &str, kind: CopyKind, files: &FilePa
     match kind {
         CopyKind::Body => body,
         CopyKind::TitleBody => join_blocks([heading, body]),
-        CopyKind::Full => join_blocks([heading, props_line(card, column), body, attachments_list(card, files)]),
+        CopyKind::Full => join_blocks([heading, props_line(card, column), body, attachments_list(&file_entries(card), files)]),
+        CopyKind::TitleBodyPaths => join_blocks([heading, body, attachments_list(&file_entries(card), files)]),
+        // Текста нет — картинки из него перечисляются вместе с файлами.
+        CopyKind::TitlePaths => join_blocks([heading, attachments_list(&card_assets(card), files)]),
         CopyKind::Paths | CopyKind::Files => {
             card_paths(card, files).iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")
         }
@@ -179,17 +199,22 @@ fn props_line(card: &KanbanCard, column: &str) -> String {
     parts.join(" · ")
 }
 
+/// Вложения со скрепкой — `(ссылка, имя)`, без картинок из текста.
+fn file_entries(card: &KanbanCard) -> Vec<(String, String)> {
+    card.files.iter().map(|f| (f.url.clone(), f.label())).collect()
+}
+
 /// «Вложения:» и по пути на строку; файл, которого нет на диске, — именем.
-fn attachments_list(card: &KanbanCard, files: &FilePaths) -> String {
-    if card.files.is_empty() {
+fn attachments_list(entries: &[(String, String)], files: &FilePaths) -> String {
+    if entries.is_empty() {
         return String::new();
     }
     let mut out = format!("{}:", tr!("notes.kanban.copy.attachments"));
-    for f in &card.files {
+    for (url, name) in entries {
         out.push_str("\n- ");
-        match files.get(&f.url) {
+        match files.get(url) {
             Some(p) => out.push_str(&p.display().to_string()),
-            None => out.push_str(&f.label()),
+            None => out.push_str(name),
         }
     }
     out
@@ -402,6 +427,21 @@ mod tests {
             card_text(&c, "В работе", CopyKind::TitleBody, &files),
             format!("### Импорт Excel\n\n- [ ] разобрать формат\n\n![скрин](/tmp/x/k1/{SHB}.png)")
         );
+        assert_eq!(
+            card_text(&c, "В работе", CopyKind::TitleBodyPaths, &files),
+            format!(
+                "### Импорт Excel\n\n- [ ] разобрать формат\n\n![скрин](/tmp/x/k1/{SHB}.png)\n\n\
+                 Вложения:\n- /tmp/x/k1/спецификация v2.pdf"
+            )
+        );
+        // Без текста картинка из него — в общем списке вложений.
+        assert_eq!(
+            card_text(&c, "", CopyKind::TitlePaths, &files),
+            format!("### Импорт Excel\n\nВложения:\n- /tmp/x/k1/спецификация v2.pdf\n- /tmp/x/k1/{SHB}.png")
+        );
+        for k in CopyKind::ALL {
+            assert_eq!(CopyKind::parse(k.key()), Some(k));
+        }
         assert!(card_text(&c, "", CopyKind::Body, &files).starts_with("- [ ] разобрать"));
         assert_eq!(
             card_text(&c, "", CopyKind::Paths, &files),

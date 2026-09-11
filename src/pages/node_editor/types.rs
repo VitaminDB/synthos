@@ -1802,6 +1802,8 @@ pub enum NodeRuntime {
         /// `latent [B, 64, T_latent]`.
         output_buf: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
         output_version: RwSignal<u32>,
+        /// Cooperative-cancel: воркер проверяет его между окнами энкода.
+        cancel: Arc<std::sync::atomic::AtomicBool>,
     },
     /// ACE-Step Checkpoint: каталог моделей + 4 опц. override'а + device/
     /// quant/compute. Веса не грузит — публикует хэндл в порт `model`.
@@ -2297,6 +2299,7 @@ impl NodeRuntime {
             | R::LtxIcLora { cancel, .. }
             | R::LtxLipdub { cancel, .. }
             | R::LtxA2V { cancel, .. }
+            | R::AceStepVaeEncode { cancel, .. }
             | R::H3Sampler { cancel, .. } => Some(cancel.clone()),
             _ => None,
         }

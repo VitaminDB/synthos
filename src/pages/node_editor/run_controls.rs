@@ -71,6 +71,19 @@ pub struct NodeRunReport {
     pub elapsed_ms: u64,
     /// Ошибка ноды на момент её финиша (`NodeRuntime::run_error_signal`).
     pub error: Option<String>,
+    /// Заголовок on_run-предка, завершившегося с ошибкой до старта этой
+    /// ноды. Её собственная ошибка тогда — следствие («подключите
+    /// src_latent» после упавшего VAE Encode), а не отдельная поломка.
+    pub after_failed: Option<&'static str>,
+}
+
+/// On_run-нода, не успевшая финишировать до Stop или замещения прогона.
+#[derive(Debug, Clone)]
+pub struct UnfinishedNode {
+    pub id: u64,
+    pub title: &'static str,
+    /// Сколько нода работала к моменту остановки; `None` — не стартовала.
+    pub running_ms: Option<u64>,
 }
 
 /// Итог прогона, отправляемый в oneshot-канал `notify` (если внешний
@@ -79,9 +92,12 @@ pub struct NodeRunReport {
 pub struct RunOutcome {
     pub end: RunEnd,
     pub total_ms: u64,
-    /// Отчёты завершившихся нод в порядке финиша. При `Stopped`/`Superseded`
-    /// ноды, не успевшие финишировать, сюда не попадают.
+    /// Отчёты завершившихся нод в порядке финиша.
     pub nodes: Vec<NodeRunReport>,
+    /// Ноды, не успевшие финишировать (только при `Stopped`/`Superseded`).
+    /// Без них сводка остановленного прогона была пустой — не видно, какая
+    /// нода работала и сколько.
+    pub unfinished: Vec<UnfinishedNode>,
 }
 
 impl RunOutcome {
@@ -131,6 +147,8 @@ struct RunQueue {
     notify: Option<tokio::sync::oneshot::Sender<RunOutcome>>,
     /// Отчёты финишировавших нод — копятся по ходу прогона.
     reports: Vec<NodeRunReport>,
+    /// Нода → заголовок её on_run-предка, финишировавшего с ошибкой.
+    failed_upstream: HashMap<NodeId, &'static str>,
 }
 
 impl RunQueue {
@@ -144,10 +162,32 @@ impl RunQueue {
 /// выкорчёвывается из статики — завершение, Stop/отмена, замещение новым Run.
 fn send_outcome(mut q: RunQueue, end: RunEnd) {
     if let Some(tx) = q.notify.take() {
+        let ctx = q.ctx;
+        let mut unfinished: Vec<UnfinishedNode> = q
+            .active
+            .iter()
+            .map(|id| UnfinishedNode {
+                id: id.0,
+                title: node_title(&ctx, *id),
+                running_ms: q.started_at.get(id).map(|t| t.elapsed().as_millis() as u64),
+            })
+            .chain(
+                q.remaining
+                    .keys()
+                    .filter(|id| !q.active.contains(id))
+                    .map(|id| UnfinishedNode {
+                        id: id.0,
+                        title: node_title(&ctx, *id),
+                        running_ms: None,
+                    }),
+            )
+            .collect();
+        unfinished.sort_by_key(|u| (u.running_ms.is_none(), u.id));
         let _ = tx.send(RunOutcome {
             end,
             total_ms: q.run_started_at.elapsed().as_millis() as u64,
             nodes: std::mem::take(&mut q.reports),
+            unfinished,
         });
     }
 }
@@ -232,6 +272,7 @@ fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection])
         run_started_at: Instant::now(),
         notify: None,
         reports: Vec::new(),
+        failed_upstream: HashMap::new(),
     }
 }
 
@@ -419,11 +460,20 @@ fn advance(ws: &EditorWorkspace, q: &mut RunQueue) -> bool {
                     "нода: финиш"
                 );
             }
+            if error.is_some() {
+                let title = node_title(&ctx, *id);
+                if let Some(succ) = q.downstream.get(id) {
+                    for d in succ {
+                        q.failed_upstream.entry(*d).or_insert(title);
+                    }
+                }
+            }
             q.reports.push(NodeRunReport {
                 id: id.0,
                 title: node_title(&ctx, *id),
                 elapsed_ms,
                 error,
+                after_failed: q.failed_upstream.get(id).copied(),
             });
         }
 
@@ -619,7 +669,7 @@ fn stop_run(cancel_workers: bool) -> bool {
         active = q.active.len(),
         pending = q.remaining.len(),
         cancel_workers,
-        "run: очередь сброшена (активные worker'ы дорабатывают)"
+        "run: очередь сброшена (ноды без cancel-флага дорабатывают)"
     );
     send_outcome(q, RunEnd::Stopped);
     // Фиксируем то, что успело натикать: уже запущенные worker'ы
@@ -711,9 +761,11 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
             .tooltip(tr!("nodes.run.stop"))
             .on_click(move || {
                 info!(target: RUN_LOG, "run: нажат Stop");
-                // Уже запущенные worker'ы доработают (кнопка исторически не
-                // взводит cancel), но новых fire'ов больше не произойдёт.
-                stop_run(false);
+                // Stop взводит cancel активным нодам, как и отмена хода агента.
+                // Раньше кнопка только сбрасывала очередь: VAE Encode на CPU
+                // после Stop ещё минуты грел все ядра и держал модель, а в
+                // это время чат перезагружал LLM — приложение вставало колом.
+                stop_run(true);
                 app_stop.notifications.info(tr!("nodes.run.stopped_notice"));
             })
             .class(button_class("ne-run-btn ne-run-btn--stop", state, RunState::Stopped));

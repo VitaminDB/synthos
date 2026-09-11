@@ -159,9 +159,19 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_PIPELINES,
             label: "pipelines",
             icon: MI_ACCOUNT_TREE,
-            description: "Node-based generation pipelines (video LTX/MiniMax-H3, \
-                music ACE-Step, TTS, ASR, LLM node) in the editor's service tab — \
+            description: "Node-based media pipelines in the editor's service tab — \
                 one per chat, the user can open it from the chat and watch. \
+                THE way to do audio/music/voice/video work on this machine — \
+                use it instead of looking for external tools (demucs, spleeter, \
+                ffmpeg filters, pip packages). Built-in templates: music from \
+                text (ACE-Step Text→Music), vocal / stem extraction from a song \
+                (ACE-Step Extract: tags say what to keep, e.g. \"acapella vocals \
+                only\"), cover in a new style (ACE-Step Cover), regenerate a \
+                region (Repaint), extend a track (Extend), morph toward a new \
+                prompt (Edit), variation (Retake); speech: TTS and voice clone \
+                (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \
+                (GigaAM), mixing/effects/recording; video: LTX text/image→video, \
+                lip-dub, audio→video, MiniMax-H3. \
                 Typical workflow: 1) action=list — templates (built-in and \
                 custom) and chat attachments; 2) action=open with \
                 template=<id> — load a template; 3) action=nodes with \

@@ -605,8 +605,12 @@ pub fn format_envelope(
                 match &n.error {
                     Some(e) => {
                         error = true;
+                        let cause = n
+                            .after_failed
+                            .map(|t| format!(" {}", tr!("chat.pipeline.node.after_failed", title = t)))
+                            .unwrap_or_default();
                         out.push_str(&format!(
-                            "- {} · {} · {}: {e}\n",
+                            "- {} · {} · {}: {e}{cause}\n",
                             n.title,
                             fmt_duration(n.elapsed_ms),
                             tr!("chat.pipeline.error_label")
@@ -618,6 +622,13 @@ pub fn format_envelope(
                         fmt_duration(n.elapsed_ms)
                     )),
                 }
+            }
+            for u in &o.unfinished {
+                let state = match u.running_ms {
+                    Some(ms) => tr!("chat.pipeline.node.interrupted", duration = fmt_duration(ms)),
+                    None => tr!("chat.pipeline.node.not_started"),
+                };
+                out.push_str(&format!("- {} · {state}\n", u.title));
             }
         }
         None if aborted => {
@@ -697,7 +708,9 @@ mod tests {
                 title: "LTX Sampler Stage1",
                 elapsed_ms: 60_000,
                 error: Some("нет входа".into()),
+                after_failed: None,
             }],
+            unfinished: Vec::new(),
         };
         let (text, err) = format_envelope(Some(&o), &[], None, false, &[]);
         assert!(err);

@@ -118,6 +118,22 @@ pub fn select(id: &str) {
     select_internal(id, &ctx);
 }
 
+/// Снять с хвоста ленты пустые assistant-плейсхолдеры: без текста,
+/// размышлений, вызовов и вложений.
+fn trim_dead_placeholders(messages: &mut Vec<crate::agent::state::ChatMsg>) {
+    use crate::agent::state::{ChatMsgKind, ChatMsgRole};
+    while messages.last().is_some_and(|m| {
+        m.role == ChatMsgRole::Assistant
+            && matches!(m.kind, ChatMsgKind::Text)
+            && m.body.trim().is_empty()
+            && m.thinking.trim().is_empty()
+            && m.tool_calls.as_ref().map_or(true, |c| c.is_empty())
+            && m.attachments.is_empty()
+    }) {
+        messages.pop();
+    }
+}
+
 fn select_internal(id: &str, ctx: &SynChatCtx) {
     let Some(stored) = storage::load(id) else {
         eprintln!("[syn_chat] чат {id} не найден на диске");
@@ -137,7 +153,14 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     let stored_id = stored.id.clone();
     ctx.active_chat_id.set(Some(stored.id.clone()));
     let title = stored.title.clone();
-    let messages = stored.messages;
+    let mut messages = stored.messages;
+    // Ход, оборванный закрытием приложения, оставляет в файле пустой
+    // assistant-плейсхолдер: пустой пузырь в конце ленты выглядит как
+    // зависшая генерация и уходит пустой репликой в историю следующего хода.
+    // Если чат сейчас не генерирует — это мусор.
+    if ctx.generating_chat.get_untracked().as_deref() != Some(stored_id.as_str()) {
+        trim_dead_placeholders(&mut messages);
+    }
     ctx.messages.set(messages.clone());
     // Per-chat sampling params: либо то, что сохранено в чате, либо дефолты
     // из AppConfig (для свежих чатов и старых файлов без поля).
@@ -346,4 +369,40 @@ pub fn active_meta() -> Option<ChatMeta> {
         .get_untracked()
         .into_iter()
         .find(|m| m.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::state::ChatMsg;
+
+    fn msg(role: &str, body: &str, kind: serde_json::Value) -> ChatMsg {
+        serde_json::from_value(serde_json::json!({
+            "role": role, "author": "", "initials": "", "tone_class": "",
+            "time": "20:23", "body": body, "error": false, "kind": kind,
+        }))
+        .expect("ChatMsg из JSON файла чата")
+    }
+
+    /// Хвост чата «Vocal» после закрытия приложения посреди хода: пустой
+    /// assistant-плейсхолдер снимается, всё содержательное остаётся.
+    #[test]
+    fn dead_placeholders_are_trimmed_from_tail_only() {
+        let text = serde_json::json!({"variant": "text"});
+        let result = serde_json::json!({
+            "variant": "tool_result", "tool_call_id": "c1", "tool_name": "pipelines", "error": true
+        });
+        let mut messages = vec![
+            msg("User", "извлеки вокал", text.clone()),
+            msg("Assistant", "", text.clone()),
+            msg("System", "--- Прогон остановлен ---", result),
+            msg("Assistant", "  \n", text.clone()),
+            msg("Assistant", "", text),
+        ];
+        trim_dead_placeholders(&mut messages);
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert_eq!(messages[2].body, "--- Прогон остановлен ---");
+        // Пустой ответ в середине ленты — не хвост, его не трогаем.
+        assert!(messages[1].body.is_empty());
+    }
 }

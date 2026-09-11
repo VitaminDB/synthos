@@ -390,6 +390,11 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("quant_enc_idx", acestep::QUANT_OPTIONS),
             ("compute_idx", acestep::COMPUTE_OPTIONS),
         ],
+        NodeKind::AceStepVaeEncode => vec![
+            ("device_idx", acestep::DEVICE_OPTIONS),
+            ("storage_idx", acestep::QUANT_OPTIONS),
+            ("compute_idx", acestep::COMPUTE_OPTIONS),
+        ],
         NodeKind::AceStepGenerate => vec![
             ("mode_idx", acestep::generate::MODE_OPTIONS),
             ("keyscale_idx", acestep::generate::KEYSCALE_OPTIONS),
@@ -1194,6 +1199,64 @@ fn check_state_fields(
     Ok(names)
 }
 
+/// Агент шлёт state и без обёртки: `{"dit_path": …}`, `{"data": {…}}` без
+/// `kind` или поля рядом с `kind`. Вид ноды известен — достраиваем
+/// `{kind, data}` сами. Раньше такой вызов отклонялся «expects state
+/// kind=…, but got —», и агент тратил ход на повтор. Чужой `kind`
+/// сохраняется — дальше честная ошибка несовпадения.
+fn normalize_state_shape(expected: Option<&str>, state: serde_json::Value) -> serde_json::Value {
+    let (Some(expected), serde_json::Value::Object(mut obj)) = (expected, state.clone()) else {
+        return state;
+    };
+    if obj.contains_key("data") {
+        obj.entry("kind").or_insert_with(|| expected.into());
+        return serde_json::Value::Object(obj);
+    }
+    let kind = obj.remove("kind").unwrap_or_else(|| expected.into());
+    serde_json::json!({ "kind": kind, "data": serde_json::Value::Object(obj) })
+}
+
+/// Строки применённых полей для ответа apply: у `*_idx` — значение и
+/// подпись варианта (`device_idx=0 (CPU)`). Голый индекс агент читал по
+/// аналогии с другими нодами: у LTX 0 = CUDA, у ACE-Step 0 = CPU — и
+/// «вернув дефолт», отправил энкод трека на процессор. Второе значение —
+/// предупреждение, если нода переехала на CPU.
+fn describe_changes(
+    kind: NodeKind,
+    state: &serde_json::Value,
+    changed: &[String],
+) -> (Vec<String>, Option<String>) {
+    let hints = enum_hints(kind);
+    let data = state.get("data");
+    let mut to_cpu = false;
+    let lines = changed
+        .iter()
+        .map(|field| {
+            let opts = hints.iter().find(|(name, _)| *name == field.as_str()).map(|(_, o)| *o);
+            let idx = data.and_then(|d| d.get(field)).and_then(|v| v.as_u64());
+            match (opts, idx) {
+                (Some(opts), Some(i)) => {
+                    let label = opts.get(i as usize).copied().unwrap_or("out of range");
+                    if field.starts_with("device") && label.eq_ignore_ascii_case("cpu") {
+                        to_cpu = true;
+                    }
+                    format!("{field}={i} ({label})")
+                }
+                _ => field.clone(),
+            }
+        })
+        .collect();
+    let warning = to_cpu.then(|| {
+        format!(
+            "warning: \"{}\" will now run on the CPU — neural models there are many \
+             times slower (a multi-minute track or a video takes tens of minutes to \
+             hours). Keep the GPU unless the user asked for CPU.",
+            registry::meta(kind).title
+        )
+    });
+    (lines, warning)
+}
+
 fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
     let node_ref = item
         .get("node")
@@ -1214,6 +1277,7 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
         .ok()
         .and_then(|g| convert::runtime_to_state(&g));
     let expected = reference.as_ref().and_then(variant_tag);
+    let state_v = normalize_state_shape(expected.as_deref(), state_v);
     let got = state_v.get("kind").and_then(|x| x.as_str()).map(str::to_string);
     if expected != got {
         return Err(format!(
@@ -1225,6 +1289,7 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     }
     let changed = check_state_fields(reference.as_ref(), &state_v)
         .map_err(|e| format!("node {node_id}: {e}"))?;
+    let (changed_lines, cpu_warning) = describe_changes(node.kind, &state_v, &changed);
     // Патч, а не замена: агент правит одно-два поля («поставь turbo-DiT»),
     // а `#[serde(default)]` на *StateData добил бы остальные дефолтами —
     // device_idx уехал бы в CPU, кванты и sampler-параметры откатились бы
@@ -1240,8 +1305,12 @@ fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<Stri
     // «принял вызов и ничего не поменял».
     let mut msg = match changed.is_empty() {
         true => format!("state of node {node_id}: nothing to change (data is empty)"),
-        false => format!("state of node {node_id} updated: {}", changed.join(", ")),
+        false => format!("state of node {node_id} updated: {}", changed_lines.join(", ")),
     };
+    if let Some(warning) = cpu_warning {
+        msg.push('\n');
+        msg.push_str(&warning);
+    }
     if let Some(note) = parse_note {
         msg.push('\n');
         msg.push_str(&note);
@@ -1757,5 +1826,73 @@ mod tests {
         assert!(js.contains("width"), "{js}");
         // Реактивные ноды без state.
         assert!(state_example(NodeKind::Add).is_none());
+    }
+
+    /// state без обёртки `{kind, data}` достраивается по виду ноды (первая
+    /// попытка apply в чате «Vocal» пришла плоской и была отклонена).
+    #[test]
+    fn normalize_state_shape_wraps_flat_forms() {
+        use serde_json::json;
+        let flat = normalize_state_shape(Some("AceStepCheckpoint"), json!({"dit_path": "/m/x.syn"}));
+        assert_eq!(flat, json!({"kind": "AceStepCheckpoint", "data": {"dit_path": "/m/x.syn"}}));
+        let no_kind = normalize_state_shape(Some("TextView"), json!({"data": {"output_text": "a"}}));
+        assert_eq!(no_kind, json!({"kind": "TextView", "data": {"output_text": "a"}}));
+        let beside = normalize_state_shape(Some("TextView"), json!({"kind": "TextView", "output_text": "a"}));
+        assert_eq!(beside, json!({"kind": "TextView", "data": {"output_text": "a"}}));
+        let canon = json!({"kind": "TextView", "data": {"output_text": "a"}});
+        assert_eq!(normalize_state_shape(Some("TextView"), canon.clone()), canon);
+        let foreign = normalize_state_shape(Some("TextView"), json!({"kind": "AudioFile", "loaded_path": "/a"}));
+        assert_eq!(foreign["kind"], "AudioFile");
+    }
+
+    /// Ответ apply называет вариант индекса и предупреждает о переезде на CPU.
+    #[test]
+    fn describe_changes_labels_indices_and_warns_on_cpu() {
+        use serde_json::json;
+        let cpu = json!({"kind": "AceStepVaeEncode", "data": {"device_idx": 0, "chunk_seconds": 20.0}});
+        let fields = vec!["device_idx".to_string(), "chunk_seconds".to_string()];
+        let (lines, warning) = describe_changes(NodeKind::AceStepVaeEncode, &cpu, &fields);
+        assert_eq!(lines, vec!["device_idx=0 (CPU)", "chunk_seconds"]);
+        assert!(warning.expect("warning").contains("CPU"));
+
+        let gpu = json!({"kind": "AceStepVaeEncode", "data": {"device_idx": 1}});
+        let (lines, warning) =
+            describe_changes(NodeKind::AceStepVaeEncode, &gpu, &["device_idx".to_string()]);
+        assert_eq!(lines, vec!["device_idx=1 (GPU (auto))"]);
+        assert!(warning.is_none());
+    }
+
+    /// Каждое `*_idx`-поле state расшифровано в action=nodes — системный
+    /// промпт это обещает. У VAE Encode таблицы не было, и агент решил, что
+    /// `device_idx: 0` — «основной CUDA».
+    #[test]
+    fn every_idx_state_field_has_enum_hint() {
+        // Не варианты дропдауна, а числа: номер кадра LTX Image (0 — i2v,
+        // >0 — позиция ключевого кадра).
+        const NOT_ENUMS: &[&str] = &["ltx_image.frame_idx"];
+        let mut missing = Vec::new();
+        for kind in NodeKind::ALL {
+            let Some(js) = state_example(*kind) else { continue };
+            let v: serde_json::Value = serde_json::from_str(&js).expect("state json");
+            let Some(data) = v.get("data").and_then(|d| d.as_object()) else { continue };
+            let hints = enum_hints(*kind);
+            for key in data.keys().filter(|k| k.ends_with("_idx")) {
+                let name = format!("{}.{key}", kind_slug(*kind));
+                if !hints.iter().any(|(f, _)| *f == key.as_str()) && !NOT_ENUMS.contains(&name.as_str()) {
+                    missing.push(name);
+                }
+            }
+        }
+        assert!(missing.is_empty(), "*_idx fields without decoding: {missing:?}");
+    }
+
+    /// VAE Encode по умолчанию на GPU, как ACE-Step Checkpoint.
+    #[test]
+    fn acestep_vae_encode_defaults_to_gpu() {
+        use crate::pages::node_editor::nodes::acestep;
+        let js = state_example(NodeKind::AceStepVaeEncode).expect("state");
+        let v: serde_json::Value = serde_json::from_str(&js).expect("state json");
+        let idx = v["data"]["device_idx"].as_u64().expect("device_idx") as usize;
+        assert_eq!(acestep::DEVICE_OPTIONS[idx], "GPU (auto)");
     }
 }

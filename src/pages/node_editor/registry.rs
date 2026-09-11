@@ -1927,7 +1927,10 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             }
         }
         NodeKind::AceStepVaeEncode => NodeRuntime::AceStepVaeEncode {
-            device_idx: use_signal(0_usize),
+            // 1 = GPU, как у ACE-Step Checkpoint. Было 0 = CPU: агент видел
+            // его в «state (example with defaults)», «возвращал дефолт» — и
+            // энкод трека в 3,5 минуты уходил на процессор.
+            device_idx: use_signal(1_usize),
             storage_idx: use_signal(acestep::default_storage_idx()),
             compute_idx: use_signal(acestep::default_compute_idx()),
             chunk_seconds: use_signal(30.0_f32),
@@ -1938,6 +1941,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             loaded_name: use_signal(None),
             output_buf: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         },
         NodeKind::FfmpegPlayer => NodeRuntime::FfmpegPlayer {
             player: Arc::new(Mutex::new(None)),

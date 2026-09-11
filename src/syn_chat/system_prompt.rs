@@ -139,6 +139,12 @@ pub fn build(env: &PromptEnv) -> String {
             s.push_str(
                 "\nPipelines (`pipelines`) — video/music/speech generation \
                  in the node editor:\n\
+                 - Any audio/music/voice/video task (extract vocals or other \
+                 stems from a song, cover, extend or edit a track, music from \
+                 text, TTS, voice clone, transcription, video) — do it with \
+                 pipelines right away: start with list and pick the template. \
+                 Don't search the disk or the web for external tools \
+                 (demucs, spleeter, ffmpeg, pip) unless the user asks for them.\n\
                  - Order: list → open (template) → nodes with filter (the \
                  exact schema of the nodes you need) → apply (prompts, \
                  parameters, ref inputs) → run. Compose the \

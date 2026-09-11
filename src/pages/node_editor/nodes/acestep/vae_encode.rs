@@ -9,8 +9,12 @@
 //! 2. Mono → stereo (duplicate). Stereo берётся как есть.
 //! 3. Deinterleaved layout `[L0..LN, R0..RN]` shape `(1, 2, N)` — это
 //!    эталонный layout VAE encoder'а (см. `pipeline.rs::encode_audio_file`).
-//! 4. `MusicVae::encode_mean` → латент.
+//! 4. `AceStepVae::encode_mean_tiled` → латент: окна по `chunk_seconds` с
+//!    `overlap_seconds` контекста по краям. Целиком трек в несколько минут
+//!    не кодируется (im2col по сэмплам — десятки ГБ, M матмула вылезал за
+//!    сетку запуска). Stop прогона прерывает энкод между окнами.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 
@@ -29,6 +33,12 @@ use super::{
 };
 
 const TARGET_SAMPLE_RATE: u32 = 48_000;
+/// Латентный кадр VAE — 1920 сэмплов при 48 кГц, 25 кадров в секунду.
+const LATENT_FPS: f32 = TARGET_SAMPLE_RATE as f32 / 1920.0;
+
+fn seconds_to_frames(s: f32) -> usize {
+    (s.max(0.0) * LATENT_FPS).round() as usize
+}
 
 pub struct VaeEncodeExec;
 
@@ -129,38 +139,40 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 device_idx,
                 storage_idx,
                 compute_idx,
+                chunk_seconds,
+                overlap_seconds,
                 loaded_cfg,
                 running,
                 error,
                 loaded_name,
                 output_buf,
                 output_version,
-                ..
+                cancel,
             } => Some((
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
+                (*device_idx, *storage_idx, *compute_idx),
+                (*chunk_seconds, *overlap_seconds),
                 loaded_cfg.clone(),
                 *running,
                 *error,
                 *loaded_name,
                 output_buf.clone(),
                 *output_version,
+                cancel.clone(),
             )),
             _ => None,
         },
         Err(_) => None,
     };
     let Some((
-        device_idx,
-        storage_idx,
-        compute_idx,
+        (device_idx, storage_idx, compute_idx),
+        (chunk_seconds, overlap_seconds),
         loaded_cfg,
         running,
         error,
         loaded_name,
         output_buf,
         output_version,
+        cancel,
     )) = snapshot
     else {
         return;
@@ -185,6 +197,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     }
     running.set(true);
     error.set(None);
+    cancel.store(false, Ordering::SeqCst);
 
     let device_i = device_idx.get_untracked();
     let storage_i = storage_idx.get_untracked();
@@ -194,6 +207,11 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         device_idx: device_i,
         storage_idx: storage_i,
         compute_idx: compute_i,
+    };
+    let chunk_s = chunk_seconds.get_untracked();
+    let tiles = Tiles {
+        chunk_frames: seconds_to_frames(if chunk_s > 0.0 { chunk_s } else { 30.0 }).max(1),
+        overlap_frames: seconds_to_frames(overlap_seconds.get_untracked()),
     };
 
     let _ = thread::Builder::new()
@@ -206,6 +224,8 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 compute_i,
                 cfg,
                 audio,
+                tiles,
+                cancel,
                 loaded_cfg,
                 running,
                 error,
@@ -216,6 +236,13 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         });
 }
 
+/// Окна энкода в латентных кадрах.
+#[derive(Clone, Copy)]
+struct Tiles {
+    chunk_frames: usize,
+    overlap_frames: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn vae_encode_worker(
     bundle_path: std::path::PathBuf,
@@ -224,6 +251,8 @@ fn vae_encode_worker(
     compute_idx: usize,
     cfg: AceStepLoadedCfg,
     audio: Arc<AudioBuffer>,
+    tiles: Tiles,
+    cancel: Arc<AtomicBool>,
     loaded_cfg: Arc<Mutex<Option<AceStepLoadedCfg>>>,
     running: RwSignal<bool>,
     error: RwSignal<Option<String>>,
@@ -287,8 +316,9 @@ fn vae_encode_worker(
         }
     };
 
-    // 3. VAE encode_mean → [1, 64, T_latent].
-    match vae.encode_mean(&tensor) {
+    // 3. VAE encode окнами → [1, 64, T_latent].
+    let cancelled = || cancel.load(Ordering::SeqCst);
+    match vae.encode_mean_tiled(&tensor, tiles.chunk_frames, tiles.overlap_frames, &cancelled) {
         Ok(latent) => {
             if let Ok(mut g) = output_buf.lock() {
                 *g = Some(latent);
@@ -297,6 +327,9 @@ fn vae_encode_worker(
                 output_version.update(|v| *v = v.wrapping_add(1));
             });
             error.set(None);
+        }
+        Err(_) if cancelled() => {
+            error.set(Some(tr!("node.ltx.common.cancelled")));
         }
         Err(e) => {
             error.set(Some(format!("vae.encode_mean: {e}")));

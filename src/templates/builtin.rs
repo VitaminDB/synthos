@@ -1322,8 +1322,8 @@ fn acestep_extract_template() -> Template {
     acestep_audio_cond(
         "builtin-acestep-extract",
         "ACE-Step: Extract",
-        "Выделение стема из микса: исходное аудио → контекст DiT, теги задают что вытянуть. ⚠ Duration = длине src.",
-        "acapella vocals only, no drums, no bass, no instruments",
+        "Выделение стема из микса: исходное аудио → контекст DiT, поле «Дорожка» у Generate выбирает стем (vocals, drums, bass, guitar…), теги — его имя. Для вокала впиши текст песни в lyrics: без него голос выходит без слов. LM не участвует, длина = длине исходника.",
+        "vocals",
         acestep_gen(6, |_| {}),
     )
 }

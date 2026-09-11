@@ -2247,6 +2247,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             repaint_strength: use_signal(0.7_f32),
             edit_n_min: use_signal(0.0_f32),
             edit_n_max: use_signal(1.0_f32),
+            track_idx: use_signal(0_usize),
             running: use_signal(false),
             error: use_signal(None),
             loaded_name: use_signal(None),

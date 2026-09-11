@@ -399,6 +399,7 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("mode_idx", acestep::generate::MODE_OPTIONS),
             ("keyscale_idx", acestep::generate::KEYSCALE_OPTIONS),
             ("timesig_idx", acestep::generate::TIMESIG_OPTIONS),
+            ("track_idx", acestep::generate::TRACK_OPTIONS),
         ],
         NodeKind::FfmpegPlayer => vec![("hwaccel_idx", ffmpeg_player::HWACCEL_LABELS)],
         NodeKind::LtxCheckpoint => vec![

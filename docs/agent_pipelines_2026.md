@@ -379,7 +379,65 @@ qwen3.8-flash-next и на Gemma-4 26B. Оба раза OOM, хотя `free_vram
 `ReactiveElement::drop` → `cleanup_element` → `RUNTIME.with` во время
 разрушения TLS. В syngui `cleanup_element` перешёл на `try_with`.
 
+### Одиннадцатый прогон (2026-09-11): extract не убирал вокал
+
+После фиксов выше граф из `builtin-acestep-extract` доходил до конца, но
+результат — тот же микс, вокал на месте. Сверка с ACE-Step (Python,
+`inference.py`, `task_utils.py`, `conditioning_*.py`) и журнал прогонов
+21:04/21:07 показали две причины:
+
+1. Для extract запускалась 5Hz LM (18,7 с, 965 кодов), и её CoT-caption
+   («An upbeat, instrumental jazz-funk track…», «A solo nylon-string acoustic
+   guitar…») уходил в DiT вместо тегов. ACE-Step для extract LM не запускает
+   (`skip_lm_tasks`, inference.py:612) — прямо с пометкой, что caption от LLM
+   спорит с инструкцией и DiT воспроизводит вход вместо стема.
+2. Инструкция DiT была всегда text2music — «Fill the audio semantic mask…».
+   У ACE-Step — «Extract the VOCALS track from the audio:» с дорожкой из
+   `TRACK_NAMES`. С исходником в контексте и инструкцией «заполни всё» DiT
+   пересобирает микс.
+
+Раздельные ноды (Audio → VaeEncode → Sampler.src_latent, TextEncoder без
+ArLm) подавали теги в DiT напрямую — подмены caption не было.
+
+Исправлено в synaptix (`generate_music`): `EditMode::Extract` не зовёт LM и
+CoT, caption и лирика — от пользователя (пустой caption — имя дорожки, как
+в UI ACE-Step), длительность — длина исходника, контекст — исходный латент
+во всю длину, инструкция `extract_instruction(track_name)`. Cover, раньше
+деливший ветку с extract, вынесен в `EditMode::Cover` и идёт прежним путём
+(см. ограничения). У ноды Generate поле «Дорожка» (`track_idx`, дефолт
+vocals) в режиме extract; шаблон кладёт в теги `vocals`; описание
+`pipelines` говорит, что extract выдаёт один стем и «всего, кроме вокала»
+среди них нет. CLI: `synaptix music … --mode extract --track drums`.
+
+Проверка на GPU (CLI, 30 с, xl_base, 32 шага, CFG 7) и что ещё нашлось:
+
+- Синтетика с известными стемами: а капелла + барабаны из text2music,
+  микс 50/50. Извлечённый вокал по лог-спектрограмме ближе к настоящему
+  вокалу (0,87), чем к барабанам (0,63) и миксу (0,68); извлечённые барабаны
+  — 0,92 к барабанам. DiT с исходником в контексте выделяет.
+- **Без лирики вокальный стем выходит без слов**: тембр и мелодия есть,
+  Whisper не разбирает ничего. С текстом песни в `lyrics` Whisper
+  распознаёт извлечённый вокал целиком (и при CFG 7, и при 1). Описание
+  `pipelines` и шаблон теперь велят класть текст в lyrics (неизвестен —
+  сначала ASR).
+- Исходник теперь в [-1, 1], как `_normalize_audio_to_stereo_48k` у
+  ACE-Step: нода VAE Encode и CLI (у трека из чата пик 1,59, 9 % сэмплов за
+  единицей). CLI читает `--src-audio` в стерео (`read_wav_stereo_f32`), как
+  нода.
+- Реальный трек из чата (Face2Face, припев и куплет) — всё ещё плохо: ни с
+  лирикой, ни в стерео, ни при ослабленном входе Whisper слов в стеме не
+  находит, низа (< 150 Гц) остаётся 60–70 %. VAE тут ни при чём: круговой
+  прогон decode(encode(x)) на этом треке 9,4 дБ SNR, на синтетике 7,7.
+  Эталона на этом треке нет — весов ACE-Step для Python/acestep.cpp на диске
+  нет; A/B требует их скачать.
+
 ## Известные ограничения
+
+- ACE-Step Cover идёт не так, как у ACE-Step: там коды берутся из исходника
+  (tokenize → detokenize), инструкция «Generate audio semantic tokens…», LM
+  не запускается; у нас — LM-коды по тегам и инструкция text2music.
+  Repaint тоже с инструкцией text2music (у ACE-Step — «Repaint the mask
+  area…»).
 
 - Прогон в subagent'е запрещён; статус-поллинг не нужен (run блокирующий).
 - `system unload` не ждёт занятых воркеров (честно сообщает «удерживается»).

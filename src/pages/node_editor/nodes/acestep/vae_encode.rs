@@ -295,10 +295,12 @@ fn vae_encode_worker(
         running.set(false);
         return;
     }
-    // 2. Deinterleave: [L0..LN, R0..RN] для shape (1, 2, N).
+    // 2. Deinterleave: [L0..LN, R0..RN] для shape (1, 2, N). Сэмплы в [-1, 1],
+    // как `_normalize_audio_to_stereo_48k` у ACE-Step: громкий мастер после
+    // декода mp3 выходит за 1 (у трека из чата «Vocal» пик 1,59).
     let mut flat: Vec<f32> = Vec::with_capacity(2 * n);
-    flat.extend(stereo_48k.iter().map(|(l, _)| *l));
-    flat.extend(stereo_48k.iter().map(|(_, r)| *r));
+    flat.extend(stereo_48k.iter().map(|(l, _)| l.clamp(-1.0, 1.0)));
+    flat.extend(stereo_48k.iter().map(|(_, r)| r.clamp(-1.0, 1.0)));
     let tensor = match synaptix_core::tensor::Tensor::from_vec(flat, vec![1, 2, n], device) {
         Ok(t) => t,
         Err(e) => {

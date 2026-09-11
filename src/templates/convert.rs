@@ -723,6 +723,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             repaint_strength,
             edit_n_min,
             edit_n_max,
+            track_idx,
             ..
         } => {
             use crate::pages::node_editor::types::{
@@ -785,6 +786,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 repaint_strength: repaint_strength.get_untracked(),
                 edit_n_min: edit_n_min.get_untracked(),
                 edit_n_max: edit_n_max.get_untracked(),
+                track_idx: track_idx.get_untracked(),
                 lm_defaults_v2: true,
             }))
         }
@@ -1421,6 +1423,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
                 repaint_strength,
                 edit_n_min,
                 edit_n_max,
+                track_idx,
                 ..
             },
             NodeStateData::AceStepGenerate(data),
@@ -1486,6 +1489,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             repaint_strength.set(data.repaint_strength);
             edit_n_min.set(data.edit_n_min);
             edit_n_max.set(data.edit_n_max);
+            track_idx.set(data.track_idx);
         }
         _ => {}
     }
@@ -2377,6 +2381,7 @@ mod tests {
                 repaint_strength: 0.5,
                 edit_n_min: 0.1,
                 edit_n_max: 0.9,
+                track_idx: 2,
                 ..Default::default()
             })),
         };
@@ -2385,6 +2390,7 @@ mod tests {
         let rt = node.runtime.lock().unwrap();
         match &*rt {
             NodeRuntime::AceStepGenerate {
+                track_idx,
                 mode_idx,
                 preset,
                 duration_seconds,
@@ -2413,6 +2419,7 @@ mod tests {
                 assert!((retake_variance.get_untracked() - 0.3).abs() < 1e-3);
                 assert!((repaint_end_sec.get_untracked() - 8.0).abs() < 1e-3);
                 assert!((edit_n_max.get_untracked() - 0.9).abs() < 1e-3);
+                assert_eq!(track_idx.get_untracked(), 2);
             }
             other => panic!("Expected AceStepGenerate runtime, got {other:?}"),
         }

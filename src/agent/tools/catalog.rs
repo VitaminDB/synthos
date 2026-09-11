@@ -165,8 +165,12 @@ pub(super) fn build_all() -> Vec<Tool> {
                 use it instead of looking for external tools (demucs, spleeter, \
                 ffmpeg filters, pip packages). Built-in templates: music from \
                 text (ACE-Step Text→Music), vocal / stem extraction from a song \
-                (ACE-Step Extract: tags say what to keep, e.g. \"acapella vocals \
-                only\"), cover in a new style (ACE-Step Cover), regenerate a \
+                (ACE-Step Extract: one stem per run — track_idx on the Generate \
+                node picks it: vocals, backing_vocals, drums, bass, guitar, \
+                keyboard, …; tags = the stem name; for vocals put the song's \
+                lyrics into the lyrics node — without them the voice comes out \
+                wordless, so transcribe with ASR first if the text is unknown; \
+                there is no \"everything but the vocals\" stem), cover in a new style (ACE-Step Cover), regenerate a \
                 region (Repaint), extend a track (Extend), morph toward a new \
                 prompt (Edit), variation (Retake); speech: TTS and voice clone \
                 (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \

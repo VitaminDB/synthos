@@ -82,6 +82,30 @@ pub const KEYSCALE_OPTIONS: &[&str] = &[
 pub const TIMESIG_OPTIONS: &[&str] =
     &["N/A", "4/4", "3/4", "6/8", "2/4", "5/4", "7/8", "9/8", "12/8"];
 
+/// Дорожка режима extract — стемы, которые base-DiT учился выделять (имена
+/// `TRACK_NAMES` ACE-Step, порядок свой: вокал первым, он же дефолт `0`).
+pub const TRACK_OPTIONS: &[&str] = &[
+    "vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard",
+    "percussion", "strings", "synth", "fx", "brass", "woodwinds",
+];
+
+/// Индекс дропдауна режима → режим synaptix. Cover идёт своим путём: раньше
+/// он делил ветку с extract, а extract теперь без LM и со своей инструкцией.
+fn edit_mode(mode_idx: usize) -> EditMode {
+    match mode_idx {
+        1 => EditMode::Retake,
+        2 | 3 => EditMode::Repaint,
+        4 => EditMode::Edit,
+        5 => EditMode::Cover,
+        6 => EditMode::Extract,
+        _ => EditMode::Text2Music,
+    }
+}
+
+fn track_name(track_idx: usize) -> &'static str {
+    TRACK_OPTIONS.get(track_idx).copied().unwrap_or(TRACK_OPTIONS[0])
+}
+
 /// Имя бандла, которое возьмётся из каталога при пустом override'е: первое
 /// существующее из `names`, иначе первое в списке (чтобы ошибка «не найден»
 /// называла ожидаемый файл). Общая точка для резолва и для подсказок в UI
@@ -368,6 +392,7 @@ struct BodySnapshot {
     repaint_strength: RwSignal<f32>,
     edit_n_min: RwSignal<f32>,
     edit_n_max: RwSignal<f32>,
+    track_idx: RwSignal<usize>,
     running: RwSignal<bool>,
     error: RwSignal<Option<String>>,
     loaded_name: RwSignal<Option<String>>,
@@ -408,6 +433,7 @@ fn snapshot(node: &NodeInstance) -> Option<BodySnapshot> {
                 repaint_strength,
                 edit_n_min,
                 edit_n_max,
+                track_idx,
                 running,
                 error,
                 loaded_name,
@@ -444,6 +470,7 @@ fn snapshot(node: &NodeInstance) -> Option<BodySnapshot> {
                 repaint_strength: *repaint_strength,
                 edit_n_min: *edit_n_min,
                 edit_n_max: *edit_n_max,
+                track_idx: *track_idx,
                 running: *running,
                 error: *error,
                 loaded_name: *loaded_name,
@@ -480,6 +507,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let repaint_strength = s.repaint_strength;
     let edit_n_min = s.edit_n_min;
     let edit_n_max = s.edit_n_max;
+    let track_idx = s.track_idx;
     let mode_rows = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         match mode_idx.get() {
             1 => vec![
@@ -501,6 +529,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 field_row("Edit n_min", make_slider_row(edit_n_min, 0.0, 1.0, 0.01, 2)),
                 field_row("Edit n_max", make_slider_row(edit_n_max, 0.0, 1.0, 0.01, 2)),
             ],
+            6 => vec![field_row(
+                &tr!("node.acestep_generate.field.track"),
+                super::make_dropdown(TRACK_OPTIONS, track_idx),
+            )],
             _ => vec![],
         }
     });
@@ -607,6 +639,7 @@ struct RunParams {
     repaint_strength: f32,
     edit_n_min: f32,
     edit_n_max: f32,
+    track_idx: usize,
 }
 
 /// Seed `0` — «случайный на каждый прогон» (как `use_random_seed` у ACE-Step:
@@ -653,7 +686,11 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     };
     // AR off (no-codes) штатно ТОЛЬКО для turbo: base/sft не дистиллированы под
     // пустые коды и падают illegal-instruction. Даём понятную ошибку заранее.
-    if !s.use_ar.get_untracked() && !matches!(detect_xl_bundle_kind(&dit), XlBundleKind::Turbo) {
+    // Extract LM не зовёт вовсе: DiT берёт контекст из исходника.
+    if mode != 6
+        && !s.use_ar.get_untracked()
+        && !matches!(detect_xl_bundle_kind(&dit), XlBundleKind::Turbo)
+    {
         s.error.set(Some(tr!("node.acestep_generate.error.no_ar_requires_turbo")));
         return;
     }
@@ -734,6 +771,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         repaint_strength: s.repaint_strength.get_untracked(),
         edit_n_min: s.edit_n_min.get_untracked(),
         edit_n_max: s.edit_n_max.get_untracked(),
+        track_idx: s.track_idx.get_untracked(),
     };
 
     s.running.set(true);
@@ -875,13 +913,8 @@ fn worker(
         _ => p.duration_sec,
     };
     let edit = EditOptions {
-        mode: match p.mode_idx {
-            1 => EditMode::Retake,
-            2 | 3 => EditMode::Repaint,
-            4 => EditMode::Edit,
-            5 | 6 => EditMode::Extract,
-            _ => EditMode::Text2Music,
-        },
+        mode: edit_mode(p.mode_idx),
+        track_name: track_name(p.track_idx).to_string(),
         retake_variance: p.retake_variance,
         retake_seed: p.retake_seed,
         src_latent: src_cl,
@@ -1141,5 +1174,34 @@ mod tests {
         let mut h = handle(std::path::Path::new("/nonexistent"));
         h.models_dir = None;
         assert!(resolve_paths(&h).is_err());
+    }
+
+    /// Cover больше не делит ветку с extract: extract в synaptix идёт без LM
+    /// и со своей инструкцией, cover — прежним путём.
+    #[test]
+    fn extract_and_cover_map_to_their_own_modes() {
+        assert_eq!(MODE_OPTIONS[5], "cover");
+        assert_eq!(MODE_OPTIONS[6], "extract");
+        assert_eq!(edit_mode(5), EditMode::Cover);
+        assert_eq!(edit_mode(6), EditMode::Extract);
+        assert_eq!(edit_mode(3), EditMode::Repaint);
+        assert_eq!(edit_mode(0), EditMode::Text2Music);
+    }
+
+    /// Дропдаун «Дорожка» — ровно стемы ACE-Step, дефолт и выход за границы
+    /// дают вокал.
+    #[test]
+    fn track_options_are_acestep_stems() {
+        use synaptix_music_acestep::text_encoder::TRACK_NAMES;
+        assert_eq!(TRACK_OPTIONS.len(), TRACK_NAMES.len());
+        for t in TRACK_OPTIONS {
+            assert!(TRACK_NAMES.contains(t), "{t} не из TRACK_NAMES");
+        }
+        assert_eq!(track_name(0), "vocals");
+        assert_eq!(track_name(99), "vocals");
+        assert_eq!(
+            TRACK_OPTIONS[crate::templates::model::AceStepGenerateStateData::default().track_idx],
+            "vocals"
+        );
     }
 }

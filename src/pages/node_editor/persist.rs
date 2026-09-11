@@ -888,6 +888,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             repaint_strength,
             edit_n_min,
             edit_n_max,
+            track_idx,
             output_version,
             ..
         } => {
@@ -922,6 +923,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = repaint_strength.get();
             let _ = edit_n_min.get();
             let _ = edit_n_max.get();
+            let _ = track_idx.get();
             let _ = output_version.get();
         }
     }

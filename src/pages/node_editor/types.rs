@@ -1827,7 +1827,7 @@ pub enum NodeRuntime {
     /// через `generate_music`. Входы (model/tags/lyrics/src_latent) — порты;
     /// в body только режим-дропдаун и слайдеры. Выходы — `audio` + `latent`.
     AceStepGenerate {
-        /// 0=text2music, 1=retake, 2=repaint, 3=extend, 4=edit.
+        /// 0=text2music, 1=retake, 2=repaint, 3=extend, 4=edit, 5=cover, 6=extract.
         mode_idx: RwSignal<usize>,
         /// Preset Auto/Turbo/Base/SFT (Auto → detect по имени DiT-бандла).
         preset: RwSignal<SamplerPreset>,
@@ -1876,6 +1876,9 @@ pub enum NodeRuntime {
         /// усечение расписания: денойз только шаги [n_min, n_max] (доли [0..1]).
         edit_n_min: RwSignal<f32>,
         edit_n_max: RwSignal<f32>,
+        // ── Режим extract ──
+        /// Дорожка: индекс в `TRACK_OPTIONS` (`0` = vocals).
+        track_idx: RwSignal<usize>,
         // ── Статус + выходы ──
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,

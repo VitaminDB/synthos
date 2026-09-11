@@ -1869,13 +1869,24 @@ async fn run_agent_loop(
     // блоками-заполнителями и эмбеддинги дальше переиспользуются на каждом
     // turn'е. Vision-башня нужна только здесь — сразу после кодирования её
     // выгружаем, чтобы KV-ring получил свободную VRAM.
-    // Медиа-путь идёт по готовым эмбеддингам и префикс-KV не поддерживает, а
-    // vision-башне нужна та же VRAM, что держит кэш диалога, — освобождаем ДО
-    // кодирования вложений.
-    if items.iter().any(HistoryItem::has_media) {
-        drop_kv_session();
-    }
+    // Слот держим на весь agent-loop: ходы внутри одного сообщения — главные
+    // потребители префикса (каждый tool-вызов раньше требовал полного
+    // префилла выросшей истории).
+    let mut kv_slot = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    // Vision-башне под НОВЫЕ вложения нужна та же VRAM, что держит кэш
+    // диалога: на время кодирования кэш уезжает в RAM и возвращается
+    // следом. Раньше он сбрасывался при любой картинке в истории, даже давно
+    // закодированной, — и каждое сообщение платило полным префиллом
+    // (журнал 11.09.2026: 55k токенов, 40 с на каждый ход).
+    let needs_vision = caps.vision
+        && items
+            .iter()
+            .any(|i| attach_prompt::needs_tower(&i.attachments, &caps));
+    let parked = needs_vision && park_kv_session(&mut kv_slot, &model);
     let (mut history, media) = prepare_history(&items, &model, &caps, &ctx);
+    if parked {
+        unpark_kv_session(&mut kv_slot, &model);
+    }
     let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
     if !media.is_empty() {
         let tokens: usize = media.iter().map(|m| m.tokens).sum();
@@ -1886,11 +1897,10 @@ async fn run_agent_loop(
         );
     }
 
-    // Слот держим на весь agent-loop: ходы внутри одного сообщения — главные
-    // потребители префикса (каждый tool-вызов раньше требовал полного
-    // префилла выросшей истории).
-    let mut kv_slot = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    let prefix_kv_on = media.is_empty() && crate::config::AppConfig::load().syn_chat_prefix_kv;
+    // Медиа-промпт продолжает сессию там, где движок держит строки вложений
+    // в префиксе (Qwen4Exp); остальные архитектуры идут полным префиллом.
+    let prefix_kv_on = (media.is_empty() || model.model.kv_session_media_ok())
+        && crate::config::AppConfig::load().syn_chat_prefix_kv;
     if !prefix_kv_on {
         *kv_slot = None;
     }
@@ -2167,36 +2177,39 @@ async fn run_agent_loop(
             // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
             // lookup / CUDA-graph) на нём не применяются.
             let mut reused = 0usize;
-            let stream_res = if !media_refs.is_empty() {
-                runner.generate_streaming_media(
+            let session = if prefix_kv_turn {
+                ensure_kv_slot(
+                    &mut kv_slot,
+                    &model,
+                    &chat_id,
+                    plan.ring_tokens,
+                    plan.session_ctx,
+                    plan.max_new,
+                )
+            } else {
+                None
+            };
+            let stream_res = match (session, media_refs.is_empty()) {
+                (Some(session), false) => runner
+                    .generate_streaming_cached_media(
+                        session,
+                        &prompt_ids,
+                        &model.tokenizer,
+                        &media_refs,
+                        on_token,
+                    )
+                    .map(|n| reused = n),
+                (None, false) => runner.generate_streaming_media(
                     &prompt_ids,
                     &model.tokenizer,
                     &media_refs,
                     on_token,
-                )
-            } else {
-                let session = if prefix_kv_turn {
-                    ensure_kv_slot(
-                        &mut kv_slot,
-                        &model,
-                        &chat_id,
-                        plan.ring_tokens,
-                        plan.session_ctx,
-                        plan.max_new,
-                    )
-                } else {
-                    None
-                };
-                match session {
-                    Some(session) => runner
-                        .generate_streaming_cached(
-                            session,
-                            &prompt_ids,
-                            &model.tokenizer,
-                            on_token,
-                        )
-                        .map(|n| reused = n),
-                    None => runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token),
+                ),
+                (Some(session), true) => runner
+                    .generate_streaming_cached(session, &prompt_ids, &model.tokenizer, on_token)
+                    .map(|n| reused = n),
+                (None, true) => {
+                    runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)
                 }
             };
 

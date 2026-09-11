@@ -981,10 +981,41 @@ document-editor {
     font-size: 11px;
     color: var(--text-muted);
 }
+/* Окно просмотра картинки-вложения карточки (`media::image_viewer`).
+ * Тёмная «галерейная» палитра просмотрщика вложений чата (media_viewer.mss)
+ * независимо от темы: под картинкой нейтральный тёмный фон читается лучше
+ * светлого. Кнопки подвала и подпись масштаба — его же классы
+ * (`media-viewer-action`, `media-viewer-zoom`).
+ * Шапку FloatingWindow рисует сам: фон окна с затемнением, заголовок и
+ * крестик — `color`. padding 1px — сцена от края до края, но не поверх
+ * рамки; у подвала своего фона нет, иначе его квадратные углы вылезли бы
+ * за скругление окна. */
+.notes-image-viewer-window {
+    background-color: #14151A;
+    color: #F2F3F5;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--radius-panel);
+    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.55);
+    padding: 1px 1px 1px 1px;
+    min-width: 360px;
+    min-height: 280px;
+}
 .notes-image-viewer {
-    padding: 8px;
+    width: 100%;
+    height: 100%;
+}
+.notes-image-viewer-stage {
+    background-color: #0E0F13;
+    flex-grow: 1;
+    overflow: hidden;
 }
 .notes-image-viewer-img {
     width: 100%;
     height: 100%;
+}
+.notes-image-viewer-footer {
+    padding: 6px 10px 6px 10px;
+    border-width: 0;
+    border-top-width: 1px;
+    border-color: rgba(255, 255, 255, 0.08);
 }

@@ -270,14 +270,45 @@ pub fn open_external(path: &Path) {
     }
 }
 
-/// Окно просмотра картинки (вложение карточки): модальное, по центру,
-/// картинка вписывается целиком.
+/// Пределы масштаба картинки — те же, что у просмотрщика вложений чата.
+const VIEWER_ZOOM_MIN: f32 = 0.1;
+const VIEWER_ZOOM_MAX: f32 = 12.0;
+
+/// Состояние окна просмотра картинки.
+#[derive(Clone, Copy)]
+struct ViewerSignals {
+    open: RwSignal<bool>,
+    file: RwSignal<Option<(PathBuf, String)>>,
+    zoom: RwSignal<f32>,
+    pan: RwSignal<Point>,
+}
+
+/// Окно просмотра картинки (вложение карточки): модальное, по центру, в
+/// тёмной палитре просмотрщика вложений чата. Картинка вписывается целиком;
+/// колёсико и кнопки подвала масштабируют, перетаскивание двигает.
 pub fn image_viewer(ctx: NotesCtx) -> impl Widget {
+    let s = ViewerSignals {
+        open: ctx.viewer_open,
+        file: ctx.viewer_file,
+        zoom: use_signal(1.0),
+        pan: use_signal(Point::new(0.0, 0.0)),
+    };
+    // Каждое открытие начинается вписанным: масштаб прошлой картинки к
+    // новой отношения не имеет.
+    create_effect(move || {
+        let _ = s.file.get();
+        if s.open.get() {
+            reset_zoom(s);
+        }
+    });
+    viewer_window(s)
+}
+
+fn viewer_window(s: ViewerSignals) -> impl Widget {
     use syngui::widgets::overlay::FloatingWindow;
-    use syngui::widgets::{Image, ImageFit};
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let open = ctx.viewer_open.get();
-        let Some((path, name)) = ctx.viewer_file.get() else {
+        let open = s.open.get();
+        let Some((path, name)) = s.file.get() else {
             return vec![Box::new(DecoratedBox::new())];
         };
         if !open {
@@ -285,20 +316,90 @@ pub fn image_viewer(ctx: NotesCtx) -> impl Widget {
         }
         let window = FloatingWindow::new(name)
             .icon(crate::icons::MI_IMAGE_ICON)
-            .is_open(ctx.viewer_open)
+            .is_open(s.open)
             .size(syngui::core::Size::new(840.0, 640.0))
             .centered()
             .modal(true)
             .with_resizable(true)
             .closable(true)
-            .child(
-                DecoratedBox::new()
-                    .class("notes-image-viewer")
-                    .child(Image::new(path.display().to_string()).fit(ImageFit::Contain).class("notes-image-viewer-img")),
-            )
+            .child(viewer_body(path, s))
             .class("notes-image-viewer-window");
         vec![Box::new(window)]
     })
+}
+
+/// Сцена (картинка в `PanZoomViewport`) и подвал с масштабом.
+fn viewer_body(path: PathBuf, s: ViewerSignals) -> impl Widget {
+    use syngui::widgets::containers::PanZoomViewport;
+    use syngui::widgets::{Image, ImageFit};
+    let image = Image::new(path.display().to_string())
+        .fit(ImageFit::Contain)
+        .class("notes-image-viewer-img");
+    let stage = DecoratedBox::new().class("notes-image-viewer-stage").child(
+        PanZoomViewport::new()
+            .zoom(s.zoom)
+            .pan(s.pan)
+            .zoom_range(VIEWER_ZOOM_MIN, VIEWER_ZOOM_MAX)
+            .grid(false)
+            .child(image)
+            .class("notes-image-viewer-panzoom"),
+    );
+    DecoratedBox::new().class("notes-image-viewer").child(
+        Column::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(vec![Box::new(stage) as Box<dyn Widget>, Box::new(viewer_footer(path, s))]),
+    )
+}
+
+/// Подвал: − / масштаб / + / вписать, справа — открыть системным приложением.
+/// Кнопки и подпись — классы просмотрщика чата, чтобы оба выглядели одинаково.
+fn viewer_footer(path: PathBuf, s: ViewerSignals) -> impl Widget {
+    use crate::icons::{MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_ZOOM_IN, MI_ZOOM_OUT};
+    let zoom = s.zoom;
+    let zoom_label = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        vec![Box::new(Text::new(format!("{:.0}%", zoom.get() * 100.0)).class("media-viewer-zoom"))]
+    });
+    DecoratedBox::new().class("notes-image-viewer-footer").child(
+        Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).children(vec![
+            Box::new(
+                ToolButton::new(MI_ZOOM_OUT)
+                    .tooltip(tr!("chat.media_viewer.zoom_out.tooltip"))
+                    .on_click(move || scale_by(s, 1.0 / 1.25))
+                    .class("media-viewer-action"),
+            ) as Box<dyn Widget>,
+            Box::new(zoom_label),
+            Box::new(
+                ToolButton::new(MI_ZOOM_IN)
+                    .tooltip(tr!("chat.media_viewer.zoom_in.tooltip"))
+                    .on_click(move || scale_by(s, 1.25))
+                    .class("media-viewer-action"),
+            ),
+            Box::new(
+                ToolButton::new(MI_FIT_SCREEN)
+                    .tooltip(tr!("chat.media_viewer.fit.tooltip"))
+                    .on_click(move || reset_zoom(s))
+                    .class("media-viewer-action"),
+            ),
+            Box::new(DecoratedBox::new().class("grow")),
+            Box::new(
+                ToolButton::new(MI_OPEN_IN_NEW)
+                    .tooltip(tr!("chat.media_viewer.open_external.tooltip"))
+                    .on_click(move || open_external(&path))
+                    .class("media-viewer-action"),
+            ),
+        ]),
+    )
+}
+
+fn scale_by(s: ViewerSignals, factor: f32) {
+    let next = (s.zoom.get_untracked() * factor).clamp(VIEWER_ZOOM_MIN, VIEWER_ZOOM_MAX);
+    s.zoom.set(next);
+}
+
+fn reset_zoom(s: ViewerSignals) {
+    s.zoom.set(1.0);
+    s.pan.set(Point::new(0.0, 0.0));
 }
 
 impl DocMediaResolver for NotesMediaResolver {
@@ -571,5 +672,99 @@ mod tests {
         assert!(!root.join("old").exists());
         assert!(root.join("fresh").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Окно просмотра картинки на `TestHarness`: тёмная палитра из MSS, сцена
+/// на всё окно, кнопки масштаба. `cargo test --features testing media::viewer_harness_tests`.
+#[cfg(all(test, feature = "testing"))]
+mod viewer_harness_tests {
+    use std::path::PathBuf;
+
+    use syngui::core::Color;
+    use syngui::input::{Event, MouseButton};
+    use syngui::prelude::*;
+    use syngui::testing::TestHarness;
+
+    use super::{viewer_window, ViewerSignals};
+
+    fn open_viewer() -> (TestHarness, ViewerSignals) {
+        let s = ViewerSignals {
+            open: use_signal(true),
+            file: use_signal(Some((PathBuf::from("/nonexistent/shot.png"), "shot.png".to_string()))),
+            zoom: use_signal(1.0),
+            pan: use_signal(Point::new(0.0, 0.0)),
+        };
+        let mut h = TestHarness::new(Box::new(Stack::new().fit(StackFit::Expand).child(viewer_window(s))));
+        // Как кадр приложения: ветка Reactive достраивается при `rebuild`,
+        // новым элементам нужны стили, потом раскладка; отрисовка ставит
+        // окно в overlay-стек, через который к нему приходят клики.
+        let engine = h.apply_mss(crate::styles::styles());
+        h.rebuild();
+        h.apply_styles(&engine);
+        h.layout(1280.0, 900.0);
+        h.paint();
+        (h, s)
+    }
+
+    fn luma(c: Color) -> f32 {
+        0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+    }
+
+    fn click(h: &mut TestHarness, at: Point) {
+        h.send_event(&Event::MouseDown { button: MouseButton::Left, position: at });
+        h.send_event(&Event::MouseUp { button: MouseButton::Left, position: at });
+    }
+
+    #[test]
+    fn window_is_dark() {
+        let (h, _) = open_viewer();
+        let ids = h.find_by_class("notes-image-viewer-window");
+        assert_eq!(ids.len(), 1, "окно не нашлось");
+        let f = h.element_mss(ids[0]).expect("стили окна");
+        let bg = f.background_color.expect("у окна нет фона — FloatingWindow зальёт белым");
+        assert!(luma(bg) < 0.15, "фон окна не тёмный: {bg:?}");
+        let fg = f.color.expect("у окна нет color — заголовок и крестик будут тёмными");
+        assert!(luma(fg) > 0.8, "заголовок не светлый: {fg:?}");
+
+        let stage = h.find_by_class("notes-image-viewer-stage");
+        let bg = h.element_mss(stage[0]).and_then(|f| f.background_color).expect("фон сцены");
+        assert!(luma(bg) < 0.1, "сцена не тёмная: {bg:?}");
+
+        let buttons = h.find_by_class("media-viewer-action");
+        assert_eq!(buttons.len(), 4, "−, +, вписать, открыть");
+        let glyph = h.element_mss(buttons[0]).and_then(|f| f.color).expect("цвет кнопки");
+        assert!(luma(glyph) > 0.5, "кнопка подвала не светлая на тёмном: {glyph:?}");
+    }
+
+    /// Картинка вписывается в окно, а не в клочок: сцена — вся ширина окна и
+    /// вся высота за вычетом шапки и подвала.
+    #[test]
+    fn stage_fills_window() {
+        let (h, _) = open_viewer();
+        let pz = h.element_bounds(h.find_by_class("notes-image-viewer-panzoom")[0]);
+        let img = h.element_bounds(h.find_by_class("notes-image-viewer-img")[0]);
+        assert!(pz.size.width > 830.0, "сцена уже окна: {pz:?}");
+        assert!(pz.size.height > 520.0 && pz.size.height < 600.0, "сцена не по высоте окна: {pz:?}");
+        assert!((img.size.width - pz.size.width).abs() < 1.0, "картинка не по сцене: {img:?} vs {pz:?}");
+        assert!((img.size.height - pz.size.height).abs() < 1.0, "картинка не по сцене: {img:?} vs {pz:?}");
+    }
+
+    #[test]
+    fn footer_buttons_zoom_and_fit() {
+        let (mut h, s) = open_viewer();
+        let buttons = h.find_by_class("media-viewer-action");
+        let center = |h: &TestHarness, id| {
+            let r = h.element_bounds(id);
+            Point::new(r.x() + r.size.width / 2.0, r.y() + r.size.height / 2.0)
+        };
+        let zoom_in = center(&h, buttons[1]);
+        click(&mut h, zoom_in);
+        assert!((s.zoom.get_untracked() - 1.25).abs() < 1e-4, "«+» не увеличил: {}", s.zoom.get_untracked());
+        s.pan.set(Point::new(40.0, 20.0));
+        let fit = center(&h, buttons[2]);
+        click(&mut h, fit);
+        assert_eq!(s.zoom.get_untracked(), 1.0, "«вписать» не сбросил масштаб");
+        assert_eq!(s.pan.get_untracked(), Point::new(0.0, 0.0), "«вписать» не сбросил сдвиг");
     }
 }

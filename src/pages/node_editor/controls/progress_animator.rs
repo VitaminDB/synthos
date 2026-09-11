@@ -10,13 +10,30 @@ use syngui::prelude::*;
 use syngui::render::DisplayList;
 use syngui::widget::context::EventContext;
 use syngui::widget::{DirtyFlags, Element, ElementId, ElementTree, UpdateContext};
+use syngui::widgets::Reactive;
 
 pub trait ProgressTicker: Send + Sync + 'static {
     fn tick(&self, dt: Duration) -> bool;
+    /// Идёт ли работа — то же условие, что держит `tick` в `true`. Без
+    /// подписки: его читает реестр анимаций syngui (`wants_animate_tick`).
+    fn active(&self) -> bool;
+    /// То же с подпиской — для `Reactive` в [`node_progress_animator`].
+    fn active_tracked(&self) -> bool;
 }
 
+/// Реестр анимаций syngui зовёт `animate` только у элементов с заявкой
+/// `wants_animate_tick`, а перечитывает её при вставке, раскладке и событии
+/// на самом элементе. Старт приходит извне (сигнал), поэтому аниматор живёт
+/// в `Reactive` по `active_tracked` и существует только пока идёт работа:
+/// на старте он вставляется заново, и заявка читается. Без этого с
+/// точечного реестра (syngui 01.09) таймеры стояли на «0.0 с».
 pub fn node_progress_animator(ticker: Arc<dyn ProgressTicker>) -> Box<dyn Widget> {
-    Box::new(ProgressAnimatorWidget { ticker })
+    Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if !ticker.active_tracked() {
+            return Vec::new();
+        }
+        vec![Box::new(ProgressAnimatorWidget { ticker: ticker.clone() })]
+    }))
 }
 
 struct ProgressAnimatorWidget {
@@ -71,6 +88,9 @@ impl Element for ProgressAnimatorElement {
     }
     fn animate(&mut self, dt: Duration) -> bool {
         self.ticker.tick(dt)
+    }
+    fn wants_animate_tick(&self) -> bool {
+        self.ticker.active()
     }
     fn children(&self) -> &[ElementId] {
         &[]

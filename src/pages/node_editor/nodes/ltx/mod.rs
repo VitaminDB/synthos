@@ -362,6 +362,12 @@ struct EtaTicker {
 }
 
 impl super::super::controls::ProgressTicker for EtaTicker {
+    fn active(&self) -> bool {
+        self.running.get_untracked()
+    }
+    fn active_tracked(&self) -> bool {
+        self.running.get()
+    }
     fn tick(&self, dt: std::time::Duration) -> bool {
         if !self.running.get_untracked() {
             return false;

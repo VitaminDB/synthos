@@ -1345,7 +1345,9 @@ impl Default for AceStepGenerateStateData {
             top_k: 0,
             min_p: 0.0,
             lm_cfg_scale: 2.0,
-            use_cot: false,
+            // Как `thinking=True` у ACE-Step: LM сама выводит BPM/тональность/
+            // размер/язык и развёрнутый caption; заданное вручную сильнее CoT.
+            use_cot: true,
             use_ar: true,
             bpm: 0,
             keyscale_idx: 0,

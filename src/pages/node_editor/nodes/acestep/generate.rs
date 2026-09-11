@@ -26,8 +26,8 @@ use synaptix_core::tensor::Tensor;
 use synaptix_music_acestep::ar::CodesGenOptions;
 use synaptix_music_acestep::dcw::DcwCorrector;
 use synaptix_music_acestep::pipeline::{
-    generate_music, EditMode, EditOptions, GenExtras, MusicComponentCache, MusicPaths, NormMode,
-    SamplerOptions,
+    generate_music, EditMode, EditOptions, GenExtras, MusicComponentCache, MusicPaths, MusicStage,
+    NormMode, SamplerOptions, StageHook,
 };
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
@@ -896,12 +896,41 @@ fn worker(
     };
 
     let started = std::time::Instant::now();
+    // Пока идёт прогон, панель «Модели в памяти» видит текущий компонент:
+    // LM → TE → DiT → VAE грузятся по очереди внутри generate_music. Запись
+    // одна (общий ключ, стадия заменяет прежнюю), жива, пока жив `run_token`.
+    let run_token = Arc::new(());
+    let run_weak = Arc::downgrade(&run_token);
+    let vram_base = crate::models::cuda_allocated();
+    let on_stage = StageHook(Arc::new(move |stage: MusicStage, path: &std::path::Path| {
+        let component = match stage {
+            MusicStage::Lm => "5Hz LM",
+            MusicStage::TextEncoder => "Text Encoder",
+            MusicStage::Dit => "DiT",
+            MusicStage::Vae => "VAE",
+        };
+        let label = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        crate::models::register_weak(
+            "acestep/run",
+            "ACE-Step",
+            component,
+            label,
+            device,
+            crate::models::cuda_allocated().saturating_sub(vram_base),
+            run_weak.clone(),
+            || {},
+        );
+    }));
     let extras = GenExtras {
         use_ar: p.use_ar,
         bpm: p.bpm,
         keyscale: p.keyscale.clone(),
         timesig: p.timesig.clone(),
         norm_mode: p.norm_mode,
+        on_stage: Some(on_stage),
     };
     let (samples, sr, latent) = match generate_music(
         &paths,
@@ -922,13 +951,17 @@ fn worker(
         Ok(r) => r,
         Err(e) => {
             error.set(Some(format!("generate_music: {e}")));
+            drop(run_token);
             if !resident {
                 crate::models::trim_all();
             }
+            crate::models::changed();
             running.set(false);
             return;
         }
     };
+    drop(run_token);
+    crate::models::changed();
 
     // Резидентный кэш заполнился в этом прогоне — показать в панели
     // «Модели в памяти» (unload оттуда очистит слот).

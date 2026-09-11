@@ -157,6 +157,12 @@ struct StopwatchTicker {
 }
 
 impl ProgressTicker for StopwatchTicker {
+    fn active(&self) -> bool {
+        self.sw.is_running_untracked()
+    }
+    fn active_tracked(&self) -> bool {
+        self.sw.is_running()
+    }
     fn tick(&self, dt: Duration) -> bool {
         if !self.sw.is_running_untracked() {
             return false;
@@ -397,5 +403,41 @@ mod tests {
             size.width > 0.0 && size.height > 0.0,
             "бейдж схлопнулся: {size:?}"
         );
+    }
+
+    /// Реестр анимаций syngui (с 01.09) зовёт `animate` только у элементов
+    /// с заявкой `wants_animate_tick`. Секундомер стартует извне (сигнал), и
+    /// его аниматор обязан попасть в реестр и двигать показание по кадрам, а
+    /// в простое — не существовать и не просить кадров. Раньше таймер стоял
+    /// на «0.0 с» весь прогон. Ручной — по той же причине, что и тест выше.
+    #[cfg(feature = "testing")]
+    #[test]
+    #[ignore = "занимает глобальный MAIN_THREAD_ID syngui — только отдельным прогоном"]
+    fn badge_ticks_through_animation_registry() {
+        use syngui::testing::TestHarness;
+
+        let sw = Stopwatch::new();
+        let mut h = TestHarness::new(node_timer_badge(sw));
+        h.rebuild();
+        h.layout_loose(400.0, 64.0);
+        assert!(h.find_by_type_name("ProgressAnimator").is_empty(), "аниматор без прогона");
+        assert!(!h.animate(Duration::from_millis(16)), "в простое кадров быть не должно");
+
+        sw.start();
+        h.rebuild();
+        h.layout_loose(400.0, 64.0);
+        let ids = h.find_by_type_name("ProgressAnimator");
+        assert_eq!(ids.len(), 1, "аниматор не появился на старте");
+        assert!(h.is_animating(ids[0]), "аниматор не попал в реестр анимаций");
+        std::thread::sleep(Duration::from_millis(150));
+        for _ in 0..8 {
+            assert!(h.animate(Duration::from_millis(16)), "кадр не запрошен посреди отсчёта");
+        }
+        assert!(sw.live_ms.get_untracked() >= 100, "показание не двигалось");
+
+        sw.finish();
+        h.rebuild();
+        assert!(h.find_by_type_name("ProgressAnimator").is_empty(), "аниматор пережил финиш");
+        assert!(!h.animate(Duration::from_millis(16)), "после финиша кадров быть не должно");
     }
 }

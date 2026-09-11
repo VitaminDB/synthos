@@ -2224,7 +2224,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             top_k: use_signal(0_u32),
             min_p: use_signal(0.0_f32),
             lm_cfg_scale: use_signal(2.0_f32),
-            use_cot: use_signal(false),
+            use_cot: use_signal(true),
             use_ar: use_signal(true),
             bpm: use_signal(0_u32),
             keyscale_idx: use_signal(0_usize),

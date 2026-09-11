@@ -252,9 +252,22 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         vec![Box::new(Text::new(txt).class("audio-node-timecode")) as Box<dyn Widget>]
     });
 
+    // Аниматор существует только пока идёт воспроизведение: реестр анимаций
+    // syngui читает заявку `wants_animate_tick` при вставке элемента, а Play
+    // жмут на другой кнопке — постоянный элемент так и не попадал в реестр,
+    // и шкала стояла (с точечного реестра syngui 01.09).
     let runtime_anim = runtime.clone();
-    let progress_animator =
-        ProgressAnimator::new(runtime_anim, is_playing, is_paused, progress_sig);
+    let progress_animator = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if !is_playing.get() || is_paused.get() {
+            return Vec::new();
+        }
+        vec![Box::new(ProgressAnimator::new(
+            runtime_anim.clone(),
+            is_playing,
+            is_paused,
+            progress_sig,
+        ))]
+    });
 
     let row = mgui! {
         Row::new()
@@ -501,6 +514,10 @@ impl Element for ProgressAnimatorElement {
             return false;
         }
         true
+    }
+    /// То же условие, что держит `animate` в `true`.
+    fn wants_animate_tick(&self) -> bool {
+        self.is_playing.get_untracked() && !self.is_paused.get_untracked()
     }
     fn children(&self) -> &[ElementId] { &[] }
     fn bounds(&self) -> Rect { self.bounds }

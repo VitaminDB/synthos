@@ -381,7 +381,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             ]
     };
 
-    let progress_animator = ProgressAnimator::new(runtime.clone());
+    // Аниматор существует только пока идёт воспроизведение (на паузе
+    // пропадает, на продолжении вставляется заново): реестр анимаций syngui
+    // читает заявку `wants_animate_tick` при вставке, а Play жмут на другой
+    // кнопке — постоянный элемент в реестр не попадал (см. audio_player).
+    let (anim_playing, anim_paused, anim_frames) = (h.is_playing, h.is_paused, h.frames_in.clone());
+    let runtime_anim = runtime.clone();
+    let progress_animator = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let playing = anim_playing.get();
+        let paused = anim_paused.get();
+        let memory = anim_frames.lock().map(|f| f.is_some()).unwrap_or(false);
+        if !playing || (paused && !memory) {
+            return Vec::new();
+        }
+        vec![Box::new(ProgressAnimator::new(runtime_anim.clone()))]
+    });
 
     let body_col = Column::new()
         .gap(8.0)
@@ -706,6 +720,16 @@ impl Element for ProgressAnimatorElement {
             progress.set(pct);
         }
         true
+    }
+    /// То же условие, что держит `animate` в `true`. Рантайм занят — считаем
+    /// живым, как и `animate` (он сам разберётся на следующем кадре).
+    fn wants_animate_tick(&self) -> bool {
+        let Ok(g) = self.runtime.try_lock() else { return true };
+        let NodeRuntime::FfmpegPlayer { is_playing, is_paused, frames_in, .. } = &*g else {
+            return false;
+        };
+        let memory = frames_in.try_lock().map(|f| f.is_some()).unwrap_or(false);
+        is_playing.get_untracked() && (memory || !is_paused.get_untracked())
     }
     fn children(&self) -> &[ElementId] {
         &[]

@@ -30,7 +30,7 @@ use crate::icons::{MI_DOWNLOAD, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY
 use crate::syn_chat::attach::{self, blobs};
 use crate::syn_chat::state::{AttachmentKind, MsgAttachment};
 
-use super::media_audio::{self, AudioSignals, PlayerSlot};
+use super::media_audio;
 
 /// Показывать ли вложение инлайн-плеером (иначе — обычная карточка-плитка).
 pub fn is_inline(a: &MsgAttachment) -> bool {
@@ -187,9 +187,12 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
 /// и общий на всю карточку пересобирал бы вместе с волной и кнопку. Клик по
 /// ней терялся между press и release (виджет успевал смениться), из-за чего
 /// пауза не срабатывала и трек доигрывал до конца.
+///
+/// Сигналы и плеер — из реестра по sha (см. [`media_audio::inline_state`]):
+/// карточку пересобирает каждое новое сообщение, а трек должен играть дальше
+/// под той же кнопкой.
 fn audio_stage(a: &MsgAttachment) -> Box<dyn Widget> {
-    let signals = AudioSignals::new();
-    let player: PlayerSlot = media_audio::new_slot();
+    let (signals, player, lease) = media_audio::inline_state(&a.sha256);
     media_audio::ensure_decoded(a, signals, &player);
     let duration = attach::format_duration(a.duration_ms);
 
@@ -228,6 +231,8 @@ fn audio_stage(a: &MsgAttachment) -> Box<dyn Widget> {
     });
 
     let timecode = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        // Аренда живёт, пока жива карточка: с ней уходит и трек.
+        let _lease = &lease;
         let pos = signals.pos.get();
         let label = match pos > 0.0 {
             true => format!("{} / {duration}", attach::format_duration((pos * 1000.0) as u64)),
@@ -325,4 +330,86 @@ fn open_externally(a: &MsgAttachment) {
     std::thread::spawn(move || {
         let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
     });
+}
+
+/// Headless-проверка аудио-карточки на `TestHarness`. Запуск:
+/// `cargo test -p synthos --features testing --lib media_inline::tests`.
+#[cfg(all(test, feature = "testing"))]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use syngui::testing::TestHarness;
+
+    use super::*;
+
+    fn audio(sha: &str) -> MsgAttachment {
+        MsgAttachment {
+            sha256: sha.into(),
+            mime: "audio/wav".into(),
+            original_name: "track.wav".into(),
+            width: 0,
+            height: 0,
+            size_bytes: 1024,
+            kind: AttachmentKind::Audio,
+            ext: "wav".into(),
+            duration_ms: 5_000,
+            model_ext: String::new(),
+            ui_ext: String::new(),
+            has_thumb: false,
+            share_path: false,
+        }
+    }
+
+    /// Новое сообщение пересобирает ленту: карточка обязана подхватить тот
+    /// же плеер и позицию (раньше заводила свой, и играющий трек оставался
+    /// без кнопки), а с уходом последней карточки — отпустить трек.
+    #[test]
+    fn audio_card_keeps_player_across_feed_rebuild() {
+        let a = audio("inline-audio-rebuild-test");
+        let sha = a.sha256.clone();
+        let tick = use_signal(0u32);
+        let shown = use_signal(true);
+        let builds = Arc::new(AtomicUsize::new(0));
+        let counter = builds.clone();
+        let mut h = TestHarness::new(Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            let _ = tick.get();
+            counter.fetch_add(1, Ordering::SeqCst);
+            if shown.get() {
+                vec![media_card(&a, || {})]
+            } else {
+                Vec::new()
+            }
+        })));
+        h.rebuild();
+
+        let (signals, player) = media_audio::inline_peek(&sha).expect("карточка взяла запись");
+        // Звуковой карты в тесте нет — «играющий трек» задаём сигналами.
+        signals.playing.set(true);
+        signals.pos.set(2.5);
+
+        // «Пришло сообщение» — лента пересобирает карточку.
+        let before = builds.load(Ordering::SeqCst);
+        tick.set(1);
+        h.rebuild();
+        assert!(builds.load(Ordering::SeqCst) > before, "лента должна была пересобраться");
+        // Уборку от отпущенной старой карточки ставит Drop аренды; в тесте
+        // очередь main-потока не крутится — зовём сами.
+        media_audio::sweep_inline();
+        let (after, player_after) =
+            media_audio::inline_peek(&sha).expect("запись пережила пересборку");
+        assert!(
+            Arc::ptr_eq(&player, &player_after),
+            "новая карточка обязана управлять тем же плеером"
+        );
+        assert!(after.playing.get_untracked());
+        assert_eq!(after.pos.get_untracked(), 2.5);
+
+        // Карточка ушла (смена чата, удаление сообщения) — трек отпущен.
+        shown.set(false);
+        h.rebuild();
+        media_audio::sweep_inline();
+        assert!(media_audio::inline_peek(&sha).is_none());
+        assert!(!signals.playing.get_untracked());
+        assert_eq!(signals.key.get_untracked(), "");
+    }
 }

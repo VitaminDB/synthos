@@ -4,8 +4,16 @@
 //! и инлайн-карточки в ленте ([`super::media_inline`]): декодируем файл в
 //! фоне (ffmpeg — секунды), играем через `AudioPlayer`, позицию тикаем в
 //! сигнал отдельным потоком.
+//!
+//! Состояние инлайн-карточки живёт в реестре по sha вложения
+//! ([`inline_state`]), а не в самой карточке: лента пересобирается на каждое
+//! сообщение (и на каждый токен стрима), и свой плеер у каждой сборки
+//! осиротил бы играющий трек — кнопка новой карточки его уже не видела и
+//! запускала второй.
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 
 use syngui::audio::{AudioBuffer, AudioPlayer};
 use syngui::prelude::*;
@@ -186,4 +194,85 @@ pub fn stop(player: &PlayerSlot) {
             p.stop();
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Реестр инлайн-карточек ленты
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Аренда записи реестра: её держат замыкания карточки. Пока на экране есть
+/// хоть одна карточка файла, запись и плеер живы; с последней отпущенной
+/// арендой трек останавливается.
+pub struct CardLease(());
+
+impl Drop for CardLease {
+    fn drop(&mut self) {
+        // Уборка отложенная: при пересборке ленты старая карточка может
+        // умереть раньше, чем новая возьмёт запись, — к моменту уборки новая
+        // аренда уже на месте.
+        syngui::async_runtime::run_on_main_thread(sweep_inline);
+    }
+}
+
+struct InlineEntry {
+    signals: AudioSignals,
+    player: PlayerSlot,
+    lease: Weak<CardLease>,
+}
+
+thread_local! {
+    static INLINE: RefCell<HashMap<String, InlineEntry>> = RefCell::new(HashMap::new());
+}
+
+/// Состояние инлайн-карточки файла `sha`: общее для всех сборок ленты (и
+/// для нескольких карточек одного файла). Аренду карточка обязана держать,
+/// пока показана.
+pub fn inline_state(sha: &str) -> (AudioSignals, PlayerSlot, Arc<CardLease>) {
+    INLINE.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let entry = reg.entry(sha.to_string()).or_insert_with(|| InlineEntry {
+            signals: AudioSignals::new(),
+            player: new_slot(),
+            lease: Weak::new(),
+        });
+        let lease = entry.lease.upgrade().unwrap_or_else(|| {
+            let lease = Arc::new(CardLease(()));
+            entry.lease = Arc::downgrade(&lease);
+            lease
+        });
+        (entry.signals, entry.player.clone(), lease)
+    })
+}
+
+/// Убрать записи, чьих карточек больше нет: смена чата, удаление или
+/// очистка сообщений, уход ленты со страницы.
+pub fn sweep_inline() {
+    let dead: Vec<InlineEntry> = INLINE.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        let keys: Vec<String> = reg
+            .iter()
+            .filter(|(_, e)| e.lease.strong_count() == 0)
+            .map(|(k, _)| k.clone())
+            .collect();
+        keys.iter().filter_map(|k| reg.remove(k)).collect()
+    });
+    for e in dead {
+        stop(&e.player);
+        // Слоты сигналов syngui не освобождаются: без сброса PCM остался бы
+        // в памяти навсегда. Пустой key отбрасывает декод, ещё идущий в фоне.
+        e.signals.key.set_always(String::new());
+        e.signals.buf.set_always(None);
+        e.signals.playing.set_always(false);
+        e.signals.pos.set_always(0.0);
+    }
+}
+
+/// Запись реестра без аренды — чтобы тест не держал её сам.
+#[cfg(all(test, feature = "testing"))]
+pub(super) fn inline_peek(sha: &str) -> Option<(AudioSignals, PlayerSlot)> {
+    INLINE.with(|reg| {
+        reg.borrow()
+            .get(sha)
+            .map(|e| (e.signals, e.player.clone()))
+    })
 }

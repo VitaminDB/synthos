@@ -1330,9 +1330,11 @@ impl Default for AceStepGenerateStateData {
             seed: 0,
             temperature: 0.85,
             top_p: 0.9,
-            top_k: 50,
+            // Как у ACE-Step (`lm_top_k=0`, `lm_cfg_scale=2.0`) и у ноды из
+            // реестра; 50/1.5 достались от старой ArLm-ноды.
+            top_k: 0,
             min_p: 0.0,
-            lm_cfg_scale: 1.5,
+            lm_cfg_scale: 2.0,
             use_cot: false,
             use_ar: true,
             bpm: 0,

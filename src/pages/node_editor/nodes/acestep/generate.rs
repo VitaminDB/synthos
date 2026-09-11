@@ -484,7 +484,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         match mode_idx.get() {
             1 => vec![
                 field_row("Retake variance", make_slider_row(retake_variance, 0.0, 1.0, 0.01, 2)),
-                field_row("Retake seed", make_seed_slider(retake_seed)),
+                field_row("Retake seed (0 = random)", make_seed_slider(retake_seed)),
             ],
             2 | 3 => vec![
                 field_row(
@@ -522,7 +522,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             &tr!("node.acestep_generate.field.duration"),
             make_slider_row(s.duration_seconds, -1.0, 600.0, 0.1, 1),
         ),
-        field_row("Seed", make_seed_slider(s.seed)),
+        field_row("Seed (0 = random)", make_seed_slider(s.seed)),
         // ── AR (5Hz LM): генерация audio-кодов + метадата-оверрайды ──
         section_header("AR · 5Hz LM"),
         field_row(&tr!("node.acestep_generate.field.ar_enabled"), make_toggle(s.use_ar)),
@@ -607,6 +607,17 @@ struct RunParams {
     repaint_strength: f32,
     edit_n_min: f32,
     edit_n_max: f32,
+}
+
+/// Seed `0` — «случайный на каждый прогон» (как `use_random_seed` у ACE-Step:
+/// там это `-1`, но SpinBox отрицательных не даёт). Берётся из 1..=u32::MAX,
+/// чтобы выпавшее значение можно было вписать обратно в поле и повторить трек.
+fn resolve_seed(v: u64) -> u64 {
+    if v == 0 {
+        u64::from(rand::random::<u32>().max(1))
+    } else {
+        v
+    }
 }
 
 pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
@@ -703,7 +714,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         steps,
         cfg,
         shift,
-        seed: s.seed.get_untracked(),
+        seed: resolve_seed(s.seed.get_untracked()),
         temperature: s.temperature.get_untracked(),
         top_p: s.top_p.get_untracked(),
         top_k: s.top_k.get_untracked() as usize,
@@ -717,7 +728,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         norm_mode,
         dcw,
         retake_variance: s.retake_variance.get_untracked(),
-        retake_seed: s.retake_seed.get_untracked(),
+        retake_seed: resolve_seed(s.retake_seed.get_untracked()),
         repaint_start_sec: s.repaint_start_sec.get_untracked(),
         repaint_end_sec: s.repaint_end_sec.get_untracked(),
         repaint_strength: s.repaint_strength.get_untracked(),
@@ -789,7 +800,7 @@ fn worker(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| dit.display().to_string());
-    loaded_name.set(Some(name));
+    loaded_name.set(Some(name.clone()));
 
     // «Держать в памяти» на ACE-Step Checkpoint: резидентный кэш компонентов
     // (LM/TE/DiT/VAE) переживает прогоны — повторная генерация не платит
@@ -911,6 +922,9 @@ fn worker(
         Ok(r) => r,
         Err(e) => {
             error.set(Some(format!("generate_music: {e}")));
+            if !resident {
+                crate::models::trim_all();
+            }
             running.set(false);
             return;
         }
@@ -943,13 +957,22 @@ fn worker(
         }
     }
 
+    // Без резидентности компоненты уже отпущены generate_music, но пул CUDA
+    // держит их блоки: без trim процесс так и сидит на ~9 ГБ после прогона.
+    if !resident {
+        crate::models::trim_all();
+    }
+
     let dur = samples.len() as f32 / sr.max(1) as f32;
     tracing::info!(
-        "[acestep] Generate ✓ {dur:.1}s аудио за {:.1}s (steps={}, cfg={:.1})",
+        "[acestep] Generate ✓ {dur:.1}s аудио за {:.1}s (steps={}, cfg={:.1}, seed={})",
         started.elapsed().as_secs_f32(),
         p.steps,
-        p.cfg
+        p.cfg,
+        p.seed
     );
+    // Выпавший seed виден в статусе — удачный трек повторяется вписыванием.
+    loaded_name.set(Some(format!("{name} · seed {}", p.seed)));
 
     let buf = Arc::new(AudioBuffer::new(
         Arc::from(samples.into_boxed_slice()),

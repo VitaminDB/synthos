@@ -102,6 +102,12 @@ pub struct SynChatCtx {
     /// Вложения, прикреплённые к ещё не отправленному сообщению. Уезжают в
     /// `ChatMsg.attachments` при send и очищаются.
     pub pending_attachments: RwSignal<Vec<MsgAttachment>>,
+    /// Галочка «передать модели путь к файлу» у черновика вложений: при
+    /// отправке ставится в `MsgAttachment::share_path` каждого вложения.
+    /// По умолчанию выключена и сбрасывается вместе с черновиком
+    /// ([`SynChatCtx::clear_draft_attachments`]) — путь нужен под
+    /// конкретную просьбу, а не каждой картинке.
+    pub attach_share_paths: RwSignal<bool>,
     /// Сколько файлов сейчас обрабатывается (хеширование, ffmpeg, превью).
     /// Ненулевое значение показывает в strip'е плашку «готовим файлы…».
     pub attach_busy: RwSignal<usize>,
@@ -294,6 +300,7 @@ impl SynChatCtx {
             generating_chat: use_signal(None),
             input: use_signal(String::new()),
             pending_attachments: use_signal(Vec::new()),
+            attach_share_paths: use_signal(false),
             attach_busy: use_signal(0),
             viewer: use_signal(None),
             pending_archive: use_signal(None),
@@ -360,6 +367,12 @@ impl SynChatCtx {
             details_open: use_signal(HashMap::new()),
             sampling_open: use_signal(false),
         }
+    }
+
+    /// Сбрасывает черновик вложений вместе с галочкой «передать путь».
+    pub fn clear_draft_attachments(&self) {
+        self.pending_attachments.set(Vec::new());
+        self.attach_share_paths.set(false);
     }
 
     /// Финализирует assistant-bubble: переливает streaming-сигналы в

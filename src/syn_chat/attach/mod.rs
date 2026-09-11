@@ -262,6 +262,7 @@ mod tests {
             model_ext: String::new(),
             ui_ext: String::new(),
             has_thumb: false,
+            share_path: false,
         };
         // 1400/28 = 50 по каждой стороне → 2500 токенов, но потолок ниже.
         assert_eq!(estimate_vision_tokens(&a, Some(1024)), 1024);

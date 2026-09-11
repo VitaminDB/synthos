@@ -770,7 +770,11 @@ pub(crate) fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
 /// уйдёт само, когда чат освободится: см. [`flush_queue`].
 pub fn send_message(text: String) {
     let ctx = use_context::<SynChatCtx>();
-    let attachments = ctx.pending_attachments.get_untracked();
+    let mut attachments = ctx.pending_attachments.get_untracked();
+    let share_paths = ctx.attach_share_paths.get_untracked();
+    for a in &mut attachments {
+        a.share_path = share_paths;
+    }
     let text = text.trim().to_string();
     // Сообщение из одних вложений — валидный сценарий («что на картинке?»
     // можно и не писать), поэтому пустой текст блокирует отправку только
@@ -799,7 +803,7 @@ pub fn send_message(text: String) {
 
 /// Черновик панели ввода отправлен: текст, вложения, счётчик токенов.
 fn clear_input(ctx: &SynChatCtx) {
-    ctx.pending_attachments.set(Vec::new());
+    ctx.clear_draft_attachments();
     ctx.input.set(String::new());
     ctx.input_gen.update(|v| *v += 1);
     ctx.input_tokens.set_always(0);

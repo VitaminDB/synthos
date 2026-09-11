@@ -49,7 +49,12 @@ pub fn strip() -> impl Widget {
             cards.push(Box::new(busy_card()));
         }
 
-        let summary = summary_line(&items, busy);
+        let mut footer: Vec<Box<dyn Widget>> = vec![Box::new(
+            Text::new(summary_line(&items, busy)).class("attachments-strip-summary"),
+        )];
+        if !items.is_empty() {
+            footer.push(Box::new(share_path_checkbox()));
+        }
         vec![Box::new(
             DecoratedBox::new().class("attachments-strip-wrap").child(mgui! {
                 Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
@@ -62,11 +67,30 @@ pub fn strip() -> impl Widget {
                                 .cross_axis_alignment(CrossAxisAlignment::Start)
                                 .children(cards),
                         ),
-                    Text::new(summary).class("attachments-strip-summary"),
+                    Row::new()
+                        .gap(12.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+                        .children(footer),
                 ]
             }),
         )]
     })
+}
+
+/// Галочка «передать модели путь к файлу». Картинка уходит модели
+/// эмбеддингами, и пути она не знает: попросишь обработать файл — ищет его
+/// по диску. С галочкой к блоку каждого вложения дописывается его путь в CAS
+/// (`prompt::path_line`). Выключена по умолчанию и сбрасывается с отправкой.
+///
+/// Состояние галочку держит сама, пересборка полосы на клик не нужна:
+/// сигнал читается без подписки, только как стартовое значение.
+fn share_path_checkbox() -> impl Widget {
+    let on = use_context::<SynChatCtx>().attach_share_paths.get_untracked();
+    Checkbox::checked(on)
+        .label(tr!("chat.attach.share_path.label"))
+        .on_change(|v| use_context::<SynChatCtx>().attach_share_paths.set(v))
+        .class("attachments-share-path")
 }
 
 /// Подпись под полосой: сколько файлов и во сколько vision-токенов они
@@ -76,9 +100,10 @@ fn summary_line(items: &[MsgAttachment], busy: usize) -> String {
     if items.is_empty() {
         return trn!("chat.attach.summary.preparing_only", busy);
     }
-    let cap = use_context::<crate::context::AppCtx>()
-        .syn_chat_max_image_tokens
-        .get_untracked();
+    // Без `AppCtx` (harness-тесты полосы) — потолок из конфига модели.
+    let cap = syngui::context_provider::try_use_context::<crate::context::AppCtx>()
+        .map(|app| app.syn_chat_max_image_tokens.get_untracked())
+        .unwrap_or(0);
     let cap = (cap > 0).then_some(cap);
     let tokens: usize = items
         .iter()

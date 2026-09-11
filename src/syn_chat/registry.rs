@@ -81,7 +81,7 @@ pub fn create_new() -> String {
     ctx.active_chat_id.set(Some(id.clone()));
     ctx.messages.set(Vec::new());
     ctx.input.set(String::new());
-    ctx.pending_attachments.set(Vec::new());
+    ctx.clear_draft_attachments();
     ctx.error.set(None);
     // Отпечаток ставим последним — params к этому моменту уже те, с
     // которыми чат уйдёт в автосейв.
@@ -153,7 +153,7 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     ctx.input_tokens.set_always(0);
     // Черновик вложений принадлежал прошлому чату — сами blob'ы остаются
     // в CAS, но к новому чату они не прикрепляются.
-    ctx.pending_attachments.set(Vec::new());
+    ctx.clear_draft_attachments();
     ctx.viewer.set(None);
     // Подсветка принадлежала прошлому переходу из поиска, правка — прошлой ленте.
     ctx.highlight_msg.set(None);
@@ -205,7 +205,7 @@ fn select_next_visible(ctx: &SynChatCtx) {
             ctx.active_chat_id.set(None);
             ctx.messages.set(Vec::new());
             ctx.input.set(String::new());
-            ctx.pending_attachments.set(Vec::new());
+            ctx.clear_draft_attachments();
             ctx.loading.set(false);
         }
     }

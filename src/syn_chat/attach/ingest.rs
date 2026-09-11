@@ -64,6 +64,7 @@ pub fn ingest(path: &Path) -> Result<MsgAttachment, String> {
         model_ext: String::new(),
         ui_ext: String::new(),
         has_thumb: false,
+        share_path: false,
     };
 
     let blob = blobs::source_path(&a);

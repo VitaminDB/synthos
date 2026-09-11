@@ -9,6 +9,10 @@
 //!   `blobs/derived/<sha>.txt`), иначе — строка-заглушка;
 //! - **прочее** — только имя и размер: модель хотя бы знает, что файл есть.
 //!
+//! С галочкой «передать модели путь к файлу» (`MsgAttachment::share_path`)
+//! после блока вложения идёт строка с его путём на диске — чтобы модель
+//! могла обработать файл инструментами, а не искать его.
+//!
 //! Если модель без vision-башни, картинки и видео тоже деградируют до
 //! текстовой строки — чат остаётся рабочим, просто модель их не «видит».
 
@@ -105,6 +109,9 @@ pub fn prepare_user_message(
             AttachmentKind::Audio => text.push_str(&audio_block(a, caps)),
             AttachmentKind::Other => text.push_str(&fallback_line(a, None)),
         }
+        if a.share_path {
+            text.push_str(&path_line(a));
+        }
     }
 
     if !body.trim().is_empty() {
@@ -114,6 +121,18 @@ pub fn prepare_user_message(
         text.push_str(body);
     }
     PreparedMessage { text, media }
+}
+
+/// Строка с путём вложения на диске — пользователь отметил «передать модели
+/// путь к файлу». Картинка уходит модели эмбеддингами, и без пути просьба
+/// «обработай её» превращалась в поиск файла по диску инструментами. Путь —
+/// оригинал в CAS: имя там — хеш, поэтому рядом исходное имя.
+fn path_line(a: &MsgAttachment) -> String {
+    format!(
+        "[путь к файлу «{}» на диске: {}]\n",
+        display_name(a),
+        blobs::source_path(a).display()
+    )
 }
 
 /// Ключ вложения в кэше эмбеддингов: модальность и потолок токенов.
@@ -405,7 +424,18 @@ mod tests {
             model_ext: String::new(),
             ui_ext: String::new(),
             has_thumb: false,
+            share_path: false,
         }
+    }
+
+    /// Путь — оригинал в CAS (имя-хеш), рядом исходное имя файла.
+    #[test]
+    fn path_line_names_blob_and_original() {
+        let a = att(AttachmentKind::Image, "photo.png");
+        let line = path_line(&a);
+        assert!(line.contains("photo.png"), "{line}");
+        assert!(line.contains(&blobs::source_path(&a).display().to_string()), "{line}");
+        assert!(line.ends_with("]\n"), "{line}");
     }
 
     #[test]

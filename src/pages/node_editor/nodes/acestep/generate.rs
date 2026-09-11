@@ -99,6 +99,13 @@ pub fn resolve_paths(
 ) -> std::result::Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
     let pick = |o: &Option<PathBuf>, names: &[&str]| -> std::result::Result<PathBuf, String> {
         if let Some(p) = o {
+            // Голое имя бандла (агент пишет `acestep_5hz_lm_4b.syn` — так их
+            // печатает схема ноды) — от каталога моделей, а не от cwd.
+            if p.is_relative() {
+                if let Some(d) = &h.models_dir {
+                    return Ok(d.join(p));
+                }
+            }
             return Ok(p.clone());
         }
         match &h.models_dir {
@@ -1047,6 +1054,29 @@ mod tests {
         h.lm_path = Some(dir.path().join("my_lm.syn"));
         let (lm, _, _, _) = resolve_paths(&h).expect("resolve");
         assert_eq!(lm.file_name().unwrap(), "my_lm.syn");
+    }
+
+    /// Голое имя в override (так пишет агент — схема ноды печатает имена
+    /// бандлов) резолвится от каталога моделей, а не от cwd процесса.
+    #[test]
+    fn resolve_paths_relative_override_joins_models_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(
+            dir.path(),
+            &[
+                "acestep_5hz_lm_1.7b.syn",
+                "acestep_5hz_lm_4b.syn",
+                "qwen3-embedding-0.6b.syn",
+                "acestep_v15_xl_base.syn",
+                "acestep_vae.syn",
+            ],
+        );
+        let mut h = handle(dir.path());
+        h.lm_path = Some(PathBuf::from("acestep_5hz_lm_1.7b.syn"));
+        h.dit_path = Some(PathBuf::from("acestep_v15_xl_base.syn"));
+        let (lm, _, dit, _) = resolve_paths(&h).expect("resolve");
+        assert_eq!(lm, dir.path().join("acestep_5hz_lm_1.7b.syn"));
+        assert_eq!(dit, dir.path().join("acestep_v15_xl_base.syn"));
     }
 
     /// Нет ни каталога, ни override'ов — понятная ошибка, а не паника.

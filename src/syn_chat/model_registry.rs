@@ -7,7 +7,11 @@ use synaptix::facade::llm::{load_llm_with_policy, Llm, LlmTokenizer, QuantPolicy
 
 pub struct LoadedSynModel {
     pub model: Llm,
-    pub tokenizer: LlmTokenizer,
+    /// Под `Arc`, чтобы счётчики токенов (`tools::budget::model_counter`)
+    /// держали только токенизатор, а не модель: клон `Arc<LoadedSynModel>`
+    /// в бюджете хода переживал выгрузку перед `pipelines run` — веса
+    /// оставались на карте, и нодовая модель прогона падала в OOM.
+    pub tokenizer: Arc<LlmTokenizer>,
     pub path: PathBuf,
     /// Кэш `Llm::supports_media()`, снятый один раз при загрузке.
     ///
@@ -230,7 +234,7 @@ impl SynModelRegistry {
                     let supports_media = model.supports_media();
                     let loaded = Arc::new(LoadedSynModel {
                         model,
-                        tokenizer,
+                        tokenizer: Arc::new(tokenizer),
                         path,
                         supports_media,
                     });

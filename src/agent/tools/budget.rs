@@ -31,9 +31,14 @@ pub type Counter = Arc<dyn Fn(&str) -> usize + Send + Sync>;
 
 /// Счётчик по загруженной модели. Ошибка кодирования не должна ронять ход:
 /// где токенизатор не смог, сойдёт оценка по символам.
+///
+/// Держит только токенизатор, не модель: счётчик живёт в бюджете хода и в
+/// `MediaCaps` весь agent-loop, и клон `Arc<LoadedSynModel>` не давал
+/// `pipelines run` с `free_vram` освободить веса — ACE-Step и LTX грузились
+/// рядом с чат-LLM и падали в OOM.
 pub fn model_counter(model: &Arc<LoadedSynModel>) -> Counter {
-    let model = model.clone();
-    Arc::new(move |s: &str| model.tokenizer.encode(s).map(|ids| ids.len()).unwrap_or_else(|_| estimate(s)))
+    let tokenizer = Arc::clone(&model.tokenizer);
+    Arc::new(move |s: &str| tokenizer.encode(s).map(|ids| ids.len()).unwrap_or_else(|_| estimate(s)))
 }
 
 /// Оценка, когда счётчика нет (юнит-тесты, вызов вне agent-loop). Русский

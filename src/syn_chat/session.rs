@@ -3290,6 +3290,10 @@ async fn run_pipeline_tool(
         let m = model_opt.take().expect("model взята выше");
         model_path = Some(m.path.clone());
         let device = *m.model.device();
+        // Проверка после выгрузки: если кто-то в ходе ещё держит клон модели,
+        // веса остаются на карте, а прогон упадёт в OOM (так было с бюджетом
+        // инструментов, державшим `Arc<LoadedSynModel>`).
+        let weak = Arc::downgrade(&m);
         **kv_slot = None;
         drop(m);
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -3298,6 +3302,13 @@ async fn run_pipeline_tool(
             let _ = tx.send(());
         });
         let _ = rx.await;
+        let alive = weak.strong_count();
+        if alive > 0 {
+            log::warn!(
+                "[syn_chat] pipelines run: LLM НЕ освобождена — живых ссылок {alive}, \
+                 веса остаются в VRAM"
+            );
+        }
         let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(device);
         log::info!(
             "[syn_chat] pipelines run: LLM выгружена (+{} MB, {} дескрипторов), \

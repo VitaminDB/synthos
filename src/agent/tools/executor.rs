@@ -86,7 +86,7 @@ pub fn history_limit(tool: &str) -> Option<usize> {
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, subagent, system, pipelines, notes, wizard")]
+    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, subagent, system, pipelines, notes, wizard, view_media")]
     Unknown(String),
     #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
@@ -154,7 +154,7 @@ pub fn normalize_args(raw: &str) -> String {
 
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
-pub(crate) const TOOL_KEYS: [&str; 9] = [
+pub(crate) const TOOL_KEYS: [&str; 10] = [
     KEY_BASH,
     KEY_KB_SEARCH,
     KEY_WEB,
@@ -164,6 +164,7 @@ pub(crate) const TOOL_KEYS: [&str; 9] = [
     KEY_PIPELINES,
     KEY_NOTES,
     super::catalog::KEY_WIZARD,
+    super::catalog::KEY_VIEW_MEDIA,
 ];
 
 /// Приводит имя вызова к ключу каталога.
@@ -202,6 +203,8 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
         KEY_PIPELINES => super::pipelines::run(args).await,
         KEY_NOTES => super::notes::run(args).await,
         super::catalog::KEY_WIZARD => super::wizard::run(args).await,
+        // Основной чат исполняет его сам (`syn_chat::session`): нужна модель.
+        super::catalog::KEY_VIEW_MEDIA => super::view_media::run(args).await,
         other => Err(ToolError::Unknown(other.to_string())),
     };
 

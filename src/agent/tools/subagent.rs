@@ -194,6 +194,14 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
     snap.ok_or_else(|| ToolError::Spawn("model not loaded".to_string()))
 }
 
+/// Инструменты, которых у субагента нет: он сам (рекурсия), визард (панель
+/// пользователю в ленте) и `view_media` (картинки — только в цикле чата).
+fn subagent_excluded(key: &str) -> bool {
+    key == KEY_SUBAGENT
+        || key == super::catalog::KEY_WIZARD
+        || key == super::catalog::KEY_VIEW_MEDIA
+}
+
 /// Собирает дескрипторы активных тулов для субагента: те же активные ключи,
 /// что в основном чате, но с явным исключением `subagent` (рекурсия
 /// запрещена) и с динамическим autoskill-обогащением.
@@ -201,8 +209,8 @@ fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
     let keys = app.tools.active.get_untracked();
     keys.iter()
         // Визард — панель для пользователя в ленте; у субагента ни ленты,
-        // ни пользователя.
-        .filter(|k| k.as_str() != KEY_SUBAGENT && k.as_str() != super::catalog::KEY_WIZARD)
+        // ни пользователя. `view_media` — медиа-путь есть только у цикла чата.
+        .filter(|k| !subagent_excluded(k))
         .filter_map(|k| {
             if k == KEY_AUTOSKILL {
                 Some(crate::agent::tool_flow::build_autoskill_chat_tool(app))
@@ -224,7 +232,7 @@ fn select_tools(snap_tools: &[ChatTool], requested: Option<&[String]>) -> Vec<Ch
             let known: std::collections::HashSet<&str> =
                 snap_tools.iter().map(|t| t.function.name.as_str()).collect();
             for k in req {
-                if k == KEY_SUBAGENT || k == super::catalog::KEY_WIZARD {
+                if subagent_excluded(k) {
                     continue;
                 }
                 if !known.contains(k.as_str()) {

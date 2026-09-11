@@ -37,7 +37,7 @@ use synaptix::facade::llm::{
 };
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
-use crate::agent::tools::catalog::KEY_SUBAGENT;
+use crate::agent::tools::catalog::{KEY_SUBAGENT, KEY_VIEW_MEDIA};
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
@@ -1887,11 +1887,13 @@ async fn run_agent_loop(
             .iter()
             .any(|i| attach_prompt::needs_tower(&i.attachments, &caps));
     let parked = needs_vision && park_kv_session(&mut kv_slot, &model);
-    let (mut history, media) = prepare_history(&items, &model, &caps, &ctx);
+    // `media` растёт и посреди хода: `view_media` дописывает эмбеддинги
+    // файлов, которые модель попросила посмотреть (порядок — порядок
+    // заполнителей в промпте, новые всегда в хвосте).
+    let (mut history, mut media) = prepare_history(&items, &model, &caps, &ctx);
     if parked {
         unpark_kv_session(&mut kv_slot, &model);
     }
-    let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
     if !media.is_empty() {
         let tokens: usize = media.iter().map(|m| m.tokens).sum();
         log::info!(
@@ -1905,7 +1907,7 @@ async fn run_agent_loop(
     // в префиксе: гибрид Qwen3.6/3.8, Muse, Gemma-4, Qwen4Exp (подмену
     // картинки при той же разметке ловит отпечаток строк). Архитектуры без
     // сессии идут полным префиллом.
-    let prefix_kv_on = (media.is_empty() || model.model.kv_session_media_ok())
+    let mut prefix_kv_on = (media.is_empty() || model.model.kv_session_media_ok())
         && crate::config::AppConfig::load().syn_chat_prefix_kv;
     if !prefix_kv_on {
         *kv_slot = None;
@@ -2195,6 +2197,7 @@ async fn run_agent_loop(
             } else {
                 None
             };
+            let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
             let stream_res = match (session, media_refs.is_empty()) {
                 (Some(session), false) => runner
                     .generate_streaming_cached_media(
@@ -2774,23 +2777,37 @@ async fn run_agent_loop(
             // «alloc_zeros(...): OOM». Отправляем кэш в RAM на время вызова
             // и забираем обратно: перевоз через PCIe — десятки мс, полный
             // префилл истории — секунды.
-            let parked = tool_name(chat_call) == KEY_SUBAGENT
-                && park_kv_session(&mut kv_slot, &model);
+            // ── view_media: файл кодирует vision-башня этой же модели, и его
+            // эмбеддинги входят в промпт следующего хода — поэтому исполняет
+            // цикл, а не `tools::execute` (у того нет ни модели, ни медиа).
+            let mut viewed: Option<ViewedMedia> = None;
+            let outcome = if tools::executor::canonical_tool_name(&tool_name(chat_call))
+                == KEY_VIEW_MEDIA
+            {
+                let v = view_media_call(chat_call, &model, &caps, &mut kv_slot).await;
+                let outcome = v.outcome.clone();
+                viewed = Some(v);
+                outcome
+            } else {
+                let parked = tool_name(chat_call) == KEY_SUBAGENT
+                    && park_kv_session(&mut kv_slot, &model);
 
-            // Исполнение с возможностью прерывания на длинных tool'ах
-            // (web fetch может висеть 30+ сек).
-            let outcome = tokio::select! {
-                o = tools::execute(chat_call) => o,
-                _ = wait_abort(&abort, abort_snapshot) => {
-                    if parked {
-                        unpark_kv_session(&mut kv_slot, &model);
+                // Исполнение с возможностью прерывания на длинных tool'ах
+                // (web fetch может висеть 30+ сек).
+                let outcome = tokio::select! {
+                    o = tools::execute(chat_call) => o,
+                    _ = wait_abort(&abort, abort_snapshot) => {
+                        if parked {
+                            unpark_kv_session(&mut kv_slot, &model);
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                };
+                if parked {
+                    unpark_kv_session(&mut kv_slot, &model);
                 }
+                outcome
             };
-            if parked {
-                unpark_kv_session(&mut kv_slot, &model);
-            }
 
             // Заметки для модели к результату. В ленту они уходят скрытым
             // полем `model_note`, а не в тело: так история, собранная из
@@ -2822,19 +2839,51 @@ async fn run_agent_loop(
             // с промптом хода байт в байт, иначе префикс-KV обнулится.
             // Исключения — `autoskill` и `notes` (см. `history_limit`).
             let content = fit_for_prompt(&outcome.content, &tool_name(chat_call));
-            push_tool_result_with(
-                &chat_id,
-                chat_call,
-                content.clone(),
-                outcome.error,
-                Vec::new(),
-                note.clone(),
-            );
+            let mut for_history = format!("{content}{note}");
+            match viewed {
+                Some(v) => {
+                    // Блоки файлов — перед телом, тем же сборщиком, что и
+                    // пересборка из ленты (`prepare_tool_view`): промпт
+                    // следующего сообщения обязан совпасть с промптом хода.
+                    let items: Vec<(&MsgAttachment, &str)> = v
+                        .attachments
+                        .iter()
+                        .zip(&v.parts)
+                        .map(|(a, p)| (a, p.as_str()))
+                        .collect();
+                    for_history = attach_prompt::assemble_tool_view(&for_history, &items);
+                    if !v.media.is_empty() {
+                        media.extend(v.media);
+                        if prefix_kv_on && !model.model.kv_session_media_ok() {
+                            log::info!(
+                                "[syn_chat] view_media: у модели нет сессии с медиа — \
+                                 префикс-KV до конца хода выключен"
+                            );
+                            prefix_kv_on = false;
+                            *kv_slot = None;
+                        }
+                    }
+                    push_tool_result_viewed(
+                        &chat_id,
+                        chat_call,
+                        content,
+                        outcome.error,
+                        v.attachments,
+                        note.clone(),
+                    );
+                }
+                None => push_tool_result_with(
+                    &chat_id,
+                    chat_call,
+                    content,
+                    outcome.error,
+                    Vec::new(),
+                    note.clone(),
+                ),
+            }
             // Результат уже уехал в историю — следующий вызов этого же хода
             // получит окно на его размер меньше.
-            tools::budget::spend(&content);
-            let mut for_history = content;
-            for_history.push_str(&note);
+            tools::budget::spend(&for_history);
             history.push(Message::tool_named(tool_name(chat_call), for_history));
             if !outcome.error && tool_name(chat_call) == tools::catalog::KEY_WIZARD {
                 awaiting_user = true;
@@ -3448,9 +3497,9 @@ fn push_tool_result(ctx: &Option<String>, call: &ChatToolCall, content: String, 
 }
 
 /// Как [`push_tool_result`], но с медиа-вложениями (результаты пайплайна:
-/// mp4/wav из save-нод). В промпт они не попадают — `build_history` для
-/// ToolResult отдаёт `attachments: Vec::new()` — а в ленте рендерятся
-/// плитками с полноэкранным просмотрщиком.
+/// mp4/wav из save-нод). В промпт они не попадают — отдельное сообщение
+/// ленты `build_history` пропускает — а в ленте рендерятся плитками с
+/// полноэкранным просмотрщиком.
 ///
 /// `model_note` — дописка к телу только для модели (см. `ChatMsg::model_note`).
 fn push_tool_result_with(
@@ -3478,6 +3527,168 @@ fn push_tool_result_with(
             m.push(media);
         }
     });
+}
+
+/// Результат `view_media`: файлы лежат на самой карточке инструмента, а не
+/// отдельным сообщением, как у пайплайна, — это часть результата, из которой
+/// `build_history` пересобирает промпт на следующем сообщении.
+fn push_tool_result_viewed(
+    chat_id: &Option<String>,
+    call: &ChatToolCall,
+    content: String,
+    error: bool,
+    attachments: Vec<MsgAttachment>,
+    model_note: String,
+) {
+    let id = call.id.clone();
+    let name = call.function.name.clone().unwrap_or_default();
+    ledger_update(chat_id, move |m| {
+        let mut msg = ChatMsg::tool_result(id, name, content, error);
+        msg.model_note = model_note;
+        msg.attachments = attachments;
+        m.push(msg);
+    });
+}
+
+/// Что `view_media` отдал циклу.
+struct ViewedMedia {
+    /// Тело результата (список файлов) — в ленту и после блоков в промпт.
+    outcome: tools::ToolOutcome,
+    /// Файлы, вошедшие в промпт (и те, у которых вместо содержимого стоит
+    /// заглушка с причиной), — на карточку результата.
+    attachments: Vec<MsgAttachment>,
+    /// Их куски промпта в том же порядке (`attach_prompt::attachment_part`).
+    parts: Vec<String>,
+    /// Эмбеддинги картинок и видео среди них — в хвост медиа хода.
+    media: Vec<MediaEmbedding>,
+}
+
+/// Исполняет `view_media`: кладёт файлы в CAS, как вложения, и готовит их
+/// тем, что умеет модель, — картинки и видео её vision-башней, звук ASR,
+/// документы текстом.
+///
+/// Башня поднимается только под то, чего нет в кэше эмбеддингов, и ложится
+/// на ту же VRAM, что держит кэш префикс-KV хода: кэш на это время уезжает в
+/// RAM (как в начале цикла). Файлы, которые не влезают в остаток окна,
+/// в промпт не идут — модель узнаёт, сколько им было нужно.
+async fn view_media_call(
+    call: &ChatToolCall,
+    model: &Arc<LoadedSynModel>,
+    caps: &MediaCaps,
+    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
+) -> ViewedMedia {
+    use crate::agent::tools::view_media::{self as vm, Entry, Status};
+
+    let fail = |content: String, invalid_args: bool| ViewedMedia {
+        outcome: tools::ToolOutcome {
+            tool_call_id: call.id.clone(),
+            name: KEY_VIEW_MEDIA.to_string(),
+            content,
+            error: true,
+            invalid_args,
+        },
+        attachments: Vec::new(),
+        parts: Vec::new(),
+        media: Vec::new(),
+    };
+    let args = tools::executor::normalize_args(call.function.arguments.as_deref().unwrap_or(""));
+    let paths = match vm::parse_paths(&args) {
+        Ok(p) => p,
+        Err(e) => return fail(e.to_string(), true),
+    };
+
+    // Хеширование, превью и ffmpeg у видео — секунды; не на потоке цикла.
+    let ingested = tokio::task::spawn_blocking(move || {
+        paths
+            .into_iter()
+            .map(|p| {
+                let r = vm::check_file(&p).and_then(|()| crate::syn_chat::attach::ingest::ingest(&p));
+                (p, r)
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
+    let ingested = match ingested {
+        Ok(v) => v,
+        Err(e) => return fail(format!("view_media: reading files failed: {e}"), false),
+    };
+
+    let ready: Vec<MsgAttachment> = ingested
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().cloned())
+        .collect();
+    let needs_vision = caps.vision && attach_prompt::needs_tower(&ready, caps);
+    let parked = needs_vision && park_kv_session(kv_slot, model);
+    let tower = attach_prompt::ensure_tower(&model.model, needs_vision);
+    let mut caps = MediaCaps { vision: tower.is_ok(), ..caps.clone() };
+    if let Err(reason) = &tower {
+        // Пустая причина — башня и не требовалась (всё в кэше).
+        if !reason.is_empty() {
+            caps.vision_error = Some(reason.clone());
+        }
+    }
+
+    // Половина остатка окна на весь результат — как у остальных
+    // инструментов (`budget::grant`); вне цикла бюджета нет.
+    let grant = tools::budget::grant(usize::MAX);
+    let mut allowed = if grant.measured { grant.tokens } else { usize::MAX };
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut attachments: Vec<MsgAttachment> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut media: Vec<MediaEmbedding> = Vec::new();
+    for (path, r) in ingested {
+        let a = match r {
+            Ok(a) => a,
+            Err(why) => {
+                entries.push(Entry { path, status: Status::Failed(why) });
+                continue;
+            }
+        };
+        let part = attach_prompt::attachment_part(&a, &model.model, &caps);
+        let tokens = part
+            .media
+            .as_ref()
+            .map(|m| m.tokens)
+            .unwrap_or_else(|| tools::budget::count(&part.text));
+        if tokens > allowed {
+            entries.push(Entry { path, status: Status::Skipped { attachment: a, need: tokens, allowed } });
+            continue;
+        }
+        allowed = allowed.saturating_sub(tokens);
+        attachments.push(a.clone());
+        parts.push(part.text);
+        media.extend(part.media);
+        entries.push(Entry {
+            path,
+            status: Status::Included { index: attachments.len(), attachment: a, tokens, failure: part.failure },
+        });
+    }
+    if tower.is_ok() {
+        attach_prompt::release_tower(&model.model);
+    }
+    if parked {
+        unpark_kv_session(kv_slot, model);
+    }
+
+    let shown = entries.iter().filter(|e| e.shown()).count();
+    log::info!(
+        "[syn_chat] view_media: показано {shown} из {} файлов, медиа {} ({} vision-токенов)",
+        entries.len(),
+        media.len(),
+        media.iter().map(|m| m.tokens).sum::<usize>()
+    );
+    ViewedMedia {
+        outcome: tools::ToolOutcome {
+            tool_call_id: call.id.clone(),
+            name: KEY_VIEW_MEDIA.to_string(),
+            content: vm::summary(&entries),
+            error: shown == 0,
+            invalid_args: false,
+        },
+        attachments,
+        parts,
+        media,
+    }
 }
 
 /// Собирает JSON-схемы активных инструментов (для передачи в Jinja-шаблон
@@ -3751,10 +3962,19 @@ fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<Hi
                 // обнуляется. Чаты, записанные до укладки, приезжают целиком.
                 let mut body = m.body.clone();
                 body.push_str(&m.model_note);
+                // Файлы на карточке — часть результата только у `view_media`
+                // (модель сама их смотрела). Медиа пайплайна в старых чатах
+                // тоже висело на карточке, но модели не показывалось.
+                let attachments =
+                    if tools::executor::canonical_tool_name(tool_name) == KEY_VIEW_MEDIA {
+                        m.attachments.clone()
+                    } else {
+                        Vec::new()
+                    };
                 out.push(HistoryItem {
                     role: m.role,
                     body,
-                    attachments: Vec::new(),
+                    attachments,
                     tool_name: Some(tool_name.clone()),
                     reasoning: String::new(),
                     calls: Vec::new(),
@@ -3803,7 +4023,19 @@ fn prepare_history(
     let mut media: Vec<MediaEmbedding> = Vec::new();
     for item in items {
         if let Some(name) = &item.tool_name {
-            out.push(Message::tool_named(name.as_str(), item.body.as_str()));
+            if item.attachments.is_empty() {
+                out.push(Message::tool_named(name.as_str(), item.body.as_str()));
+            } else {
+                // `view_media`: блоки файлов перед телом, как в ходе.
+                let prepared = attach_prompt::prepare_tool_view(
+                    &item.body,
+                    &item.attachments,
+                    &model.model,
+                    &caps,
+                );
+                media.extend(prepared.media);
+                out.push(Message::tool_named(name.as_str(), prepared.text));
+            }
             continue;
         }
         match item.role {
@@ -4342,6 +4574,47 @@ mod tests {
     /// Выхлоп `sed -n '1,250p'` по 16 КБ: при свободном окне уходит целиком
     /// — именно на этом ломался чат «MyLife» (07.09.2026), где статический
     /// клип резал каждый кусок и модель перечитывала файл по кругу.
+    /// Файлы, которые модель посмотрела через `view_media`, лежат на карточке
+    /// результата и уходят в пересборку промпта (иначе следующее сообщение
+    /// теряло бы картинку и префикс-KV). Медиа пайплайна на карточке старых
+    /// чатов модели не показывалось — и не показывается.
+    #[test]
+    fn view_media_attachments_reach_history_pipeline_media_does_not() {
+        let img = MsgAttachment {
+            sha256: "a".repeat(64),
+            mime: "image/png".into(),
+            original_name: "me.png".into(),
+            width: 640,
+            height: 480,
+            size_bytes: 1000,
+            kind: crate::agent::state::AttachmentKind::Image,
+            ext: "png".into(),
+            duration_ms: 0,
+            model_ext: String::new(),
+            ui_ext: String::new(),
+            has_thumb: false,
+            share_path: false,
+        };
+        let mut viewed = ChatMsg::tool_result("c1", "view_media", "view_media: 1 of 1", false);
+        viewed.attachments = vec![img.clone()];
+        viewed.model_note = "\n[note]".into();
+        // Канальный шаблон зовёт инструмент с пространством имён.
+        let mut viewed_ns = ChatMsg::tool_result("c2", "view_media.show", "ok", false);
+        viewed_ns.attachments = vec![img.clone()];
+        let mut pipe = ChatMsg::tool_result("c3", "pipelines", "done", false);
+        pipe.attachments = vec![img.clone()];
+
+        let ctx = SynChatCtx::new();
+        ctx.messages.set(vec![ChatMsg::user("найди меня"), viewed, viewed_ns, pipe]);
+        let items = build_history(&ctx, "", false);
+        let tools: Vec<&HistoryItem> = items.iter().filter(|i| i.tool_name.is_some()).collect();
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0].attachments, [img.clone()]);
+        assert_eq!(tools[0].body, "view_media: 1 of 1\n[note]", "заметка — в тело, как в ходе");
+        assert_eq!(tools[1].attachments, [img]);
+        assert!(tools[2].attachments.is_empty(), "медиа пайплайна модели не показывается");
+    }
+
     #[test]
     fn fit_for_prompt_keeps_a_chunk_that_fits_the_window() {
         let _serial = budget::test_serial();

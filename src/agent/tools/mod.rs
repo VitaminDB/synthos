@@ -14,6 +14,8 @@
 //! - [`web_fetch`]  — общий HTTP-helper (reqwest+htmd), используется
 //!   kb-ingest pipeline'ом; tool `web` имеет свой собственный pipeline в
 //!   `web::http`, чтобы получать сырой HTML до htmd для Readability.
+//! - [`view_media`] — модель смотрит локальный файл по пути своим зрением
+//!   (картинка/видео → vision-башня, звук → ASR); исполняет agent-loop чата.
 //!
 //! Политика безопасности:
 //! - Каждое исполнение проходит через UI-подтверждение (кроме «Разрешить все»,
@@ -35,6 +37,7 @@ pub mod notes;
 pub mod pipelines;
 pub mod subagent;
 pub mod system;
+pub mod view_media;
 pub mod web;
 pub mod web_fetch;
 pub mod wizard;

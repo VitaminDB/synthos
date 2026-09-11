@@ -75,6 +75,51 @@ pub struct PreparedMessage {
     pub media: Vec<MediaEmbedding>,
 }
 
+/// Одно вложение в промпте: его кусок текста (блок заполнителей, документ,
+/// транскрипт или строка-заглушка) и эмбеддинг, если это картинка/видео.
+pub struct Part {
+    pub text: String,
+    pub media: Option<MediaEmbedding>,
+    /// Почему содержимое модели не досталось (`None` — досталось): в `text`
+    /// тогда лежит строка-заглушка с этой же причиной.
+    pub failure: Option<String>,
+}
+
+impl Part {
+    fn failed(text: String, reason: impl Into<String>) -> Self {
+        Self { text, media: None, failure: Some(reason.into()) }
+    }
+}
+
+/// Кусок промпта под одно вложение — каждой модальности своим путём (см.
+/// шапку модуля). Картинка и видео кодируются башней (или берутся из кэша
+/// эмбеддингов), поэтому башня к этому моменту уже должна быть поднята
+/// ([`ensure_tower`]), если эмбеддингов в кэше нет.
+pub fn attachment_part(a: &MsgAttachment, model: &Llm, caps: &MediaCaps) -> Part {
+    let mut part = match a.kind {
+        AttachmentKind::Image | AttachmentKind::Video => match encode_media(a, model, caps) {
+            Ok(emb) => Part {
+                text: format!("{}\n", emb.prompt_block),
+                media: Some(emb),
+                failure: None,
+            },
+            Err(e) => {
+                log::warn!("[attach] {}: {e}", a.original_name);
+                Part::failed(fallback_line(a, Some(&e)), e)
+            }
+        },
+        AttachmentKind::Document => document_part(a, caps),
+        AttachmentKind::Audio => audio_part(a, caps),
+        AttachmentKind::Other => {
+            Part::failed(fallback_line(a, None), "содержимое модели недоступно")
+        }
+    };
+    if a.share_path {
+        part.text.push_str(&path_line(a));
+    }
+    part
+}
+
 /// Собирает содержимое user-сообщения из вложений и текста.
 ///
 /// Порядок важен: блоки вложений идут перед текстом реплики (так их видят
@@ -91,27 +136,9 @@ pub fn prepare_user_message(
     let mut media: Vec<MediaEmbedding> = Vec::new();
 
     for a in attachments {
-        match a.kind {
-            AttachmentKind::Image | AttachmentKind::Video => {
-                match encode_media(a, model, caps) {
-                    Ok(emb) => {
-                        text.push_str(&emb.prompt_block);
-                        text.push('\n');
-                        media.push(emb);
-                    }
-                    Err(e) => {
-                        log::warn!("[attach] {}: {e}", a.original_name);
-                        text.push_str(&fallback_line(a, Some(&e)));
-                    }
-                }
-            }
-            AttachmentKind::Document => text.push_str(&document_block(a, caps)),
-            AttachmentKind::Audio => text.push_str(&audio_block(a, caps)),
-            AttachmentKind::Other => text.push_str(&fallback_line(a, None)),
-        }
-        if a.share_path {
-            text.push_str(&path_line(a));
-        }
+        let part = attachment_part(a, model, caps);
+        text.push_str(&part.text);
+        media.extend(part.media);
     }
 
     if !body.trim().is_empty() {
@@ -121,6 +148,45 @@ pub fn prepare_user_message(
         text.push_str(body);
     }
     PreparedMessage { text, media }
+}
+
+/// Результат инструмента `view_media`: файлы, которые модель попросила
+/// посмотреть, — каждый со своей подписью перед блоком (модель сравнивает
+/// фото между собой и должна знать, какое из них какой файл), затем тело
+/// результата со списком путей.
+///
+/// Одна функция на оба пути — ход агента собирает текст из уже посчитанных
+/// кусков ([`assemble_tool_view`]), пересборка истории из ленты — отсюда;
+/// текст обязан совпасть байт в байт, иначе префикс-KV обнулится.
+pub fn prepare_tool_view(
+    body: &str,
+    attachments: &[MsgAttachment],
+    model: &Llm,
+    caps: &MediaCaps,
+) -> PreparedMessage {
+    let parts: Vec<Part> = attachments.iter().map(|a| attachment_part(a, model, caps)).collect();
+    let items: Vec<(&MsgAttachment, &str)> = attachments
+        .iter()
+        .zip(&parts)
+        .map(|(a, p)| (a, p.text.as_str()))
+        .collect();
+    let text = assemble_tool_view(body, &items);
+    PreparedMessage { text, media: parts.into_iter().filter_map(|p| p.media).collect() }
+}
+
+/// Текст результата `view_media` из готовых кусков: `[file N: имя]`, кусок
+/// вложения, и после всех файлов — тело результата.
+pub fn assemble_tool_view(body: &str, items: &[(&MsgAttachment, &str)]) -> String {
+    let mut text = String::new();
+    for (i, (a, part)) in items.iter().enumerate() {
+        text.push_str(&format!("[file {}: {}]\n", i + 1, display_name(a)));
+        text.push_str(part);
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+    text.push_str(body);
+    text
 }
 
 /// Строка с путём вложения на диске — пользователь отметил «передать модели
@@ -303,7 +369,7 @@ fn display_name(a: &MsgAttachment) -> &str {
 /// (`budget::fit_with`): голова и хвост по строкам, в середине — пометка с
 /// номерами пропущенных строк и путём к файлу, чтобы модель дочитала их
 /// инструментом `bash`, а не гадала по обрыву.
-fn document_block(a: &MsgAttachment, caps: &MediaCaps) -> String {
+fn document_part(a: &MsgAttachment, caps: &MediaCaps) -> Part {
     let path = blobs::source_path(a);
     match read_document(&path) {
         Ok(text) if !text.trim().is_empty() => {
@@ -318,10 +384,14 @@ fn document_block(a: &MsgAttachment, caps: &MediaCaps) -> String {
                     }
                 }
             };
-            format!("[документ: {}]\n```\n{body}\n```\n", display_name(a))
+            Part {
+                text: format!("[документ: {}]\n```\n{body}\n```\n", display_name(a)),
+                media: None,
+                failure: None,
+            }
         }
-        Ok(_) => fallback_line(a, Some("документ пуст")),
-        Err(e) => fallback_line(a, Some(&e)),
+        Ok(_) => Part::failed(fallback_line(a, Some("документ пуст")), "документ пуст"),
+        Err(e) => Part::failed(fallback_line(a, Some(&e)), e),
     }
 }
 
@@ -366,16 +436,26 @@ fn truncate_chars(s: &str, limit: usize) -> (String, bool) {
 }
 
 /// Транскрипт аудио: сначала кэш на диске, потом загруженная ASR-модель.
-fn audio_block(a: &MsgAttachment, caps: &MediaCaps) -> String {
+fn audio_part(a: &MsgAttachment, caps: &MediaCaps) -> Part {
     match transcribe(a, caps) {
-        Some(text) if !text.trim().is_empty() => format!(
-            "[аудио: {} · {}]\nРасшифровка:\n```\n{}\n```\n",
-            display_name(a),
-            format_duration(a.duration_ms),
-            text.trim()
-        ),
-        Some(_) => fallback_line(a, Some("в записи не распознана речь")),
-        None => fallback_line(a, Some("ASR-модель не загружена")),
+        Some(text) if !text.trim().is_empty() => Part {
+            text: format!(
+                "[аудио: {} · {}]\nРасшифровка:\n```\n{}\n```\n",
+                display_name(a),
+                format_duration(a.duration_ms),
+                text.trim()
+            ),
+            media: None,
+            failure: None,
+        },
+        Some(_) => {
+            let why = "в записи не распознана речь";
+            Part::failed(fallback_line(a, Some(why)), why)
+        }
+        None => {
+            let why = "ASR-модель не загружена";
+            Part::failed(fallback_line(a, Some(why)), why)
+        }
     }
 }
 
@@ -436,6 +516,26 @@ mod tests {
         assert!(line.contains("photo.png"), "{line}");
         assert!(line.contains(&blobs::source_path(&a).display().to_string()), "{line}");
         assert!(line.ends_with("]\n"), "{line}");
+    }
+
+    /// Результат `view_media`: у каждого файла своя подпись перед блоком,
+    /// номера совпадают со списком в теле, тело — последним.
+    #[test]
+    fn tool_view_labels_each_file_before_its_block() {
+        let a = att(AttachmentKind::Image, "me.png");
+        let b = att(AttachmentKind::Image, "trip.jpg");
+        let text = assemble_tool_view(
+            "view_media: 2 of 2 file(s) shown above, in order.\n",
+            &[(&a, "<|image|>\n"), (&b, "[картинка: trip.jpg — не удалось]\n")],
+        );
+        assert_eq!(
+            text,
+            "[file 1: me.png]\n<|image|>\n[file 2: trip.jpg]\n[картинка: trip.jpg — не удалось]\n\
+             view_media: 2 of 2 file(s) shown above, in order.\n"
+        );
+        // Кусок без перевода строки в конце не склеивается со следующей подписью.
+        let glued = assemble_tool_view("", &[(&a, "x"), (&b, "y")]);
+        assert_eq!(glued, "[file 1: me.png]\nx\n[file 2: trip.jpg]\ny\n");
     }
 
     #[test]

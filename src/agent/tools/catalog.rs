@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::icons::{
     MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_HELP_OUTLINE, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH,
-    MI_TERMINAL, MI_TRAVEL_EXPLORE,
+    MI_TERMINAL, MI_TRAVEL_EXPLORE, MI_VISIBILITY,
 };
 
 use super::descriptor::Tool;
@@ -19,6 +19,7 @@ pub const KEY_SYSTEM: &str = "system";
 pub const KEY_PIPELINES: &str = "pipelines";
 pub const KEY_NOTES: &str = "notes";
 pub const KEY_WIZARD: &str = "wizard";
+pub const KEY_VIEW_MEDIA: &str = "view_media";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -344,6 +345,41 @@ pub(super) fn build_all() -> Vec<Tool> {
                     }
                 },
                 "required": ["question"],
+                "additionalProperties": false
+            }),
+        },
+        Tool {
+            key: KEY_VIEW_MEDIA,
+            label: "view_media",
+            icon: MI_VISIBILITY,
+            description: "Look at local files yourself. Images and video go \
+                through your own vision encoder — you see them natively, exactly \
+                as if the user had attached them; audio is transcribed by the \
+                loaded speech-recognition model; text documents are inlined. \
+                CALL it whenever the user points to a picture, photo, video or \
+                recording on disk, or asks you to look at, compare or find \
+                something in local media (e.g. find a person across a folder of \
+                photos). It does not list directories: find the files first with \
+                bash (`ls DIR`, `find DIR -type f -iname '*.jpg'`), then pass up \
+                to 8 paths per call and call it again for the rest. Each file \
+                comes under a `[file N: name]` header, followed by a list that \
+                maps N to its full path; a file that could not be shown (no \
+                vision encoder, video unsupported by this model, context full) \
+                is listed with the reason.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path (or ~/…) of one file to look at."
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "maxItems": 8,
+                        "description": "Several files at once (up to 8), shown in this order."
+                    }
+                },
                 "additionalProperties": false
             }),
         },

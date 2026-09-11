@@ -1898,7 +1898,9 @@ async fn run_agent_loop(
     }
 
     // Медиа-промпт продолжает сессию там, где движок держит строки вложений
-    // в префиксе (Qwen4Exp); остальные архитектуры идут полным префиллом.
+    // в префиксе: гибрид Qwen3.6/3.8, Muse, Gemma-4, Qwen4Exp (подмену
+    // картинки при той же разметке ловит отпечаток строк). Архитектуры без
+    // сессии идут полным префиллом.
     let prefix_kv_on = (media.is_empty() || model.model.kv_session_media_ok())
         && crate::config::AppConfig::load().syn_chat_prefix_kv;
     if !prefix_kv_on {

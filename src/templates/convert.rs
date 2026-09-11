@@ -785,6 +785,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 repaint_strength: repaint_strength.get_untracked(),
                 edit_n_min: edit_n_min.get_untracked(),
                 edit_n_max: edit_n_max.get_untracked(),
+                lm_defaults_v2: true,
             }))
         }
     }
@@ -1444,9 +1445,15 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             seed.set(data.seed);
             temperature.set(data.temperature);
             top_p.set(data.top_p);
-            top_k.set(data.top_k);
+            // Графы до pkgrel 219: 50/1.5 — дефолт старой ArLm-ноды, а не выбор
+            // пользователя; на 0/2.0 вокал внятнее (CER 0,15 → 0,07 на 5 сидах).
+            // Однократно — см. `lm_defaults_v2`.
+            let legacy_lm = !data.lm_defaults_v2
+                && data.top_k == 50
+                && (data.lm_cfg_scale - 1.5).abs() < 1e-6;
+            top_k.set(if legacy_lm { 0 } else { data.top_k });
             min_p.set(data.min_p);
-            lm_cfg_scale.set(data.lm_cfg_scale);
+            lm_cfg_scale.set(if legacy_lm { 2.0 } else { data.lm_cfg_scale });
             use_cot.set(data.use_cot);
             use_ar.set(data.use_ar);
             bpm.set(data.bpm);
@@ -2409,6 +2416,41 @@ mod tests {
             }
             other => panic!("Expected AceStepGenerate runtime, got {other:?}"),
         }
+    }
+
+    /// Граф до pkgrel 219 (без `lm_defaults_v2`) с парой 50/1.5 от старой
+    /// ArLm-ноды грузится с 0/2.0; с маркером 50/1.5 остаются как выбраны.
+    #[test]
+    fn acestep_generate_legacy_lm_defaults_migrate_once() {
+        let load_lm = |state: AceStepGenerateStateData| -> (u32, f32) {
+            let nd = NodeData {
+                id: 1,
+                kind: NodeKind::AceStepGenerate,
+                pos: PointData { x: 0.0, y: 0.0 },
+                fields: Default::default(),
+                style: Default::default(),
+                enabled: true,
+                state: Some(NodeStateData::AceStepGenerate(state)),
+            };
+            let ctx = roundtrip(&make_template(vec![nd]));
+            let node = first_node(&ctx);
+            let rt = node.runtime.lock().unwrap();
+            match &*rt {
+                NodeRuntime::AceStepGenerate { top_k, lm_cfg_scale, .. } => {
+                    (top_k.get_untracked(), lm_cfg_scale.get_untracked())
+                }
+                other => panic!("Expected AceStepGenerate runtime, got {other:?}"),
+            }
+        };
+        let legacy: AceStepGenerateStateData =
+            serde_json::from_value(serde_json::json!({ "top_k": 50, "lm_cfg_scale": 1.5 })).unwrap();
+        assert!(!legacy.lm_defaults_v2);
+        assert_eq!(load_lm(legacy), (0, 2.0));
+        let legacy_custom: AceStepGenerateStateData =
+            serde_json::from_value(serde_json::json!({ "top_k": 40, "lm_cfg_scale": 1.5 })).unwrap();
+        assert_eq!(load_lm(legacy_custom), (40, 1.5));
+        let chosen = AceStepGenerateStateData { top_k: 50, lm_cfg_scale: 1.5, ..Default::default() };
+        assert_eq!(load_lm(chosen), (50, 1.5));
     }
 
     #[test]

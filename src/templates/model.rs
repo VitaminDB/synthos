@@ -1316,6 +1316,16 @@ pub struct AceStepGenerateStateData {
     pub repaint_strength: f32,
     pub edit_n_min: f32,
     pub edit_n_max: f32,
+    /// Маркер однократной миграции LM-дефолтов. В графах, сохранённых до
+    /// pkgrel 219, поля нет (false): пара top_k 50 / LM CFG 1.5 от старой
+    /// ArLm-ноды при загрузке становится 0 / 2.0, как у ACE-Step. Новые
+    /// сохранения пишут true — осознанно выбранные 50/1.5 не трогаются.
+    #[serde(default = "legacy_lm_defaults")]
+    pub lm_defaults_v2: bool,
+}
+
+fn legacy_lm_defaults() -> bool {
+    false
 }
 
 impl Default for AceStepGenerateStateData {
@@ -1354,6 +1364,7 @@ impl Default for AceStepGenerateStateData {
             repaint_strength: 0.7,
             edit_n_min: 0.0,
             edit_n_max: 1.0,
+            lm_defaults_v2: true,
         }
     }
 }

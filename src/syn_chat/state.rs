@@ -214,6 +214,12 @@ pub struct SynChatCtx {
     /// `None` — ничего не редактируется. Эфемерно, сбрасывается при смене
     /// чата и при старте генерации.
     pub editing_msg: RwSignal<Option<usize>>,
+    /// Набранный текст правки и сообщение, к которому он относится. Живёт
+    /// в контексте, а не в самом поле: строка ленты размонтируется, стоит
+    /// увести её за край окна виртуального списка, и черновик пропал бы
+    /// вместе с ней. Индекс в паре отсекает чужой черновик, если правку
+    /// закрыли не кнопкой.
+    pub edit_draft: RwSignal<Option<(usize, String)>>,
     /// Название активного чата в шапке переведено в режим правки (клик по
     /// нему). Обязан быть сигналом, а не локальным флагом: смена режима
     /// должна пересобрать реактивный блок заголовка. Сбрасывается при
@@ -348,6 +354,7 @@ impl SynChatCtx {
             highlight_msg: use_signal(None),
             highlight_gen: use_signal(0),
             editing_msg: use_signal(None),
+            edit_draft: use_signal(None),
             renaming_chat: use_signal(false),
             pending_clear: use_signal(false),
             wizard_drafts: use_signal(HashMap::new()),

@@ -478,7 +478,12 @@ fn actions_row(
             buttons.push(Box::new(
                 ToolButton::new(MI_EDIT)
                     .tooltip(tr!("chat.msg.actions.edit.tooltip"))
-                    .on_click(move || use_context::<SynChatCtx>().editing_msg.set(Some(idx)))
+                    .on_click(move || {
+                        let ctx = use_context::<SynChatCtx>();
+                        // Новая правка начинается с текста сообщения.
+                        ctx.edit_draft.set(None);
+                        ctx.editing_msg.set(Some(idx));
+                    })
                     .class("msg-action-edit"),
             ));
         }
@@ -517,36 +522,58 @@ fn actions_row(
 
 /// Поле правки текста сообщения внутри пузырька. Enter — сохранить,
 /// Shift+Enter — перенос строки; «Отмена» возвращает исходный текст.
-/// Черновик живёт в `Arc<Mutex<String>>`, а не в сигнале: сигнал в scope
-/// ленты пересоздавался бы при каждом её ребилде.
+/// Черновик живёт в контексте (`SynChatCtx::edit_draft`), а не в самом
+/// поле: строка ленты размонтируется, стоит увести её за край окна
+/// виртуального списка, — набранный текст пропал бы вместе с ней. По той же
+/// причине он не сигнал в scope ленты: тот пересоздавался бы на каждой
+/// пересборке.
+fn edit_initial(draft: Option<(usize, String)>, msg_idx: usize, body: String) -> String {
+    draft
+        .filter(|(idx, _)| *idx == msg_idx)
+        .map(|(_, text)| text)
+        .unwrap_or(body)
+}
+
 fn edit_box(msg_idx: usize, body: String) -> impl Widget {
-    use std::sync::{Arc, Mutex};
-    let draft = Arc::new(Mutex::new(body.clone()));
-    let draft_change = draft.clone();
-    let draft_save = draft.clone();
+    let ctx = use_context::<SynChatCtx>();
+    let initial = edit_initial(ctx.edit_draft.get_untracked(), msg_idx, body);
     let editor = MultilineTextEdit::new()
-        .text(body)
+        .text(initial)
         .rows(2)
         .max_rows(16)
         .auto_height(true)
         .submit_on_enter(true)
         .on_change(move |s| {
-            if let Ok(mut d) = draft_change.lock() {
-                *d = s.to_string();
-            }
+            use_context::<SynChatCtx>()
+                .edit_draft
+                .set(Some((msg_idx, s.to_string())));
         })
-        .on_submit(move |s| session::edit_message(msg_idx, s.to_string()))
+        .on_submit(move |s| {
+            use_context::<SynChatCtx>().edit_draft.set(None);
+            session::edit_message(msg_idx, s.to_string())
+        })
         .class("msg-edit-field");
     let save = Button::new(tr!("chat.msg.edit.save"))
         .leading_icon(MI_CHECK)
         .on_click(move || {
-            let text = draft_save.lock().map(|d| d.clone()).unwrap_or_default();
+            let ctx = use_context::<SynChatCtx>();
+            let text = ctx
+                .edit_draft
+                .get_untracked()
+                .filter(|(idx, _)| *idx == msg_idx)
+                .map(|(_, text)| text)
+                .unwrap_or_default();
+            ctx.edit_draft.set(None);
             session::edit_message(msg_idx, text);
         })
         .class("code-editor-dialog-btn-primary");
     let cancel = Button::new(tr!("app.cancel"))
         .leading_icon(MI_CLOSE)
-        .on_click(|| use_context::<SynChatCtx>().editing_msg.set(None))
+        .on_click(|| {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.edit_draft.set(None);
+            ctx.editing_msg.set(None);
+        })
         .class("code-editor-dialog-btn-secondary");
     mgui! {
         Column::new()
@@ -1422,6 +1449,24 @@ fn unescape_persisted_json_newlines(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Черновик правки переживает размонтирование строки (виртуальная лента
+    /// уводит её из дерева, стоит прокрутить за край окна), но достаётся
+    /// только своему сообщению.
+    #[test]
+    fn edit_field_opens_with_the_saved_draft() {
+        let body = || "исходное тело".to_string();
+        assert_eq!(edit_initial(None, 3, body()), "исходное тело");
+        assert_eq!(
+            edit_initial(Some((3, "набрано".into())), 3, body()),
+            "набрано"
+        );
+        // Черновик другого сообщения не подставляется.
+        assert_eq!(
+            edit_initial(Some((4, "чужое".into())), 3, body()),
+            "исходное тело"
+        );
+    }
     use super::*;
 
     #[test]

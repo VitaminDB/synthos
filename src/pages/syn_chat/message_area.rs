@@ -10,11 +10,18 @@ use syngui::core::Color;
 use syngui::mgui;
 use syngui::prelude::*;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+use syngui::widgets::containers::Keyed;
+
 use crate::agent::time::format_date_today;
 use crate::components::date_divider;
 use crate::context::AppCtx;
-use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, QueuedMsg, SynChatCtx};
+use crate::syn_chat::state::{ChatMsg, QueuedMsg, SynChatCtx};
 
+use super::lane::{self, LaneKind, LaneRow, LaneUi};
 use super::{compaction_marker, message_bubble, tool_group};
 
 pub fn view() -> impl Widget {
@@ -63,42 +70,142 @@ fn scroll_list() -> impl Widget {
 fn scroll_list_for_chat() -> impl Widget {
     ScrollView::new().vertical().follow_end(true).child(move || {
         let ctx = use_context::<SynChatCtx>();
+        let app = use_context::<AppCtx>();
         let has_active = ctx.active_chat_id.get().is_some();
-        let msgs = ctx.messages.get();
+        let msgs = Arc::new(ctx.messages.get());
         let pending = ctx.pending.get();
-        // Подписка: при смене режима отображения tool-карточек лента
-        // пересобирается без отдельного эффекта.
-        let tool_mode = use_context::<AppCtx>().general.tool_display_mode.get();
+        // Подписки: смена режима показа tool-карточек и темы меняет вид
+        // строк, поэтому они входят и в версию строки.
+        let tool_mode = app.general.tool_display_mode.get();
+        let theme_key = hash_of(&app.theme_key.get());
 
         // Индекс сообщения, на которое привёл глобальный поиск: пузырёк
         // обводится рамкой, пока пользователь не сменит чат.
         let highlight = ctx.highlight_msg.get();
+        let editing = ctx.editing_msg.get();
         // Очередь отправки активного чата — пузырьки в хвосте ленты.
         let active = ctx.active_chat_id.get_untracked();
-        let queued: Vec<QueuedMsg> = ctx
-            .queue
-            .get()
-            .into_iter()
-            .filter(|m| Some(&m.chat_id) == active.as_ref())
-            .collect();
-        let _ = ctx.queue_editing.get();
+        let queued: Arc<Vec<QueuedMsg>> = Arc::new(
+            ctx.queue
+                .get()
+                .into_iter()
+                .filter(|m| Some(&m.chat_id) == active.as_ref())
+                .collect(),
+        );
+        let queue_editing = ctx.queue_editing.get();
 
-        let body: Box<dyn Widget> = if !has_active {
-            Box::new(no_chat_hero())
+        let children: Vec<Box<dyn Widget>> = if !has_active {
+            vec![Box::new(no_chat_hero())]
         } else if msgs.is_empty() && !pending && queued.is_empty() {
-            Box::new(empty_hero())
+            vec![Box::new(empty_hero())]
         } else {
-            Box::new(populated(msgs, pending, &tool_mode, highlight, &queued))
+            // Состояние раскрытия входит в версию строки: клик по шеврону
+            // пересобирает свою строку, а не всю ленту.
+            let thinking_open = ctx.thinking_open.get();
+            let tool_body_open = ctx.tool_body_open.get();
+            let tool_group_open = ctx.tool_group_open.get();
+            let compaction_open = ctx.compaction_open.get();
+            let wizard_drafts = ctx.wizard_drafts.get();
+            let ui = LaneUi {
+                tool_mode: &tool_mode,
+                pending,
+                highlight,
+                editing,
+                theme_key,
+                thinking_open: &thinking_open,
+                tool_body_open: &tool_body_open,
+                tool_group_open: &tool_group_open,
+                compaction_open: &compaction_open,
+                wizard_drafts: &wizard_drafts,
+                queue_editing,
+            };
+            lane::build(&msgs, &queued, &ui)
+                .into_iter()
+                .map(|row| row_widget(row, &msgs, &queued, &tool_mode))
+                .collect()
         };
 
-        DecoratedBox::new()
-            .class("message-area-scroll-wrap")
-            .child(
-                Column::new()
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![body]),
-            )
+        DecoratedBox::new().class("message-area-scroll-wrap").child(
+            Column::new()
+                .gap(14.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(children),
+        )
     })
+}
+
+fn hash_of(value: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+/// Строка ленты как виджет. Всё, от чего зависит её вид, уже посчитано в
+/// версии ([`lane::build`]), поэтому `Keyed` при той же версии не вызывает
+/// этот сборщик вовсе: пузырёк не пересобирается и не перемеряется.
+fn row_widget(
+    row: LaneRow,
+    msgs: &Arc<Vec<ChatMsg>>,
+    queued: &Arc<Vec<QueuedMsg>>,
+    tool_mode: &str,
+) -> Box<dyn Widget> {
+    let LaneRow { key, version, kind } = row;
+    let msgs = msgs.clone();
+    let queued = queued.clone();
+    let tool_mode = tool_mode.to_string();
+
+    match kind {
+        LaneKind::DateDivider => Box::new(Keyed::new(key, version, move || {
+            Box::new(date_divider::view(&format_date_today()))
+        })),
+
+        LaneKind::Message(m) => Box::new(Keyed::new(key, version, move || {
+            let msg = &msgs[m.idx];
+            let bubble = message_bubble::view(msg, m.idx, m.is_typing, m.is_last_assistant, &tool_mode);
+            // Обёртка стоит всегда, меняется только класс: иначе при
+            // подсветке найденного сообщения менялся бы тип виджета строки
+            // и её элемент пересоздавался бы вместе с состоянием.
+            // Класс ставится всегда: `.class()` меняет тип виджета, а
+            // строка должна оставаться того же типа, иначе её элемент
+            // пересоздастся вместе с состоянием.
+            let wrap = DecoratedBox::new().class(if m.highlighted {
+                "msg-search-highlight"
+            } else {
+                "msg-row"
+            });
+            Box::new(
+                wrap.child(
+                    Column::new()
+                        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .children(vec![bubble]),
+                ),
+            )
+        })),
+
+        LaneKind::Group(g) => Box::new(Keyed::new(key, version, move || {
+            Box::new(tool_group::view(tool_group::ToolGroup {
+                start_idx: g.start_idx,
+                count: g.count,
+                tool_name: g.tool_name.clone(),
+                err_count: g.err_count,
+                items: g.items.iter().map(|&i| (i, msgs[i].clone())).collect(),
+            }))
+        })),
+
+        LaneKind::Marker(m) => Box::new(Keyed::new(key, version, move || {
+            let compacted: Vec<(usize, ChatMsg)> =
+                m.compacted.iter().map(|&i| (i, msgs[i].clone())).collect();
+            compaction_marker::view(&msgs[m.idx], compacted, &tool_mode)
+        })),
+
+        LaneKind::Queued(q) => Box::new(Keyed::new(key, version, move || {
+            match queued.iter().find(|item| item.id == q.id) {
+                Some(item) => Box::new(message_bubble::queued_view(item)) as Box<dyn Widget>,
+                // Сообщение ушло из очереди между сборкой модели и строки.
+                None => Box::new(Column::new()),
+            }
+        })),
+    }
 }
 
 fn no_chat_hero() -> impl Widget {
@@ -124,300 +231,4 @@ fn empty_hero() -> impl Widget {
     })
 }
 
-fn populated(
-    msgs: Vec<ChatMsg>,
-    pending: bool,
-    tool_mode: &str,
-    highlight: Option<usize>,
-    queued: &[QueuedMsg],
-) -> impl Widget {
-    let mut items: Vec<Box<dyn Widget>> = Vec::new();
-    items.push(Box::new(date_divider::view(&format_date_today())));
 
-    // Свёрнутые autocompact'ом сообщения из основной ленты исключаются (они
-    // рендерятся внутри своего маркера). Лента и группировка строятся по
-    // «видимым» сообщениям, а исходные индексы сохраняются для ключей
-    // open-state в bubble'ах.
-    let mut visible: Vec<ChatMsg> = Vec::with_capacity(msgs.len());
-    let mut orig_idx: Vec<usize> = Vec::with_capacity(msgs.len());
-    for (i, m) in msgs.iter().enumerate() {
-        if m.compacted_iter.is_none() {
-            visible.push(m.clone());
-            orig_idx.push(i);
-        }
-    }
-
-    let last_vis = visible.len().saturating_sub(1);
-    // В minimal-режиме подряд идущие пары `(ToolCall, ToolResult)` одного
-    // инструмента (≥ 2 пар) схлопываются в одну сворачиваемую карточку.
-    for entry in build_lane(&visible, tool_mode) {
-        match entry {
-            LaneEntry::Single(vi) => {
-                let idx = orig_idx[vi];
-                let msg = &msgs[idx];
-                if let ChatMsgKind::CompactionMarker { iteration, .. } = &msg.kind {
-                    let compacted: Vec<(usize, ChatMsg)> = msgs
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, m)| m.compacted_iter == Some(*iteration))
-                        .map(|(i, m)| (i, m.clone()))
-                        .collect();
-                    items.push(compaction_marker::view(msg, compacted, tool_mode));
-                    continue;
-                }
-                // Стрим-хвост и regen привязаны только к текстовому bubble'у
-                // ассистента: tool-карточки собственного стрима не имеют.
-                let is_last_assistant = vi == last_vis
-                    && msg.role == ChatMsgRole::Assistant
-                    && matches!(msg.kind, ChatMsgKind::Text);
-                let is_typing = pending
-                    && vi == last_vis
-                    && msg.role == ChatMsgRole::Assistant
-                    && msg.body.is_empty();
-                let bubble = message_bubble::view(
-                    msg,
-                    idx,
-                    is_typing,
-                    is_last_assistant,
-                    tool_mode,
-                );
-                items.push(if highlight == Some(idx) {
-                    Box::new(
-                        DecoratedBox::new().class("msg-search-highlight").child(
-                            Column::new()
-                                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                                .children(vec![bubble]),
-                        ),
-                    )
-                } else {
-                    bubble
-                });
-            }
-            LaneEntry::Group(mut g) => {
-                // Индексы группы — в «видимом» пространстве; для ключей
-                // open-state возвращаем исходные.
-                g.start_idx = orig_idx[g.start_idx];
-                g.items = g
-                    .items
-                    .into_iter()
-                    .map(|(vi, m)| (orig_idx[vi], m))
-                    .collect();
-                items.push(Box::new(tool_group::view(g)));
-            }
-        }
-    }
-    for q in queued {
-        items.push(Box::new(message_bubble::queued_view(q)));
-    }
-
-    Column::new()
-        .gap(14.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .children(items)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Группировка подряд идущих tool-вызовов одного типа (только minimal-режим)
-// ─────────────────────────────────────────────────────────────────────────────
-
-pub(super) enum LaneEntry {
-    Single(usize),
-    Group(tool_group::ToolGroup),
-}
-
-pub(super) fn build_lane(msgs: &[ChatMsg], tool_mode: &str) -> Vec<LaneEntry> {
-    if tool_mode != "minimal" {
-        return (0..msgs.len()).map(LaneEntry::Single).collect();
-    }
-    let mut out: Vec<LaneEntry> = Vec::with_capacity(msgs.len());
-    let mut i = 0usize;
-    while i < msgs.len() {
-        if let Some((name, _)) = pair_at(msgs, i) {
-            // Считаем сколько последовательных пар того же tool_name.
-            let mut j = i;
-            let mut pairs = 0usize;
-            let mut errors = 0usize;
-            while let Some((n, err)) = pair_at(msgs, j) {
-                if n != name {
-                    break;
-                }
-                pairs += 1;
-                errors += usize::from(err);
-                j += 2;
-            }
-            if pairs >= 2 {
-                let items: Vec<(usize, ChatMsg)> =
-                    (i..j).map(|k| (k, msgs[k].clone())).collect();
-                out.push(LaneEntry::Group(tool_group::ToolGroup {
-                    start_idx: i,
-                    count: pairs,
-                    tool_name: name.to_string(),
-                    err_count: errors,
-                    items,
-                }));
-                i = j;
-                continue;
-            }
-        }
-        out.push(LaneEntry::Single(i));
-        i += 1;
-    }
-    out
-}
-
-/// Возвращает `(tool_name, result_error)`, если `msgs[i]` — `ToolCall(name)`,
-/// а `msgs[i+1]` — `ToolResult(_, name, error)` того же инструмента.
-fn pair_at(msgs: &[ChatMsg], i: usize) -> Option<(&str, bool)> {
-    if i + 1 >= msgs.len() {
-        return None;
-    }
-    let call_name = match &msgs[i].kind {
-        // Панель визарда — не карточка инструмента: под шапку группы её не
-        // прятать.
-        ChatMsgKind::ToolCall { tool_name } if tool_name == "wizard" => return None,
-        ChatMsgKind::ToolCall { tool_name } => tool_name.as_str(),
-        _ => return None,
-    };
-    let (result_name, err) = match &msgs[i + 1].kind {
-        ChatMsgKind::ToolResult {
-            tool_name, error, ..
-        } => (tool_name.as_str(), *error),
-        _ => return None,
-    };
-    if call_name != result_name {
-        return None;
-    }
-    Some((call_name, err))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn call(name: &str) -> ChatMsg {
-        ChatMsg::tool_call(name, "{}", Vec::new())
-    }
-    fn result(name: &str, error: bool) -> ChatMsg {
-        ChatMsg::tool_result("call-id", name, "ok", error)
-    }
-    fn text() -> ChatMsg {
-        ChatMsg::user("hi")
-    }
-
-    /// `(индекс, Some((инструмент, вызовов, из них с ошибкой)))`.
-    fn classify(lane: &[LaneEntry]) -> Vec<(usize, Option<(String, usize, usize)>)> {
-        lane.iter()
-            .map(|e| match e {
-                LaneEntry::Single(i) => (*i, None),
-                LaneEntry::Group(g) => {
-                    (g.start_idx, Some((g.tool_name.clone(), g.count, g.err_count)))
-                }
-            })
-            .collect()
-    }
-
-    #[test]
-    fn non_minimal_mode_returns_flat_singles() {
-        let msgs = vec![call("web"), result("web", false), call("web"), result("web", false)];
-        let lane = build_lane(&msgs, "full");
-        assert_eq!(classify(&lane), vec![(0, None), (1, None), (2, None), (3, None)]);
-    }
-
-    #[test]
-    fn single_pair_does_not_group() {
-        let msgs = vec![call("web"), result("web", false)];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(classify(&lane), vec![(0, None), (1, None)]);
-    }
-
-    #[test]
-    fn two_consecutive_pairs_group() {
-        let msgs = vec![call("web"), result("web", false), call("web"), result("web", false)];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 2, 0)))]);
-    }
-
-    #[test]
-    fn different_tool_names_break_group() {
-        let msgs = vec![
-            call("web"), result("web", false),
-            call("web"), result("web", false),
-            call("bash"), result("bash", false),
-        ];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(
-            classify(&lane),
-            vec![
-                (0, Some(("web".to_string(), 2, 0))),
-                (4, None),
-                (5, None),
-            ]
-        );
-    }
-
-    #[test]
-    fn unfinished_call_at_tail_stays_outside_group() {
-        let msgs = vec![
-            call("web"), result("web", false),
-            call("web"), result("web", false),
-            call("web"),
-        ];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(
-            classify(&lane),
-            vec![(0, Some(("web".to_string(), 2, 0))), (4, None)]
-        );
-    }
-
-    #[test]
-    fn err_count_counts_only_failed_results() {
-        let msgs = vec![
-            call("web"), result("web", false),
-            call("web"), result("web", true),
-            call("web"), result("web", false),
-        ];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(classify(&lane), vec![(0, Some(("web".to_string(), 3, 1)))]);
-    }
-
-    #[test]
-    fn err_count_zero_when_all_succeed_and_full_when_all_fail() {
-        let ok = vec![
-            call("web"), result("web", false),
-            call("web"), result("web", false),
-        ];
-        assert_eq!(classify(&build_lane(&ok, "minimal")), vec![(0, Some(("web".to_string(), 2, 0)))]);
-        let bad = vec![
-            call("web"), result("web", true),
-            call("web"), result("web", true),
-        ];
-        assert_eq!(classify(&build_lane(&bad, "minimal")), vec![(0, Some(("web".to_string(), 2, 2)))]);
-    }
-
-    #[test]
-    fn text_messages_between_groups_are_singles() {
-        let msgs = vec![
-            text(),
-            call("web"), result("web", false),
-            call("web"), result("web", false),
-            text(),
-        ];
-        let lane = build_lane(&msgs, "minimal");
-        assert_eq!(
-            classify(&lane),
-            vec![(0, None), (1, Some(("web".to_string(), 2, 0))), (5, None)]
-        );
-    }
-
-    #[test]
-    fn pair_at_rejects_mismatched_names() {
-        let msgs = vec![call("web"), result("bash", false)];
-        assert_eq!(pair_at(&msgs, 0), None);
-    }
-
-    #[test]
-    fn pair_at_returns_name_and_error_flag() {
-        let msgs = vec![call("kb_search"), result("kb_search", true)];
-        assert_eq!(pair_at(&msgs, 0), Some(("kb_search", true)));
-    }
-}

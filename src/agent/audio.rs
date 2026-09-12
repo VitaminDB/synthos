@@ -632,8 +632,18 @@ mod input_devices_tests {
             call < Duration::from_millis(100),
             "вызов занял {call:?} — опрос идёт не в фоне"
         );
+    }
 
-        // Ждём фонового ответа: он приходит колбэком на главный поток.
+    /// Список действительно доезжает до сигнала. Отдельным запуском: тест
+    /// вычерпывает общую очередь главного потока, а сигналы у syngui свои
+    /// в каждом потоке — чужие колбэки соседних тестов упали бы на чтении.
+    #[test]
+    #[ignore = "только в один поток: cargo test -p synthos --features testing --lib input_devices_tests -- --ignored --test-threads=1"]
+    fn scan_delivers_the_list() {
+        syngui::signal::allow_signal_reads_on_this_thread();
+        let ctx = AudioCtx::new();
+        scan_input_devices(&ctx, false);
+
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline && ctx.input_devices.get_untracked().is_none() {
             syngui::async_runtime::drain_main_thread_callbacks();

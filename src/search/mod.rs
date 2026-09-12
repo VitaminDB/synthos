@@ -241,7 +241,10 @@ impl SearchCtx {
         let scan = self.scan;
         let scanning = self.scanning;
         let dirs = index::scan_dirs();
+        // Открытый чат мог ещё не уйти на диск: автосейв ждёт паузы.
+        crate::syn_chat::autosave::flush();
         spawn(async move {
+            crate::syn_chat::storage::flush_all();
             let data = index::scan_disk(&dirs);
             run_on_main_thread(move || {
                 scan.set_always(Arc::new(data));

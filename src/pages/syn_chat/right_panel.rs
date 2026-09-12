@@ -975,12 +975,13 @@ fn stat_tile(value: String, label: String, accent: bool) -> Box<dyn Widget> {
 fn chat_size_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
-        let msgs = ctx.messages.get();
-        let n = msgs.len();
-        let chars: usize = msgs
-            .iter()
-            .map(|m| m.body.chars().count() + m.thinking.chars().count())
-            .sum();
+        let (n, chars) = ctx.messages.with(|msgs| {
+            let chars: usize = msgs
+                .iter()
+                .map(|m| m.body.chars().count() + m.thinking.chars().count())
+                .sum();
+            (msgs.len(), chars)
+        });
         let tiles: Vec<Box<dyn Widget>> = vec![
             stat_tile(
                 group(n as u64),

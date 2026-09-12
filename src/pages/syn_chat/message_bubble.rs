@@ -1009,12 +1009,7 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
     // результат не пришёл, вызов остаётся хвостом ленты.
     if tool_name == "pipelines" {
         let chat = use_context::<SynChatCtx>();
-        let is_tail = chat
-            .messages
-            .get_untracked()
-            .len()
-            .saturating_sub(1)
-            == msg_idx;
+        let is_tail = chat.messages.with_untracked(Vec::len).saturating_sub(1) == msg_idx;
         if is_tail {
             meta_children.push(pipeline_live_card());
         }

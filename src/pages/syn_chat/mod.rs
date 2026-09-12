@@ -41,8 +41,11 @@ pub mod chat_pane;
 pub mod clear_dialog;
 pub mod compaction_marker;
 pub mod emoji_picker;
+#[cfg(all(test, feature = "testing"))]
+mod feed_bench;
 pub mod float_window;
 pub mod input_panel;
+pub mod lane;
 pub mod left_panel;
 pub mod media_audio;
 pub mod media_inline;

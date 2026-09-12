@@ -78,9 +78,13 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
         // Кнопка сжатия: disabled, пока идёт генерация/сжатие ИЛИ в ленте
         // нет кандидатов (find_compact_range = None).
         let pending = ctx.pending.get();
-        let msgs = ctx.messages.get();
-        let can_compact =
-            !pending && crate::syn_chat::compact::find_compact_range(&msgs).is_some();
+        let (has_range, empty) = ctx.messages.with(|msgs| {
+            (
+                crate::syn_chat::compact::find_compact_range(msgs).is_some(),
+                msgs.is_empty(),
+            )
+        });
+        let can_compact = !pending && has_range;
 
         let row = mgui! {
             Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
@@ -96,7 +100,7 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                 // сообщения. Во время генерации и на пустой ленте — disabled.
                 ToolButton::new(MI_CLEAR_ALL)
                     .tooltip(tr!("chat.header.clear.tooltip"))
-                    .disabled(pending || msgs.is_empty())
+                    .disabled(pending || empty)
                     .on_click(|| use_context::<SynChatCtx>().pending_clear.set(true))
                     .class("panel-header-action"),
                 ToolButton::new(MI_ARCHIVE)

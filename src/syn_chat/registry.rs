@@ -11,7 +11,7 @@ use crate::agent::time::{unix_nanos, unix_secs};
 use super::params::SamplingParams;
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};
-use super::{session, telemetry};
+use super::{autosave, session, telemetry};
 
 /// Контент-зависимый отпечаток чата для пропуска идемпотентного автосейва.
 pub fn fingerprint(title: &str, messages: &[ChatMsg]) -> u64 {
@@ -62,6 +62,9 @@ pub fn load_all() {
 /// Создаёт новый пустой чат и делает его активным. Возвращает id.
 pub fn create_new() -> String {
     let ctx = use_context::<SynChatCtx>();
+    // Покидаемый чат дописывается до переключения: отложенная запись
+    // досталась бы уже новому чату, и правки прежнего пропали бы.
+    autosave::flush();
     let now = unix_secs();
     let id = format!("{:016x}", unix_nanos());
     let stored = StoredChat {
@@ -74,7 +77,7 @@ pub fn create_new() -> String {
         syn_params: None,
         archived: false,
     };
-    storage::save(&stored);
+    storage::save_async(stored.clone());
     ctx.chats.update(|list| list.insert(0, stored.to_meta()));
     ctx.loading.set(true);
     leave_current_chat();
@@ -135,6 +138,10 @@ fn trim_dead_placeholders(messages: &mut Vec<crate::agent::state::ChatMsg>) {
 }
 
 fn select_internal(id: &str, ctx: &SynChatCtx) {
+    // Открытый чат дописывается до того, как лента сменится: отложенная
+    // запись сняла бы снимок уже с нового. Повторный выбор того же чата
+    // перечитывает его с диска — там тоже должны быть последние правки.
+    autosave::flush();
     let Some(stored) = storage::load(id) else {
         eprintln!("[syn_chat] чат {id} не найден на диске");
         ctx.chats.update(|list| list.retain(|m| m.id != id));
@@ -201,6 +208,9 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
 
 pub fn delete(id: &str) {
     let ctx = use_context::<SynChatCtx>();
+    // Сборка мусора ниже берёт ссылки на вложения с диска: открытый чат
+    // должен лежать там со всеми правками, иначе его свежие blob'ы уйдут.
+    autosave::flush();
     storage::delete(id);
     // Blob'ы удалённого чата больше никому не нужны — но только если на
     // них не ссылается другой чат (CAS дедуплицирует по содержимому).
@@ -241,13 +251,20 @@ pub fn archive(id: &str) {
     let ctx = use_context::<SynChatCtx>();
     let was_active = ctx.active_chat_id.get_untracked().as_deref() == Some(id);
     if was_active {
+        // Снимок — полное состояние чата: отложенная запись не нужна.
+        autosave::cancel();
         if let Some(mut snap) = snapshot_current() {
             snap.archived = true;
-            storage::save(&snap);
+            // Иначе переход на следующий чат записал бы тот же снимок ещё раз.
+            ctx.last_saved_fp.set(state_fingerprint(
+                &snap.title,
+                &snap.messages,
+                &ctx.params.get_untracked(),
+            ));
+            storage::save_async(snap);
         }
-    } else if let Some(mut stored) = storage::load(id) {
-        stored.archived = true;
-        storage::save(&stored);
+    } else {
+        storage::update_async(id, |stored| stored.archived = true);
     }
     ctx.chats.update(|list| {
         if let Some(m) = list.iter_mut().find(|m| m.id == id) {
@@ -262,10 +279,9 @@ pub fn archive(id: &str) {
 /// Вернуть чат из архива в рейл и сделать его активным.
 pub fn unarchive(id: &str) {
     let ctx = use_context::<SynChatCtx>();
-    if let Some(mut stored) = storage::load(id) {
-        stored.archived = false;
-        storage::save(&stored);
-    }
+    // `select_internal` ниже читает файл после этой правки: `load` ждёт
+    // очередь записи.
+    storage::update_async(id, |stored| stored.archived = false);
     ctx.chats.update(|list| {
         if let Some(m) = list.iter_mut().find(|m| m.id == id) {
             m.archived = false;
@@ -284,6 +300,8 @@ pub fn clear_archive() {
         .filter(|m| m.archived)
         .map(|m| m.id.clone())
         .collect();
+    // Как в `delete`: ссылки открытого чата на вложения — на диск до GC.
+    autosave::flush();
     for id in ids {
         storage::delete(&id);
     }
@@ -304,9 +322,9 @@ pub fn rename_active(title: String) {
 }
 
 /// Имя загруженного бандла (`qwen3.8-27b.syn` → `qwen3.8-27b`) для записи
-/// в файл чата.
-fn current_model_name() -> Option<String> {
-    use_context::<crate::syn_chat::SynModelRegistry>()
+/// в файл чата. Реестра моделей нет только в тестах.
+pub(crate) fn current_model_name() -> Option<String> {
+    try_use_context::<crate::syn_chat::SynModelRegistry>()?
         .current
         .get_untracked()
         .and_then(|m| {
@@ -314,6 +332,27 @@ fn current_model_name() -> Option<String> {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
         })
+}
+
+/// Файл чата из его `ChatMeta` и ленты. `created_at` и прежнее имя модели
+/// берутся из меты, а не с диска: раньше каждый автосейв ради них читал и
+/// разбирал весь файл чата.
+pub(crate) fn stored_from_meta(
+    meta: &ChatMeta,
+    messages: Vec<ChatMsg>,
+    params: SamplingParams,
+    model_name: Option<String>,
+) -> StoredChat {
+    StoredChat {
+        id: meta.id.clone(),
+        title: meta.title.clone(),
+        created_at: meta.created_at,
+        updated_at: unix_secs(),
+        model_name,
+        messages,
+        syn_params: Some(params),
+        archived: meta.archived,
+    }
 }
 
 pub fn snapshot_current() -> Option<StoredChat> {
@@ -324,29 +363,23 @@ pub fn snapshot_current() -> Option<StoredChat> {
         .get_untracked()
         .into_iter()
         .find(|m| m.id == id)?;
-    let messages: Vec<ChatMsg> = ctx.messages.get_untracked();
-    let on_disk = storage::load(&id);
-    let created_at = on_disk.as_ref().map(|c| c.created_at).unwrap_or_else(unix_secs);
     // Имя модели раньше не сохранялось вообще: по файлу чата нельзя было
     // понять, какой бандл отвечал, — а разбор поведения агента без этого
     // сводится к угадыванию. Пишем имя текущего бандла; если модель ещё не
-    // загружена — оставляем то, что было записано раньше.
-    let model_name = current_model_name()
-        .or_else(|| on_disk.as_ref().and_then(|c| c.model_name.clone()));
-    Some(StoredChat {
-        id: meta.id.clone(),
-        title: meta.title.clone(),
-        created_at,
-        updated_at: unix_secs(),
+    // загружена — оставляем то, что было записано раньше (оно в мете).
+    let model_name = current_model_name().or_else(|| meta.model_name.clone());
+    Some(stored_from_meta(
+        &meta,
+        ctx.messages.get_untracked(),
+        ctx.params.get_untracked(),
         model_name,
-        messages,
-        syn_params: Some(ctx.params.get_untracked()),
-        archived: meta.archived,
-    })
+    ))
 }
 
-/// Обновляет preview активного meta — для мгновенного отображения «свежие сверху».
-pub fn refresh_active_preview(messages: &[ChatMsg]) {
+/// Обновляет preview активного meta — для отображения «свежие сверху».
+/// Имя модели, с которым уходит запись, кладётся туда же: следующий снимок
+/// возьмёт его из меты, если модель к тому времени выгрузят.
+pub fn refresh_active_preview(messages: &[ChatMsg], model_name: Option<String>) {
     let ctx = use_context::<SynChatCtx>();
     let Some(id) = ctx.active_chat_id.get_untracked() else {
         return;
@@ -357,6 +390,9 @@ pub fn refresh_active_preview(messages: &[ChatMsg]) {
         if let Some(m) = list.iter_mut().find(|m| m.id == id) {
             m.preview = preview;
             m.updated_at = updated_at;
+            if model_name.is_some() {
+                m.model_name = model_name;
+            }
         }
         list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     });

@@ -162,19 +162,21 @@ fn continue_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send 
         let ctx = use_context::<SynChatCtx>();
         let pending = ctx.pending.get();
         let cap_reached = ctx.turn_cap_reached.get();
-        let msgs = ctx.messages.get();
-        let has_any_user = msgs.iter().any(|m| m.role == ChatMsgRole::User);
-        // Ход считаем незакончённым, пока хвост ленты — не непустой
-        // текстовый ответ ассистента: tool-call/tool-result или пустой
-        // плейсхолдер означают, что цикл оборвался на полпути.
-        let tail_unfinished = msgs
-            .last()
-            .map(|m| {
-                m.kind != ChatMsgKind::Text
-                    || m.role != ChatMsgRole::Assistant
-                    || m.body.is_empty()
-            })
-            .unwrap_or(false);
+        let (has_any_user, tail_unfinished) = ctx.messages.with(|msgs| {
+            let has_any_user = msgs.iter().any(|m| m.role == ChatMsgRole::User);
+            // Ход считаем незакончённым, пока хвост ленты — не непустой
+            // текстовый ответ ассистента: tool-call/tool-result или пустой
+            // плейсхолдер означают, что цикл оборвался на полпути.
+            let tail_unfinished = msgs
+                .last()
+                .map(|m| {
+                    m.kind != ChatMsgKind::Text
+                        || m.role != ChatMsgRole::Assistant
+                        || m.body.is_empty()
+                })
+                .unwrap_or(false);
+            (has_any_user, tail_unfinished)
+        });
         if pending || !has_any_user || !(cap_reached || tail_unfinished) {
             return DecoratedBox::new().class("input-regen-empty");
         }
@@ -190,8 +192,9 @@ fn regen_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
     || {
         let ctx = use_context::<SynChatCtx>();
         let pending = ctx.pending.get();
-        let msgs = ctx.messages.get();
-        let has_any_user = msgs.iter().any(|m| m.role == ChatMsgRole::User);
+        let has_any_user = ctx
+            .messages
+            .with(|msgs| msgs.iter().any(|m| m.role == ChatMsgRole::User));
         if pending || !has_any_user {
             return DecoratedBox::new().class("input-regen-empty");
         }
@@ -291,5 +294,43 @@ fn pending_hint_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
         DecoratedBox::new()
             .child(Text::new(txt).max_lines(3).class("input-hint-text"))
             .class(class)
+    }
+}
+
+/// Кнопки хвоста ленты на `TestHarness`. Запуск:
+/// `cargo test -p synthos --features testing --lib input_panel::tests`.
+#[cfg(all(test, feature = "testing"))]
+mod tests {
+    use syngui::testing::TestHarness;
+
+    use super::*;
+    use crate::syn_chat::state::ChatMsg;
+
+    /// «Продолжить» и «Повторить» читают ленту через `with` — без клона
+    /// всей истории, но с подпиской: правка ленты обязана их пересобрать.
+    #[test]
+    fn tail_buttons_follow_messages() {
+        syngui::signal::allow_signal_reads_on_this_thread();
+        let ctx = SynChatCtx::new();
+        provide_context(ctx.clone());
+        let mut h = TestHarness::new(Box::new(Row::new().children(vec![
+            Box::new(DecoratedBox::new().child(continue_button_reactive())) as Box<dyn Widget>,
+            Box::new(DecoratedBox::new().child(regen_button_reactive())),
+        ])));
+        h.rebuild();
+        let shown = |h: &TestHarness| h.find_by_class("input-regen-wrap").len();
+        assert_eq!(shown(&h), 0, "пустая лента — кнопок нет");
+
+        // Хвост — вопрос без ответа: можно и продолжить, и повторить.
+        ctx.messages.update(|m| m.push(ChatMsg::user("вопрос")));
+        h.rebuild();
+        assert_eq!(shown(&h), 2);
+
+        // Непустой ответ ассистента закрывает ход — остаётся «Повторить».
+        let mut answer = ChatMsg::assistant_empty();
+        answer.body = "ответ".into();
+        ctx.messages.update(|m| m.push(answer));
+        h.rebuild();
+        assert_eq!(shown(&h), 1);
     }
 }

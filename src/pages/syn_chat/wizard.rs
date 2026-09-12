@@ -47,7 +47,7 @@ pub fn row(msg: &ChatMsg, msg_idx: usize, spec: WizardSpec) -> impl Widget {
     let ctx = use_context::<SynChatCtx>();
     // После результата вызова (idx+1) в ленте есть ещё что-то — значит,
     // пользователь ответил (или разговор ушёл дальше).
-    let answered = ctx.messages.get_untracked().len() > msg_idx + 2;
+    let answered = ctx.messages.with_untracked(Vec::len) > msg_idx + 2;
     if !answered {
         arm_timer(&ctx, msg_idx, &spec);
     }

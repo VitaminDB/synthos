@@ -69,6 +69,7 @@ pub fn allow_close() -> bool {
 /// Дописать на диск то, что ждало автосейва по дебаунсу.
 fn flush_pending_writes() {
     crate::pages::notes::autosave::flush_all();
+    crate::syn_chat::autosave::flush_for_exit();
 }
 
 /// Причины, по которым закрытие стоит подтвердить. Пустой список — можно

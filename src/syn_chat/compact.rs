@@ -639,10 +639,12 @@ async fn read_compact_plan_on_main(
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
-        let msgs = ctx.messages.get_untracked();
-        let plan = scope.range(&msgs).map(|range| {
-            let iteration = next_iteration(&msgs);
-            (msgs.clone(), range, iteration)
+        // Ленту клонируем, только если есть что сжимать.
+        let plan = ctx.messages.with_untracked(|msgs| {
+            scope.range(msgs).map(|range| {
+                let iteration = next_iteration(msgs);
+                (msgs.clone(), range, iteration)
+            })
         });
         let _ = tx.send(plan);
     });

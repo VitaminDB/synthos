@@ -22,6 +22,8 @@
 //! активного чата живёт в `messages`; при переключении чата `registry::select`
 //! перегружает её из `storage`.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use syngui::tr;
 use serde::{Deserialize, Serialize};
 
@@ -198,8 +200,48 @@ pub enum ChatMsgKind {
 /// Поле `tone_class` — это MSS-класс аватара (`avatar-slate`, `avatar-blue`,
 /// …). Сделано `String`, а не `&'static str`, чтобы сообщение можно было
 /// сериализовать в JSON при сохранении чата на диск.
+/// Сессионный номер сообщения — стабильный ключ строки ленты.
+///
+/// Индексы в `messages` для этого не годятся: сообщение удаляют из
+/// середины, компактификация прячет часть ленты, а группы tool-вызовов
+/// схлопывают несколько сообщений в одну строку. Номер выдаётся при
+/// создании `ChatMsg` и переживает правку тела на месте.
+///
+/// В JSON не уходит (`serde(skip)`), а `PartialEq`/`Hash` намеренно
+/// вырождены: формат `StoredChat` и отпечаток автосейва
+/// (`registry::state_fingerprint`) не должны зависеть от номера, иначе
+/// одинаковые по содержимому ленты считались бы разными.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UiId(pub u64);
+
+impl UiId {
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        UiId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl Default for UiId {
+    fn default() -> Self {
+        Self::next()
+    }
+}
+
+impl PartialEq for UiId {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for UiId {}
+impl std::hash::Hash for UiId {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChatMsg {
+    /// Сессионный ключ строки ленты, см. [`UiId`]. Не сохраняется.
+    #[serde(skip, default)]
+    pub ui_id: UiId,
     pub role: ChatMsgRole,
     /// Отображаемое имя ("Вы" / "Ассистент" / пусто для system).
     pub author: String,
@@ -265,6 +307,7 @@ impl ChatMsg {
     /// `attachments` пуст — эквивалентно [`ChatMsg::user`].
     pub fn user_with_attachments(body: impl Into<String>, attachments: Vec<MsgAttachment>) -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::User,
             author: tr!("chat.msg.author.you"),
             initials: tr!("chat.msg.author.you_initials"),
@@ -284,6 +327,7 @@ impl ChatMsg {
     /// Пустой placeholder для ответа ассистента — в него стримятся токены.
     pub fn assistant_empty() -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::Assistant,
             author: tr!("chat.msg.author.assistant"),
             initials: "AI".to_string(),
@@ -303,6 +347,7 @@ impl ChatMsg {
     /// Системная «плашка» внутри ленты (ошибка соединения, отмена и т.п.).
     pub fn system(body: impl Into<String>, error: bool) -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::System,
             author: String::new(),
             initials: String::new(),
@@ -326,6 +371,7 @@ impl ChatMsg {
     /// структурированные данные для отправки обратно серверу.
     pub fn tool_call(tool_name: impl Into<String>, args_pretty: impl Into<String>, calls: Vec<ChatToolCall>) -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::Assistant,
             author: tr!("chat.msg.author.assistant"),
             initials: "AI".to_string(),
@@ -354,6 +400,7 @@ impl ChatMsg {
         error: bool,
     ) -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::System,
             author: String::new(),
             initials: String::new(),
@@ -387,6 +434,7 @@ impl ChatMsg {
         summary: impl Into<String>,
     ) -> Self {
         Self {
+            ui_id: UiId::next(),
             role: ChatMsgRole::System,
             author: String::new(),
             initials: String::new(),

@@ -31,7 +31,7 @@ use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 use syngui::core::Point;
 
-use crate::agent::state::{AttachmentKind, ChatMsg, MsgAttachment};
+use crate::agent::state::{AttachmentKind, MsgAttachment};
 use crate::context::AppCtx;
 use crate::pages::node_editor::registry::{self, NodeCategory};
 use crate::pages::node_editor::state::NodeEditorCtx;
@@ -294,10 +294,11 @@ fn attachment_kind_label(k: AttachmentKind) -> &'static str {
 /// Все вложения user-сообщений активного чата, свежие в конце.
 fn chat_attachments() -> Vec<MsgAttachment> {
     let chat = use_context::<SynChatCtx>();
-    let msgs: Vec<ChatMsg> = chat.messages.get_untracked();
-    msgs.iter()
-        .flat_map(|m| m.attachments.iter().cloned())
-        .collect()
+    chat.messages.with_untracked(|msgs| {
+        msgs.iter()
+            .flat_map(|m| m.attachments.iter().cloned())
+            .collect()
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1133,7 +1133,9 @@ fn pop_empty_assistant(m: &mut Vec<ChatMsg>) {
 /// Активный чат правим в UI, фоновый — прямо в файле: с 04.09.2026
 /// переключение чата не обрывает ход, и его сообщения не должны попадать в
 /// чужую ленту. Файл — та же лента, которую `registry::select` прочитает при
-/// возврате, так что накопленное за время отсутствия не теряется.
+/// возврате, так что накопленное за время отсутствия не теряется. Правку
+/// файла делает фоновый писатель (`storage::update_async`) по порядку с
+/// остальными записями этого чата; `registry::select` её дождётся.
 pub(crate) fn ledger_update<F>(chat_id: &Option<String>, f: F)
 where
     F: FnOnce(&mut Vec<ChatMsg>) + Send + 'static,
@@ -1146,9 +1148,7 @@ where
             return;
         }
         let Some(id) = owner else { return };
-        let Some(mut stored) = crate::syn_chat::storage::load(&id) else { return };
-        f(&mut stored.messages);
-        crate::syn_chat::storage::save(&stored);
+        crate::syn_chat::storage::update_async(&id, move |stored| f(&mut stored.messages));
     });
 }
 
@@ -1166,17 +1166,17 @@ pub(crate) fn commit_turn_text(chat_id: &Option<String>, body: String, thinking:
             return;
         }
         let Some(id) = owner else { return };
-        let Some(mut stored) = crate::syn_chat::storage::load(&id) else { return };
-        if let Some(last) = stored
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|m| m.role == ChatMsgRole::Assistant)
-        {
-            last.body.push_str(&body);
-            last.thinking.push_str(&thinking);
-        }
-        crate::syn_chat::storage::save(&stored);
+        crate::syn_chat::storage::update_async(&id, move |stored| {
+            if let Some(last) = stored
+                .messages
+                .iter_mut()
+                .rev()
+                .find(|m| m.role == ChatMsgRole::Assistant)
+            {
+                last.body.push_str(&body);
+                last.thinking.push_str(&thinking);
+            }
+        });
     });
 }
 
@@ -1238,8 +1238,10 @@ pub fn regenerate_last() {
         m.push(ChatMsg::assistant_empty());
     });
     // Если после удаления ни одного user нет, выходим.
-    let msgs = ctx.messages.get_untracked();
-    if !msgs.iter().any(|x| x.role == ChatMsgRole::User) {
+    if !ctx
+        .messages
+        .with_untracked(|m| m.iter().any(|x| x.role == ChatMsgRole::User))
+    {
         return;
     }
 
@@ -1271,8 +1273,10 @@ pub fn continue_last() {
         ctx.error.set(Some(tr!("chat.model.not_loaded")));
         return;
     };
-    let msgs = ctx.messages.get_untracked();
-    if !msgs.iter().any(|x| x.role == ChatMsgRole::User) {
+    if !ctx
+        .messages
+        .with_untracked(|m| m.iter().any(|x| x.role == ChatMsgRole::User))
+    {
         return;
     }
 
@@ -1766,7 +1770,7 @@ fn note_outcome(outcomes: &mut HashMap<String, (u64, usize)>, key: &str, content
 }
 
 fn seen_calls_in_current_turn(ctx: &SynChatCtx) -> RepeatState {
-    repeat_state_from(&ctx.messages.get_untracked())
+    ctx.messages.with_untracked(|m| repeat_state_from(m))
 }
 
 /// Чистая часть [`seen_calls_in_current_turn`] — считает состояние по ленте.
@@ -3835,8 +3839,12 @@ pub(crate) fn assistant_turn_message(prose: &str, thinking: &str, calls: &[RawTo
 /// копировала его как обычный текст, и инструменты больше не вызывались
 /// (живой прогон 03.09.2026).
 fn build_history(ctx: &SynChatCtx, system_prompt: &str, channel: bool) -> Vec<HistoryItem> {
-    let msgs = ctx.messages.get_untracked();
+    ctx.messages
+        .with_untracked(|msgs| history_from_messages(msgs, system_prompt, channel))
+}
 
+/// Чистая часть [`build_history`]: промпт по ленте, без клона всей истории.
+fn history_from_messages(msgs: &[ChatMsg], system_prompt: &str, channel: bool) -> Vec<HistoryItem> {
     let mut sys = system_prompt.trim().to_string();
     for m in msgs.iter().filter(|m| m.compacted_iter.is_none()) {
         if let ChatMsgKind::CompactionMarker { summary, .. } = &m.kind {

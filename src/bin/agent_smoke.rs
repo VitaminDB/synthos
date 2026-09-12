@@ -261,7 +261,7 @@ fn run() -> std::result::Result<(), String> {
 
     let mut overall_ok = true;
     for (pi, prompt) in prompts.iter().enumerate() {
-        let from = chat.messages.get_untracked().len();
+        let from = chat.messages.with_untracked(Vec::len);
         println!("\n════════ сообщение {} / {}: {}", pi + 1, prompts.len(), head(prompt, 200));
         session::send_message(prompt.clone());
         drain();

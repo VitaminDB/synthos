@@ -52,7 +52,7 @@ pub fn view() -> impl Widget {
                         .map(|m| m.title)
                 })
                 .unwrap_or_default();
-            let count = ctx.messages.get_untracked().len();
+            let count = ctx.messages.with_untracked(Vec::len);
             vec![Box::new(confirm_card(title, count))]
         }))
 }

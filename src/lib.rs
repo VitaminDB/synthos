@@ -786,56 +786,24 @@ fn install_config_autosave(ctx: &AppCtx) {
 
 /// Автосохранение Syn-чатов на диск + sync system_prompt с AppConfig.
 ///
-/// Эффект 1 (per-chat): подписывается на `messages`/`chats`/`active_chat_id`/
-/// `params`. Отпечаток считает `registry::state_fingerprint` — он включает
-/// params, чтобы изменение слайдеров вызывало disk write через
-/// snapshot_current (там params сохраняются в StoredChat), и он же кладётся
-/// в `last_saved_fp` при выборе чата, чтобы простое переключение не
-/// считалось правкой.
+/// Лента открытого чата — `syn_chat::autosave`: эффекты там только отмечают
+/// правку (`messages`, `params`, название чата), запись — после паузы и в
+/// фоновом потоке. Отпечаток `registry::state_fingerprint` включает params,
+/// чтобы изменение слайдеров тоже сохранялось (params пишутся в
+/// StoredChat), и он же кладётся в `last_saved_fp` при выборе чата, чтобы
+/// простое переключение не считалось правкой.
 ///
-/// Эффект 2 (global): подписывается на `system_prompt`, переливает текст в
-/// активный пресет библиотеки промптов (`syn_chat::prompt_presets`), та
-/// пишется на диск с дебаунсом. Стартовое значение `system_prompt` берёт
-/// конструктор `SynChatCtx` из той же библиотеки.
+/// Эффект system_prompt (global): переливает текст в активный пресет
+/// библиотеки промптов (`syn_chat::prompt_presets`), та пишется на диск с
+/// дебаунсом. Стартовое значение `system_prompt` берёт конструктор
+/// `SynChatCtx` из той же библиотеки.
 fn install_syn_chat_autosave() {
     let ctx = use_context::<syn_chat::SynChatCtx>();
 
-    // Эффект 1 — per-chat persistence.
-    create_effect(move || {
-        let _id = ctx.active_chat_id.get();
-        let msgs = ctx.messages.get();
-        let chats = ctx.chats.get();
-        let params = ctx.params.get();
+    // Лента открытого чата.
+    syn_chat::autosave::install(&ctx);
 
-        if ctx.loading.get_untracked() {
-            return;
-        }
-        let Some(active_id) = ctx.active_chat_id.get_untracked() else {
-            return;
-        };
-
-        let title = chats
-            .iter()
-            .find(|m| m.id == active_id)
-            .map(|m| m.title.clone())
-            .unwrap_or_default();
-
-        // Тот же расчёт, что `registry::select_internal` кладёт в
-        // `last_saved_fp` при выборе чата — иначе выбор выглядит как
-        // правка и двигает чат наверх списка.
-        let fp = syn_chat::registry::state_fingerprint(&title, &msgs, &params);
-        if ctx.last_saved_fp.get_untracked() == fp {
-            return;
-        }
-
-        syn_chat::registry::refresh_active_preview(&msgs);
-        if let Some(stored) = syn_chat::registry::snapshot_current() {
-            syn_chat::storage::save(&stored);
-            ctx.last_saved_fp.set(fp);
-        }
-    });
-
-    // Эффект 2 — system_prompt → активный пресет библиотеки промптов.
+    // system_prompt → активный пресет библиотеки промптов.
     let ctx2 = ctx.clone();
     create_effect(move || {
         let prompt = ctx2.system_prompt.get();

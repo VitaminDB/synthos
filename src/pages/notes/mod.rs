@@ -28,6 +28,8 @@ pub mod blocks;
 pub mod calendar;
 pub mod chart;
 pub mod contents;
+#[cfg(all(test, feature = "testing"))]
+mod doc_bench;
 pub mod doc_menu;
 pub mod editor_pane;
 pub mod embeds;

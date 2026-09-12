@@ -224,6 +224,19 @@ thread_local! {
     static INLINE: RefCell<HashMap<String, InlineEntry>> = RefCell::new(HashMap::new());
 }
 
+/// Остановить и забыть все инлайн-карточки: смена чата, закрытие ленты.
+/// В отличие от [`sweep_inline`] снимает и играющие.
+pub fn stop_inline_all() {
+    let all: Vec<InlineEntry> = INLINE.with(|reg| reg.borrow_mut().drain().map(|(_, e)| e).collect());
+    for e in all {
+        stop(&e.player);
+        e.signals.key.set_always(String::new());
+        e.signals.buf.set_always(None);
+        e.signals.playing.set_always(false);
+        e.signals.pos.set_always(0.0);
+    }
+}
+
 /// Состояние инлайн-карточки файла `sha`: общее для всех сборок ленты (и
 /// для нескольких карточек одного файла). Аренду карточка обязана держать,
 /// пока показана.
@@ -244,14 +257,19 @@ pub fn inline_state(sha: &str) -> (AudioSignals, PlayerSlot, Arc<CardLease>) {
     })
 }
 
-/// Убрать записи, чьих карточек больше нет: смена чата, удаление или
-/// очистка сообщений, уход ленты со страницы.
+/// Убрать записи, чьих карточек больше нет: удаление сообщения, очистка
+/// ленты, уход строки из окна виртуального списка.
+///
+/// Играющий трек уборка не трогает: в виртуальной ленте строка уходит из
+/// дерева, стоит прокрутить её за край окна, и музыка обрывалась бы на
+/// ровном месте. Такую запись подхватит обратно та же карточка, когда
+/// строка вернётся в окно. Полная остановка — [`stop_inline_all`].
 pub fn sweep_inline() {
     let dead: Vec<InlineEntry> = INLINE.with(|reg| {
         let mut reg = reg.borrow_mut();
         let keys: Vec<String> = reg
             .iter()
-            .filter(|(_, e)| e.lease.strong_count() == 0)
+            .filter(|(_, e)| e.lease.strong_count() == 0 && !e.signals.playing.get_untracked())
             .map(|(k, _)| k.clone())
             .collect();
         keys.iter().filter_map(|k| reg.remove(k)).collect()

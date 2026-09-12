@@ -404,12 +404,30 @@ mod tests {
         assert!(after.playing.get_untracked());
         assert_eq!(after.pos.get_untracked(), 2.5);
 
-        // Карточка ушла (смена чата, удаление сообщения) — трек отпущен.
+        // Строка ушла из окна виртуальной ленты — играющий трек остаётся:
+        // прокрутка не должна обрывать музыку.
         shown.set(false);
         h.rebuild();
         media_audio::sweep_inline();
+        assert!(
+            media_audio::inline_peek(&sha).is_some(),
+            "играющий трек убрали вместе со строкой"
+        );
+        assert!(signals.playing.get_untracked());
+
+        // Пауза — и та же уборка запись снимает.
+        signals.playing.set(false);
+        media_audio::sweep_inline();
         assert!(media_audio::inline_peek(&sha).is_none());
-        assert!(!signals.playing.get_untracked());
         assert_eq!(signals.key.get_untracked(), "");
+
+        // Смена чата останавливает и играющие.
+        shown.set(true);
+        h.rebuild();
+        let (again, _) = media_audio::inline_peek(&sha).expect("карточка вернулась");
+        again.playing.set(true);
+        media_audio::stop_inline_all();
+        assert!(media_audio::inline_peek(&sha).is_none());
+        assert!(!again.playing.get_untracked());
     }
 }

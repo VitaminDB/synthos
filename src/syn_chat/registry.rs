@@ -142,6 +142,10 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
     // запись сняла бы снимок уже с нового. Повторный выбор того же чата
     // перечитывает его с диска — там тоже должны быть последние правки.
     autosave::flush();
+    // Играющий звук инлайн-карточек принадлежал прежней ленте. Обычная
+    // уборка его бережёт (строка могла просто уйти из окна), поэтому здесь
+    // останавливаем явно.
+    crate::pages::syn_chat::media_audio::stop_inline_all();
     let Some(stored) = storage::load(id) else {
         eprintln!("[syn_chat] чат {id} не найден на диске");
         ctx.chats.update(|list| list.retain(|m| m.id != id));

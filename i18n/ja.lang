@@ -1193,6 +1193,7 @@ settings.audio_models.file.desc = "重みと tokenizer を含む .syn バンド�
 settings.audio_models.input_device.auto = "自動（既定 + 検出）"
 settings.audio_models.input_device = "マイク"
 settings.audio_models.input_device.desc = "選択したデバイスが使用できない場合、システムは自動的に動作するデバイスへ切り替えて記憶します。"
+settings.audio_models.input_device.refresh = "マイク一覧を更新"
 settings.audio_models.language = "認識言語"
 settings.audio_models.language.desc = "Whisper へのヒントです。「自動」はモデルが検出します。GigaAM は無視します。"
 settings.audio_models.device.gpu_auto = "GPU（自動：CUDA → Metal → CPU）"

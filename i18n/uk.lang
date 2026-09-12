@@ -1209,6 +1209,7 @@ settings.audio_models.file.desc = ".syn bundle з вагами і токеніз
 settings.audio_models.input_device.auto = "Авто (типове + пошук)"
 settings.audio_models.input_device = "Мікрофон"
 settings.audio_models.input_device.desc = "Якщо вибраний пристрій недоступний, система автоматично перемкнеться на робочий і запам'ятає його."
+settings.audio_models.input_device.refresh = "Оновити список мікрофонів"
 settings.audio_models.language = "Мова розпізнавання"
 settings.audio_models.language.desc = "Підказка для Whisper. «Авто» визначається моделлю. GigaAM це ігнорує."
 settings.audio_models.device.gpu_auto = "GPU (авто: CUDA → Metal → CPU)"

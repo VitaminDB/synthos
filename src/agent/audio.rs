@@ -83,6 +83,10 @@ pub struct AudioCtx {
     pub asr_loaded_name: RwSignal<Option<String>>,
     /// Идёт ли загрузка модели (Transcriber::load в spawn_blocking).
     pub asr_loading: RwSignal<bool>,
+    /// Микрофоны системы. `None` — опрос ещё не закончился: он идёт в
+    /// фоне, потому что `cpal`/ALSA перебирает устройства около секунды и
+    /// в сборке виджета вешал бы весь интерфейс.
+    pub input_devices: RwSignal<Option<Vec<String>>>,
 
     /// **Mirror** `session.state()` → True при `RecordingState::Recording`.
     /// Backward-compat для `input_panel`, `voice_fab/*`. Обновляется
@@ -144,6 +148,7 @@ impl AudioCtx {
             asr: Arc::new(Mutex::new(None)),
             asr_loaded_name: use_signal(None),
             asr_loading: use_signal(false),
+            input_devices: use_signal(None),
             is_recording,
             vis_handle,
             error,
@@ -580,4 +585,63 @@ pub fn unload_model() {
     }
     app.audio.asr_loaded_name.set(None);
     app.audio.session.error().set(None);
+}
+
+/// Опросить микрофоны в фоне и положить в `AudioCtx::input_devices`.
+/// Повторный вызов, пока опрос идёт, ничего не делает; `force` заставляет
+/// перечитать (пользователь воткнул микрофон и нажал «обновить»).
+pub fn scan_input_devices(ctx: &AudioCtx, force: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BUSY: AtomicBool = AtomicBool::new(false);
+
+    if !force && ctx.input_devices.get_untracked().is_some() {
+        return;
+    }
+    if BUSY.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let devices = ctx.input_devices;
+    // Обычный поток, а не задача рантайма: перебор устройств блокирующий.
+    std::thread::spawn(move || {
+        let list = syngui::audio::list_input_devices();
+        syngui::async_runtime::run_on_main_thread(move || {
+            devices.set(Some(list));
+            BUSY.store(false, Ordering::SeqCst);
+        });
+    });
+}
+
+#[cfg(test)]
+mod input_devices_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Опрос микрофонов не должен занимать время вызывающего: `cpal`
+    /// перебирает устройства около секунды, а зовут его из сборки виджета
+    /// настроек — раньше на это вставал весь интерфейс.
+    #[test]
+    fn scan_does_not_block_the_caller() {
+        syngui::signal::allow_signal_reads_on_this_thread();
+        let ctx = AudioCtx::new();
+        assert!(ctx.input_devices.get_untracked().is_none());
+
+        let started = Instant::now();
+        scan_input_devices(&ctx, false);
+        let call = started.elapsed();
+        assert!(
+            call < Duration::from_millis(100),
+            "вызов занял {call:?} — опрос идёт не в фоне"
+        );
+
+        // Ждём фонового ответа: он приходит колбэком на главный поток.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && ctx.input_devices.get_untracked().is_none() {
+            syngui::async_runtime::drain_main_thread_callbacks();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            ctx.input_devices.get_untracked().is_some(),
+            "список микрофонов так и не пришёл"
+        );
+    }
 }

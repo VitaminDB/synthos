@@ -1200,6 +1200,7 @@ settings.audio_models.file.desc = ".syn bundle, ağırlıklar ve tokenizer içer
 settings.audio_models.input_device.auto = "Otomatik (default + probing)"
 settings.audio_models.input_device = "Mikrofon"
 settings.audio_models.input_device.desc = "Seçili aygıt kullanılamıyorsa sistem otomatik olarak çalışan bir aygıta geçer ve bunu hatırlar."
+settings.audio_models.input_device.refresh = "Mikrofon listesini yenile"
 settings.audio_models.language = "Tanıma dili"
 settings.audio_models.language.desc = "Whisper için ipucu. “Otomatik” model tarafından tespit edilir. GigaAM bunu yok sayar."
 settings.audio_models.device.gpu_auto = "GPU (otomatik: CUDA → Metal → CPU)"

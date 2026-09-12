@@ -1193,6 +1193,7 @@ settings.audio_models.file.desc = ".syn 번들에 가중치와 tokenizer가 포�
 settings.audio_models.input_device.auto = "자동(default + probing)"
 settings.audio_models.input_device = "마이크"
 settings.audio_models.input_device.desc = "선택한 장치를 사용할 수 없으면 시스템이 자동으로 작동하는 장치로 전환하고 이를 기억합니다."
+settings.audio_models.input_device.refresh = "마이크 목록 새로 고침"
 settings.audio_models.language = "인식 언어"
 settings.audio_models.language.desc = "Whisper용 힌트입니다. \"자동\"은 모델이 감지합니다. GigaAM은 이를 무시합니다."
 settings.audio_models.device.gpu_auto = "GPU(자동: CUDA → Metal → CPU)"

@@ -1195,6 +1195,7 @@ settings.audio_models.file.desc = "Салмақтары мен tokenizer бар 
 settings.audio_models.input_device.auto = "Авто (default + іздеу)"
 settings.audio_models.input_device = "Микрофон"
 settings.audio_models.input_device.desc = "Таңдалған құрылғы қолжетімсіз болса, жүйе автоматты түрде жұмыс істейтінге ауысады және оны есте сақтайды."
+settings.audio_models.input_device.refresh = "Микрофондар тізімін жаңарту"
 settings.audio_models.language = "Тану тілі"
 settings.audio_models.language.desc = "Whisper үшін ишара. «Авто» модельмен анықталады. GigaAM оны елемейді."
 settings.audio_models.device.gpu_auto = "GPU (авто: CUDA → Metal → CPU)"

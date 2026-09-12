@@ -1191,6 +1191,7 @@ settings.audio_models.file.desc = ".syn bundle 包含权重和 tokenizer——�
 settings.audio_models.input_device.auto = "自动（default + probing）"
 settings.audio_models.input_device = "麦克风"
 settings.audio_models.input_device.desc = "如果所选设备不可用，系统会自动切换到可用的设备并记住它。"
+settings.audio_models.input_device.refresh = "刷新麦克风列表"
 settings.audio_models.language = "识别语言"
 settings.audio_models.language.desc = "面向 Whisper 的提示。「自动」由模型自行检测。GigaAM 会忽略此设置。"
 settings.audio_models.device.gpu_auto = "GPU（自动：CUDA → Metal → CPU）"

@@ -272,21 +272,37 @@ fn path_row(idx: usize, initial: String) -> Box<dyn Widget> {
 /// вкладки. Виртуальный пункт "auto" вверху означает «дать системе
 /// выбрать» (default + перебор).
 fn input_device_row() -> Box<dyn Widget> {
-    let ctx = use_context::<AppCtx>();
-    let current = ctx.general.audio_input_device.get_untracked();
-    let current_key = if current.trim().is_empty() {
-        "auto".to_string()
-    } else {
-        current.clone()
-    };
+    let control: Box<dyn Widget> = Box::new(DecoratedBox::new().class("grow").child(move || {
+        let ctx = use_context::<AppCtx>();
+        // Перебор устройств (cpal → ALSA) занимает около секунды. Раньше он
+        // шёл прямо здесь, в сборке виджета, и подвешивал интерфейс при
+        // каждом открытии страницы и каждой её пересборке. Теперь опрос в
+        // фоне, а до его конца в списке — сохранённый выбор.
+        audio::scan_input_devices(&ctx.audio, false);
+        let current = ctx.general.audio_input_device.get();
+        let current_key = if current.trim().is_empty() {
+            "auto".to_string()
+        } else {
+            current.clone()
+        };
+        let known = ctx.audio.input_devices.get();
 
-    let mut items = vec![DropdownItem::new("auto", tr!("settings.audio_models.input_device.auto"))];
-    for name in syngui::audio::list_input_devices() {
-        let label = name.clone();
-        items.push(DropdownItem::new(name, label));
-    }
+        let mut items =
+            vec![DropdownItem::new("auto", tr!("settings.audio_models.input_device.auto"))];
+        match &known {
+            Some(list) => {
+                for name in list {
+                    items.push(DropdownItem::new(name.clone(), name.clone()));
+                }
+            }
+            // Опрос ещё идёт: показываем хотя бы текущий выбор, иначе
+            // Dropdown нарисовал бы пустое место вместо него.
+            None if current_key != "auto" => {
+                items.push(DropdownItem::new(current.clone(), current.clone()));
+            }
+            None => {}
+        }
 
-    let control: Box<dyn Widget> = Box::new(
         Dropdown::with_items(items)
             .selected(current_key)
             .on_change(|s| {
@@ -295,14 +311,28 @@ fn input_device_row() -> Box<dyn Widget> {
                 let normalized = if s == "auto" { String::new() } else { s };
                 ctx.general.audio_input_device.set(normalized);
             })
-            .class("models-active-dropdown"),
+            .class("models-active-dropdown")
+    }));
+
+    let refresh: Box<dyn Widget> = Box::new(
+        ToolButton::new(MI_AUTORENEW)
+            .on_click(|| {
+                let ctx = use_context::<AppCtx>();
+                audio::scan_input_devices(&ctx.audio, true);
+            })
+            .tooltip(tr!("settings.audio_models.input_device.refresh")),
     );
 
     row_frame(
         MI_HEADSET_MIC,
         tr!("settings.audio_models.input_device"),
         tr!("settings.audio_models.input_device.desc"),
-        control,
+        Box::new(
+            Row::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .children(vec![control, refresh]),
+        ),
     )
 }
 

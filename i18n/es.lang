@@ -1203,6 +1203,7 @@ settings.audio_models.file.desc = "Bundle .syn con pesos y tokenizer — empaque
 settings.audio_models.input_device.auto = "Automático (por defecto + sondeo)"
 settings.audio_models.input_device = "Micrófono"
 settings.audio_models.input_device.desc = "Si el dispositivo seleccionado no está disponible, el sistema cambia automáticamente a uno operativo y lo recuerda."
+settings.audio_models.input_device.refresh = "Actualizar lista de micrófonos"
 settings.audio_models.language = "Idioma de reconocimiento"
 settings.audio_models.language.desc = "Pista para Whisper. «Auto» lo detecta el modelo. GigaAM lo ignora."
 settings.audio_models.device.gpu_auto = "GPU (auto: CUDA → Metal → CPU)"

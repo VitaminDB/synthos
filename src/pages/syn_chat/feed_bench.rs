@@ -553,6 +553,40 @@ fn run(n: usize, print: bool) {
         ctx.pending.set(false);
     });
 
+    // (c2) Длинный ответ: 60 сбросов на ~25 КБ с двумя большими блоками
+    // кода. Здесь видно цену разбора и отрисовки всего ответа на каждую
+    // дельту — короткий ответ её прячет.
+    w.step("длинный ответ: начало", |_, ctx| {
+        ctx.pending.set(true);
+        ctx.messages.update(|m| m.push(ChatMsg::assistant_empty()))
+    });
+    let long_answer = format!(
+        "{}\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+        paragraph(&mut rng, 3, 5),
+        code_block(&mut rng, 120),
+        paragraph(&mut rng, 2, 4),
+        bullet_list(&mut rng),
+        code_block(&mut rng, 120),
+        paragraph(&mut rng, 3, 4)
+    );
+    let mut long_stream = Vec::new();
+    for chunk in chunks(&long_answer, 60) {
+        long_stream.push(w.sample(move |_, ctx| {
+            ctx.streaming_body.update(|b| b.push_str(&chunk));
+        }));
+    }
+    if print {
+        println!(
+            "N={n:<3} длинный ответ: {:.1} КБ, 60 сбросов",
+            long_answer.len() as f64 / 1024.0
+        );
+    }
+    w.aggregate("длинный ответ: 60 сбросов", &long_stream);
+    w.step("длинный ответ: commit", |_, ctx| {
+        ctx.commit_streaming_tail();
+        ctx.pending.set(false);
+    });
+
     // (d) Прокрутка колесом: 8 шагов вверх, 4 обратно; инерцию тикает
     // `animate`, как цикл событий между кадрами.
     let y0 = w.scroll_y();

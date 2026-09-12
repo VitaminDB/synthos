@@ -89,6 +89,11 @@ fn open_chat(id: &str, highlight: Option<usize>) {
         registry::select(id);
     }
     ctx.highlight_msg.set(highlight);
+    if highlight.is_some() {
+        // Лента прокручивается к сообщению по смене поколения: без него
+        // повторный переход к тому же сообщению ничего бы не сделал.
+        ctx.highlight_gen.update(|g| *g += 1);
+    }
     navigate("syn_chat");
 }
 

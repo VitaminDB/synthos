@@ -205,6 +205,10 @@ pub struct SynChatCtx {
     /// индексом подсвечивается рамкой, пока пользователь не переключит чат
     /// или не кликнет по ленте. Эфемерно, не persist'ится.
     pub highlight_msg: RwSignal<Option<usize>>,
+    /// Поколение подсветки: растёт на каждый переход из поиска. Лента по
+    /// нему прокручивается к найденному сообщению — даже если это то же
+    /// сообщение, что и в прошлый раз.
+    pub highlight_gen: RwSignal<u64>,
     /// Индекс сообщения, которое сейчас правится прямо в ленте: вместо
     /// текста пузырёк показывает поле ввода (`message_bubble::edit_box`).
     /// `None` — ничего не редактируется. Эфемерно, сбрасывается при смене
@@ -342,6 +346,7 @@ impl SynChatCtx {
             compaction_open: use_signal(HashMap::new()),
             right_panel_tab: use_signal(0),
             highlight_msg: use_signal(None),
+            highlight_gen: use_signal(0),
             editing_msg: use_signal(None),
             renaming_chat: use_signal(false),
             pending_clear: use_signal(false),

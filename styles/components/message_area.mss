@@ -11,6 +11,11 @@
     padding: 20px 24px 20px 24px;
 }
 
+/* Виртуальная лента: отступы те же, что были у обёртки прокрутки. */
+.message-feed {
+    padding: 20px 24px 20px 24px;
+}
+
 .dot-pattern {
     background-color: var(--bg-chat);
     color: var(--bg-chat-dots);

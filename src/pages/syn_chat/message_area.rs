@@ -14,7 +14,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use syngui::widgets::containers::Keyed;
+use syngui::widgets::containers::{VirtualList, VirtualRow};
 
 use crate::agent::time::format_date_today;
 use crate::components::date_divider;
@@ -68,22 +68,22 @@ fn scroll_list() -> impl Widget {
 }
 
 fn scroll_list_for_chat() -> impl Widget {
-    ScrollView::new().vertical().follow_end(true).child(move || {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<SynChatCtx>();
         let app = use_context::<AppCtx>();
         let has_active = ctx.active_chat_id.get().is_some();
         let msgs = Arc::new(ctx.messages.get());
         let pending = ctx.pending.get();
-        // Подписки: смена режима показа tool-карточек и темы меняет вид
-        // строк, поэтому они входят и в версию строки.
+        // Подписки: режим показа tool-карточек и тема меняют вид строк,
+        // поэтому они же входят в версию строки.
         let tool_mode = app.general.tool_display_mode.get();
         let theme_key = hash_of(&app.theme_key.get());
 
-        // Индекс сообщения, на которое привёл глобальный поиск: пузырёк
-        // обводится рамкой, пока пользователь не сменит чат.
+        // Сообщение, на которое привёл глобальный поиск: лента к нему
+        // прокручивается и обводит его рамкой.
         let highlight = ctx.highlight_msg.get();
+        let highlight_gen = ctx.highlight_gen.get();
         let editing = ctx.editing_msg.get();
-        // Очередь отправки активного чата — пузырьки в хвосте ленты.
         let active = ctx.active_chat_id.get_untracked();
         let queued: Arc<Vec<QueuedMsg>> = Arc::new(
             ctx.queue
@@ -94,44 +94,65 @@ fn scroll_list_for_chat() -> impl Widget {
         );
         let queue_editing = ctx.queue_editing.get();
 
-        let children: Vec<Box<dyn Widget>> = if !has_active {
-            vec![Box::new(no_chat_hero())]
-        } else if msgs.is_empty() && !pending && queued.is_empty() {
-            vec![Box::new(empty_hero())]
-        } else {
-            // Состояние раскрытия входит в версию строки: клик по шеврону
-            // пересобирает свою строку, а не всю ленту.
-            let thinking_open = ctx.thinking_open.get();
-            let tool_body_open = ctx.tool_body_open.get();
-            let tool_group_open = ctx.tool_group_open.get();
-            let compaction_open = ctx.compaction_open.get();
-            let wizard_drafts = ctx.wizard_drafts.get();
-            let ui = LaneUi {
-                tool_mode: &tool_mode,
-                pending,
-                highlight,
-                editing,
-                theme_key,
-                thinking_open: &thinking_open,
-                tool_body_open: &tool_body_open,
-                tool_group_open: &tool_group_open,
-                compaction_open: &compaction_open,
-                wizard_drafts: &wizard_drafts,
-                queue_editing,
-            };
-            lane::build(&msgs, &queued, &ui)
-                .into_iter()
-                .map(|row| row_widget(row, &msgs, &queued, &tool_mode))
-                .collect()
+        if !has_active {
+            return vec![Box::new(hero_wrap(no_chat_hero()))];
+        }
+        if msgs.is_empty() && !pending && queued.is_empty() {
+            return vec![Box::new(hero_wrap(empty_hero()))];
+        }
+
+        // Состояние раскрытия входит в версию строки: клик по шеврону
+        // пересобирает свою строку, а не всю ленту.
+        let thinking_open = ctx.thinking_open.get();
+        let tool_body_open = ctx.tool_body_open.get();
+        let tool_group_open = ctx.tool_group_open.get();
+        let compaction_open = ctx.compaction_open.get();
+        let wizard_drafts = ctx.wizard_drafts.get();
+        let ui = LaneUi {
+            tool_mode: &tool_mode,
+            pending,
+            highlight,
+            editing,
+            theme_key,
+            thinking_open: &thinking_open,
+            tool_body_open: &tool_body_open,
+            tool_group_open: &tool_group_open,
+            compaction_open: &compaction_open,
+            wizard_drafts: &wizard_drafts,
+            queue_editing,
         };
 
-        DecoratedBox::new().class("message-area-scroll-wrap").child(
-            Column::new()
-                .gap(14.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(children),
-        )
+        let rows: Vec<VirtualRow> = lane::build(&msgs, &queued, &ui)
+            .into_iter()
+            .map(|row| {
+                let (key, version) = (row.key, row.version);
+                VirtualRow::from_arc(key, version, row_builder(row, &msgs, &queued, &tool_mode))
+            })
+            .collect();
+
+        let mut list = VirtualList::new(rows)
+            .gap(14.0)
+            // Средний пузырёк ленты: по этой оценке считаются высоты
+            // строк, до которых прокрутка ещё не доходила.
+            .estimated_row_height(170.0)
+            .overscan(900.0)
+            .follow_end(true)
+            // Смена чата сбрасывает кэш высот и возвращает ленту вниз:
+            // элемент списка при переключении переиспользуется.
+            .reset_key(active.as_deref().map(hash_of).unwrap_or(0));
+        if let Some(msg) = highlight.and_then(|i| msgs.get(i)) {
+            list = list.scroll_to(lane::message_key(msg), highlight_gen);
+        }
+
+        vec![Box::new(list.class("message-feed"))]
     })
+}
+
+/// Приветственная заглушка: отступы те же, что у ленты.
+fn hero_wrap(hero: impl Widget + 'static) -> impl Widget {
+    DecoratedBox::new()
+        .class("message-area-scroll-wrap")
+        .child(hero)
 }
 
 fn hash_of(value: &str) -> u64 {
@@ -140,26 +161,27 @@ fn hash_of(value: &str) -> u64 {
     h.finish()
 }
 
-/// Строка ленты как виджет. Всё, от чего зависит её вид, уже посчитано в
-/// версии ([`lane::build`]), поэтому `Keyed` при той же версии не вызывает
-/// этот сборщик вовсе: пузырёк не пересобирается и не перемеряется.
-fn row_widget(
+/// Сборщик строки ленты. Всё, от чего зависит её вид, уже посчитано в
+/// версии ([`lane::build`]), поэтому при той же версии список не вызывает
+/// сборщик вовсе: пузырёк не пересобирается и не перемеряется. Сам вызов
+/// случается, только когда строка попала в видимое окно.
+fn row_builder(
     row: LaneRow,
     msgs: &Arc<Vec<ChatMsg>>,
     queued: &Arc<Vec<QueuedMsg>>,
     tool_mode: &str,
-) -> Box<dyn Widget> {
-    let LaneRow { key, version, kind } = row;
+) -> Arc<dyn Fn() -> Box<dyn Widget> + Send + Sync> {
+    let LaneRow { kind, .. } = row;
     let msgs = msgs.clone();
     let queued = queued.clone();
     let tool_mode = tool_mode.to_string();
 
     match kind {
-        LaneKind::DateDivider => Box::new(Keyed::new(key, version, move || {
-            Box::new(date_divider::view(&format_date_today()))
-        })),
+        LaneKind::DateDivider => {
+            Arc::new(move || Box::new(date_divider::view(&format_date_today())) as Box<dyn Widget>)
+        }
 
-        LaneKind::Message(m) => Box::new(Keyed::new(key, version, move || {
+        LaneKind::Message(m) => Arc::new(move || {
             let msg = &msgs[m.idx];
             let bubble = message_bubble::view(msg, m.idx, m.is_typing, m.is_last_assistant, &tool_mode);
             // Обёртка стоит всегда, меняется только класс: иначе при
@@ -179,32 +201,32 @@ fn row_widget(
                         .cross_axis_alignment(CrossAxisAlignment::Stretch)
                         .children(vec![bubble]),
                 ),
-            )
-        })),
+            ) as Box<dyn Widget>
+        }),
 
-        LaneKind::Group(g) => Box::new(Keyed::new(key, version, move || {
+        LaneKind::Group(g) => Arc::new(move || {
             Box::new(tool_group::view(tool_group::ToolGroup {
                 start_idx: g.start_idx,
                 count: g.count,
                 tool_name: g.tool_name.clone(),
                 err_count: g.err_count,
                 items: g.items.iter().map(|&i| (i, msgs[i].clone())).collect(),
-            }))
-        })),
+            })) as Box<dyn Widget>
+        }),
 
-        LaneKind::Marker(m) => Box::new(Keyed::new(key, version, move || {
+        LaneKind::Marker(m) => Arc::new(move || {
             let compacted: Vec<(usize, ChatMsg)> =
                 m.compacted.iter().map(|&i| (i, msgs[i].clone())).collect();
             compaction_marker::view(&msgs[m.idx], compacted, &tool_mode)
-        })),
+        }),
 
-        LaneKind::Queued(q) => Box::new(Keyed::new(key, version, move || {
+        LaneKind::Queued(q) => Arc::new(move || {
             match queued.iter().find(|item| item.id == q.id) {
                 Some(item) => Box::new(message_bubble::queued_view(item)) as Box<dyn Widget>,
                 // Сообщение ушло из очереди между сборкой модели и строки.
                 None => Box::new(Column::new()),
             }
-        })),
+        }),
     }
 }
 

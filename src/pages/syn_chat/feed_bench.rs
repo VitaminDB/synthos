@@ -422,13 +422,18 @@ impl World {
         );
     }
 
-    /// Прокрутчик ленты — первый `ScrollView` в обходе (внешний).
+    /// Прокрутчик ленты — виртуальный список.
     fn feed_scroll(&self) -> ElementId {
         *self
             .h
-            .find_by_type_name("ScrollView")
+            .find_by_type_name("VirtualList")
             .first()
-            .expect("лента не смонтировала ScrollView")
+            .expect("лента не смонтировала VirtualList")
+    }
+
+    /// Сколько строк ленты сейчас смонтировано (окно виртуального списка).
+    fn built_rows(&self) -> usize {
+        self.h.find_by_type_name("Keyed").len()
     }
 
     fn scroll_y(&self) -> f32 {
@@ -481,24 +486,19 @@ fn run(n: usize, print: bool) {
     w.step("простой кадр", |_, _| {});
     let scroll_id = w.feed_scroll();
     let viewport = w.h.element_bounds(scroll_id);
-    let content = w
-        .h
-        .tree
-        .children_of(scroll_id)
-        .first()
-        .map(|&c| w.h.element_bounds(c).size.height)
-        .unwrap_or(0.0);
     let bubbles = w.h.find_by_type_name("MarkdownView").len();
+    let rows = w.built_rows();
     if print {
         println!(
-            "N={n:<3} лента: ScrollView {:.0}×{:.0}, содержимое {:.0} px, MarkdownView {bubbles}, элементов {}",
-            viewport.size.width, viewport.size.height, content, open.live
+            "N={n:<3} лента: VirtualList {:.0}×{:.0}, строк в окне {rows} из {n}, MarkdownView {bubbles}, элементов {}",
+            viewport.size.width, viewport.size.height, open.live
         );
     }
     assert!(bubbles > 0, "лента не построила пузырьки");
+    assert!(rows < n.max(2), "смонтирована вся лента, а не окно: {rows}");
     assert!(
         viewport.size.height <= VIEW_H + 1.0,
-        "ScrollView вырос до содержимого — замер не про прокручиваемую ленту: {viewport:?}"
+        "список вырос до содержимого — замер не про прокручиваемую ленту: {viewport:?}"
     );
 
     // (b) Агентный ход: вопрос и заглушка, вызов инструмента на месте

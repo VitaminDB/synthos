@@ -595,7 +595,7 @@ fn reset_button() -> impl Widget {
 // ─────────────────────── ТАБ «ДЕТАЛИ» ───────────────────────
 //
 // Панель — дашборд из карточек: сверху основной цикл чата, под ним
-// карточки живых субагентов (с отступом по глубине вложенности), внизу
+// карточки живых субагентов (в том же столбце, без отступа), внизу
 // размер чата. Все карточки сворачиваются: цепочка из нескольких
 // субагентов иначе не помещается в панель.
 
@@ -626,9 +626,6 @@ struct CardView {
     badge: Option<(String, &'static str)>,
     /// Цикл работает прямо сейчас — иконка пульсирует, карточка подсвечена.
     live: bool,
-    /// Глубина вложенности: 0 — основной чат, 1 — его субагент, дальше —
-    /// рекурсия. Даёт отступ карточки.
-    depth: u32,
     stats: RunStats,
     /// Ходов сделано — отдельной плиткой.
     turns: u32,
@@ -672,7 +669,6 @@ fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
                 )
             }),
             live,
-            depth: 0,
             stats,
             turns: ctx.last_turns.get(),
             default_open: true,
@@ -680,8 +676,8 @@ fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
     }
 }
 
-/// Карточки вложенных циклов. Порядок — тот, в котором их запускали, а
-/// отступ берётся из `depth`: рекурсивный вызов видно как лесенку.
+/// Карточки вложенных циклов. Порядок — тот, в котором их запускали;
+/// выровнены по основному чату, глубина — в заголовке.
 fn subagent_cards_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
@@ -753,7 +749,6 @@ fn card_of(run: &AgentRun) -> CardView {
         status,
         badge,
         live: run.state.is_running(),
-        depth: run.depth,
         stats: run.stats,
         turns: run.turn,
         // Работающий цикл раскрыт — ради него панель и открывали;
@@ -833,18 +828,12 @@ fn run_card(v: CardView) -> StyledWidget<DecoratedBox> {
         ));
     }
 
-    // Отступ по глубине: субагент сдвинут относительно основного чата,
-    // его собственный вложенный вызов — ещё правее. Рекурсию видно как
-    // лесенку, без отдельного дерева-виджета.
-    let class = match (v.depth, v.live) {
-        (0, false) => "details-card",
-        (0, true) => "details-card details-card-live",
-        (1, false) => "details-card details-nest-1",
-        (1, true) => "details-card details-card-live details-nest-1",
-        (2, false) => "details-card details-nest-2",
-        (2, true) => "details-card details-card-live details-nest-2",
-        (_, false) => "details-card details-nest-3",
-        (_, true) => "details-card details-card-live details-nest-3",
+    // Карточки субагентов стоят в одном столбце с основным чатом, без
+    // сдвига: глубину рекурсии называет заголовок («уровень N»).
+    let class = if v.live {
+        "details-card details-card-live"
+    } else {
+        "details-card"
     };
     DecoratedBox::new()
         .class(class)

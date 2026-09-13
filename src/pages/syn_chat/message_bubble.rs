@@ -17,7 +17,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::visual::MarkdownView;
-use syngui::widgets::{AnimatedSize, AnimationAxis, MultilineTextEdit, Reactive};
+use syngui::widgets::{AnimatedSize, AnimationAxis, MultilineTextEdit, Padding, Reactive};
 
 use crate::agent::tools::Tool;
 use crate::context::AppCtx;
@@ -194,26 +194,26 @@ fn chat_row(
     if !msg.attachments.is_empty() {
         bubble_children.push(super::attachments::bubble_grid(&msg.attachments));
     }
-    if !outgoing {
-        let default_open = msg.body.is_empty();
-        let initial_thinking = msg.thinking.clone();
-        if is_last_assistant {
-            bubble_children.push(Box::new(streaming_thinking_block(
-                msg_idx,
-                initial_thinking,
-                default_open,
-            )));
-        } else if !initial_thinking.is_empty() {
-            bubble_children.push(Box::new(thinking_block(
-                msg_idx,
-                initial_thinking,
-                default_open,
-            )));
+    let default_open = msg.body.is_empty();
+    if !outgoing && is_last_assistant {
+        // Столбец без зазора: пустой блок размышлений не должен сдвигать
+        // текст (flex считает gap и на пустого ребёнка).
+        bubble_children.push(Box::new(
+            Column::new()
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(vec![
+                    Box::new(live_thinking_block(msg_idx, msg.thinking.clone(), default_open)),
+                    bubble_child,
+                ]),
+        ));
+    } else {
+        if !outgoing && !msg.thinking.is_empty() {
+            bubble_children.push(Box::new(thinking_block(msg_idx, msg.thinking.clone(), default_open)));
         }
-    }
-    let text_is_redundant = outgoing && body.trim().is_empty() && !msg.attachments.is_empty();
-    if !text_is_redundant || editing {
-        bubble_children.push(bubble_child);
+        let text_is_redundant = outgoing && body.trim().is_empty() && !msg.attachments.is_empty();
+        if !text_is_redundant || editing {
+            bubble_children.push(bubble_child);
+        }
     }
 
     // В режиме правки пузырёк растягивается: поле ввода должно быть
@@ -695,72 +695,22 @@ fn thinking_block(msg_idx: usize, thinking: String, default_open: bool) -> impl 
     })
 }
 
-fn streaming_thinking_block(msg_idx: usize, initial_thinking: String, default_open: bool) -> impl Widget {
-    let chevron_reactive = move || {
+/// Размышления последнего ответа: сохранённые плюс хвост идущего хода (как у
+/// текста — только при `pending`). Пока размышлений нет, блока нет совсем:
+/// раньше шапка «Размышления» стояла над каждым последним ответом, в том
+/// числе с выключенными размышлениями. Зазор до текста — отступом внутри
+/// блока, чтобы пустой блок места не занимал.
+fn live_thinking_block(msg_idx: usize, saved: String, default_open: bool) -> impl Widget {
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<SynChatCtx>();
-        let open = ctx
-            .thinking_open
-            .get()
-            .get(&msg_idx)
-            .copied()
-            .unwrap_or(default_open);
-        let icon = if open { MI_EXPAND_LESS } else { MI_EXPAND_MORE };
-        Icon::new(icon).class("msg-thinking-chevron")
-    };
-    let header = mgui! {
-        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Icon::new(MI_PSYCHOLOGY).class("msg-thinking-icon"),
-            Text::new(tr!("chat.msg.thinking.title")).class("msg-thinking-title"),
-            DecoratedBox::new().class("grow"),
-            chevron_reactive,
-        ]
-    };
-    let header_clickable = GestureDetector::new()
-        .on_click(move || {
-            let ctx = use_context::<SynChatCtx>();
-            ctx.thinking_open.update(|m| {
-                let cur = m.get(&msg_idx).copied().unwrap_or(default_open);
-                m.insert(msg_idx, !cur);
-            });
-        })
-        .child(header);
-
-    let initial_for_body = initial_thinking.clone();
-    let body_reactive = move || {
-        let ctx = use_context::<SynChatCtx>();
-        let tail = ctx.streaming_thinking.get();
-        let open = ctx
-            .thinking_open
-            .get()
-            .get(&msg_idx)
-            .copied()
-            .unwrap_or(default_open);
-        let merged = if tail.is_empty() {
-            initial_for_body.clone()
-        } else if initial_for_body.is_empty() {
-            tail
-        } else {
-            format!("{initial_for_body}{tail}")
-        };
-        let body: Box<dyn Widget> = if !open || merged.is_empty() {
-            Box::new(DecoratedBox::new())
-        } else {
-            Box::new(MarkdownView::new(merged).class("msg-thinking-body"))
-        };
-        DecoratedBox::new().child(
-            Column::new()
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(vec![body]),
-        )
-    };
-
-    let _ = initial_thinking;
-
-    DecoratedBox::new().class("msg-thinking").child(mgui! {
-        Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-            header_clickable,
-            body_reactive,
-        ]
+        let tail = if ctx.pending.get() { ctx.streaming_thinking.get() } else { String::new() };
+        let thinking = format!("{saved}{tail}");
+        if thinking.is_empty() {
+            return Vec::new();
+        }
+        vec![Box::new(
+            Padding::only(0.0, 0.0, 0.0, 8.0).child(thinking_block(msg_idx, thinking, default_open)),
+        )]
     })
 }
 

@@ -3,6 +3,7 @@
 //! Left: app name + version (`Synthos v<CARGO_PKG_VERSION>`), пилюля стадии
 //! («beta») и номер сборки — `pkgrel` из `packaging/PKGBUILD`, который
 //! пробрасывает `build.rs`. По нему сразу видно, какая сборка запущена.
+//! За ними — кликабельные чипы Donate и GitHub в том же виде, что пилюли.
 //! Right: window controls — either the built-in Windows-style trio or, when
 //! «системные кнопки окна» is on, the buttons of the desktop's decoration
 //! theme (on KDE with an Aurorae theme they are drawn from its own SVGs, so
@@ -13,12 +14,24 @@
 
 use syngui::appearance::decorations::{read_system_decorations, SystemDecorations, TitleAlignment};
 use syngui::mgui;
+use syngui::open_url;
 use syngui::prelude::*;
 use syngui::widgets::overlay::{SystemWindowControls, WindowControl, WindowDragRegion};
+use syngui::widgets::visual::{Image, ImageFit};
+use syngui::widgets::GestureDetector;
 use syngui::window::WindowState;
 
 use crate::context::AppCtx;
-use crate::icons::{MI_CLOSE, MI_CROP_SQUARE, MI_REMOVE};
+use crate::icons::{MI_CLOSE, MI_CROP_SQUARE, MI_FAVORITE, MI_REMOVE};
+
+/// Куда ведёт чип Donate — та же ссылка, что в README и `.github/FUNDING.yml`.
+pub const DONATE_URL: &str = "https://paypal.me/vitamindbnfkz";
+pub const GITHUB_URL: &str = env!("CARGO_PKG_REPOSITORY");
+
+/// Octicons `mark-github` (MIT): белая заливка, цвет даёт `color-tint` из MSS.
+/// Холст 64 px при viewBox 16 — растеризуется один раз, и на 12 px в шапке
+/// логотип остаётся чётким и на HiDPI.
+const GITHUB_MARK_SVG: &[u8] = include_bytes!("../../packaging/github-mark.svg");
 
 pub fn view() -> impl Widget {
     WindowDragRegion::new().child(
@@ -48,7 +61,97 @@ fn title_text() -> impl Widget {
     if !PKGREL.is_empty() {
         row = row.child(badge(format!("#{PKGREL}"), "titlebar-badge-build"));
     }
-    row
+    row.child(DecoratedBox::new().class("titlebar-divider")).child(links())
+}
+
+/// Чипы Donate и GitHub: открывают ссылку в системном браузере.
+pub fn links() -> impl Widget {
+    Row::new()
+        .gap(6.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(link_chip(
+            ChipIcon::Glyph(MI_FAVORITE),
+            "donate",
+            tr!("titlebar.chip.donate"),
+            tr!("titlebar.chip.donate.tooltip"),
+            || open_link(DONATE_URL),
+        ))
+        .child(link_chip(
+            ChipIcon::GithubMark,
+            "github",
+            tr!("titlebar.chip.github"),
+            tr!("titlebar.chip.github.tooltip"),
+            || open_link(GITHUB_URL),
+        ))
+}
+
+fn open_link(url: &str) {
+    if let Err(e) = open_url(url) {
+        eprintln!("[titlebar] не удалось открыть {url}: {e}");
+    }
+}
+
+pub enum ChipIcon {
+    Glyph(&'static str),
+    GithubMark,
+}
+
+/// Чип-ссылка в стиле пилюль титлбара: иконка и подпись, по щелчку — `on_click`.
+///
+/// Наведение ведёт `GestureDetector`, а не `:hover` в MSS: у каждого элемента
+/// hover считается по его собственным границам, и `.chip:hover .text` не
+/// перекрасил бы подпись, пока курсор над отступами чипа, а у `Text` hover
+/// нет вовсе. Фон и рамку всё же меняет `:hover` самой подложки — её границы
+/// совпадают с чипом, и переход у неё анимируется; цвет иконки и подписи —
+/// класс `titlebar-chip--hover`.
+///
+/// Вертикальный `Padding` внутри детектора растягивает зону щелчка на всю
+/// высоту титлбара: пилюля в 16 px — слишком мелкая цель. Нажатие берёт
+/// детектор, поэтому окно из-под чипа не начинает перетаскиваться.
+pub fn link_chip(
+    icon: ChipIcon,
+    variant: &'static str,
+    label: String,
+    tooltip: String,
+    on_click: impl FnMut() + Send + 'static,
+) -> impl Widget {
+    let hovered = use_signal(false);
+    let chip = move || {
+        let state = if hovered.get() { " titlebar-chip--hover" } else { "" };
+        let icon: Box<dyn Widget> = match icon {
+            ChipIcon::Glyph(glyph) => Box::new(Icon::new(glyph).class("titlebar-chip-icon")),
+            ChipIcon::GithubMark => Box::new(
+                Image::from_bytes("titlebar-github-mark", GITHUB_MARK_SVG.to_vec())
+                    .fit(ImageFit::Contain)
+                    .placeholder(false)
+                    .class("titlebar-chip-logo"),
+            ),
+        };
+        DecoratedBox::new()
+            .class(format!("titlebar-chip titlebar-chip-{variant}{state}"))
+            .child(
+                Center::new().child(
+                    Row::new()
+                        .gap(4.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .children(vec![
+                            icon,
+                            Box::new(
+                                Text::new(label.clone())
+                                    .max_lines(1)
+                                    .class("titlebar-badge-text titlebar-chip-text"),
+                            ),
+                        ]),
+                ),
+            )
+    };
+    Tooltip::new(
+        GestureDetector::new()
+            .on_hover_change(move |inside| hovered.set(inside))
+            .on_click(on_click)
+            .child(Padding::symmetric(0.0, 8.0).child(DecoratedBox::new().child(chip))),
+        tooltip,
+    )
 }
 
 /// Пилюля титлбара: подложка со скруглением и мелкий текст внутри.

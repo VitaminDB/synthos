@@ -87,6 +87,60 @@
     text-transform: none;
 }
 
+/* Чипы-ссылки Donate / GitHub — те же метрики, что у пилюль выше (высота,
+ * скругление, подпись `.titlebar-badge-text`), плюс иконка и отклик на
+ * наведение. Фон и рамка — `:hover` самой подложки (с переходом); цвет
+ * иконки и подписи — класс `--hover`, который ставит `titlebar::link_chip`:
+ * hover у потомка считается по его собственным границам, не по чипу. */
+.titlebar-divider {
+    width: 1px;
+    height: 12px;
+    margin: 0 2px;
+    background-color: var(--border);
+}
+
+.titlebar-chip {
+    height: 16px;
+    padding: 0 7px 0 5px;
+    border-radius: var(--radius-pill);
+    border-width: 1px;
+    background-color: var(--bg-search);
+    border-color: var(--border-soft);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.titlebar-chip:hover {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+}
+
+/* Полупрозрачная роза, а не токен: читается и на светлых, и на тёмных темах. */
+.titlebar-chip.titlebar-chip-donate:hover {
+    background-color: rgba(229, 72, 122, 0.12);
+    border-color: #E5487A;
+}
+
+.titlebar-chip-text {
+    color: var(--text-muted);
+}
+
+.titlebar-chip-icon {
+    color: #E5487A;
+    icon-size: 10px;
+}
+
+.titlebar-chip-logo {
+    width: 10px;
+    height: 10px;
+    color-tint: var(--text-muted);
+}
+
+.titlebar-chip--hover .titlebar-chip-text   { color: var(--text); }
+.titlebar-chip--hover .titlebar-chip-logo   { color-tint: var(--text); }
+.titlebar-chip-donate.titlebar-chip--hover .titlebar-chip-text { color: #E5487A; }
+
 .window-control {
     width: 44px;
     height: 32px;

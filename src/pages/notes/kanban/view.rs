@@ -467,17 +467,19 @@ fn card(
 }
 
 /// Меню карточки (правый клик): «Копировать ▸» — виды копии (пути и файлы
-/// — только при вложениях), «Вставить карточку» — после неё. Без него
+/// — только при вложениях, заголовок — при заголовке), «Вставить
+/// карточку» — после неё. Без него
 /// правый клик доставался меню страницы, и «Копировать» уносил блок доски
 /// `![[kanban:…]]` целиком.
 fn card_menu<W: Widget + 'static>(env: &BoardEnv, handle: &KanbanHandle, c: &KanbanCard, child: W) -> Box<dyn Widget> {
     let has_files = !clip::card_assets(c).is_empty();
+    let has_title = !c.title.trim().is_empty();
     let kinds: Vec<MenuItem> = CopyKind::ALL
         .iter()
         .map(|k| {
             let item = MenuItem::new(format!("copy:{}", k.key()), k.label());
             let item = if *k == CopyKind::Full { item.shortcut("Ctrl+C") } else { item };
-            item.disabled(k.needs_files() && !has_files)
+            item.disabled((k.needs_files() && !has_files) || (*k == CopyKind::Title && !has_title))
         })
         .collect();
     let items = vec![

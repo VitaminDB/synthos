@@ -37,6 +37,8 @@ pub enum CopyKind {
     TitleBodyPaths,
     /// Заголовок и список всех вложений путями — и картинок из текста.
     TitlePaths,
+    /// Заголовок как есть, без `###`.
+    Title,
     Body,
     /// Пути вложений одной строкой, в кавычках для шелла.
     Paths,
@@ -46,11 +48,12 @@ pub enum CopyKind {
 
 impl CopyKind {
     /// В порядке пунктов меню.
-    pub const ALL: [CopyKind; 7] = [
+    pub const ALL: [CopyKind; 8] = [
         CopyKind::Full,
         CopyKind::TitleBody,
         CopyKind::TitleBodyPaths,
         CopyKind::TitlePaths,
+        CopyKind::Title,
         CopyKind::Body,
         CopyKind::Paths,
         CopyKind::Files,
@@ -62,6 +65,7 @@ impl CopyKind {
             CopyKind::TitleBody => "title_body",
             CopyKind::TitleBodyPaths => "title_body_paths",
             CopyKind::TitlePaths => "title_paths",
+            CopyKind::Title => "title",
             CopyKind::Body => "body",
             CopyKind::Paths => "paths",
             CopyKind::Files => "files",
@@ -78,6 +82,7 @@ impl CopyKind {
             CopyKind::TitleBody => tr!("notes.kanban.copy.title_body"),
             CopyKind::TitleBodyPaths => tr!("notes.kanban.copy.title_body_paths"),
             CopyKind::TitlePaths => tr!("notes.kanban.copy.title_paths"),
+            CopyKind::Title => tr!("notes.kanban.copy.title"),
             CopyKind::Body => tr!("notes.kanban.copy.body"),
             CopyKind::Paths => tr!("notes.kanban.copy.paths"),
             CopyKind::Files => tr!("notes.kanban.copy.files"),
@@ -153,6 +158,7 @@ pub fn card_text(card: &KanbanCard, column: &str, kind: CopyKind, files: &FilePa
     let heading = if title.is_empty() { String::new() } else { format!("### {title}") };
     let body = with_paths(card.md.trim(), files);
     match kind {
+        CopyKind::Title => title.to_string(),
         CopyKind::Body => body,
         CopyKind::TitleBody => join_blocks([heading, body]),
         CopyKind::Full => join_blocks([heading, props_line(card, column), body, attachments_list(&file_entries(card), files)]),
@@ -442,6 +448,7 @@ mod tests {
         for k in CopyKind::ALL {
             assert_eq!(CopyKind::parse(k.key()), Some(k));
         }
+        assert_eq!(card_text(&c, "В работе", CopyKind::Title, &files), "Импорт Excel");
         assert!(card_text(&c, "", CopyKind::Body, &files).starts_with("- [ ] разобрать"));
         assert_eq!(
             card_text(&c, "", CopyKind::Paths, &files),

@@ -248,6 +248,9 @@ impl PanelsCtx {
 /// - `active` — активные ключи инструментов, уходят в каждый запрос
 ///   `ChatRequest.tools`. Меняется кликом по чипу в правой панели;
 ///   сериализуется в `AppConfig.tools_active`.
+/// - `auto` — пул `autotools`: инструменты, чьи схемы модели не объявляются,
+///   она подгружает их по запросу. Сериализуется в `AppConfig.tools_auto`;
+///   с `active` не пересекается — см. [`ToolsCtx::toggle_active`].
 /// - `allow_all` — флаг «пропускать диалог подтверждения». Per-chat:
 ///   сбрасывается при переключении/создании чата, НЕ persist’ится.
 /// - `pending_approval` — если `Some`, на экране висит Portal-диалог
@@ -257,17 +260,42 @@ impl PanelsCtx {
 #[derive(Clone)]
 pub struct ToolsCtx {
     pub active: RwSignal<Vec<String>>,
+    pub auto: RwSignal<Vec<String>>,
     pub allow_all: RwSignal<bool>,
     pub pending_approval: RwSignal<Option<Arc<PendingApproval>>>,
 }
 
 impl ToolsCtx {
-    pub fn new(active: Vec<String>) -> Self {
+    pub fn new(active: Vec<String>, auto: Vec<String>) -> Self {
         Self {
             active: use_signal(active),
+            auto: use_signal(auto),
             allow_all: use_signal(false),
             pending_approval: use_signal(None),
         }
+    }
+
+    /// Клик по чипу в «Инструментах»: включить или выключить. Включённый
+    /// уходит из пула — его схема и так объявлена.
+    pub fn toggle_active(&self, key: &str) {
+        Self::toggle(self.active, self.auto, key);
+    }
+
+    /// Клик по чипу в «Autotools»: положить в пул или убрать. Положенный
+    /// перестаёт быть активным.
+    pub fn toggle_pool(&self, key: &str) {
+        Self::toggle(self.auto, self.active, key);
+    }
+
+    fn toggle(primary: RwSignal<Vec<String>>, other: RwSignal<Vec<String>>, key: &str) {
+        let mut list = primary.get_untracked();
+        let before = other.get_untracked();
+        let mut rest = before.clone();
+        crate::agent::tools::autotools::toggle_exclusive(&mut list, &mut rest, key);
+        if rest != before {
+            other.set(rest);
+        }
+        primary.set(list);
     }
 }
 

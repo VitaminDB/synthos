@@ -1,12 +1,12 @@
-//! Общие UI-секции «Инструменты» и «Скилы» для правого сайдбара.
+//! Общие UI-секции «Инструменты», «Autotools» и «Скилы» для правого сайдбара.
 //!
 //! Используются в двух местах:
 //! - `llama_control` (llama.cpp-чат) — секции под выбором модели/контролами;
 //! - `pages/syn_chat/right_panel` — первая вкладка «Инструменты».
 //!
-//! Источники данных — `AppCtx.tools.active` и `AppCtx.skills` / `AppCtx.skills_active`.
-//! Эти сигналы model-agnostic, поэтому одинаковый UI работает для обеих
-//! страниц без параметров.
+//! Источники данных — `AppCtx.tools.active` / `AppCtx.tools.auto` и
+//! `AppCtx.skills` / `AppCtx.skills_active`. Эти сигналы model-agnostic,
+//! поэтому одинаковый UI работает для обеих страниц без параметров.
 
 use syngui::mgui;
 use syngui::prelude::*;
@@ -24,66 +24,120 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
     || {
         let ctx = use_context::<AppCtx>();
         let active: Vec<String> = ctx.tools.active.get();
-        let all: Vec<&'static Tool> = Tool::all().iter().collect();
 
         let active_tools: Vec<&'static Tool> = active
             .iter()
             .filter_map(|k| Tool::by_key(k))
+            .filter(|t| !t.is_implicit())
             .collect();
-        let available_tools: Vec<&'static Tool> = all
-            .iter()
+        let available_tools: Vec<&'static Tool> = Tool::selectable()
             .filter(|t| !active.iter().any(|k| k == t.key))
-            .copied()
             .collect();
 
         let active_block: Box<dyn Widget> = if active_tools.is_empty() {
-            Box::new(
-                DecoratedBox::new()
-                    .class("tools-empty")
-                    .child(Text::new(tr!("chat.right_panel.tools.empty_active")).class("tools-empty-text")),
-            )
+            empty_block(tr!("chat.right_panel.tools.empty_active"))
         } else {
-            Box::new(chips_wrap(active_tools, ChipMode::Active))
+            Box::new(chips_wrap(active_tools, ChipMode::Active, toggle_tool))
         };
-
         let available_block: Box<dyn Widget> = if available_tools.is_empty() {
-            Box::new(
-                DecoratedBox::new()
-                    .class("tools-empty")
-                    .child(Text::new(tr!("chat.right_panel.tools.all_active")).class("tools-empty-text")),
-            )
+            empty_block(tr!("chat.right_panel.tools.all_active"))
         } else {
-            Box::new(chips_wrap(available_tools, ChipMode::Available))
+            Box::new(chips_wrap(available_tools, ChipMode::Available, toggle_tool))
         };
 
-        let column = Column::new()
-            .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(mgui! {
-                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Icon::new(MI_AUTO_AWESOME).class("tools-section-icon"),
-                    Text::new(tr!("chat.right_panel.tools.title")).class("tools-section-title"),
-                ]
-            })
-            .child(
-                Text::new(tr!("chat.right_panel.tools.hint"))
-                    .class("tools-section-hint"),
-            )
-            .child(Text::new(tr!("chat.right_panel.active")).class("tools-section-subtitle"))
-            .child(
-                Column::new()
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![active_block]),
-            )
-            .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
-            .child(
-                Column::new()
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![available_block]),
-            );
-
-        DecoratedBox::new().class("tools-section").child(column)
+        section(
+            MI_AUTO_AWESOME,
+            tr!("chat.right_panel.tools.title"),
+            tr!("chat.right_panel.tools.hint"),
+            tr!("chat.right_panel.active"),
+            active_block,
+            available_block,
+        )
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Секция «Autotools» — пул инструментов, которые модель подгружает сама
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Близнец секции «Скилы»: сверху инструменты пула, ниже — все остальные.
+/// Клик по доступному кладёт инструмент в пул и снимает его с активных, клик
+/// по инструменту в пуле — убирает его оттуда.
+pub fn autotools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+    || {
+        let ctx = use_context::<AppCtx>();
+        let auto: Vec<String> = ctx.tools.auto.get();
+        let active: Vec<String> = ctx.tools.active.get();
+
+        let pooled = crate::agent::tools::autotools::pool(&active, &auto);
+        let available: Vec<&'static Tool> = Tool::selectable()
+            .filter(|t| !pooled.iter().any(|p| p.key == t.key))
+            .collect();
+
+        let pooled_block: Box<dyn Widget> = if pooled.is_empty() {
+            empty_block(tr!("chat.right_panel.autotools.empty"))
+        } else {
+            Box::new(chips_wrap(pooled, ChipMode::Active, toggle_pool))
+        };
+        let available_block: Box<dyn Widget> = if available.is_empty() {
+            empty_block(tr!("chat.right_panel.autotools.all_pooled"))
+        } else {
+            Box::new(chips_wrap(available, ChipMode::Available, toggle_pool))
+        };
+
+        section(
+            MI_HANDYMAN,
+            tr!("chat.right_panel.autotools.title"),
+            tr!("chat.right_panel.autotools.hint"),
+            tr!("chat.right_panel.autotools.pooled"),
+            pooled_block,
+            available_block,
+        )
+    }
+}
+
+/// Каркас секции: заголовок с иконкой, подсказка, включённые чипы под
+/// `first_label` и остальные под «Доступные».
+fn section(
+    icon: &'static str,
+    title: String,
+    hint: String,
+    first_label: String,
+    first: Box<dyn Widget>,
+    rest: Box<dyn Widget>,
+) -> StyledWidget<DecoratedBox> {
+    let column = Column::new()
+        .gap(10.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .child(mgui! {
+            Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Icon::new(icon).class("tools-section-icon"),
+                Text::new(title).class("tools-section-title"),
+            ]
+        })
+        .child(Text::new(hint).class("tools-section-hint"))
+        .child(Text::new(first_label).class("tools-section-subtitle"))
+        .child(
+            Column::new()
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(vec![first]),
+        )
+        .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
+        .child(
+            Column::new()
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(vec![rest]),
+        );
+
+    DecoratedBox::new().class("tools-section").child(column)
+}
+
+fn empty_block(text: String) -> Box<dyn Widget> {
+    Box::new(
+        DecoratedBox::new()
+            .class("tools-empty")
+            .child(Text::new(text).class("tools-empty-text")),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -94,14 +148,14 @@ enum ChipMode {
 
 /// Раскладывает чипы по PER_ROW штук в строку. syngui не поддерживает
 /// flex-wrap — явная разбивка на Row’ы.
-fn chips_wrap(tools: Vec<&'static Tool>, mode: ChipMode) -> impl Widget {
+fn chips_wrap(tools: Vec<&'static Tool>, mode: ChipMode, on_toggle: fn(&str)) -> impl Widget {
     const PER_ROW: usize = 2;
 
     let mut rows: Vec<Box<dyn Widget>> = Vec::new();
     for chunk in tools.chunks(PER_ROW) {
         let mut cells: Vec<Box<dyn Widget>> = Vec::new();
         for t in chunk {
-            cells.push(make_chip(t, mode));
+            cells.push(make_chip(t, mode, on_toggle));
         }
         rows.push(Box::new(
             Row::new()
@@ -118,7 +172,7 @@ fn chips_wrap(tools: Vec<&'static Tool>, mode: ChipMode) -> impl Widget {
         .children(rows)
 }
 
-fn make_chip(tool: &'static Tool, mode: ChipMode) -> Box<dyn Widget> {
+fn make_chip(tool: &'static Tool, mode: ChipMode, on_toggle: fn(&str)) -> Box<dyn Widget> {
     let key_for_click = tool.key.to_string();
     let (class, icon) = match mode {
         ChipMode::Active => ("tools-active-chip", tool.icon),
@@ -126,21 +180,17 @@ fn make_chip(tool: &'static Tool, mode: ChipMode) -> Box<dyn Widget> {
     };
     let chip = Chip::new(crate::i18n::tool_label(tool))
         .icon(icon)
-        .on_click(move || toggle_tool(&key_for_click))
+        .on_click(move || on_toggle(&key_for_click))
         .class(class);
     Box::new(chip)
 }
 
 fn toggle_tool(key: &str) {
-    let ctx = use_context::<AppCtx>();
-    let key = key.to_string();
-    ctx.tools.active.update(|list| {
-        if let Some(idx) = list.iter().position(|k| k == &key) {
-            list.remove(idx);
-        } else {
-            list.push(key.clone());
-        }
-    });
+    use_context::<AppCtx>().tools.toggle_active(key);
+}
+
+fn toggle_pool(key: &str) {
+    use_context::<AppCtx>().tools.toggle_pool(key);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,50 +235,24 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             .collect();
 
         let active_block: Box<dyn Widget> = if active_skills.is_empty() {
-            Box::new(
-                DecoratedBox::new()
-                    .class("tools-empty")
-                    .child(Text::new(tr!("chat.right_panel.skills.empty_active")).class("tools-empty-text")),
-            )
+            empty_block(tr!("chat.right_panel.skills.empty_active"))
         } else {
             Box::new(skill_chips_wrap(active_skills, ChipMode::Active))
         };
         let available_block: Box<dyn Widget> = if available_skills.is_empty() {
-            Box::new(
-                DecoratedBox::new()
-                    .class("tools-empty")
-                    .child(Text::new(tr!("chat.right_panel.skills.all_active")).class("tools-empty-text")),
-            )
+            empty_block(tr!("chat.right_panel.skills.all_active"))
         } else {
             Box::new(skill_chips_wrap(available_skills, ChipMode::Available))
         };
 
-        let column = Column::new()
-            .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .child(mgui! {
-                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Icon::new(MI_PSYCHOLOGY).class("tools-section-icon"),
-                    Text::new(tr!("chat.right_panel.skills.title")).class("tools-section-title"),
-                ]
-            })
-            .child(
-                Text::new(tr!("chat.right_panel.skills.hint"))
-                    .class("tools-section-hint"),
-            )
-            .child(Text::new(tr!("chat.right_panel.active")).class("tools-section-subtitle"))
-            .child(
-                Column::new()
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![active_block]),
-            )
-            .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
-            .child(
-                Column::new()
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .children(vec![available_block]),
-            );
-        DecoratedBox::new().class("tools-section").child(column)
+        section(
+            MI_PSYCHOLOGY,
+            tr!("chat.right_panel.skills.title"),
+            tr!("chat.right_panel.skills.hint"),
+            tr!("chat.right_panel.active"),
+            active_block,
+            available_block,
+        )
     }
 }
 

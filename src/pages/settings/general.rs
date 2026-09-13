@@ -129,7 +129,8 @@ pub fn view() -> impl Widget {
                                         DropdownItem::new(TOOL_APPROVAL_ALWAYS, tr!("settings.general.tool_approval.allow")),
                                     ]),
                             ];
-                            for tool in Tool::all() {
+                            // `autotools` только читает каталог и не спрашивает.
+                            for tool in Tool::selectable() {
                                 rows.push(tool_override_row(
                                     tool.key, tool.icon, tool.label,
                                     tr!("settings.general.tool_override.desc"),

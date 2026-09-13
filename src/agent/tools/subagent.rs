@@ -159,6 +159,9 @@ struct SubagentSnapshot {
     default_system_prompt: String,
     /// Готовые ChatTool-дескрипторы всех активных в чате тулов кроме `subagent`.
     active_tools: Vec<ChatTool>,
+    /// Полные дескрипторы инструментов пула `autotools`: если задача прямо
+    /// называет такой инструмент в `tools`, субагент получает его схемой.
+    pool_tools: Vec<ChatTool>,
     /// Лимит tool-turn'ов цикла субагента — пользовательская настройка
     /// `general.subagent_max_turns`, склампленная к `>= 1`.
     max_turns: usize,
@@ -183,6 +186,7 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
                 params: syn.params.get_untracked(),
                 default_system_prompt: syn.system_prompt.get_untracked(),
                 active_tools: build_active_tools_for_subagent(&app),
+                pool_tools: build_pool_tools_for_subagent(&app),
                 max_turns: app.general.subagent_max_turns.get_untracked().max(1) as usize,
                 abort,
                 abort_baseline,
@@ -207,7 +211,8 @@ fn subagent_excluded(key: &str) -> bool {
 /// запрещена) и с динамическим autoskill-обогащением.
 fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
     let keys = app.tools.active.get_untracked();
-    keys.iter()
+    let mut tools: Vec<ChatTool> = keys
+        .iter()
         // Визард — панель для пользователя в ленте; у субагента ни ленты,
         // ни пользователя. `view_media` — медиа-путь есть только у цикла чата.
         .filter(|k| !subagent_excluded(k))
@@ -215,33 +220,63 @@ fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
             if k == KEY_AUTOSKILL {
                 Some(crate::agent::tool_flow::build_autoskill_chat_tool(app))
             } else {
-                Tool::by_key(k).map(|t| t.to_chat_tool())
+                Tool::by_key(k).filter(|t| !t.is_implicit()).map(|t| t.to_chat_tool())
+            }
+        })
+        .collect();
+    // Пул — тем же `autotools`, что у чата, но без инструментов, которых у
+    // субагента нет.
+    let pool: Vec<&Tool> = super::autotools::pool(&keys, &app.tools.auto.get_untracked())
+        .into_iter()
+        .filter(|t| !subagent_excluded(t.key))
+        .collect();
+    if !pool.is_empty() {
+        tools.push(super::autotools::chat_tool(&pool));
+    }
+    tools
+}
+
+/// Полные дескрипторы инструментов пула — для явного `args.tools`.
+fn build_pool_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
+    super::autotools::pool(&app.tools.active.get_untracked(), &app.tools.auto.get_untracked())
+        .into_iter()
+        .filter(|t| !subagent_excluded(t.key))
+        .map(|t| {
+            if t.key == KEY_AUTOSKILL {
+                crate::agent::tool_flow::build_autoskill_chat_tool(app)
+            } else {
+                t.to_chat_tool()
             }
         })
         .collect()
 }
 
 /// Применяет фильтр пользовательских `args.tools` к собранному snapshot'у.
-/// Неизвестные ключи логируются в warn и отбрасываются. Сам `subagent`
-/// явно убирается (двойная защита; первичная — в `parse_args`).
-fn select_tools(snap_tools: &[ChatTool], requested: Option<&[String]>) -> Vec<ChatTool> {
+/// Ключ из пула `autotools` отдаётся полной схемой — задача назвала
+/// инструмент явно, грузить его субагенту незачем. Неизвестные ключи
+/// логируются в warn и отбрасываются. Сам `subagent` явно убирается (двойная
+/// защита; первичная — в `parse_args`).
+fn select_tools(
+    snap_tools: &[ChatTool],
+    pool_tools: &[ChatTool],
+    requested: Option<&[String]>,
+) -> Vec<ChatTool> {
     match requested {
         None => snap_tools.to_vec(),
         Some(req) => {
             let mut out = Vec::new();
-            let known: std::collections::HashSet<&str> =
-                snap_tools.iter().map(|t| t.function.name.as_str()).collect();
             for k in req {
                 if subagent_excluded(k) {
                     continue;
                 }
-                if !known.contains(k.as_str()) {
-                    tracing::warn!(target: "subagent", tool = %k,
-                        "запрошенный tool не активен в чате — игнорирую");
-                    continue;
-                }
-                if let Some(t) = snap_tools.iter().find(|t| t.function.name == *k) {
-                    out.push(t.clone());
+                let found = snap_tools
+                    .iter()
+                    .chain(pool_tools)
+                    .find(|t| t.function.name == *k);
+                match found {
+                    Some(t) => out.push(t.clone()),
+                    None => tracing::warn!(target: "subagent", tool = %k,
+                        "запрошенный tool не активен в чате — игнорирую"),
                 }
             }
             out
@@ -339,7 +374,7 @@ async fn run_subagent_loop(
     id: String,
     run_id: u64,
 ) -> Result<String, ToolError> {
-    let tools_list = select_tools(&snap.active_tools, args.tools.as_deref());
+    let tools_list = select_tools(&snap.active_tools, &snap.pool_tools, args.tools.as_deref());
     let tool_schemas: Vec<serde_json::Value> = tools_list
         .iter()
         .filter_map(|t| serde_json::to_value(t).ok())
@@ -919,7 +954,7 @@ mod tests {
             dummy_chat_tool("web"),
             dummy_chat_tool("kb_search"),
         ];
-        let out = select_tools(&snap, None);
+        let out = select_tools(&snap, &[], None);
         assert_eq!(out.len(), 3);
     }
 
@@ -927,9 +962,24 @@ mod tests {
     fn select_tools_filters_unknown_keys() {
         let snap = vec![dummy_chat_tool("bash"), dummy_chat_tool("web")];
         let req = vec!["bash".to_string(), "totally_made_up".to_string()];
-        let out = select_tools(&snap, Some(&req));
+        let out = select_tools(&snap, &[], Some(&req));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].function.name, "bash");
+    }
+
+    /// Без `tools` у субагента только объявленное (и `autotools`); явно
+    /// названный инструмент пула приходит полной схемой.
+    #[test]
+    fn select_tools_takes_named_pool_tool() {
+        let snap = vec![dummy_chat_tool("bash"), dummy_chat_tool("autotools")];
+        let pool = vec![dummy_chat_tool("notes")];
+        assert_eq!(select_tools(&snap, &pool, None).len(), 2);
+        let req = vec!["notes".to_string(), "bash".to_string()];
+        let names: Vec<String> = select_tools(&snap, &pool, Some(&req))
+            .into_iter()
+            .map(|t| t.function.name)
+            .collect();
+        assert_eq!(names, ["notes", "bash"]);
     }
 
     #[test]
@@ -937,7 +987,7 @@ mod tests {
         let snap = vec![dummy_chat_tool("bash"), dummy_chat_tool("web")];
         // Реально parse_args бы это уже отбил, но проверим вторую линию защиты.
         let req = vec!["bash".to_string(), KEY_SUBAGENT.to_string()];
-        let out = select_tools(&snap, Some(&req));
+        let out = select_tools(&snap, &[], Some(&req));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].function.name, "bash");
     }
@@ -950,7 +1000,7 @@ mod tests {
             dummy_chat_tool("kb_search"),
         ];
         let req = vec!["web".to_string(), "bash".to_string()];
-        let out = select_tools(&snap, Some(&req));
+        let out = select_tools(&snap, &[], Some(&req));
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].function.name, "web");
         assert_eq!(out[1].function.name, "bash");

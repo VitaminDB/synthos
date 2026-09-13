@@ -166,6 +166,9 @@ pub const MI_NOTE_ADD: &str            = "\u{E89C}"; // new file
 pub const MI_LAUNCH: &str              = "\u{E895}"; // reveal in file manager
 pub const MI_SYNC_PROBLEM: &str        = "\u{E629}"; // file changed externally — conflict
 
+// --- Агентские инструменты
+pub const MI_HANDYMAN: &str            = "\u{F10B}"; // autotools — пул инструментов по запросу
+
 // --- SynExplorer
 /// Material Symbols «inventory_2» — иконка nav-rail страницы SynExplorer
 /// (склад моделей-пакетов `.syn`).

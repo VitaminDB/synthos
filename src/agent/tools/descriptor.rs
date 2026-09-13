@@ -24,6 +24,9 @@ pub struct Tool {
     /// Короткое описание — уходит в `ToolFunctionSchema.description` и может
     /// показываться в tooltip’е чипа.
     pub description: &'static str,
+    /// Одна строка «когда звать» — каталог `autotools`: инструмент из пула
+    /// модель знает только по ней, пока не загрузит полное описание.
+    pub summary: &'static str,
     /// JSONSchema для `function.parameters`. Обязательно валидный JSON-объект.
     pub schema: Json,
 }
@@ -52,6 +55,18 @@ impl Tool {
     pub fn by_key(key: &str) -> Option<&'static Tool> {
         Self::all().iter().find(|t| t.key == key)
     }
+
+    /// Инструмент, который пользователь не выбирает: `autotools` уходит
+    /// модели сам, когда пул не пуст. Чипов, строки в настройках
+    /// подтверждений и пункта в поиске у него нет.
+    pub fn is_implicit(&self) -> bool {
+        self.key == super::catalog::KEY_AUTOTOOLS
+    }
+
+    /// Инструменты, которые пользователь включает и кладёт в пул.
+    pub fn selectable() -> impl Iterator<Item = &'static Tool> {
+        Self::all().iter().filter(|t| !t.is_implicit())
+    }
 }
 
 #[cfg(test)]
@@ -77,5 +92,20 @@ mod tests {
         let before = keys.len();
         keys.dedup();
         assert_eq!(before, keys.len(), "ключи инструментов должны быть уникальны");
+    }
+
+    #[test]
+    fn every_tool_has_one_line_summary() {
+        for t in Tool::all() {
+            assert!(!t.summary.trim().is_empty(), "{}: пустой summary", t.key);
+            assert!(!t.summary.contains('\n'), "{}: summary в одну строку", t.key);
+        }
+    }
+
+    #[test]
+    fn autotools_is_not_selectable() {
+        assert!(Tool::by_key("autotools").is_some_and(Tool::is_implicit));
+        assert!(Tool::selectable().all(|t| t.key != "autotools"));
+        assert!(Tool::selectable().any(|t| t.key == "notes"));
     }
 }

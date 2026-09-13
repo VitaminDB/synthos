@@ -1,4 +1,4 @@
-//! Левая панель Syn-чата: инструменты и скилы агента.
+//! Левая панель Syn-чата: инструменты, пул autotools и скилы агента.
 //!
 //! Раньше секции tools/skills были первой вкладкой правой панели, а слева
 //! стоял список чатов. Список переехал в нав-рейл, и его место заняли
@@ -25,6 +25,7 @@ pub fn body() -> impl Widget {
                     .gap(16.0)
                     .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                         tools_panel::tools_section(),
+                        tools_panel::autotools_section(),
                         tools_panel::skills_section(),
                     ]
             }),

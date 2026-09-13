@@ -633,7 +633,7 @@ fn push_skills(items: &mut Vec<SearchItem>) {
 
 fn push_tools(items: &mut Vec<SearchItem>) {
     let hint = tr!("search.group.tools");
-    for tool in Tool::all() {
+    for tool in Tool::selectable() {
         items.push(
             SearchItem::new(
                 format!("tool:{}", tool.key),

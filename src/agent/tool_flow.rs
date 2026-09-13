@@ -1,5 +1,5 @@
 //! Общий для обоих чат-движков tool-flow: подтверждение tool-вызовов и
-//! динамическая сборка autoskill-дескриптора.
+//! динамическая сборка дескрипторов autoskill и autotools.
 //!
 //! Раньше жил внутри `chat::session` (драйвер llama-server). Вынесен в
 //! нейтральный модуль, потому что нативный `syn_chat` (in-process synaptix)
@@ -98,6 +98,16 @@ pub(crate) fn build_autoskill_chat_tool(app: &AppCtx) -> ChatTool {
     }
 }
 
+/// ChatTool `autotools` для текущего пула (см. [`tools::autotools`]) или
+/// `None`, когда пул пуст: тогда инструмент модели не объявляется вовсе.
+pub(crate) fn build_autotools_chat_tool(app: &AppCtx) -> Option<ChatTool> {
+    let pool = tools::autotools::pool(
+        &app.tools.active.get_untracked(),
+        &app.tools.auto.get_untracked(),
+    );
+    (!pool.is_empty()).then(|| tools::autotools::chat_tool(&pool))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Подтверждение tool-вызова
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,8 +124,11 @@ pub(crate) async fn await_decision_on_tool_call(
 ) -> ToolDecision {
     let tool_key = call.function.name.clone().unwrap_or_default();
     // Вопрос пользователю — не действие: подтверждать нечего, диалог перед
-    // панелью с кнопками только мешал бы.
-    if tool_key == crate::agent::tools::catalog::KEY_WIZARD {
+    // панелью с кнопками только мешал бы. Загрузка схемы из пула `autotools`
+    // тоже ничего не делает — это чтение каталога.
+    if tool_key == crate::agent::tools::catalog::KEY_WIZARD
+        || tools::executor::canonical_tool_name(&tool_key) == crate::agent::tools::catalog::KEY_AUTOTOOLS
+    {
         return ToolDecision::Allow;
     }
 

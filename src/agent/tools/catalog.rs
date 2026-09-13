@@ -3,8 +3,8 @@
 use serde_json::json;
 
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_HELP_OUTLINE, MI_MEMORY, MI_PSYCHOLOGY, MI_SEARCH,
-    MI_TERMINAL, MI_TRAVEL_EXPLORE, MI_VISIBILITY,
+    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_HANDYMAN, MI_HELP_OUTLINE, MI_MEMORY,
+    MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE, MI_VISIBILITY,
 };
 
 use super::descriptor::Tool;
@@ -20,6 +20,7 @@ pub const KEY_PIPELINES: &str = "pipelines";
 pub const KEY_NOTES: &str = "notes";
 pub const KEY_WIZARD: &str = "wizard";
 pub const KEY_VIEW_MEDIA: &str = "view_media";
+pub const KEY_AUTOTOOLS: &str = "autotools";
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -29,6 +30,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_BASH,
             label: "bash",
             icon: MI_TERMINAL,
+            summary: "run a shell command: files, processes, builds, git, local scripts.",
             description: "Run a shell command via bash -lc. \
                 Returns stdout, stderr, and the exit code. \
                 Use only for fast, deterministic commands.",
@@ -49,6 +51,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_KB_SEARCH,
             label: "kb_search",
             icon: MI_SEARCH,
+            summary: "find facts in the user's local knowledge bases (their own documents).",
             description: "Find relevant fragments in the active knowledge bases \
                 (RAG hybrid search: BM25 + cosine). Returns the top-K fragments \
                 with source citations. Use it when you need specific facts \
@@ -76,6 +79,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_WEB,
             label: "web",
             icon: MI_TRAVEL_EXPLORE,
+            summary: "search the web and read pages: news, prices, weather, anything fresh or after your cutoff.",
             description: "Search and read web pages in real time. \
                 ALWAYS CALL this tool when the question needs current or \
                 fresh data that can't be in your weights: weather, currency \
@@ -138,6 +142,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_AUTOSKILL,
             label: "autoskill",
             icon: MI_PSYCHOLOGY,
+            summary: "get one of the user's markdown instructions (skills) when the question matches its topic.",
             description: "Get the user's markdown instruction (skill) by its id. \
                 The full list of available skills (id and short description) is \
                 inserted into this description dynamically on every request. When \
@@ -156,9 +161,40 @@ pub(super) fn build_all() -> Vec<Tool> {
             }),
         },
         Tool {
+            key: KEY_AUTOTOOLS,
+            label: "autotools",
+            icon: MI_HANDYMAN,
+            summary: "load the description and parameters of a tool that is not declared up front.",
+            description: "Load a tool that is not declared up front. The tools \
+                listed below exist and work, but their descriptions and \
+                parameters are left out of your context to save room. When the \
+                task needs one of them, call `autotools` with its id: the reply \
+                is that tool's description, JSON parameters and rules. Then call \
+                the tool itself directly by its name, exactly like a declared \
+                tool. A tool loaded earlier in this dialogue stays usable — \
+                don't load it again. The list is inserted into this description \
+                dynamically.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Id of the tool to load (see the list in this tool's description)."
+                    },
+                    "ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Several tool ids at once, when the task clearly needs more than one."
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        Tool {
             key: KEY_PIPELINES,
             label: "pipelines",
             icon: MI_ACCOUNT_TREE,
+            summary: "any audio, music, voice or video work: generate, extract stems, TTS, transcribe, edit.",
             description: "Node-based media pipelines in the editor's service tab — \
                 one per chat, the user can open it from the chat and watch. \
                 THE way to do audio/music/voice/video work on this machine — \
@@ -268,6 +304,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_SYSTEM,
             label: "system",
             icon: MI_MEMORY,
+            summary: "VRAM/RAM status and loaded models; unload node-graph models.",
             description: "System and memory state. action=status — VRAM \
                 (total / free / available accounting for pools), RAM, list \
                 of models in memory: node-graph models (with id for \
@@ -305,6 +342,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_WIZARD,
             label: "wizard",
             icon: MI_HELP_OUTLINE,
+            summary: "ask the user one question with clickable answer options when the decision is theirs.",
             description: "Ask the user ONE question with clickable answer \
                 options (single or multiple choice) and/or a free-text \
                 field. A panel appears in the chat; the user's click is \
@@ -366,6 +404,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_VIEW_MEDIA,
             label: "view_media",
             icon: MI_VISIBILITY,
+            summary: "look at local images or video and listen to audio files by path.",
             description: "Look at local files yourself. Images and video go \
                 through your own vision encoder — you see them natively, exactly \
                 as if the user had attached them; audio is transcribed by the \
@@ -401,6 +440,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_NOTES,
             label: "notes",
             icon: MI_EDIT_NOTE,
+            summary: "the user's Notes: pages, kanban tasks, Gantt, calendar, mind maps, charts; agenda and journal.",
             description: "Read and edit the user's Notes (the Notes mode of \
                 the app): a tree of markdown pages — a free canvas where \
                 blocks have coordinates — with shapes/arrows, kanban boards \
@@ -500,6 +540,7 @@ pub(super) fn build_all() -> Vec<Tool> {
             key: KEY_SUBAGENT,
             label: "subagent",
             icon: MI_BOLT,
+            summary: "delegate a narrow research subtask to a nested agent that returns a short summary.",
             description: "Delegate a long research/local task to a nested \
                 agent so it doesn't bloat your context. The subagent runs \
                 its own loop with its own set of tools, performs the \

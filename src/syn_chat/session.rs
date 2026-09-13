@@ -1323,6 +1323,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     // настроек. Пустое поле в настройках больше не означает «промпта нет».
     let system_prompt = system_prompt::build(&PromptEnv::snapshot(
         active_tool_labels(&app_ctx),
+        pool_tool_labels(&app_ctx),
         max_turns,
         ctx.system_prompt.get_untracked(),
     ));
@@ -2841,7 +2842,7 @@ async fn run_agent_loop(
             // — и в ленту, и в историю уходит одна и та же копия: история,
             // пересобранная из ленты на следующем сообщении, обязана совпасть
             // с промптом хода байт в байт, иначе префикс-KV обнулится.
-            // Исключения — `autoskill` и `notes` (см. `history_limit`).
+            // Исключения — `autoskill`, `autotools` и `notes` (см. `history_limit`).
             let content = fit_for_prompt(&outcome.content, &tool_name(chat_call));
             let mut for_history = format!("{content}{note}");
             match viewed {
@@ -3695,9 +3696,6 @@ async fn view_media_call(
     }
 }
 
-/// Собирает JSON-схемы активных инструментов (для передачи в Jinja-шаблон
-/// Qwen3 или manual prefix). Особый случай — `autoskill`, описание которого
-/// расширяется актуальным списком скилов через [`build_autoskill_chat_tool`].
 /// Лейблы активных инструментов для системного промпта — в том же порядке,
 /// в каком они уходят в tool-схемы.
 fn active_tool_labels(app: &AppCtx) -> Vec<String> {
@@ -3705,6 +3703,7 @@ fn active_tool_labels(app: &AppCtx) -> Vec<String> {
         .active
         .get_untracked()
         .iter()
+        .filter(|k| !Tool::by_key(k).is_some_and(Tool::is_implicit))
         .map(|k| {
             Tool::by_key(k)
                 .map(|t| t.label.to_string())
@@ -3713,21 +3712,39 @@ fn active_tool_labels(app: &AppCtx) -> Vec<String> {
         .collect()
 }
 
+/// Лейблы инструментов из пула `autotools` — для строки про пул в системном
+/// промпте.
+fn pool_tool_labels(app: &AppCtx) -> Vec<String> {
+    tools::autotools::pool(&app.tools.active.get_untracked(), &app.tools.auto.get_untracked())
+        .iter()
+        .map(|t| t.label.to_string())
+        .collect()
+}
+
+/// Собирает JSON-схемы активных инструментов (для передачи в Jinja-шаблон
+/// Qwen3 или manual prefix). Особые случаи — `autoskill`, описание которого
+/// расширяется актуальным списком скилов через [`build_autoskill_chat_tool`],
+/// и пул: он уходит одной схемой `autotools` в конце списка, а схемы самих
+/// инструментов из пула модель получает ответом `autotools`.
 fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
     use crate::agent::tools::catalog::KEY_AUTOSKILL;
     let keys = app.tools.active.get_untracked();
-    keys.iter()
+    let mut schemas: Vec<serde_json::Value> = keys
+        .iter()
         .filter_map(|k| {
-            let tool_json = if k == KEY_AUTOSKILL {
-                let t = crate::agent::tool_flow::build_autoskill_chat_tool(app);
-                serde_json::to_value(&t).ok()
+            let tool = Tool::by_key(k).filter(|t| !t.is_implicit())?;
+            let t = if k == KEY_AUTOSKILL {
+                crate::agent::tool_flow::build_autoskill_chat_tool(app)
             } else {
-                let t = Tool::by_key(k)?.to_chat_tool();
-                serde_json::to_value(&t).ok()
-            }?;
-            Some(tool_json)
+                tool.to_chat_tool()
+            };
+            serde_json::to_value(&t).ok()
         })
-        .collect()
+        .collect();
+    if let Some(t) = crate::agent::tool_flow::build_autotools_chat_tool(app) {
+        schemas.extend(serde_json::to_value(&t).ok());
+    }
+    schemas
 }
 
 /// Полный набор stop-токенов для Qwen3 ChatML: EOS из конфига + `<|im_end|>`.

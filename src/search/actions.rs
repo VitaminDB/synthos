@@ -98,14 +98,7 @@ fn open_chat(id: &str, highlight: Option<usize>) {
 }
 
 fn toggle_tool(key: &str) {
-    let app = use_context::<AppCtx>();
-    app.tools.active.update(|list| {
-        if let Some(pos) = list.iter().position(|k| k == key) {
-            list.remove(pos);
-        } else {
-            list.push(key.to_string());
-        }
-    });
+    use_context::<AppCtx>().tools.toggle_active(key);
 }
 
 fn open_template(id: &str) {

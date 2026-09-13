@@ -510,6 +510,12 @@ pub struct AppConfig {
     /// — старые конфиги без поля не теряют функциональность.
     #[serde(default = "default_tools_active")]
     pub tools_active: Vec<String>,
+    /// Пул `autotools`: инструменты, чьи схемы модели не объявляются — она
+    /// видит их список в описании `autotools` и подгружает нужный по
+    /// запросу. С `tools_active` не пересекается (UI переносит ключ из
+    /// одного списка в другой). Пустой — `autotools` модели не уходит.
+    #[serde(default)]
+    pub tools_auto: Vec<String>,
     /// Инструмент `notes` появился позже стартового набора: конфиг со
     /// своим списком `tools_active` его не содержит, и агент не видел бы
     /// заметок, пока пользователь не найдёт чип. Флаг — «инструмент уже
@@ -1174,6 +1180,7 @@ impl Default for AppConfig {
             window_opacity: default_window_opacity(),
             general: GeneralConfig::default(),
             tools_active: default_tools_active(),
+            tools_auto: Vec::new(),
             tools_notes_introduced: true,
             tools_wizard_introduced: true,
             tools_view_media_introduced: true,
@@ -1536,6 +1543,19 @@ mod tests {
         cfg.introduce_view_media_tool();
         assert_eq!(cfg.tools_active, ["bash"], "выбор пользователя не трогается");
         assert!(AppConfig::default().tools_active.iter().any(|k| k == "view_media"));
+    }
+
+    /// Пул `autotools` появился 13.09.2026: старый конфиг его не содержит и
+    /// ведёт себя как раньше — никакой инструмент сам в пул не переезжает.
+    #[test]
+    fn autotools_pool_defaults_to_empty() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"tools_active":["bash","notes"]}"#).unwrap();
+        assert!(cfg.tools_auto.is_empty());
+        assert_eq!(cfg.tools_active, ["bash", "notes"]);
+        assert!(AppConfig::default().tools_auto.is_empty());
+        let round: AppConfig =
+            serde_json::from_str(r#"{"tools_active":["bash"],"tools_auto":["notes"]}"#).unwrap();
+        assert_eq!(round.tools_auto, ["notes"]);
     }
 
     #[test]

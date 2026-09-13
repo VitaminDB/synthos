@@ -17,8 +17,8 @@ use tokio::process::Command;
 use crate::agent::schema::ChatToolCall;
 
 use super::catalog::{
-    KEY_AUTOSKILL, KEY_BASH, KEY_KB_SEARCH, KEY_NOTES, KEY_PIPELINES, KEY_SUBAGENT, KEY_SYSTEM,
-    KEY_WEB,
+    KEY_AUTOSKILL, KEY_AUTOTOOLS, KEY_BASH, KEY_KB_SEARCH, KEY_NOTES, KEY_PIPELINES, KEY_SUBAGENT,
+    KEY_SYSTEM, KEY_WEB,
 };
 
 /// Верхняя граница длины вывода одного инструмента (в байтах). Всё, что
@@ -52,7 +52,7 @@ pub const MAX_READ_OUTPUT_BYTES: usize = MAX_OUTPUT_BYTES * 4;
 /// Предел вывода конкретного инструмента.
 fn output_limit(tool: &str) -> usize {
     match tool {
-        KEY_AUTOSKILL => MAX_SKILL_OUTPUT_BYTES,
+        KEY_AUTOSKILL | KEY_AUTOTOOLS => MAX_SKILL_OUTPUT_BYTES,
         KEY_NOTES => MAX_NOTES_OUTPUT_BYTES,
         KEY_BASH | KEY_WEB => MAX_READ_OUTPUT_BYTES,
         _ => MAX_OUTPUT_BYTES,
@@ -74,10 +74,11 @@ fn output_limit(tool: &str) -> usize {
 /// ради которого скил и подключали. `notes` сам меряет ответ живым окном
 /// (`notes::ReadBudget`) и обрывает его на границе страницы, называя
 /// недочитанное, — укладка поверх этого только вырезала бы у честной пачки
-/// середину. Обоим размер ограничивает потолок исполнителя.
+/// середину. Обоим размер ограничивает потолок исполнителя. `autotools` — как
+/// скил: схема с вырезанной серединой хуже, чем никакой.
 pub fn history_limit(tool: &str) -> Option<usize> {
     match tool {
-        KEY_AUTOSKILL | KEY_NOTES => None,
+        KEY_AUTOSKILL | KEY_AUTOTOOLS | KEY_NOTES => None,
         _ => Some(super::budget::FALLBACK_RESULT_TOKENS),
     }
 }
@@ -86,7 +87,7 @@ pub fn history_limit(tool: &str) -> Option<usize> {
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, subagent, system, pipelines, notes, wizard, view_media")]
+    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, autotools, subagent, system, pipelines, notes, wizard, view_media")]
     Unknown(String),
     #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
@@ -154,11 +155,12 @@ pub fn normalize_args(raw: &str) -> String {
 
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
-pub(crate) const TOOL_KEYS: [&str; 10] = [
+pub(crate) const TOOL_KEYS: [&str; 11] = [
     KEY_BASH,
     KEY_KB_SEARCH,
     KEY_WEB,
     KEY_AUTOSKILL,
+    KEY_AUTOTOOLS,
     KEY_SUBAGENT,
     KEY_SYSTEM,
     KEY_PIPELINES,
@@ -198,6 +200,7 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
         KEY_KB_SEARCH => super::kb_search::run(args).await,
         KEY_WEB => super::web::run(args).await,
         KEY_AUTOSKILL => super::autoskill::run(args).await,
+        KEY_AUTOTOOLS => super::autotools::run(args).await,
         KEY_SUBAGENT => super::subagent::run(args).await,
         KEY_SYSTEM => super::system::run(args).await,
         KEY_PIPELINES => super::pipelines::run(args).await,
@@ -383,5 +386,9 @@ mod tests {
         assert_eq!(output_limit(KEY_BASH), MAX_READ_OUTPUT_BYTES);
         assert_eq!(output_limit(KEY_WEB), MAX_READ_OUTPUT_BYTES);
         assert_eq!(truncate_output(&skill, output_limit(KEY_BASH)), skill);
+        // Схема из пула `autotools` — тоже инструкция: целиком и без укладки.
+        assert_eq!(output_limit(KEY_AUTOTOOLS), MAX_SKILL_OUTPUT_BYTES);
+        assert_eq!(history_limit(KEY_AUTOTOOLS), None);
+        assert_eq!(canonical_tool_name("functions.autotools"), KEY_AUTOTOOLS);
     }
 }

@@ -415,7 +415,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let audio = agent::audio::AudioCtx::new();
     let voice = VoiceFabCtx::new();
     let metrics = Arc::new(MetricsState::new());
-    let tools = ToolsCtx::new(saved.tools_active.clone());
+    let tools = ToolsCtx::new(saved.tools_active.clone(), saved.tools_auto.clone());
 
     // KB / RAG. Реестр сканируется сразу — это быстро (просто listdir).
     // Embedder грузится лениво при первом ingest/search.
@@ -568,6 +568,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let a = ctx.appearance;
     let g = ctx.general;
     let tools_active = ctx.tools.active;
+    let tools_auto = ctx.tools.auto;
     let skills_active = ctx.skills_active;
     let audio_models = ctx.audio_models;
     let selected_audio_model = ctx.selected_audio_model;
@@ -676,6 +677,7 @@ fn install_config_autosave(ctx: &AppCtx) {
                 autocompact_threshold_percent: g.autocompact_threshold_percent.get(),
             },
             tools_active: tools_active.get(),
+            tools_auto: tools_auto.get(),
             // Загруженный конфиг уже прошёл `introduce_notes_tool`.
             tools_notes_introduced: true,
             tools_wizard_introduced: true,

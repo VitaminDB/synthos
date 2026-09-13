@@ -19,6 +19,8 @@
 //!   прогон на десятки минут);
 //! - `SYN_SMOKE_TOOLS` — активные инструменты через запятую (пустая строка —
 //!   без инструментов); без переменной — `tools_active` из конфига, как в GUI;
+//! - `SYN_SMOKE_AUTO` — пул `autotools` через запятую (пустая строка — пул
+//!   пуст); без переменной — `tools_auto` из конфига;
 //! - `SYN_SMOKE_PARAMS` — JSON с полями `SamplingParams` поверх
 //!   `syn_chat_defaults` из конфига (например
 //!   `{"temperature":0.0,"enable_thinking":false}`); без переменной — ровно
@@ -176,9 +178,16 @@ fn run() -> std::result::Result<(), String> {
     // прогон обязан идти на параметрах и инструментах приложения, иначе
     // «на тестах работало» ничего не говорит о чате.
     let cfg = synthos::config::AppConfig::load();
+    let key_list = |list: String| -> Vec<String> {
+        list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    };
     let tools: Vec<String> = match std::env::var("SYN_SMOKE_TOOLS") {
-        Ok(list) => list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Ok(list) => key_list(list),
         Err(_) => cfg.tools_active.clone(),
+    };
+    let auto: Vec<String> = match std::env::var("SYN_SMOKE_AUTO") {
+        Ok(list) => key_list(list),
+        Err(_) => cfg.tools_auto.clone(),
     };
     let switch_after: u64 = env_or("SYN_SMOKE_SWITCH_AFTER_S", 0);
     let params: SamplingParams = match std::env::var("SYN_SMOKE_PARAMS") {
@@ -195,7 +204,7 @@ fn run() -> std::result::Result<(), String> {
         Err(_) => cfg.syn_chat_defaults.clone(),
     };
     eprintln!(
-        "agent_smoke: bundle={} turns={turns} sub_turns={sub_turns} tools={tools:?} params={}",
+        "agent_smoke: bundle={} turns={turns} sub_turns={sub_turns} tools={tools:?} auto={auto:?} params={}",
         bundle.display(),
         serde_json::to_string(&params).unwrap_or_default()
     );
@@ -207,6 +216,7 @@ fn run() -> std::result::Result<(), String> {
     synthos::i18n::install(app_ctx.general);
     app_ctx.tools.allow_all.set(true);
     app_ctx.tools.active.set(tools);
+    app_ctx.tools.auto.set(auto);
     app_ctx.general.agent_max_turns.set(turns);
     app_ctx.general.subagent_max_turns.set(sub_turns);
     provide_context(app_ctx.clone());

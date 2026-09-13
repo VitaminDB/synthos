@@ -28,7 +28,6 @@ use crate::icons::{
 };
 use crate::pages::notes::NotesCtx;
 use crate::pages::node_editor::run_controls;
-use crate::pages::settings::theme_data;
 use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
 use crate::pages::node_editor::timing;
 use crate::syn_chat::session;
@@ -606,10 +605,13 @@ pub(super) fn bubble_markdown(body: &str, class: &'static str) -> impl Widget {
 /// Тема syntect-подсветки под текущую тему приложения. Раньше везде стоял
 /// светлый `InspiredGitHub`, и на тёмных темах код в карточках tool-call
 /// был тёмным по тёмному.
+///
+/// Светлоту берём у **активной** темы: в режиме «следовать системе»
+/// `theme_key` держит последний ручной выбор и не меняется вовсе, поэтому
+/// по нему подсветка оставалась тёмной на светлой системной схеме.
 fn syntax_theme() -> &'static str {
-    let dark = theme_data::find(&use_context::<AppCtx>().theme_key.get())
-        .map(|t| t.is_dark)
-        .unwrap_or(true);
+    let app = use_context::<AppCtx>();
+    let dark = crate::active_theme(app.appearance, app.theme_key).is_dark;
     if dark {
         "base16-ocean.dark"
     } else {

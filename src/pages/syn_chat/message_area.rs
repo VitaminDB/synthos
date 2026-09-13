@@ -77,7 +77,10 @@ fn scroll_list_for_chat() -> impl Widget {
         // Подписки: режим показа tool-карточек и тема меняют вид строк,
         // поэтому они же входят в версию строки.
         let tool_mode = app.general.tool_display_mode.get();
-        let theme_key = hash_of(&app.theme_key.get());
+        // Не `theme_key`: в режиме «следовать системе» он держит последний
+        // ручной выбор и не меняется, а вид строки зависит от активной темы
+        // (подсветка кода в tool-карточках выбирается по её светлоте).
+        let theme_key = hash_of(crate::active_theme(app.appearance, app.theme_key).id);
 
         // Сообщение, на которое привёл глобальный поиск: лента к нему
         // прокручивается и обводит его рамкой.

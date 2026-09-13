@@ -69,11 +69,24 @@
     border-color: var(--border-soft);
 }
 
+/* Аргументы рисует MarkdownView (JSON в fence), поэтому фон код-блока —
+ * это `--md-code-block-bg`, а не `background-color`. Без него MarkdownView
+ * берёт свой дефолт `#1E293B` — тёмную плашку, которая на светлой теме
+ * оставалась тёмной, а текст подсветки `InspiredGitHub` на ней исчезал.
+ * Фон уже даёт обёртка `.tool-call-args-wrap`: делаем блок прозрачным и
+ * без собственного паддинга, чтобы не было плашки в плашке. */
 .tool-call-args {
     font-family: "JetBrains Mono", "Fira Code", monospace;
     font-size: 12px;
     color: var(--text-muted);
     white-space: pre;
+    --md-code-block-bg: transparent;
+    --md-code-block-color: var(--text-muted);
+    --md-code-block-padding: 0px;
+    --md-code-block-radius: 0px;
+    --md-code-font-size: 12px;
+    --md-code-bg: var(--surface-hover);
+    --md-code-color: var(--primary);
 }
 
 /* ───────────────────────── Tool-result bubble ──────────────────────── */

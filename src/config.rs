@@ -678,6 +678,9 @@ pub struct AppConfig {
     pub syn_chat_window_pos: Option<(f32, f32)>,
     #[serde(default)]
     pub syn_chat_window_size: Option<(f32, f32)>,
+    /// Какие карточки боковых панелей чата раскрыты.
+    #[serde(default)]
+    pub syn_chat_cards: SynChatCardsConfig,
     /// Разделители страницы HuggingFace: список моделей ↔ README ↔ файлы.
     #[serde(default = "default_hf_left_split_ratio")]
     pub hf_left_split_ratio: f32,
@@ -1218,6 +1221,7 @@ impl Default for AppConfig {
             syn_chat_window_minimized: false,
             syn_chat_window_pos: None,
             syn_chat_window_size: None,
+            syn_chat_cards: SynChatCardsConfig::default(),
             hf_left_split_ratio: default_hf_left_split_ratio(),
             hf_right_split_ratio: default_hf_right_split_ratio(),
             settings_left_split_ratio: default_settings_left_split_ratio(),
@@ -1340,6 +1344,47 @@ impl Default for PanelsConfig {
             huggingface_right: true,
             settings_left: true,
             settings_right: true,
+        }
+    }
+}
+
+/// Раскрытие сворачиваемых карточек боковых панелей Syn-чата
+/// (`components::collapsible_card`): слева «Инструменты / Autotools /
+/// Скилы», справа «Модель / Thinking / Sampling / Контекст / Система».
+/// Сигналы — `syn_chat::state::CardsOpen`, автосейв пишет их сюда.
+/// Раскрыто всё, кроме Sampling: девять его слайдеров выдавливали
+/// системный prompt за нижний край панели, а трогают их редко.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SynChatCardsConfig {
+    #[serde(default = "default_true")]
+    pub tools: bool,
+    #[serde(default = "default_true")]
+    pub autotools: bool,
+    #[serde(default = "default_true")]
+    pub skills: bool,
+    #[serde(default = "default_true")]
+    pub model: bool,
+    #[serde(default = "default_true")]
+    pub thinking: bool,
+    #[serde(default)]
+    pub sampling: bool,
+    #[serde(default = "default_true")]
+    pub context: bool,
+    #[serde(default = "default_true")]
+    pub system: bool,
+}
+
+impl Default for SynChatCardsConfig {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            autotools: true,
+            skills: true,
+            model: true,
+            thinking: true,
+            sampling: false,
+            context: true,
+            system: true,
         }
     }
 }

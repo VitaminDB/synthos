@@ -392,11 +392,6 @@
     border-color: var(--border);
 }
 
-.tools-section-icon {
-    color: var(--primary);
-    font-size: 18px;
-}
-
 .tools-section-title {
     font-size: 14px;
     font-weight: 600;

@@ -168,6 +168,9 @@ pub const MI_SYNC_PROBLEM: &str        = "\u{E629}"; // file changed externally 
 
 // --- Агентские инструменты
 pub const MI_HANDYMAN: &str            = "\u{F10B}"; // autotools — пул инструментов по запросу
+pub const MI_EXTENSION: &str           = "\u{E87B}"; // скилы в левой панели чата — кусочек пазла
+/// «token» — карточка «Контекст» правой панели чата: окно в токенах.
+pub const MI_TOKEN: &str               = "\u{EA25}";
 
 // --- SynExplorer
 /// Material Symbols «inventory_2» — иконка nav-rail страницы SynExplorer

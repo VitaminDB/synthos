@@ -95,7 +95,7 @@ fn sampling_and_thinking_cards_follow_theme_and_logic() {
     provide_context(SynModelRegistry::new());
     let ctx = use_context::<SynChatCtx>();
     let reg = use_context::<SynModelRegistry>();
-    ctx.sampling_open.set(true);
+    ctx.cards.sampling.set(true);
     reg.sampling.set(Some(Arc::new(qwen38_profile())));
 
     // ── Переключатель в цветах темы ─────────────────────────────────────

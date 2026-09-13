@@ -35,10 +35,32 @@
   letter-spacing: 0.5px;
 }
 
-/* Шеврон сворачиваемой секции — тот же вид, что у карточек «Деталей». */
-.right-section-chevron {
+/* ── Сворачиваемые карточки боковых панелей (`components::collapsible_card`) ──
+ * Шапка одна на обе панели: иконка в акценте, заголовок ужимается до
+ * остатка и обрезается в одну строку (кнопки справа держат размер), шеврон
+ * — тот же, что у карточек «Деталей». Отступ под шапкой — у тела, чтобы у
+ * свёрнутой карточки его не было. */
+.collapsible-card-icon {
+  icon-size: 16px;
+  color: var(--primary);
+}
+
+.collapsible-card-title {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.collapsible-card-chevron {
   icon-size: 18px;
   color: var(--text-subtle);
+}
+
+.collapsible-card-body {
+  padding-top: 8px;
+}
+
+.tools-section .collapsible-card-body {
+  padding-top: 10px;
 }
 
 /* ── Карточка модели + sampling + контекст + system ── */
@@ -311,11 +333,4 @@
 .system-prompt-window-stats {
   font-size: 11px;
   color: var(--text-subtle);
-}
-
-.system-prompt-head-title {
-  /* Заголовок шапки — flex-элемент: кнопки справа держат свой размер, а
-   * заголовок ужимается до остатка и обрезается в одну строку. */
-  flex-grow: 1;
-  min-width: 0;
 }

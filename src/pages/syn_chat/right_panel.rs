@@ -13,6 +13,7 @@ use syngui::widget::styled::StyledWidget;
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::{Dropdown, DropdownItem, SegmentedButton, Slider, SpinBox, TextField, Toggle};
 
+use crate::components::collapsible_card::CollapsibleCard;
 use crate::context::{SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS};
 use crate::icons::*;
 use crate::syn_chat::params::{SamplingMode, SamplingParams};
@@ -53,36 +54,30 @@ fn params_tab() -> impl Widget {
                 model_card(),
                 // Размышления — выше сэмплинга: от них зависит, какой пресет
                 // модели работает в режиме «По умолчанию».
-                thinking_card_reactive(),
-                sampling_card_reactive(),
-                context_card_reactive(),
-                system_prompt_card_reactive(),
+                thinking_card(),
+                sampling_card(),
+                context_card(),
+                system_prompt_card(),
                 reset_button(),
             ]
     })
 }
 
-/// Карточки «Thinking» и «Sampling» как самостоятельные виджеты — для
-/// harness-тестов (`tests/sampling_card_theme.rs`).
-pub fn thinking_card() -> impl Widget {
-    DecoratedBox::new().child(thinking_card_reactive())
-}
-
-pub fn sampling_card() -> impl Widget {
-    DecoratedBox::new().child(sampling_card_reactive())
-}
+// Карточки таба — сворачиваемые (`components::collapsible_card`), флаги
+// раскрытия — в `SynChatCtx.cards`. Публичные собираются и в harness-тестах
+// (`tests/sampling_card_theme.rs`, `tests/system_prompt_card_layout.rs`,
+// `tests/collapsible_cards.rs`).
 
 // ── Карточка «Модель» ────────────────────────────────────────────────
 
-fn model_card() -> impl Widget {
-    DecoratedBox::new().class("sampling-card").child(mgui! {
-        Column::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.model.title")),
-                model_status_reactive(),
-                pick_button_reactive(),
-            ]
+pub fn model_card() -> impl Widget {
+    let open = use_context::<SynChatCtx>().cards.model;
+    CollapsibleCard::new("sampling-card", MI_MEMORY, tr!("chat.right.model.title"), open).body(|| {
+        use syngui::widgets::containers::reactive::IntoWidget;
+        vec![
+            IntoWidget::into_widget(model_status_reactive()),
+            IntoWidget::into_widget(pick_button_reactive()),
+        ]
     })
 }
 
@@ -263,38 +258,10 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
 
 // ── Карточка «Sampling» ──────────────────────────────────────────────
 
-/// Кликабельная шапка сворачиваемой секции: заголовок + шеврон, как у
-/// карточек таба «Детали».
-fn collapsible_title(
-    text: impl Into<String>,
-    open: bool,
-    toggle: impl Fn() + Send + Sync + 'static,
-) -> impl Widget {
-    GestureDetector::new().on_click(toggle).child(mgui! {
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                section_title(text.into()),
-                Icon::new(if open { MI_EXPAND_LESS } else { MI_EXPAND_MORE })
-                    .class("right-section-chevron"),
-            ]
-    })
-}
-
-fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
+pub fn sampling_card() -> impl Widget {
+    let open = use_context::<SynChatCtx>().cards.sampling;
+    CollapsibleCard::new("sampling-card", MI_TUNE, tr!("chat.right.sampling.title"), open).body(|| {
         let ctx = use_context::<SynChatCtx>();
-        let open = ctx.sampling_open.get();
-        let head = collapsible_title(tr!("chat.right.sampling.title"), open, move || {
-            let ctx = use_context::<SynChatCtx>();
-            ctx.sampling_open.set(!ctx.sampling_open.get_untracked());
-        });
-        if !open {
-            return DecoratedBox::new()
-                .class("sampling-card")
-                .child(Stack::new().children(vec![Box::new(head) as Box<dyn Widget>]));
-        }
         let p = ctx.params.get();
         let profile = use_context::<SynModelRegistry>().sampling.get();
         let custom = p.mode() == SamplingMode::Custom;
@@ -333,7 +300,6 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
         .class("sampling-mode-switch");
 
         let mut rows: Vec<Box<dyn Widget>> = vec![
-            Box::new(head),
             Box::new(Tooltip::new(mode_switch, tr!("chat.right.sampling.mode.tooltip"))),
             preset_row(&p, profile.as_deref()),
         ];
@@ -369,14 +335,8 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
             ]);
         }
         rows.push(Box::new(seed_row(p.seed)));
-
-        DecoratedBox::new().class("sampling-card").child(
-            Column::new()
-                .gap(8.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(rows),
-        )
-    }
+        rows
+    })
 }
 
 /// Комбобокс пресетов модели. В режиме `default` выбирает, какой пресет
@@ -540,12 +500,11 @@ fn seed_row(seed: i64) -> impl Widget {
 
 // ── Карточка «Контекст» ──────────────────────────────────────────────
 
-fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
-        let ctx = use_context::<SynChatCtx>();
-        let p = ctx.params.get();
-        let rows: Vec<Box<dyn Widget>> = vec![
-            Box::new(section_title(tr!("chat.right.context.title"))),
+pub fn context_card() -> impl Widget {
+    let open = use_context::<SynChatCtx>().cards.context;
+    CollapsibleCard::new("sampling-card", MI_TOKEN, tr!("chat.right.context.title"), open).body(|| {
+        let p = use_context::<SynChatCtx>().params.get();
+        vec![
             slider_row(
                 "max_new_tokens",
                 p.max_new_tokens as f32,
@@ -566,20 +525,15 @@ fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 true,
                 |v, q| q.max_seq_len = v.round() as u32,
             ),
-        ];
-        DecoratedBox::new().class("sampling-card").child(
-            Column::new()
-                .gap(8.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(rows),
-        )
-    }
+        ]
+    })
 }
 
 // ── Карточка «Thinking» ──────────────────────────────────────────────
 
-fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
+pub fn thinking_card() -> impl Widget {
+    let open = use_context::<SynChatCtx>().cards.thinking;
+    CollapsibleCard::new("sampling-card", MI_PSYCHOLOGY, tr!("chat.right.thinking.label"), open).body(|| {
         let ctx = use_context::<SynChatCtx>();
         let p = ctx.params.get();
         let on = p.enable_thinking;
@@ -625,14 +579,8 @@ fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
                 ]
             })));
         }
-
-        DecoratedBox::new().class("sampling-card").child(
-            Column::new()
-                .gap(8.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(rows),
-        )
-    }
+        rows
+    })
 }
 
 fn level_label(level: &str) -> String {
@@ -653,113 +601,97 @@ fn level_label(level: &str) -> String {
 // один и тот же `system_prompt`; на диск текст уходит через эффект в
 // `lib.rs::install_syn_chat_autosave`.
 
-/// Карточка «Система» как самостоятельный виджет — для harness-тестов
-/// (`tests/system_prompt_card_layout.rs`); панель собирает её через
-/// [`system_prompt_card_reactive`].
+/// Кнопки библиотеки — в шапке карточки, только у раскрытой.
 pub fn system_prompt_card() -> impl Widget {
-    DecoratedBox::new().child(system_prompt_card_reactive())
+    let open = use_context::<SynChatCtx>().cards.system;
+    CollapsibleCard::new("sampling-card", MI_SETTINGS, tr!("chat.right.system.title"), open)
+        .gap(6.0)
+        .actions(system_prompt_actions)
+        .body(|| {
+            let ctx = use_context::<SynChatCtx>();
+            let cur = ctx.system_prompt.get();
+            let presets = ctx.prompt_presets.get();
+            let active = ctx.prompt_active.get();
+
+            let items: Vec<DropdownItem> = presets
+                .iter()
+                .map(|p| DropdownItem::new(p.id.clone(), p.name.clone()))
+                .collect();
+            let picker = Dropdown::with_items(items)
+                .selected(active)
+                .leading_icon(MI_DESCRIPTION)
+                .on_change(|id| {
+                    let ctx = use_context::<SynChatCtx>();
+                    prompt_presets::select(&ctx, id);
+                })
+                .class("system-prompt-picker");
+
+            let edit = syngui::widgets::MultilineTextEdit::new()
+                .text(cur)
+                .placeholder(tr!("chat.right.system.placeholder"))
+                .rows(2)
+                .max_rows(8)
+                .auto_height(true)
+                .on_change(|s| {
+                    let ctx = use_context::<SynChatCtx>();
+                    ctx.system_prompt.set(s.to_string());
+                })
+                .class("system-prompt-edit");
+
+            vec![Box::new(picker), Box::new(edit)]
+        })
 }
 
-fn system_prompt_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
-        let ctx = use_context::<SynChatCtx>();
-        let cur = ctx.system_prompt.get();
-        let presets = ctx.prompt_presets.get();
-        let active = ctx.prompt_active.get();
-        let active_name = presets
-            .iter()
-            .find(|p| p.id == active)
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
+/// Создать / переименовать / удалить пресет и открыть текст в окне.
+fn system_prompt_actions() -> Vec<Box<dyn Widget>> {
+    let ctx = use_context::<SynChatCtx>();
+    let presets = ctx.prompt_presets.get();
+    let active = ctx.prompt_active.get();
+    let active_name = presets
+        .iter()
+        .find(|p| p.id == active)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
 
-        let items: Vec<DropdownItem> = presets
-            .iter()
-            .map(|p| DropdownItem::new(p.id.clone(), p.name.clone()))
-            .collect();
-        let picker = Dropdown::with_items(items)
-            .selected(active.clone())
-            .leading_icon(MI_DESCRIPTION)
-            .on_change(|id| {
-                let ctx = use_context::<SynChatCtx>();
-                prompt_presets::select(&ctx, id);
-            })
-            .class("system-prompt-picker");
-
-        let add = ToolButton::new(MI_ADD)
-            .tooltip(tr!("chat.right.system.preset.add"))
-            .on_click(|| {
-                use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Create));
-            })
-            .class("system-prompt-action");
-        let rename = {
-            let (id, name) = (active.clone(), active_name.clone());
-            ToolButton::new(MI_DRIVE_FILE_RENAME_OUTLINE)
-                .tooltip(tr!("chat.right.system.preset.rename"))
-                .on_click(move || {
-                    use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Rename {
-                        id: id.clone(),
-                        name: name.clone(),
-                    }));
-                })
-                .class("system-prompt-action")
-        };
-        let delete = {
-            let (id, name) = (active.clone(), active_name.clone());
-            ToolButton::new(MI_DELETE)
-                .tooltip(tr!("chat.right.system.preset.delete"))
-                .on_click(move || {
-                    use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Delete {
-                        id: id.clone(),
-                        name: name.clone(),
-                    }));
-                })
-                .class("system-prompt-action")
-        };
-        let open_window = ToolButton::new(MI_OPEN_IN_NEW)
-            .tooltip(tr!("chat.right.system.preset.open_window"))
-            .active(ctx.prompt_window_open.get())
-            .on_click(|| {
-                use_context::<SynChatCtx>().prompt_window_open.set(true);
-            })
-            .class("system-prompt-action");
-
-        let edit = syngui::widgets::MultilineTextEdit::new()
-            .text(cur)
-            .placeholder(tr!("chat.right.system.placeholder"))
-            .rows(2)
-            .max_rows(8)
-            .auto_height(true)
-            .on_change(|s| {
-                let ctx = use_context::<SynChatCtx>();
-                ctx.system_prompt.set(s.to_string());
-            })
-            .class("system-prompt-edit");
-
-        DecoratedBox::new().class("sampling-card").child(mgui! {
-            Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Row::new()
-                    .gap(6.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
-                        // Заголовок — flex-элемент (см. `.system-prompt-head-title`):
-                        // кнопки справа держат размер, заголовок ужимается.
-                        DecoratedBox::new().class("system-prompt-head-title") => [
-                            Text::new(tr!("chat.right.system.title"))
-                                .max_lines(1)
-                                .class("right-panel-section-title"),
-                        ],
-                        Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                            add,
-                            rename,
-                            delete,
-                            open_window,
-                        ],
-                    ],
-                picker,
-                edit,
-            ]
+    let add = ToolButton::new(MI_ADD)
+        .tooltip(tr!("chat.right.system.preset.add"))
+        .on_click(|| {
+            use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Create));
         })
-    }
+        .class("system-prompt-action");
+    let rename = {
+        let (id, name) = (active.clone(), active_name.clone());
+        ToolButton::new(MI_DRIVE_FILE_RENAME_OUTLINE)
+            .tooltip(tr!("chat.right.system.preset.rename"))
+            .on_click(move || {
+                use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Rename {
+                    id: id.clone(),
+                    name: name.clone(),
+                }));
+            })
+            .class("system-prompt-action")
+    };
+    let delete = {
+        let (id, name) = (active, active_name);
+        ToolButton::new(MI_DELETE)
+            .tooltip(tr!("chat.right.system.preset.delete"))
+            .on_click(move || {
+                use_context::<SynChatCtx>().prompt_dialog.set(Some(PromptDialog::Delete {
+                    id: id.clone(),
+                    name: name.clone(),
+                }));
+            })
+            .class("system-prompt-action")
+    };
+    let open_window = ToolButton::new(MI_OPEN_IN_NEW)
+        .tooltip(tr!("chat.right.system.preset.open_window"))
+        .active(ctx.prompt_window_open.get())
+        .on_click(|| {
+            use_context::<SynChatCtx>().prompt_window_open.set(true);
+        })
+        .class("system-prompt-action");
+
+    vec![Box::new(add), Box::new(rename), Box::new(delete), Box::new(open_window)]
 }
 
 // ── Кнопка «Сбросить к дефолтам» ─────────────────────────────────────
@@ -1194,10 +1126,6 @@ fn group(n: u64) -> String {
 }
 
 // ─────────────────────── Общие хелперы ───────────────────────
-
-fn section_title(text: impl Into<String>) -> impl Widget {
-    Text::new(text.into()).class("right-panel-section-title")
-}
 
 /// Запуск `SynModelRegistry::load` из любого потока — get/set сигналов
 /// сами маршализуются в main thread. policy читается ВНУТРИ run_on_main_thread,

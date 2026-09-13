@@ -1,18 +1,16 @@
-//! Общие UI-секции «Инструменты», «Autotools» и «Скилы» для правого сайдбара.
-//!
-//! Используются в двух местах:
-//! - `llama_control` (llama.cpp-чат) — секции под выбором модели/контролами;
-//! - `pages/syn_chat/right_panel` — первая вкладка «Инструменты».
+//! Секции «Инструменты», «Autotools» и «Скилы» левой панели Syn-чата
+//! (`pages::syn_chat::left_panel`).
 //!
 //! Источники данных — `AppCtx.tools.active` / `AppCtx.tools.auto` и
-//! `AppCtx.skills` / `AppCtx.skills_active`. Эти сигналы model-agnostic,
-//! поэтому одинаковый UI работает для обеих страниц без параметров.
+//! `AppCtx.skills` / `AppCtx.skills_active`. Раскрытие секции приходит
+//! параметром (флаг из `SynChatCtx.cards`), так что сами секции от чата не
+//! зависят.
 
-use syngui::mgui;
 use syngui::prelude::*;
 use syngui::StyledWidget;
 
 use crate::agent::tools::Tool;
+use crate::components::collapsible_card::CollapsibleCard;
 use crate::context::AppCtx;
 use crate::icons::*;
 
@@ -20,8 +18,8 @@ use crate::icons::*;
 // Секция «Инструменты» — активные/доступные чипы
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
+pub fn tools_section(open: RwSignal<bool>) -> StyledWidget<DecoratedBox> {
+    section(MI_AUTO_AWESOME, tr!("chat.right_panel.tools.title"), open, || {
         let ctx = use_context::<AppCtx>();
         let active: Vec<String> = ctx.tools.active.get();
 
@@ -45,15 +43,13 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
             Box::new(chips_wrap(available_tools, ChipMode::Available, toggle_tool))
         };
 
-        section(
-            MI_AUTO_AWESOME,
-            tr!("chat.right_panel.tools.title"),
+        chip_rows(
             tr!("chat.right_panel.tools.hint"),
             tr!("chat.right_panel.active"),
             active_block,
             available_block,
         )
-    }
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,8 +59,8 @@ pub fn tools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync 
 /// Близнец секции «Скилы»: сверху инструменты пула, ниже — все остальные.
 /// Клик по доступному кладёт инструмент в пул и снимает его с активных, клик
 /// по инструменту в пуле — убирает его оттуда.
-pub fn autotools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
+pub fn autotools_section(open: RwSignal<bool>) -> StyledWidget<DecoratedBox> {
+    section(MI_HANDYMAN, tr!("chat.right_panel.autotools.title"), open, || {
         let ctx = use_context::<AppCtx>();
         let auto: Vec<String> = ctx.tools.auto.get();
         let active: Vec<String> = ctx.tools.active.get();
@@ -85,51 +81,46 @@ pub fn autotools_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             Box::new(chips_wrap(available, ChipMode::Available, toggle_pool))
         };
 
-        section(
-            MI_HANDYMAN,
-            tr!("chat.right_panel.autotools.title"),
+        chip_rows(
             tr!("chat.right_panel.autotools.hint"),
             tr!("chat.right_panel.autotools.pooled"),
             pooled_block,
             available_block,
         )
-    }
+    })
 }
 
-/// Каркас секции: заголовок с иконкой, подсказка, включённые чипы под
-/// `first_label` и остальные под «Доступные».
+/// Каркас секции: сворачиваемая карточка с иконкой в шапке.
 fn section(
     icon: &'static str,
     title: String,
-    hint: String,
-    first_label: String,
-    first: Box<dyn Widget>,
-    rest: Box<dyn Widget>,
+    open: RwSignal<bool>,
+    rows: impl Fn() -> Vec<Box<dyn Widget>> + Send + Sync + 'static,
 ) -> StyledWidget<DecoratedBox> {
-    let column = Column::new()
+    CollapsibleCard::new("tools-section", icon, title, open)
+        .title_class("tools-section-title")
         .gap(10.0)
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .child(mgui! {
-            Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Icon::new(icon).class("tools-section-icon"),
-                Text::new(title).class("tools-section-title"),
-            ]
-        })
-        .child(Text::new(hint).class("tools-section-hint"))
-        .child(Text::new(first_label).class("tools-section-subtitle"))
-        .child(
+        .body(rows)
+}
+
+/// Тело секции: подсказка, включённые чипы под `first_label` и остальные
+/// под «Доступные».
+fn chip_rows(hint: String, first_label: String, first: Box<dyn Widget>, rest: Box<dyn Widget>) -> Vec<Box<dyn Widget>> {
+    vec![
+        Box::new(Text::new(hint).class("tools-section-hint")),
+        Box::new(Text::new(first_label).class("tools-section-subtitle")),
+        Box::new(
             Column::new()
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .children(vec![first]),
-        )
-        .child(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle"))
-        .child(
+        ),
+        Box::new(Text::new(tr!("chat.right_panel.available")).class("tools-section-subtitle")),
+        Box::new(
             Column::new()
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .children(vec![rest]),
-        );
-
-    DecoratedBox::new().class("tools-section").child(column)
+        ),
+    ]
 }
 
 fn empty_block(text: String) -> Box<dyn Widget> {
@@ -197,8 +188,10 @@ fn toggle_pool(key: &str) {
 // Секция «Скилы» — близнец tools_section, но источник данных — `AppCtx.skills`
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
-    || {
+/// Иконка скилов — «extension» (кусочек пазла): «psychology» в правой
+/// панели занята карточкой «Thinking-режим».
+pub fn skills_section(open: RwSignal<bool>) -> StyledWidget<DecoratedBox> {
+    section(MI_EXTENSION, tr!("chat.right_panel.skills.title"), open, || {
         let ctx = use_context::<AppCtx>();
         let active_keys: Vec<String> = ctx.skills_active.get();
         let all = ctx.skills.get();
@@ -206,22 +199,14 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
         // Скилов вообще нет — компактная подсказка с кнопкой перехода
         // в Settings → Скилы.
         if all.is_empty() {
-            let column = Column::new()
-                .gap(10.0)
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .child(mgui! {
-                    Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                        Icon::new(MI_PSYCHOLOGY).class("tools-section-icon"),
-                        Text::new(tr!("chat.right_panel.skills.title")).class("tools-section-title"),
-                    ]
-                })
-                .child(
+            return vec![
+                Box::new(
                     DecoratedBox::new()
                         .class("tools-empty")
                         .child(Text::new(tr!("chat.right_panel.skills.none")).class("tools-empty-text")),
-                )
-                .child(navigate_to_skills_btn());
-            return DecoratedBox::new().class("tools-section").child(column);
+                ),
+                Box::new(navigate_to_skills_btn()),
+            ];
         }
 
         let active_skills: Vec<crate::skills::Skill> = active_keys
@@ -245,15 +230,13 @@ pub fn skills_section() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             Box::new(skill_chips_wrap(available_skills, ChipMode::Available))
         };
 
-        section(
-            MI_PSYCHOLOGY,
-            tr!("chat.right_panel.skills.title"),
+        chip_rows(
             tr!("chat.right_panel.skills.hint"),
             tr!("chat.right_panel.active"),
             active_block,
             available_block,
         )
-    }
+    })
 }
 
 /// Раскладка чипов скилов — точная копия `chips_wrap` для tools.
@@ -286,7 +269,7 @@ fn make_skill_chip(skill: crate::skills::Skill, mode: ChipMode) -> Box<dyn Widge
         ChipMode::Available => "tools-available-chip skills-chip",
     };
     let chip = Chip::new(skill.name)
-        .icon(MI_PSYCHOLOGY)
+        .icon(MI_EXTENSION)
         .on_click(move || toggle_skill(&key_for_click))
         .class(class);
     Box::new(chip)
@@ -306,7 +289,7 @@ fn toggle_skill(key: &str) {
 
 fn navigate_to_skills_btn() -> impl Widget {
     Button::new(tr!("chat.right_panel.skills.open_settings"))
-        .leading_icon(MI_PSYCHOLOGY)
+        .leading_icon(MI_EXTENSION)
         .on_click(|| {
             let ctx = use_context::<AppCtx>();
             if ctx.current_route.get_untracked() != "settings" {

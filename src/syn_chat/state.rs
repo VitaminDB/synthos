@@ -18,6 +18,7 @@ pub use crate::agent::state::{
 };
 pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
+use crate::config::SynChatCardsConfig;
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::prompt_presets::{self, PromptDialog, PromptPreset};
 use crate::syn_chat::telemetry::AgentRun;
@@ -281,10 +282,53 @@ pub struct SynChatCtx {
     /// (`telemetry::ROOT_RUN` — карточка основного чата). Значения нет —
     /// карточка сама решает дефолт: живая раскрыта, завершённая свёрнута.
     pub details_open: RwSignal<HashMap<u64, bool>>,
-    /// Раскрыта ли карточка «Sampling» в табе «Параметры». Свёрнута по
-    /// умолчанию: девять слайдеров занимали панель целиком и выдавливали
-    /// системный prompt за нижний край, а трогают их редко.
-    pub sampling_open: RwSignal<bool>,
+    /// Раскрытие сворачиваемых карточек обеих боковых панелей
+    /// (`components::collapsible_card`); восстанавливается из конфига.
+    pub cards: CardsOpen,
+}
+
+/// Раскрытие карточек боковых панелей чата — по сигналу на карточку, чтобы
+/// щелчок перестраивал только свою. На диск — через [`SynChatCardsConfig`]
+/// (автосейв в `lib.rs`), там же дефолты.
+#[derive(Clone, Copy)]
+pub struct CardsOpen {
+    pub tools: RwSignal<bool>,
+    pub autotools: RwSignal<bool>,
+    pub skills: RwSignal<bool>,
+    pub model: RwSignal<bool>,
+    pub thinking: RwSignal<bool>,
+    pub sampling: RwSignal<bool>,
+    pub context: RwSignal<bool>,
+    pub system: RwSignal<bool>,
+}
+
+impl CardsOpen {
+    pub fn from_config(cfg: &SynChatCardsConfig) -> Self {
+        Self {
+            tools: use_signal(cfg.tools),
+            autotools: use_signal(cfg.autotools),
+            skills: use_signal(cfg.skills),
+            model: use_signal(cfg.model),
+            thinking: use_signal(cfg.thinking),
+            sampling: use_signal(cfg.sampling),
+            context: use_signal(cfg.context),
+            system: use_signal(cfg.system),
+        }
+    }
+
+    /// Снимок для автосейва (`.get()` — подписка эффекта на все флаги).
+    pub fn to_config(&self) -> SynChatCardsConfig {
+        SynChatCardsConfig {
+            tools: self.tools.get(),
+            autotools: self.autotools.get(),
+            skills: self.skills.get(),
+            model: self.model.get(),
+            thinking: self.thinking.get(),
+            sampling: self.sampling.get(),
+            context: self.context.get(),
+            system: self.system.get(),
+        }
+    }
 }
 
 impl SynChatCtx {
@@ -377,7 +421,7 @@ impl SynChatCtx {
             last_blocks_resident: use_signal(None),
             agent_runs: use_signal(Vec::new()),
             details_open: use_signal(HashMap::new()),
-            sampling_open: use_signal(false),
+            cards: CardsOpen::from_config(&cfg.syn_chat_cards),
         }
     }
 

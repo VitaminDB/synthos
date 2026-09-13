@@ -600,6 +600,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let syn_chat_left_split = syn_chat_ctx.left_split_ratio;
     let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
     let chat_detached = syn_chat_ctx.chat_detached;
+    let chat_cards = syn_chat_ctx.cards;
     let chat_window_minimized = syn_chat_ctx.chat_window_minimized;
     let chat_window_pos = syn_chat_ctx.chat_window_pos;
     let chat_window_size = syn_chat_ctx.chat_window_size;
@@ -747,6 +748,8 @@ fn install_config_autosave(ctx: &AppCtx) {
                 let s = chat_window_size.get();
                 Some((s.width, s.height))
             },
+            // Свёрнутые карточки боковых панелей чата остаются свёрнутыми.
+            syn_chat_cards: chat_cards.to_config(),
             hf_left_split_ratio: hf_left_split.get(),
             hf_right_split_ratio: hf_right_split.get(),
             settings_left_split_ratio: settings_left_split.get(),

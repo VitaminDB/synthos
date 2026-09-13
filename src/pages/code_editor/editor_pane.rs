@@ -79,10 +79,12 @@ pub fn header_identity() -> impl Widget {
                     ]
                 };
                 // Каталог файла сжимаем по середине — в узком центре
-                // хвост пути важнее начала.
+                // хвост пути важнее начала. Без файла подзаголовка нет
+                // совсем: пустой Text всё равно занимает строку, и «Файл не
+                // выбран» уезжает выше центра иконки.
                 let subtitle: Box<dyn Widget> = match dir {
                     Some(d) => Box::new(panel_header::subtitle_path(&d)),
-                    None => Box::new(panel_header::subtitle_text("")),
+                    None => Box::new(DecoratedBox::new()),
                 };
                 panel_header::identity(
                     Icon::new(header_icon).class(header_icon_class),

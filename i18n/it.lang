@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Auto-augment saltato: embedder non caricato. I
 kb.augment.spawn_panic_warning = "Auto-augment è andato in crash sul worker thread."
 code.editor.no_file_selected = "Nessun file selezionato"
 code.editor.wrap_tooltip = "A capo automatico"
+code.editor.toggle_tooltip = "Mostra o nascondi l'editor"
 code.history.title = "Cronologia delle versioni"
 code.editor.save_tooltip = "Salva (su disco)"
 app.copy = "Copia"

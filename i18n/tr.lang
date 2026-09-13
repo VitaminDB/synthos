@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Otomatik zenginleştirme atlandı: embedder y�
 kb.augment.spawn_panic_warning = "Otomatik zenginleştirme worker thread'inde çöktü."
 code.editor.no_file_selected = "Dosya seçilmedi"
 code.editor.wrap_tooltip = "Satır kaydırma"
+code.editor.toggle_tooltip = "Düzenleyiciyi göster veya gizle"
 code.history.title = "Sürüm Geçmişi"
 code.editor.save_tooltip = "Kaydet (diske)"
 app.copy = "Kopyala"

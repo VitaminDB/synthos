@@ -260,6 +260,12 @@
     animation: code-editor-fade-in var(--duration-med) var(--ease-standard);
 }
 
+/* Редактор скрыт — терминал стоит прямо под шапкой центра, у которой уже
+ * есть border-bottom; своя верхняя линия дала бы двойную. */
+.code-editor-terminal-pane--solo {
+    border-top-width: 0;
+}
+
 .code-editor-terminal-icon {
     icon-size: 32px;
     color: var(--text-subtle);

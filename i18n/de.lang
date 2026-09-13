@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Auto-Augment übersprungen: Embedder nicht gel
 kb.augment.spawn_panic_warning = "Auto-Augment ist im Worker-Thread abgestürzt."
 code.editor.no_file_selected = "Keine Datei ausgewählt"
 code.editor.wrap_tooltip = "Zeilenumbruch"
+code.editor.toggle_tooltip = "Editor ein- oder ausblenden"
 code.history.title = "Versionsverlauf"
 code.editor.save_tooltip = "Speichern (auf Festplatte)"
 app.copy = "Kopieren"

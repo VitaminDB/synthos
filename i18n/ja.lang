@@ -312,6 +312,7 @@ kb.augment.no_embedder_warning = "自動拡張をスキップしました：エ�
 kb.augment.spawn_panic_warning = "自動拡張がワーカースレッドでクラッシュしました。"
 code.editor.no_file_selected = "ファイルが選択されていません"
 code.editor.wrap_tooltip = "折り返し表示（word wrap）"
+code.editor.toggle_tooltip = "エディターの表示／非表示"
 code.history.title = "バージョン履歴"
 code.editor.save_tooltip = "保存（ディスクへ）"
 app.copy = "コピー"

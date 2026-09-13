@@ -18,8 +18,8 @@ use syngui::widgets::overlay::menu::MenuItem;
 use syngui::widgets::CodeEditor;
 
 use crate::icons::{
-    MI_CONTENT_COPY, MI_CONTENT_CUT, MI_CONTENT_PASTE, MI_DESCRIPTION, MI_HISTORY, MI_SAVE,
-    MI_SELECT_ALL, MI_WRAP_TEXT,
+    MI_CODE, MI_CONTENT_COPY, MI_CONTENT_CUT, MI_CONTENT_PASTE, MI_DESCRIPTION, MI_HISTORY,
+    MI_SAVE, MI_SELECT_ALL, MI_WRAP_TEXT,
 };
 
 use super::dialogs::DialogKind;
@@ -115,6 +115,13 @@ pub fn header_actions() -> impl Widget {
                 } else {
                     "code-editor-save-btn"
                 };
+                // Тоггл редактора выглядит как тогглы боковых панелей:
+                // подсвечен, пока редактор показан.
+                let editor_class = if session.editor_visible.get() {
+                    "panel-header-toggle panel-header-toggle--on"
+                } else {
+                    "panel-header-toggle"
+                };
                 let wrap_enabled = session.soft_wrap.get();
                 let wrap_class = if wrap_enabled {
                     "code-editor-wrap-btn enabled"
@@ -158,6 +165,10 @@ pub fn header_actions() -> impl Widget {
                                     }
                                 })
                                 .class(save_class),
+                            ToolButton::new(MI_CODE)
+                                .tooltip(tr!("code.editor.toggle_tooltip"))
+                                .on_click(move || session.editor_visible.update(|v| *v = !*v))
+                                .class(editor_class),
                         ]
                 })
             }

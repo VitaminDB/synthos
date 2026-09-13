@@ -322,6 +322,7 @@ kb.augment.no_embedder_warning = "Auto-augment пропущено: ембеде�
 kb.augment.spawn_panic_warning = "Auto-augment впав на worker-потоці."
 code.editor.no_file_selected = "Файл не вибрано"
 code.editor.wrap_tooltip = "Перенесення рядків (word wrap)"
+code.editor.toggle_tooltip = "Показати або сховати редактор"
 code.history.title = "Історія версій"
 code.editor.save_tooltip = "Зберегти (на диск)"
 app.copy = "Копіювати"

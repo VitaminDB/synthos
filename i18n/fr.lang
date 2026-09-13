@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Auto-augment ignoré : encodeur non chargé. P
 kb.augment.spawn_panic_warning = "Auto-augment a planté sur le thread worker."
 code.editor.no_file_selected = "Aucun fichier sélectionné"
 code.editor.wrap_tooltip = "Retour à la ligne"
+code.editor.toggle_tooltip = "Afficher ou masquer l'éditeur"
 code.history.title = "Historique des versions"
 code.editor.save_tooltip = "Enregistrer (sur le disque)"
 app.copy = "Copier"

@@ -31,10 +31,17 @@ use super::state::{
     CodeEditorCtx, CodeSession, TerminalTab,
 };
 
-pub fn view() -> impl Widget {
+/// `solo` — редактор скрыт и терминал занимает весь центр: верхняя граница
+/// панели тогда легла бы второй линией под шапку центра.
+pub fn view(solo: bool) -> impl Widget {
     // RwSignal видимости gear-popover'а. Локальный — popover не должен
     // переживать переключение страниц «Чат» ↔ «Редактор кода».
     let gear_open = use_signal(false);
+    let class = if solo {
+        "code-editor-terminal-pane code-editor-terminal-pane--solo"
+    } else {
+        "code-editor-terminal-pane"
+    };
 
     DecoratedBox::new()
         .child(mgui! {
@@ -46,7 +53,7 @@ pub fn view() -> impl Widget {
                     gear_popover(gear_open),
                 ]
         })
-        .class("code-editor-terminal-pane")
+        .class(class)
 }
 
 /// Верхний бар с табами + кнопка `+` + gear-кнопка справа.

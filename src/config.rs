@@ -434,6 +434,11 @@ pub struct CodeSessionConfig {
     /// пользователь включает кнопкой в header'е editor pane'а.
     #[serde(default)]
     pub soft_wrap: bool,
+    /// Показан ли редактор над терминалом (кнопка в шапке центра). `None` —
+    /// конфиг до тоггла, считается «показан». Без активного файла при
+    /// восстановлении редактор всё равно скрыт.
+    #[serde(default)]
+    pub editor_visible: Option<bool>,
     /// Persisted-снимки cursor/scroll по каждому открытому файлу. Ключ —
     /// путь файла как строка (`PathBuf::display`). Заполняется автосэйвом
     /// (`install_config_autosave`) на каждом изменении `editor_states`

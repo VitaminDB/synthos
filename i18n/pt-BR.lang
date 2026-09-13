@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Aumento automático ignorado: embedder não ca
 kb.augment.spawn_panic_warning = "O aumento automático travou na thread de trabalho."
 code.editor.no_file_selected = "Nenhum arquivo selecionado"
 code.editor.wrap_tooltip = "Quebra de linha"
+code.editor.toggle_tooltip = "Mostrar ou ocultar o editor"
 code.history.title = "Histórico de versões"
 code.editor.save_tooltip = "Salvar (no disco)"
 app.copy = "Copiar"

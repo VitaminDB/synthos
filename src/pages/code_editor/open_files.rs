@@ -152,10 +152,7 @@ fn list_widget(
             .selected(selected_idx)
             .on_select(move |idx| {
                 if let Some(path) = files_for_select.get(idx).cloned() {
-                    if session.active_file.get_untracked().as_ref() != Some(&path) {
-                        session.active_file.set(Some(path));
-                        session.editor_gen.update(|n| *n = n.wrapping_add(1));
-                    }
+                    state::activate_file(session, path);
                 }
             })
             .item_widget(move |idx, _item, selected, _hovered| {
@@ -228,10 +225,7 @@ fn list_widget(
                 Box::new(
                     Draggable::new(DRAG_TYPE_TAB, drag_payload)
                         .on_click(move || {
-                            if session.active_file.get_untracked().as_ref() != Some(&click_path) {
-                                session.active_file.set(Some(click_path.clone()));
-                                session.editor_gen.update(|n| *n = n.wrapping_add(1));
-                            }
+                            state::activate_file(session, click_path.clone());
                         })
                         .child(
                             DropArea::new()

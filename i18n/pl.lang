@@ -322,6 +322,7 @@ kb.augment.no_embedder_warning = "Auto-augment pominięty: embedder nie załadow
 kb.augment.spawn_panic_warning = "Auto-augment padł na wątku roboczym."
 code.editor.no_file_selected = "Nie wybrano pliku"
 code.editor.wrap_tooltip = "Zawijanie wierszy"
+code.editor.toggle_tooltip = "Pokaż lub ukryj edytor"
 code.history.title = "Historia wersji"
 code.editor.save_tooltip = "Zapisz (na dysk)"
 app.copy = "Kopiuj"

@@ -337,6 +337,7 @@ kb.augment.no_embedder_warning = "Auto-augment skipped: embedder not loaded. Set
 kb.augment.spawn_panic_warning = "Auto-augment crashed on the worker thread."
 code.editor.no_file_selected = "No file selected"
 code.editor.wrap_tooltip = "Word wrap"
+code.editor.toggle_tooltip = "Show or hide the editor"
 code.history.title = "Version History"
 code.editor.save_tooltip = "Save (to disk)"
 app.copy = "Copy"

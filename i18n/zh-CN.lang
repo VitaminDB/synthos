@@ -312,6 +312,7 @@ kb.augment.no_embedder_warning = "已跳过自动增强：嵌入模型未加载�
 kb.augment.spawn_panic_warning = "自动增强在工作线程中崩溃。"
 code.editor.no_file_selected = "未选择文件"
 code.editor.wrap_tooltip = "自动换行"
+code.editor.toggle_tooltip = "显示或隐藏编辑器"
 code.history.title = "版本历史"
 code.editor.save_tooltip = "保存（写入磁盘）"
 app.copy = "复制"

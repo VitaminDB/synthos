@@ -318,6 +318,7 @@ kb.augment.no_embedder_warning = "Auto-augment omitido: embedder no cargado. Aju
 kb.augment.spawn_panic_warning = "Auto-augment falló en el hilo de trabajo."
 code.editor.no_file_selected = "Ningún archivo seleccionado"
 code.editor.wrap_tooltip = "Ajuste de línea"
+code.editor.toggle_tooltip = "Mostrar u ocultar el editor"
 code.history.title = "Historial de versiones"
 code.editor.save_tooltip = "Guardar (en disco)"
 app.copy = "Copiar"

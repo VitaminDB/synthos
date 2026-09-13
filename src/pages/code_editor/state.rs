@@ -182,6 +182,12 @@ pub struct CodeSession {
     /// header'е переключает; CodeEditor реактивно перестраивается.
     /// Persist'ится через `CodeSessionConfig.soft_wrap`.
     pub soft_wrap: RwSignal<bool>,
+    /// Показан ли редактор над терминалом. Без активного файла редактор
+    /// схлопывается и центр целиком отдаётся терминалу
+    /// ([`install_editor_autohide`]); открытие файла возвращает его
+    /// ([`activate_file`]), кнопка в шапке переключает вручную. Persist'ится
+    /// через `CodeSessionConfig.editor_visible`.
+    pub editor_visible: RwSignal<bool>,
     /// Положение левого разделителя file_tree↔(center+open_files)
     /// (horizontal). Аналогично [`Self::split_ratio`].
     pub left_split_ratio: RwSignal<f32>,
@@ -225,6 +231,7 @@ impl CodeSession {
         left_split_ratio_init: f32,
         right_split_ratio_init: f32,
         soft_wrap_init: bool,
+        editor_visible_init: bool,
         editor_states_init: HashMap<PathBuf, EditorPersistedState>,
         created_at: u64,
     ) -> Self {
@@ -366,6 +373,9 @@ impl CodeSession {
                 }
             }
         }
+        // Сохранённое «показан» действует, только если есть что показывать:
+        // сессия без восстановленных файлов стартует с одним терминалом.
+        let editor_visible = use_signal(editor_visible_init && active_file.get_untracked().is_some());
 
         let session = Self {
             id,
@@ -384,6 +394,7 @@ impl CodeSession {
             left_split_ratio,
             right_split_ratio,
             soft_wrap,
+            editor_visible,
             editor_states,
             conflicts,
             created_at,
@@ -497,10 +508,12 @@ impl CodeEditorCtx {
                 left_split_ratio,
                 right_split_ratio,
                 cfg.soft_wrap,
+                cfg.editor_visible.unwrap_or(true),
                 editor_states,
                 created_at,
             );
             drafts::install_draft_autosave(session);
+            install_editor_autohide(session);
             built.push(session);
         }
 
@@ -568,10 +581,12 @@ impl CodeEditorCtx {
             default_code_editor_left_split_ratio(),
             default_code_editor_right_split_ratio(),
             false, // soft_wrap default off — пользователь включает по желанию
+            true,  // файлов нет — редактор всё равно стартует скрытым
             HashMap::new(),
             crate::config::now_millis(),
         );
         drafts::install_draft_autosave(session);
+        install_editor_autohide(session);
         self.sessions.update(|v| v.push(session));
         self.active_id.set(Some(id));
         self.session_gen.update(|n| *n = n.wrapping_add(1));
@@ -1055,10 +1070,38 @@ pub fn open_file(session: CodeSession, path: PathBuf) {
             }
         }
     }
+    activate_file(session, path);
+}
+
+/// Сделать открытый файл активным и показать редактор. Клик по файлу — явная
+/// просьба его увидеть, поэтому редактор, скрытый кнопкой в шапке,
+/// возвращается и для файла, который уже активен.
+pub fn activate_file(session: CodeSession, path: PathBuf) {
     if session.active_file.get_untracked().as_ref() != Some(&path) {
         session.active_file.set(Some(path));
         session.editor_gen.update(|n| *n = n.wrapping_add(1));
     }
+    if !session.editor_visible.get_untracked() {
+        session.editor_visible.set(true);
+    }
+}
+
+/// Редактор без файла не занимает место: когда активный файл пропадает
+/// (закрыли последний, сменили папку сессии), редактор скрывается и терминал
+/// получает весь центр. Смотрим только на переход «был файл → нет файла»:
+/// переименование меняет путь, но не должно показывать скрытый вручную
+/// редактор, а показ при открытии делает [`activate_file`].
+pub fn install_editor_autohide(session: CodeSession) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let had_file = Arc::new(AtomicBool::new(session.active_file.get_untracked().is_some()));
+    create_effect(move || {
+        let has_file = session.active_file.get().is_some();
+        let lost_file = had_file.swap(has_file, Ordering::Relaxed) && !has_file;
+        if lost_file && session.editor_visible.get_untracked() {
+            session.editor_visible.set(false);
+        }
+    });
 }
 
 /// Сохранить активный файл сессии на диск.
@@ -1135,4 +1178,102 @@ pub fn update_active_text(session: CodeSession, text: &str) {
     session.file_contents.update(|m| {
         m.insert(path, text.to_string());
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_file(tag: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "synthos-editor-autohide-{}-{tag}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        path
+    }
+
+    /// `set` только ставит эффекты в очередь; в приложении её разбирает цикл
+    /// кадра, здесь — вручную после каждого шага.
+    fn frame() {
+        syngui::signal::drain_and_run_effects();
+    }
+
+    #[test]
+    fn editor_follows_active_file_and_manual_toggle() {
+        let ctx = CodeEditorCtx::new(Vec::new(), None);
+        ctx.create_empty();
+        frame();
+        let session = ctx.active_session_untracked().unwrap();
+        assert!(!session.editor_visible.get_untracked(), "без файла редактор скрыт");
+
+        let a = temp_file("a");
+        let b = temp_file("b");
+        open_file(session, a.clone());
+        frame();
+        assert!(session.editor_visible.get_untracked(), "открытие файла показывает редактор");
+
+        session.editor_visible.set(false);
+        frame();
+        open_file(session, a.clone());
+        frame();
+        assert!(
+            session.editor_visible.get_untracked(),
+            "повторный клик по активному файлу возвращает скрытый редактор"
+        );
+
+        open_file(session, b.clone());
+        frame();
+        close_file(session, b.clone());
+        frame();
+        assert!(
+            session.editor_visible.get_untracked(),
+            "закрытие не последнего файла редактор не прячет"
+        );
+
+        close_file(session, a.clone());
+        frame();
+        assert!(
+            !session.editor_visible.get_untracked(),
+            "закрыли последний файл — редактор скрыт"
+        );
+
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
+    }
+
+    #[test]
+    fn restored_visibility_needs_a_file() {
+        let file = temp_file("restore");
+        let cfg = |open: Vec<String>, visible: Option<bool>| CodeSessionConfig {
+            root_folder: None,
+            open_files: open.clone(),
+            active_file: open.first().cloned(),
+            split_ratio: None,
+            left_split_ratio: None,
+            right_split_ratio: None,
+            soft_wrap: false,
+            editor_visible: visible,
+            editor_states: HashMap::new(),
+            created_at: None,
+        };
+        let path = file.display().to_string();
+        let ctx = CodeEditorCtx::new(
+            vec![
+                cfg(vec![path.clone()], None),
+                cfg(vec![path.clone()], Some(false)),
+                cfg(Vec::new(), Some(true)),
+            ],
+            Some(0),
+        );
+        let visible: Vec<bool> = ctx
+            .sessions
+            .get_untracked()
+            .iter()
+            .map(|s| s.editor_visible.get_untracked())
+            .collect();
+        assert_eq!(visible, vec![true, false, false]);
+
+        let _ = std::fs::remove_file(file);
+    }
 }

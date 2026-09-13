@@ -312,6 +312,7 @@ kb.augment.no_embedder_warning = "자동 증강 건너뜀: 임베더가 로드�
 kb.augment.spawn_panic_warning = "자동 증강이 워커 스레드에서 충돌했습니다."
 code.editor.no_file_selected = "선택된 파일 없음"
 code.editor.wrap_tooltip = "자동 줄바꿈"
+code.editor.toggle_tooltip = "편집기 표시 또는 숨기기"
 code.history.title = "버전 기록"
 code.editor.save_tooltip = "저장(디스크에)"
 app.copy = "복사"

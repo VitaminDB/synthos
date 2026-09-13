@@ -294,6 +294,7 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
                 left_split_ratio: None,
                 right_split_ratio: None,
                 soft_wrap: false,
+                editor_visible: None,
                 editor_states: std::collections::HashMap::new(),
                 created_at: None,
             });
@@ -624,6 +625,7 @@ fn install_config_autosave(ctx: &AppCtx) {
                 left_split_ratio: Some(s.left_split_ratio.get()),
                 right_split_ratio: Some(s.right_split_ratio.get()),
                 soft_wrap: s.soft_wrap.get(),
+                editor_visible: Some(s.editor_visible.get()),
                 // Persisted-снимки cursor/scroll по открытым файлам. `.get()`
                 // подписывает effect — каждое изменение в editor'е (через
                 // `state_signal` → запись в `editor_states`) триггерит

@@ -317,6 +317,7 @@ kb.augment.no_embedder_warning = "Auto-augment өткізіп жіберілді
 kb.augment.spawn_panic_warning = "Auto-augment worker ағынында құлады."
 code.editor.no_file_selected = "Файл таңдалмаған"
 code.editor.wrap_tooltip = "Жол тасымалы"
+code.editor.toggle_tooltip = "Редакторды көрсету немесе жасыру"
 code.history.title = "Нұсқалар тарихы"
 code.editor.save_tooltip = "Сақтау (дискіге)"
 app.copy = "Көшіру"

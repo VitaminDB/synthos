@@ -11,10 +11,11 @@
 //!   [▤ папка · путь  ⎘] [файл · каталог   🔍 поиск   ↵ ⟲ 💾] [Открытые файлы · N ▥]   ← заголовки
 //!   ├── file_tree                        ─── Reactive(TreeView)
 //!   └── SplitView(Horizontal, session.right_split_ratio)
-//!       ├── center                       ─── вертикальный SplitView(editor↔terminal)
-//!       │   └── SplitView(Vertical, session.split_ratio)
+//!       ├── center                       ─── Reactive(session.editor_visible)
+//!       │   └── SplitView(Vertical, session.split_ratio)   ← редактор показан
 //!       │       ├── editor_pane          ─── Reactive(CodeEditor)
 //!       │       └── terminal_pane        ─── tabs + Reactive(Terminal::attach)
+//!       │   └── terminal_pane                               ← редактор скрыт
 //!       └── open_files                   ─── Reactive(ListView)
 //! ```
 //!
@@ -118,16 +119,25 @@ pub fn view() -> impl Widget {
         .children(vec![Box::new(main) as Box<dyn Widget>, Box::new(dialogs::view())])
 }
 
-/// Центр: вертикальный split editor↔terminal.
+/// Центр: вертикальный split editor↔terminal, а при скрытом редакторе
+/// (`session.editor_visible`) — один терминал на всю высоту. Подписка своя,
+/// чтобы переключение не пересобирало каркас вместе с деревом файлов.
 fn center(session: state::CodeSession) -> impl Widget {
-    DecoratedBox::new().class("code-editor-center grow").child(
-        SplitView::new(editor_pane::view(), terminal_pane::view())
-            .class("code-editor-split")
-            .direction(SplitDirection::Vertical)
-            .ratio_signal(session.split_ratio)
-            .min_size(80.0)
-            .divider_width(6.0),
-    )
+    DecoratedBox::new().class("code-editor-center grow").child(move || {
+        let child: Box<dyn Widget> = if session.editor_visible.get() {
+            Box::new(
+                SplitView::new(editor_pane::view(), terminal_pane::view(false))
+                    .class("code-editor-split")
+                    .direction(SplitDirection::Vertical)
+                    .ratio_signal(session.split_ratio)
+                    .min_size(80.0)
+                    .divider_width(6.0),
+            )
+        } else {
+            Box::new(terminal_pane::view(true))
+        };
+        expand(child)
+    })
 }
 
 /// Заголовок левой панели: папка сессии + путь к корню, справа — кнопка

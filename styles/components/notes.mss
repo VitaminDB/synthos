@@ -982,20 +982,20 @@ document-editor {
     color: var(--text-muted);
 }
 /* Окно просмотра картинки-вложения карточки (`media::image_viewer`).
- * Тёмная «галерейная» палитра просмотрщика вложений чата (media_viewer.mss)
- * независимо от темы: под картинкой нейтральный тёмный фон читается лучше
- * светлого. Кнопки подвала и подпись масштаба — его же классы
- * (`media-viewer-action`, `media-viewer-zoom`).
+ * Палитра темы, как у остальных плавающих окон (`.chat-float-window`):
+ * с жёстко тёмной «галерейной» палитрой окно на светлой теме выглядело
+ * чужим. Сцена — `--bg-window`: на тон отличается от панели, так что края
+ * картинки со светлым фоном видны в обеих темах.
  * Шапку FloatingWindow рисует сам: фон окна с затемнением, заголовок и
  * крестик — `color`. padding 1px — сцена от края до края, но не поверх
  * рамки; у подвала своего фона нет, иначе его квадратные углы вылезли бы
  * за скругление окна. */
 .notes-image-viewer-window {
-    background-color: #14151A;
-    color: #F2F3F5;
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-panel);
-    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18), var(--glass-shadow);
     padding: 1px 1px 1px 1px;
     min-width: 360px;
     min-height: 280px;
@@ -1005,7 +1005,7 @@ document-editor {
     height: 100%;
 }
 .notes-image-viewer-stage {
-    background-color: #0E0F13;
+    background-color: var(--bg-window);
     flex-grow: 1;
     overflow: hidden;
 }
@@ -1017,5 +1017,19 @@ document-editor {
     padding: 6px 10px 6px 10px;
     border-width: 0;
     border-top-width: 1px;
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--border-soft);
+}
+/* Кнопки подвала: цвет и наведение — из ресета ToolButton (reset.mss),
+ * здесь только размер. Классы чата (`media-viewer-*`) не годятся: там
+ * белые глифы под его всегда тёмный просмотрщик. */
+.notes-image-viewer-action {
+    width: 32px;
+    height: 32px;
+    icon-size: 18px;
+}
+.notes-image-viewer-zoom {
+    color: var(--text-muted);
+    font-size: 12px;
+    width: 48px;
+    text-align: center;
 }

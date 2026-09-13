@@ -284,7 +284,7 @@ struct ViewerSignals {
 }
 
 /// Окно просмотра картинки (вложение карточки): модальное, по центру, в
-/// тёмной палитре просмотрщика вложений чата. Картинка вписывается целиком;
+/// палитре текущей темы. Картинка вписывается целиком;
 /// колёсико и кнопки подвала масштабируют, перетаскивание двигает.
 pub fn image_viewer(ctx: NotesCtx) -> impl Widget {
     let s = ViewerSignals {
@@ -353,12 +353,12 @@ fn viewer_body(path: PathBuf, s: ViewerSignals) -> impl Widget {
 }
 
 /// Подвал: − / масштаб / + / вписать, справа — открыть системным приложением.
-/// Кнопки и подпись — классы просмотрщика чата, чтобы оба выглядели одинаково.
+/// Подсказки — те же строки, что у просмотрщика чата; стили свои, по теме.
 fn viewer_footer(path: PathBuf, s: ViewerSignals) -> impl Widget {
     use crate::icons::{MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_ZOOM_IN, MI_ZOOM_OUT};
     let zoom = s.zoom;
     let zoom_label = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        vec![Box::new(Text::new(format!("{:.0}%", zoom.get() * 100.0)).class("media-viewer-zoom"))]
+        vec![Box::new(Text::new(format!("{:.0}%", zoom.get() * 100.0)).class("notes-image-viewer-zoom"))]
     });
     DecoratedBox::new().class("notes-image-viewer-footer").child(
         Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).children(vec![
@@ -366,27 +366,27 @@ fn viewer_footer(path: PathBuf, s: ViewerSignals) -> impl Widget {
                 ToolButton::new(MI_ZOOM_OUT)
                     .tooltip(tr!("chat.media_viewer.zoom_out.tooltip"))
                     .on_click(move || scale_by(s, 1.0 / 1.25))
-                    .class("media-viewer-action"),
+                    .class("notes-image-viewer-action"),
             ) as Box<dyn Widget>,
             Box::new(zoom_label),
             Box::new(
                 ToolButton::new(MI_ZOOM_IN)
                     .tooltip(tr!("chat.media_viewer.zoom_in.tooltip"))
                     .on_click(move || scale_by(s, 1.25))
-                    .class("media-viewer-action"),
+                    .class("notes-image-viewer-action"),
             ),
             Box::new(
                 ToolButton::new(MI_FIT_SCREEN)
                     .tooltip(tr!("chat.media_viewer.fit.tooltip"))
                     .on_click(move || reset_zoom(s))
-                    .class("media-viewer-action"),
+                    .class("notes-image-viewer-action"),
             ),
             Box::new(DecoratedBox::new().class("grow")),
             Box::new(
                 ToolButton::new(MI_OPEN_IN_NEW)
                     .tooltip(tr!("chat.media_viewer.open_external.tooltip"))
                     .on_click(move || open_external(&path))
-                    .class("media-viewer-action"),
+                    .class("notes-image-viewer-action"),
             ),
         ]),
     )
@@ -675,7 +675,7 @@ mod tests {
     }
 }
 
-/// Окно просмотра картинки на `TestHarness`: тёмная палитра из MSS, сцена
+/// Окно просмотра картинки на `TestHarness`: палитра темы из MSS, сцена
 /// на всё окно, кнопки масштаба. `cargo test --features testing media::viewer_harness_tests`.
 #[cfg(all(test, feature = "testing"))]
 mod viewer_harness_tests {
@@ -687,8 +687,15 @@ mod viewer_harness_tests {
     use syngui::testing::TestHarness;
 
     use super::{viewer_window, ViewerSignals};
+    use crate::pages::settings::theme_data::{default_dark_theme, default_theme, SynthosTheme};
 
     fn open_viewer() -> (TestHarness, ViewerSignals) {
+        open_viewer_with(default_theme())
+    }
+
+    /// Тема поверх стилей — как в приложении: её `:root` идёт последним и
+    /// перекрывает переменные из variables.mss.
+    fn open_viewer_with(theme: SynthosTheme) -> (TestHarness, ViewerSignals) {
         let s = ViewerSignals {
             open: use_signal(true),
             file: use_signal(Some((PathBuf::from("/nonexistent/shot.png"), "shot.png".to_string()))),
@@ -699,7 +706,8 @@ mod viewer_harness_tests {
         // Как кадр приложения: ветка Reactive достраивается при `rebuild`,
         // новым элементам нужны стили, потом раскладка; отрисовка ставит
         // окно в overlay-стек, через который к нему приходят клики.
-        let engine = h.apply_mss(crate::styles::styles());
+        let mss = format!("{}\n{}", crate::styles::styles(), theme.to_mss());
+        let engine = h.apply_mss(&mss);
         h.rebuild();
         h.apply_styles(&engine);
         h.layout(1280.0, 900.0);
@@ -707,8 +715,11 @@ mod viewer_harness_tests {
         (h, s)
     }
 
+    /// Воспринимаемая яркость по sRGB: `Color` хранит линейные компоненты.
     fn luma(c: Color) -> f32 {
-        0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+        let [r, g, b] = c.to_srgb_u8();
+        let f = |v: u8| v as f32 / 255.0;
+        0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
     }
 
     fn click(h: &mut TestHarness, at: Point) {
@@ -716,25 +727,41 @@ mod viewer_harness_tests {
         h.send_event(&Event::MouseUp { button: MouseButton::Left, position: at });
     }
 
-    #[test]
-    fn window_is_dark() {
-        let (h, _) = open_viewer();
+    /// Фон окна, заголовка (`color`), сцены и глиф кнопки подвала.
+    fn palette(h: &TestHarness) -> (Color, Color, Color, Color) {
         let ids = h.find_by_class("notes-image-viewer-window");
         assert_eq!(ids.len(), 1, "окно не нашлось");
         let f = h.element_mss(ids[0]).expect("стили окна");
         let bg = f.background_color.expect("у окна нет фона — FloatingWindow зальёт белым");
-        assert!(luma(bg) < 0.15, "фон окна не тёмный: {bg:?}");
-        let fg = f.color.expect("у окна нет color — заголовок и крестик будут тёмными");
-        assert!(luma(fg) > 0.8, "заголовок не светлый: {fg:?}");
-
+        let fg = f.color.expect("у окна нет color — заголовок и крестик возьмут дефолт");
         let stage = h.find_by_class("notes-image-viewer-stage");
-        let bg = h.element_mss(stage[0]).and_then(|f| f.background_color).expect("фон сцены");
-        assert!(luma(bg) < 0.1, "сцена не тёмная: {bg:?}");
-
-        let buttons = h.find_by_class("media-viewer-action");
+        let stage = h.element_mss(stage[0]).and_then(|f| f.background_color).expect("фон сцены");
+        let buttons = h.find_by_class("notes-image-viewer-action");
         assert_eq!(buttons.len(), 4, "−, +, вписать, открыть");
         let glyph = h.element_mss(buttons[0]).and_then(|f| f.color).expect("цвет кнопки");
-        assert!(luma(glyph) > 0.5, "кнопка подвала не светлая на тёмном: {glyph:?}");
+        (bg, fg, stage, glyph)
+    }
+
+    /// Светлая тема — светлое окно: раньше палитра была жёстко тёмной.
+    #[test]
+    fn window_is_light_on_light_theme() {
+        let (h, _) = open_viewer_with(default_theme());
+        let (bg, fg, stage, glyph) = palette(&h);
+        assert!(luma(bg) > 0.9, "фон окна не светлый: {bg:?}");
+        assert!(luma(fg) < 0.3, "заголовок не тёмный на светлом: {fg:?}");
+        assert!(luma(stage) > 0.8, "сцена не светлая: {stage:?}");
+        assert!(luma(stage) < luma(bg), "сцена сливается с окном: {stage:?} vs {bg:?}");
+        assert!(luma(glyph) < 0.6, "кнопка подвала не видна на светлом: {glyph:?}");
+    }
+
+    #[test]
+    fn window_is_dark_on_dark_theme() {
+        let (h, _) = open_viewer_with(default_dark_theme());
+        let (bg, fg, stage, glyph) = palette(&h);
+        assert!(luma(bg) < 0.3, "фон окна не тёмный: {bg:?}");
+        assert!(luma(fg) > 0.5, "заголовок не светлый на тёмном: {fg:?}");
+        assert!(luma(stage) < luma(bg), "сцена не темнее окна: {stage:?} vs {bg:?}");
+        assert!(luma(glyph) > 0.4, "кнопка подвала не видна на тёмном: {glyph:?}");
     }
 
     /// Картинка вписывается в окно, а не в клочок: сцена — вся ширина окна и
@@ -753,8 +780,8 @@ mod viewer_harness_tests {
     #[test]
     fn footer_buttons_zoom_and_fit() {
         let (mut h, s) = open_viewer();
-        let buttons = h.find_by_class("media-viewer-action");
-        let center = |h: &TestHarness, id| {
+        let buttons = h.find_by_class("notes-image-viewer-action");
+        let center =|h: &TestHarness, id| {
             let r = h.element_bounds(id);
             Point::new(r.x() + r.size.width / 2.0, r.y() + r.size.height / 2.0)
         };

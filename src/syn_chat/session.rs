@@ -3701,16 +3701,19 @@ async fn view_media_call(
 /// Лейблы активных инструментов для системного промпта — в том же порядке,
 /// в каком они уходят в tool-схемы.
 fn active_tool_labels(app: &AppCtx) -> Vec<String> {
-    app.tools
-        .active
-        .get_untracked()
-        .iter()
-        .filter(|k| !Tool::by_key(k).is_some_and(Tool::is_implicit))
-        .map(|k| {
-            Tool::by_key(k)
-                .map(|t| t.label.to_string())
-                .unwrap_or_else(|| k.clone())
-        })
+    declared_tool_labels(&app.tools.active.get_untracked())
+}
+
+/// Лейблы тех ключей, что уходят модели схемой: инструменты каталога, кроме
+/// неявных. Ключ вне каталога схемы не получает, и в строке «available
+/// tools» его быть не должно — 13.09.2026 `web_read`/`web_search` из
+/// конфига до слияния в `web` попадали туда именами, и модель при пустых
+/// «Активных» перечисляла их как объявленные.
+fn declared_tool_labels(keys: &[String]) -> Vec<String> {
+    keys.iter()
+        .filter_map(|k| Tool::by_key(k))
+        .filter(|t| !t.is_implicit())
+        .map(|t| t.label.to_string())
         .collect()
 }
 
@@ -4094,6 +4097,17 @@ fn prepare_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Строка «available tools» называет только объявленные схемой
+    /// инструменты: ни ключей вне каталога, ни неявного `autotools`.
+    #[test]
+    fn declared_tool_labels_skip_keys_outside_catalog() {
+        let keys: Vec<String> = ["web_read", "bash", "web_search", "autotools", "notes"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(declared_tool_labels(&keys), ["bash", "notes"]);
+    }
 
     /// Сквозной рендер шаблона Gemma-4 с настоящими схемами инструментов и
     /// историей «вызов → результат»: объявления в системном ходе, вызов в

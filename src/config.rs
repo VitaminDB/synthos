@@ -1158,7 +1158,7 @@ pub fn resolve_models_dir(raw: &str) -> std::path::PathBuf {
 pub fn default_tools_active() -> Vec<String> {
     vec![
         "bash".to_string(),
-        "web_read".to_string(),
+        "web".to_string(),
         "system".to_string(),
         "pipelines".to_string(),
         "notes".to_string(),
@@ -1412,6 +1412,22 @@ impl AppConfig {
         }
     }
 
+    /// `web_read` / `web_search` — инструменты до слияния в `web`. Каталог их
+    /// не знает: чипа нет, снять нельзя, а в системный промпт они уходили
+    /// именами. На их месте встаёт `web`, если его ещё нет ни в активных,
+    /// ни в пуле.
+    pub fn migrate_legacy_web_tool_keys(&mut self) {
+        let is_legacy = |k: &String| k == "web_read" || k == "web_search";
+        let Some(pos) = self.tools_active.iter().position(is_legacy) else {
+            return;
+        };
+        self.tools_active.retain(|k| !is_legacy(k));
+        let has_web = |list: &[String]| list.iter().any(|k| k == "web");
+        if !has_web(&self.tools_active) && !has_web(&self.tools_auto) {
+            self.tools_active.insert(pos, "web".to_string());
+        }
+    }
+
     /// Одноразовая миграция дефолтов сэмплинга Syn-чата (03.09.2026): старый
     /// набор 0.7 / 0.9 / 40 / repeat 1.05 → рекомендованные Qwen 0.6 / 0.95 /
     /// 20 без штрафа за повторы. Переписываем только конфиг, в котором лежит
@@ -1442,6 +1458,7 @@ impl AppConfig {
                     cfg.introduce_notes_tool();
                     cfg.introduce_wizard_tool();
                     cfg.introduce_view_media_tool();
+                    cfg.migrate_legacy_web_tool_keys();
                     cfg.migrate_sampling_defaults();
                     cfg
                 }
@@ -1543,6 +1560,26 @@ mod tests {
         cfg.introduce_view_media_tool();
         assert_eq!(cfg.tools_active, ["bash"], "выбор пользователя не трогается");
         assert!(AppConfig::default().tools_active.iter().any(|k| k == "view_media"));
+    }
+
+    /// `web_read`/`web_search` до слияния в `web`: в активных становятся
+    /// `web`, а если `web` уже в пуле — просто уходят (конфиг 13.09.2026).
+    #[test]
+    fn legacy_web_tool_keys_migrate_to_web() {
+        let mut cfg: AppConfig =
+            serde_json::from_str(r#"{"tools_active":["bash","web_read","web_search","notes"]}"#).unwrap();
+        cfg.migrate_legacy_web_tool_keys();
+        assert_eq!(cfg.tools_active, ["bash", "web", "notes"]);
+
+        let mut cfg: AppConfig = serde_json::from_str(
+            r#"{"tools_active":["web_read","web_search"],"tools_auto":["bash","web"]}"#,
+        )
+        .unwrap();
+        cfg.migrate_legacy_web_tool_keys();
+        assert!(cfg.tools_active.is_empty(), "{:?}", cfg.tools_active);
+        assert_eq!(cfg.tools_auto, ["bash", "web"]);
+
+        assert!(!AppConfig::default().tools_active.iter().any(|k| k.starts_with("web_")));
     }
 
     /// Пул `autotools` появился 13.09.2026: старый конфиг его не содержит и

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use synaptix_core::device::Device;
 use syngui::prelude::*;
-use synaptix::facade::llm::{load_llm_with_policy, Llm, LlmTokenizer, QuantPolicy};
+use synaptix::facade::llm::{load_llm_with_policy, Llm, LlmTokenizer, QuantPolicy, SamplingProfile};
 
 pub struct LoadedSynModel {
     pub model: Llm,
@@ -22,6 +22,9 @@ pub struct LoadedSynModel {
     /// переставало перерисовываться, композитор помечал его «не отвечает».
     /// Для загруженного бандла флаг неизменен, поэтому кэш честный.
     pub supports_media: bool,
+    /// Пресеты сэмплинга и уровни размышлений модели — по ним режим
+    /// `default` карточки Sampling собирает параметры хода.
+    pub sampling: SamplingProfile,
 }
 
 fn select_device() -> Device {
@@ -117,6 +120,10 @@ pub struct SynModelRegistry {
     /// НЕ поднимается — путь нужен кнопке «Загрузить модель», чтобы не гонять
     /// пользователя через файловый диалог на каждый запуск.
     pub last_path: RwSignal<Option<PathBuf>>,
+    /// Пресеты сэмплинга для карточки Sampling: загруженной модели, а до
+    /// загрузки — последней (`last_path`), чтобы режим `default` показывал
+    /// значения модели сразу. Профиль читает только конфиги бандла, не веса.
+    pub sampling: RwSignal<Option<Arc<SamplingProfile>>>,
 }
 
 impl SynModelRegistry {
@@ -125,11 +132,21 @@ impl SynModelRegistry {
             .last_syn_model
             .map(PathBuf::from)
             .filter(|p| p.exists());
+        let sampling = use_signal(None);
+        if let Some(path) = last.clone() {
+            // Открыть бандл — это прочитать его каталог чанков; на старте
+            // приложения это не повод ждать.
+            std::thread::spawn(move || {
+                let profile = synaptix::facade::llm::sampling_profile(&path);
+                sampling.set(Some(Arc::new(profile)));
+            });
+        }
         Self {
             current: use_signal(None),
             loading: use_signal(false),
             error: use_signal(None),
             last_path: use_signal(last),
+            sampling,
         }
     }
 
@@ -232,11 +249,14 @@ impl SynModelRegistry {
                     }
                     registry.last_path.set_always(Some(path.clone()));
                     let supports_media = model.supports_media();
+                    let sampling = synaptix::facade::llm::sampling_profile(&path);
+                    registry.sampling.set(Some(Arc::new(sampling.clone())));
                     let loaded = Arc::new(LoadedSynModel {
                         model,
                         tokenizer: Arc::new(tokenizer),
                         path,
                         supports_media,
+                        sampling,
                     });
                     registry.current.set_always(Some(loaded.clone()));
                     if let Some(tx) = notify {

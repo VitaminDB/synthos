@@ -11,11 +11,11 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
 use syngui::widgets::containers::GestureDetector;
-use syngui::widgets::{Dropdown, DropdownItem, Slider, SpinBox, TextField, Toggle};
+use syngui::widgets::{Dropdown, DropdownItem, SegmentedButton, Slider, SpinBox, TextField, Toggle};
 
 use crate::context::{SYN_RIGHT_PANEL_DETAILS, SYN_RIGHT_PANEL_PARAMS};
 use crate::icons::*;
-use crate::syn_chat::params::SamplingParams;
+use crate::syn_chat::params::{SamplingMode, SamplingParams};
 use crate::syn_chat::prompt_presets::{self, PromptDialog};
 use crate::syn_chat::telemetry::{AgentRun, RunKind, RunState, RunStats, ROOT_RUN};
 use crate::syn_chat::{SynChatCtx, SynModelRegistry};
@@ -284,50 +284,133 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
                 .child(Stack::new().children(vec![Box::new(head) as Box<dyn Widget>]));
         }
         let p = ctx.params.get();
+        let profile = use_context::<SynModelRegistry>().sampling.get();
+        let custom = p.mode() == SamplingMode::Custom;
+        // В режиме `default` слайдеры показывают то, с чем пойдёт ход, —
+        // пресет модели, — и не правятся.
+        let shown = match (&profile, custom) {
+            (Some(prof), false) => p.effective(prof),
+            _ => p.clone(),
+        };
+        let edit = custom;
 
-        DecoratedBox::new().class("sampling-card").child(mgui! {
-            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                head,
-                slider_row("Temperature", p.temperature, 0.0, 2.0, 0.05, 2, |v, q| q.temperature = v),
-                slider_row("top_p", p.top_p, 0.0, 1.0, 0.05, 2, |v, q| q.top_p = v),
-                slider_row("top_k", p.top_k as f32, 0.0, 200.0, 1.0, 0, |v, q| q.top_k = v.round() as u32),
-                slider_row("min_p", p.min_p, 0.0, 1.0, 0.01, 2, |v, q| q.min_p = v),
-                slider_row(
-                    "repeat_penalty",
-                    p.repeat_penalty,
-                    1.0,
-                    2.0,
-                    0.01,
-                    2,
-                    |v, q| q.repeat_penalty = v,
-                ),
-                spin_row("repeat_last_n", p.repeat_last_n as f64, 0.0, 512.0, 8.0, |v, q| {
-                    q.repeat_last_n = v.round().max(0.0) as u32;
-                }),
-                slider_row(
-                    "presence_penalty",
-                    p.presence_penalty,
-                    -2.0,
-                    2.0,
-                    0.05,
-                    2,
-                    |v, q| q.presence_penalty = v,
-                ),
-                slider_row(
-                    "frequency_penalty",
-                    p.frequency_penalty,
-                    -2.0,
-                    2.0,
-                    0.05,
-                    2,
-                    |v, q| q.frequency_penalty = v,
-                ),
-                seed_row(p.seed),
-            ]
+        let mode_switch = SegmentedButton::new(vec![
+            tr!("chat.right.sampling.mode.default"),
+            tr!("chat.right.sampling.mode.custom"),
+        ])
+        .selected(usize::from(custom))
+        .on_change(|i| {
+            let ctx = use_context::<SynChatCtx>();
+            let profile = use_context::<SynModelRegistry>().sampling.get_untracked();
+            ctx.params.update(|q| {
+                if i == 1 {
+                    // «Свои» начинаются с того, что модель и так давала, —
+                    // иначе слайдеры прыгнули бы на давно забытые значения.
+                    if q.mode() == SamplingMode::Default {
+                        if let Some(prof) = &profile {
+                            *q = q.effective(prof);
+                        }
+                    }
+                    q.mode = Some(SamplingMode::Custom);
+                } else {
+                    q.mode = Some(SamplingMode::Default);
+                }
+            });
         })
+        .class("sampling-mode-switch");
+
+        let mut rows: Vec<Box<dyn Widget>> = vec![
+            Box::new(head),
+            Box::new(Tooltip::new(mode_switch, tr!("chat.right.sampling.mode.tooltip"))),
+            preset_row(&p, profile.as_deref()),
+        ];
+        rows.extend([
+            slider_row("Temperature", shown.temperature, 0.0, 2.0, 0.05, 2, edit, |v, q| q.temperature = v),
+            slider_row("top_p", shown.top_p, 0.0, 1.0, 0.05, 2, edit, |v, q| q.top_p = v),
+            slider_row("top_k", shown.top_k as f32, 0.0, 200.0, 1.0, 0, edit, |v, q| {
+                q.top_k = v.round() as u32;
+            }),
+            slider_row("min_p", shown.min_p, 0.0, 1.0, 0.01, 2, edit, |v, q| q.min_p = v),
+            slider_row("repeat_penalty", shown.repeat_penalty, 1.0, 2.0, 0.01, 2, edit, |v, q| {
+                q.repeat_penalty = v;
+            }),
+        ]);
+        rows.push(spin_row("repeat_last_n", shown.repeat_last_n as f64, 0.0, 512.0, 8.0, edit, |v, q| {
+            q.repeat_last_n = v.round().max(0.0) as u32;
+        }));
+        rows.extend([
+            slider_row("presence_penalty", shown.presence_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
+                q.presence_penalty = v;
+            }),
+            slider_row("frequency_penalty", shown.frequency_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
+                q.frequency_penalty = v;
+            }),
+        ]);
+        rows.push(Box::new(seed_row(p.seed)));
+
+        DecoratedBox::new().class("sampling-card").child(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(rows),
+        )
     }
 }
 
+/// Комбобокс пресетов модели. В режиме `default` выбирает, какой пресет
+/// работает (пресет режима размышлений заодно переключает и их); в `custom`
+/// — заливает значения пресета в слайдеры как отправную точку.
+fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::SamplingProfile>) -> Box<dyn Widget> {
+    let Some(profile) = profile else {
+        return Box::new(Text::new(tr!("chat.right.sampling.preset.no_model")).class("sampling-hint"));
+    };
+    let selected = match p.mode() {
+        SamplingMode::Default => profile.pick(&p.preset, p.enable_thinking).map(|x| x.id),
+        SamplingMode::Custom => profile.preset(&p.preset).map(|x| x.id),
+    };
+    let items: Vec<DropdownItem> = profile
+        .presets
+        .iter()
+        .map(|x| DropdownItem::new(x.id, preset_label(x.id)))
+        .collect();
+    let presets = profile.presets.clone();
+    let picker = Dropdown::with_items(items)
+        .selected(selected.unwrap_or_default().to_string())
+        .leading_icon(MI_TUNE)
+        .on_change(move |id| {
+            let Some(preset) = presets.iter().find(|x| x.id == id) else { return };
+            use_context::<SynChatCtx>().params.update(|q| {
+                q.preset = preset.id.to_string();
+                if let Some(thinking) = preset.thinking {
+                    q.enable_thinking = thinking;
+                }
+                if q.mode() == SamplingMode::Custom {
+                    *q = q.with_preset(preset);
+                }
+            });
+        })
+        .class("sampling-preset-picker");
+    Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
+        Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            Text::new(tr!("chat.right.sampling.preset.label")).class("sampling-label"),
+            picker,
+        ]
+    }))
+}
+
+fn preset_label(id: &str) -> String {
+    match id {
+        "thinking" => tr!("chat.right.sampling.preset.thinking"),
+        "thinking_coding" => tr!("chat.right.sampling.preset.thinking_coding"),
+        "instruct" => tr!("chat.right.sampling.preset.instruct"),
+        "recommended" => tr!("chat.right.sampling.preset.recommended"),
+        "generation_config" => tr!("chat.right.sampling.preset.generation_config"),
+        "generic" => tr!("chat.right.sampling.preset.generic"),
+        other => other.to_string(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn slider_row(
     label: &'static str,
     value: f32,
@@ -335,18 +418,20 @@ fn slider_row(
     max: f32,
     step: f32,
     decimals: usize,
+    enabled: bool,
     apply: fn(f32, &mut SamplingParams),
-) -> impl Widget {
+) -> Box<dyn Widget> {
     let value_text = format!("{value:.decimals$}");
     let slider = Slider::new()
         .range(min, max)
         .step(step)
         .value(value)
+        .disabled(!enabled)
         .on_change(move |v| {
             let ctx = use_context::<SynChatCtx>();
             ctx.params.update(|q| apply(v, q));
         });
-    DecoratedBox::new().class("sampling-row").child(mgui! {
+    Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
         Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
             Row::new()
                 .gap(8.0)
@@ -357,27 +442,30 @@ fn slider_row(
                 ],
             slider,
         ]
-    })
+    }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spin_row(
     label: &'static str,
     value: f64,
     min: f64,
     max: f64,
     step: f64,
+    enabled: bool,
     apply: fn(f64, &mut SamplingParams),
-) -> impl Widget {
+) -> Box<dyn Widget> {
     let spin = SpinBox::new()
         .range(min, max)
         .step(step)
         .decimal_places(0)
         .value(value)
+        .disabled(!enabled)
         .on_change(move |v| {
             let ctx = use_context::<SynChatCtx>();
             ctx.params.update(|q| apply(v, q));
         });
-    DecoratedBox::new().class("sampling-row").child(mgui! {
+    Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
         Row::new()
             .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -385,7 +473,7 @@ fn spin_row(
                 Text::new(label).class("sampling-label"),
                 spin,
             ]
-    })
+    }))
 }
 
 fn seed_row(seed: i64) -> impl Widget {
@@ -414,29 +502,35 @@ fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
     || {
         let ctx = use_context::<SynChatCtx>();
         let p = ctx.params.get();
-        DecoratedBox::new().class("sampling-card").child(mgui! {
-            Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                section_title(tr!("chat.right.context.title")),
-                slider_row(
-                    "max_new_tokens",
-                    p.max_new_tokens as f32,
-                    32.0,
-                    262144.0,
-                    256.0,
-                    0,
-                    |v, q| q.max_new_tokens = v.round() as u32,
-                ),
-                slider_row(
-                    "max_seq_len",
-                    p.max_seq_len as f32,
-                    1024.0,
-                    262144.0,
-                    1024.0,
-                    0,
-                    |v, q| q.max_seq_len = v.round() as u32,
-                ),
-            ]
-        })
+        let rows: Vec<Box<dyn Widget>> = vec![
+            Box::new(section_title(tr!("chat.right.context.title"))),
+            slider_row(
+                "max_new_tokens",
+                p.max_new_tokens as f32,
+                32.0,
+                262144.0,
+                256.0,
+                0,
+                true,
+                |v, q| q.max_new_tokens = v.round() as u32,
+            ),
+            slider_row(
+                "max_seq_len",
+                p.max_seq_len as f32,
+                1024.0,
+                262144.0,
+                1024.0,
+                0,
+                true,
+                |v, q| q.max_seq_len = v.round() as u32,
+            ),
+        ];
+        DecoratedBox::new().class("sampling-card").child(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(rows),
+        )
     }
 }
 
@@ -445,11 +539,12 @@ fn context_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
 fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     || {
         let ctx = use_context::<SynChatCtx>();
-        let on = ctx.params.get().enable_thinking;
+        let p = ctx.params.get();
+        let on = p.enable_thinking;
         let toggle = Toggle::new().on(on).on_change(|v| {
             use_context::<SynChatCtx>().params.update(|q| q.enable_thinking = v);
         });
-        DecoratedBox::new().class("sampling-card").child(mgui! {
+        let mut rows: Vec<Box<dyn Widget>> = vec![Box::new(mgui! {
             Row::new()
                 .gap(10.0)
                 .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -457,7 +552,54 @@ fn thinking_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
                     Text::new(tr!("chat.right.thinking.label")).class("sampling-label"),
                     toggle,
                 ]
-        })
+        })];
+
+        // Глубина — только у моделей, чей шаблон её настраивает (Qwen3.8,
+        // Muse Glimmer), и только при включённых размышлениях: без них
+        // уровень шаблон не читает.
+        let levels = use_context::<SynModelRegistry>()
+            .sampling
+            .get()
+            .and_then(|prof| prof.reasoning.clone());
+        if let (true, Some(levels)) = (on, levels) {
+            let mut items = vec![DropdownItem::new(
+                "",
+                tr!("chat.right.thinking.level.model_default", level = level_label(&levels.default)),
+            )];
+            items.extend(levels.levels.iter().map(|l| DropdownItem::new(l.clone(), level_label(l))));
+            let selected = levels.resolve(p.effort()).unwrap_or_default().to_string();
+            let picker = Dropdown::with_items(items)
+                .selected(selected)
+                .leading_icon(MI_PSYCHOLOGY)
+                .on_change(|id| {
+                    let id = id.to_string();
+                    use_context::<SynChatCtx>().params.update(|q| q.reasoning_effort = id.clone());
+                })
+                .class("sampling-preset-picker");
+            rows.push(Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
+                Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    Text::new(tr!("chat.right.thinking.level.label")).class("sampling-label"),
+                    picker,
+                ]
+            })));
+        }
+
+        DecoratedBox::new().class("sampling-card").child(
+            Column::new()
+                .gap(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(rows),
+        )
+    }
+}
+
+fn level_label(level: &str) -> String {
+    match level {
+        "low" => tr!("chat.right.thinking.level.low"),
+        "medium" => tr!("chat.right.thinking.level.medium"),
+        "high" => tr!("chat.right.thinking.level.high"),
+        "xhigh" => tr!("chat.right.thinking.level.xhigh"),
+        other => other.to_string(),
     }
 }
 

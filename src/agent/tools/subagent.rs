@@ -181,9 +181,14 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
         let snap = reg.current.get_untracked().map(|model| {
             let abort = syn.abort.clone();
             let abort_baseline = abort.load(Ordering::Relaxed);
+            // Пресет модели разрешается здесь, по режиму размышлений чата, —
+            // до того как субагент выключит размышления себе: иначе режим
+            // `default` отдал бы ему Instruct-пресет со штрафом присутствия,
+            // а штрафы ломают синтаксис tool-вызова (см. `params.rs`).
+            let params = syn.params.get_untracked().effective(&model.sampling);
             SubagentSnapshot {
                 model,
-                params: syn.params.get_untracked(),
+                params,
                 default_system_prompt: syn.system_prompt.get_untracked(),
                 active_tools: build_active_tools_for_subagent(&app),
                 pool_tools: build_pool_tools_for_subagent(&app),
@@ -595,10 +600,11 @@ fn generate_subagent_turn(
     // (id карточки в панели «Детали», токены, накопленные прошлыми turn'ами)
     run: (u64, u32),
 ) -> anyhow::Result<SubagentTurn> {
-    let prompt = model.tokenizer.apply_chat_template_ex_tools(
+    let prompt = model.tokenizer.apply_chat_template_reasoning(
         history,
         true,
         params.enable_thinking,
+        params.effort(),
         if tool_schemas.is_empty() {
             None
         } else {

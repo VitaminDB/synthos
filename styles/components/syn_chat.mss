@@ -68,6 +68,12 @@
   font-family: monospace;
 }
 
+/* Подсказка вместо пресетов, пока модель не выбрана. */
+.sampling-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .system-prompt-edit {
   font-size: 12px;
   border-radius: 6px;

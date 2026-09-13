@@ -1317,7 +1317,8 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     crate::syn_chat::telemetry::reset();
 
     // 2. Snapshot params + история + tool-схемы (всё на main thread!).
-    let params = ctx.params.get_untracked();
+    // В режиме `default` сэмплинг — из пресета модели.
+    let params = ctx.params.get_untracked().effective(&model.sampling);
     let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
     // Системный промпт агента: базовые правила + пользовательская добавка из
     // настроек. Пустое поле в настройках больше не означает «промпта нет».
@@ -1979,10 +1980,11 @@ async fn run_agent_loop(
                 }
                 None => &history,
             };
-            let rendered = model.tokenizer.apply_chat_template_ex_tools(
+            let rendered = model.tokenizer.apply_chat_template_reasoning(
                 for_prompt,
                 true,
                 params.enable_thinking,
+                params.effort(),
                 if tool_schemas.is_empty() {
                     None
                 } else {

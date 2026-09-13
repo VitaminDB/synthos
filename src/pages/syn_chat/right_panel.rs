@@ -51,13 +51,25 @@ fn params_tab() -> impl Widget {
             .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 model_card(),
+                // Размышления — выше сэмплинга: от них зависит, какой пресет
+                // модели работает в режиме «По умолчанию».
+                thinking_card_reactive(),
                 sampling_card_reactive(),
                 context_card_reactive(),
-                thinking_card_reactive(),
                 system_prompt_card_reactive(),
                 reset_button(),
             ]
     })
+}
+
+/// Карточки «Thinking» и «Sampling» как самостоятельные виджеты — для
+/// harness-тестов (`tests/sampling_card_theme.rs`).
+pub fn thinking_card() -> impl Widget {
+    DecoratedBox::new().child(thinking_card_reactive())
+}
+
+pub fn sampling_card() -> impl Widget {
+    DecoratedBox::new().child(sampling_card_reactive())
 }
 
 // ── Карточка «Модель» ────────────────────────────────────────────────
@@ -287,12 +299,13 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
         let profile = use_context::<SynModelRegistry>().sampling.get();
         let custom = p.mode() == SamplingMode::Custom;
         // В режиме `default` слайдеры показывают то, с чем пойдёт ход, —
-        // пресет модели, — и не правятся.
+        // пресет модели, — и не правятся. Пока модель не выбрана, значений
+        // нет вовсе: вместо слайдеров только подсказка из `preset_row`.
         let shown = match (&profile, custom) {
-            (Some(prof), false) => p.effective(prof),
-            _ => p.clone(),
+            (_, true) => Some(p.clone()),
+            (Some(prof), false) => Some(p.effective(prof)),
+            (None, false) => None,
         };
-        let edit = custom;
 
         let mode_switch = SegmentedButton::new(vec![
             tr!("chat.right.sampling.mode.default"),
@@ -324,28 +337,37 @@ fn sampling_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + 
             Box::new(Tooltip::new(mode_switch, tr!("chat.right.sampling.mode.tooltip"))),
             preset_row(&p, profile.as_deref()),
         ];
-        rows.extend([
-            slider_row("Temperature", shown.temperature, 0.0, 2.0, 0.05, 2, edit, |v, q| q.temperature = v),
-            slider_row("top_p", shown.top_p, 0.0, 1.0, 0.05, 2, edit, |v, q| q.top_p = v),
-            slider_row("top_k", shown.top_k as f32, 0.0, 200.0, 1.0, 0, edit, |v, q| {
-                q.top_k = v.round() as u32;
-            }),
-            slider_row("min_p", shown.min_p, 0.0, 1.0, 0.01, 2, edit, |v, q| q.min_p = v),
-            slider_row("repeat_penalty", shown.repeat_penalty, 1.0, 2.0, 0.01, 2, edit, |v, q| {
-                q.repeat_penalty = v;
-            }),
-        ]);
-        rows.push(spin_row("repeat_last_n", shown.repeat_last_n as f64, 0.0, 512.0, 8.0, edit, |v, q| {
-            q.repeat_last_n = v.round().max(0.0) as u32;
-        }));
-        rows.extend([
-            slider_row("presence_penalty", shown.presence_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
-                q.presence_penalty = v;
-            }),
-            slider_row("frequency_penalty", shown.frequency_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
-                q.frequency_penalty = v;
-            }),
-        ]);
+        if let Some(shown) = shown {
+            let edit = custom;
+            rows.extend([
+                slider_row("Temperature", shown.temperature, 0.0, 2.0, 0.05, 2, edit, |v, q| q.temperature = v),
+                slider_row("top_p", shown.top_p, 0.0, 1.0, 0.05, 2, edit, |v, q| q.top_p = v),
+                slider_row("top_k", shown.top_k as f32, 0.0, 200.0, 1.0, 0, edit, |v, q| {
+                    q.top_k = v.round() as u32;
+                }),
+                slider_row("min_p", shown.min_p, 0.0, 1.0, 0.01, 2, edit, |v, q| q.min_p = v),
+                slider_row("repeat_penalty", shown.repeat_penalty, 1.0, 2.0, 0.01, 2, edit, |v, q| {
+                    q.repeat_penalty = v;
+                }),
+            ]);
+            // Заблокированный SpinBox рисуется пустым полем с прочерком —
+            // в режиме `default` значение просто текстом.
+            rows.push(if edit {
+                spin_row("repeat_last_n", shown.repeat_last_n as f64, 0.0, 512.0, 8.0, true, |v, q| {
+                    q.repeat_last_n = v.round().max(0.0) as u32;
+                })
+            } else {
+                value_row("repeat_last_n", shown.repeat_last_n.to_string())
+            });
+            rows.extend([
+                slider_row("presence_penalty", shown.presence_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
+                    q.presence_penalty = v;
+                }),
+                slider_row("frequency_penalty", shown.frequency_penalty, -2.0, 2.0, 0.05, 2, edit, |v, q| {
+                    q.frequency_penalty = v;
+                }),
+            ]);
+        }
         rows.push(Box::new(seed_row(p.seed)));
 
         DecoratedBox::new().class("sampling-card").child(
@@ -364,9 +386,14 @@ fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::Sampli
     let Some(profile) = profile else {
         return Box::new(Text::new(tr!("chat.right.sampling.preset.no_model")).class("sampling-hint"));
     };
-    let selected = match p.mode() {
-        SamplingMode::Default => profile.pick(&p.preset, p.enable_thinking).map(|x| x.id),
-        SamplingMode::Custom => profile.preset(&p.preset).map(|x| x.id),
+    let custom = p.mode() == SamplingMode::Custom;
+    let (label, selected) = if custom {
+        // В «Своих» пресет — отправная точка. Имя держим, только пока
+        // слайдеры с ним совпадают: сдвинутый слайдер — уже не этот пресет.
+        let still_same = profile.preset(&p.preset).filter(|x| p.with_preset(x) == *p);
+        (tr!("chat.right.sampling.preset.apply_label"), still_same.map(|x| x.id))
+    } else {
+        (tr!("chat.right.sampling.preset.label"), profile.pick(&p.preset, p.enable_thinking).map(|x| x.id))
     };
     let items: Vec<DropdownItem> = profile
         .presets
@@ -376,6 +403,7 @@ fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::Sampli
     let presets = profile.presets.clone();
     let picker = Dropdown::with_items(items)
         .selected(selected.unwrap_or_default().to_string())
+        .placeholder("—")
         .leading_icon(MI_TUNE)
         .on_change(move |id| {
             let Some(preset) = presets.iter().find(|x| x.id == id) else { return };
@@ -392,7 +420,7 @@ fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::Sampli
         .class("sampling-preset-picker");
     Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
         Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-            Text::new(tr!("chat.right.sampling.preset.label")).class("sampling-label"),
+            Text::new(label).class("sampling-label"),
             picker,
         ]
     }))
@@ -408,6 +436,20 @@ fn preset_label(id: &str) -> String {
         "generic" => tr!("chat.right.sampling.preset.generic"),
         other => other.to_string(),
     }
+}
+
+/// Строка «подпись — значение» без контрола: параметр, который в режиме
+/// `default` только показывается.
+fn value_row(label: &'static str, value: String) -> Box<dyn Widget> {
+    Box::new(DecoratedBox::new().class("sampling-row").child(mgui! {
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween) => [
+                Text::new(label).class("sampling-label"),
+                Text::new(value).class("sampling-value"),
+            ]
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -74,6 +74,26 @@
   color: var(--text-muted);
 }
 
+/* «По умолчанию / Свои» — в размер пикеров карточки, а не 36px кнопки. */
+.sampling-mode-switch {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+/* Пресет модели и глубина размышлений — на всю ширину карточки, как
+ * пикер системного промпта. */
+.sampling-preset-picker {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background-color: var(--bg-window);
+  color: var(--text);
+}
+
 .system-prompt-edit {
   font-size: 12px;
   border-radius: 6px;

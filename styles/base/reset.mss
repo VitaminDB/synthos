@@ -112,6 +112,21 @@ Dropdown:hover {
     border-color: var(--primary);
 }
 
+/* SegmentedButton — без правила виджет рисует свои дефолты: белую подложку,
+ * рамку #D1D5DB и синий #3B82F6 под выбранным сегментом, то есть «чужой»
+ * акцент и светлый контрол на тёмной теме. `background-color`/`color` —
+ * невыбранные сегменты, `accent-color` — выбранный (его текст виджет
+ * рисует белым, как `--on-primary`). */
+SegmentedButton {
+    background-color: var(--bg-search);
+    color: var(--text);
+    border-width: 1px;
+    border-color: var(--border-soft);
+    border-radius: 10px;
+    accent-color: var(--primary);
+    font-size: 14px;
+}
+
 /* DatePicker — поле и всплывающий календарь в теме приложения: без
  * правила виджет берёт свои дефолты (белая заливка поля и панели, серая
  * рамка), и в тёмной теме календарь выглядит чужим. `--cal-*` красят

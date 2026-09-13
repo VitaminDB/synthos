@@ -9,8 +9,10 @@
 //! поверх заметок, редактора и настроек.
 //!
 //! Окно одно и показывает активный чат: клик по другой плитке в рейле
-//! переключает содержимое, а не открывает второе окно
-//! (`rail::open`). Пока чат оторван, центральная колонка страницы —
+//! переключает содержимое, а не открывает второе окно, и открывает
+//! страницу чата с панелями хода (`rail::open`). К панелям ведёт и кнопка
+//! в полосе над лентой (`window_bar`) — окно при этом остаётся, там же
+//! «печатает…», пока модель отвечает. Пока чат оторван, центральная колонка страницы —
 //! плейсхолдер с «Вернуть» (`chat_pane::view`); лента и ввод существуют в
 //! одном экземпляре, так что фокус, скролл и черновик не раздваиваются.
 //!
@@ -22,17 +24,19 @@
 use syngui::input::CursorIcon;
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::containers::GestureDetector;
+use syngui::widgets::containers::{GestureDetector, Positioned, Stack};
 use syngui::widgets::feedback::Tooltip;
 use syngui::widgets::overlay::drop_area::DropInfo;
 use syngui::widgets::overlay::portal::{Portal, PortalAnchor};
 use syngui::widgets::overlay::DropArea;
 use syngui::widgets::FloatingWindow;
 
-use crate::components::chat_item::{display_title, initials_from_title, tone_for};
+use crate::components::chat_item::{
+    display_title, initials_from_title, is_generating, tone_for, typing_dot,
+};
 use crate::components::workspace_frame::expand;
 use crate::context::AppCtx;
-use crate::icons::MI_CHAT;
+use crate::icons::{MI_CHAT, MI_VIEW_SIDEBAR};
 use crate::rail;
 use crate::syn_chat::SynChatCtx;
 
@@ -122,11 +126,50 @@ pub fn window() -> impl Widget {
 fn body() -> impl Widget {
     Reactive::new(|| -> Vec<Box<dyn Widget>> {
         if use_context::<SynChatCtx>().chat_detached.get() {
-            vec![Box::new(expand(Box::new(chat_pane::pane())))]
+            let column = mgui! {
+                Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    window_bar(),
+                    DecoratedBox::new().class("grow").child(chat_pane::pane()),
+                ]
+            };
+            vec![Box::new(expand(Box::new(column)))]
         } else {
             vec![Box::new(DecoratedBox::new().class("chat-float-window-empty"))]
         }
     })
+}
+
+/// Полоса над лентой в окне: слева «печатает…», пока модель отвечает в
+/// открытом чате, справа — переход на страницу чата к панелям хода
+/// (токены, статус, параметры). Окно при этом не закрывается: раньше к
+/// панелям можно было попасть, только вернув чат на страницу.
+pub fn window_bar() -> impl Widget {
+    let status = DecoratedBox::new().class("grow").child(|| {
+        let ctx = use_context::<SynChatCtx>();
+        let generating = ctx.active_chat_id.get().is_some_and(|id| is_generating(&id));
+        let mut row = Row::new()
+            .gap(6.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center);
+        if generating {
+            row = row
+                .child(typing_dot())
+                .child(Text::new(tr!("chat.typing")).max_lines(1).class("chat-float-window-typing"));
+        }
+        row
+    });
+    let panels = ToolButton::new(MI_VIEW_SIDEBAR)
+        .tooltip(tr!("chat.window.panels.tooltip"))
+        .on_click(|| rail::navigate("syn_chat"))
+        .class("panel-header-action");
+    mgui! {
+        Row::new()
+            .gap(4.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .class("chat-float-window-bar") => [
+                status,
+                panels,
+            ]
+    }
 }
 
 /// `(id, название)` активного чата. Подписки на `chats`, `active_chat_id`
@@ -202,10 +245,15 @@ fn fab_button() -> impl Widget {
         let body = DecoratedBox::new()
             .class(class)
             .child(Center::new().child(avatar));
+        // Бейджик «печатает» — тот же, что у плитки чата в рейле.
+        let mut badge = Stack::new().child(body);
+        if ctx.pending.get() {
+            badge = badge.child(Positioned::new(typing_dot()).at(38.0, 2.0));
+        }
         GestureDetector::new()
             .cursor(CursorIcon::Pointer)
             .on_click(restore)
-            .child(Tooltip::new(body, tr!("chat.window.fab.tooltip", name = shown)))
+            .child(Tooltip::new(badge, tr!("chat.window.fab.tooltip", name = shown)))
     })
 }
 

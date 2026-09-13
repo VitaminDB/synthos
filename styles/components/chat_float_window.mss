@@ -18,6 +18,35 @@
     font-size: 13px;
 }
 
+/* Полоса над лентой в окне: «печатает…» слева, переход к панелям чата
+ * справа (`float_window::window_bar`). */
+.chat-float-window-bar {
+    height: 30px;
+    padding: 0px 0px 4px 6px;
+}
+
+.chat-float-window-typing {
+    font-size: 12px;
+    color: var(--text-subtle);
+}
+
+/* Бейджик «модель печатает» (`chat_item::typing_dot`): точка поверх
+ * аватара в рейле и на кнопке свёрнутого окна, пульсирует, пока идёт ход.
+ * Обводка цветом подложки отделяет её от аватара. */
+.chat-typing-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background-color: var(--primary);
+    border: 2px solid var(--bg-rail);
+    animation: chat-typing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes chat-typing-pulse {
+    0%, 100% { opacity: 1.0; }
+    50%      { opacity: 0.35; }
+}
+
 /* Тело закрытого окна — пустышка без размера. */
 .chat-float-window-empty {
     width: 0px;

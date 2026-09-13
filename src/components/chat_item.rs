@@ -19,6 +19,7 @@ use syngui::widgets::overlay::menu::MenuItem;
 
 use crate::agent::state::ChatMeta;
 use crate::icons::*;
+use crate::syn_chat::SynChatCtx;
 
 /// Рендерит карточку чата. Callback'и select/delete передаются явно —
 /// Syn-чат подставляет `syn_chat::registry::{select,delete}`. Используется
@@ -183,4 +184,19 @@ pub fn tone_for(id: &str) -> &'static str {
         hash = hash.wrapping_mul(31).wrapping_add(b as u32);
     }
     TONES[(hash as usize) % TONES.len()]
+}
+
+/// Идёт ли в чате `id` генерация ответа (`SynChatCtx::generating_chat` —
+/// владелец хода, в том числе фонового). Сигнал читается через `.get()`:
+/// реактивный блок, который зовёт функцию, перерисуется на старте и конце
+/// хода.
+pub fn is_generating(id: &str) -> bool {
+    use_context::<SynChatCtx>().generating_chat.get().as_deref() == Some(id)
+}
+
+/// Бейджик «модель печатает»: пульсирующая точка (`.chat-typing-dot`)
+/// поверх аватара чата в рейле, на кнопке свёрнутого окна и в полосе
+/// плавающего окна.
+pub fn typing_dot() -> impl Widget {
+    DecoratedBox::new().class("chat-typing-dot")
 }

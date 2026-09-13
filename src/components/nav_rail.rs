@@ -35,7 +35,9 @@ use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
 use syngui::widgets::overlay::{Draggable, DropArea};
 use syngui::widgets::visual::{Badge, Image, ImageFit};
 
-use crate::components::chat_item::{display_title, initials_from_title, tone_for};
+use crate::components::chat_item::{
+    display_title, initials_from_title, is_generating, tone_for, typing_dot,
+};
 use crate::context::AppCtx;
 use crate::icons::*;
 use crate::pages::code_editor::state::CodeSession;
@@ -375,7 +377,20 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
     let body = DecoratedBox::new()
         .class(ring_class)
         .child(Center::new().child(avatar));
-    tile_with_label(Tooltip::new(body, shown.clone()), shown, is_selected, entry)
+    // Модель печатает ответ в этом чате — пульсирующая точка в углу: ход
+    // виден, даже когда чат в фоне или свёрнут в окно. `.get()` внутри
+    // `is_generating` подписывает Reactive рейла на старт и конец хода.
+    let generating = is_generating(&id);
+    let mut stack = Stack::new().child(body);
+    if generating {
+        stack = stack.child(Positioned::new(typing_dot()).at(28.0, 0.0));
+    }
+    let tooltip = if generating {
+        tr!("chat.typing.tooltip", name = shown.clone())
+    } else {
+        shown.clone()
+    };
+    tile_with_label(Tooltip::new(stack, tooltip), shown, is_selected, entry)
 }
 
 /// Плитка проекта заметок: иконка режима в скруглённой рамке, подпись —

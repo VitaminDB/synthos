@@ -188,14 +188,15 @@ pub fn open(entry: &RailEntry) {
             if chat.active_chat_id.get_untracked().as_deref() != Some(m.id.as_str()) {
                 registry::select(&m.id);
             }
-            // Оторванный чат живёт в плавающем окне поверх любой страницы:
-            // плитка переключает окно на этот чат и разворачивает его, не
-            // уводя со страницы, где работает пользователь.
+            // Оторванный чат остаётся в плавающем окне: плитка переключает
+            // окно на этот чат и разворачивает его. Страница чата при этом
+            // открывается всё равно — на ней панели хода (токены, статус,
+            // параметры), и раньше попасть к ним можно было только вернув
+            // окно на страницу.
             if chat.chat_detached.get_untracked() {
                 chat.chat_window_minimized.set(false);
-            } else {
-                navigate("syn_chat");
             }
+            navigate("syn_chat");
         }
         RailEntry::Notes(_) => navigate("notes"),
         RailEntry::Separator(_) => {}

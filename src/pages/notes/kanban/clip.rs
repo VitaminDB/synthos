@@ -47,14 +47,15 @@ pub enum CopyKind {
 }
 
 impl CopyKind {
-    /// В порядке пунктов меню.
+    /// В порядке пунктов меню: целиком, части по одной, их сочетания, затем
+    /// одни вложения.
     pub const ALL: [CopyKind; 8] = [
         CopyKind::Full,
+        CopyKind::Title,
+        CopyKind::Body,
         CopyKind::TitleBody,
         CopyKind::TitleBodyPaths,
         CopyKind::TitlePaths,
-        CopyKind::Title,
-        CopyKind::Body,
         CopyKind::Paths,
         CopyKind::Files,
     ];

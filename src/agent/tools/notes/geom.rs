@@ -193,8 +193,129 @@ fn block_width(b: &DocBlock) -> f32 {
 pub(super) fn block_rect(b: &DocBlock) -> Option<(f32, f32, f32, f32)> {
     let (x, y) = free::pos_of(&b.attrs)?;
     let w = block_width(b);
-    let h = free::height_of(&b.attrs).unwrap_or_else(|| est_height(b, w));
-    Some((x, y, w, h))
+    Some((x, y, w, block_height(b, w)))
+}
+
+/// Высота блока на холсте: у объекта — его `h`, у текста — по содержимому.
+fn block_height(b: &DocBlock, w: f32) -> f32 {
+    own_height(b).unwrap_or_else(|| est_height(b, w))
+}
+
+/// `h`, которую редактор действительно рисует: только у объектов (фигуры,
+/// медиа, врезки). У текстового блока ручки высоты нет и `h` не читается —
+/// 14.09.2026 модель поставила toggle `h=2100`, редактор этого не показал, а
+/// агент видел рамку в 2100 px и 20 вызовов уводил от неё соседей.
+pub(super) fn own_height(b: &DocBlock) -> Option<f32> {
+    if needs_own_height(b) {
+        free::height_of(&b.attrs)
+    } else {
+        None
+    }
+}
+
+/// Снять `h` у текстового блока (редактор её не рисует). `true` — была.
+pub(super) fn drop_text_height(b: &mut DocBlock) -> bool {
+    if needs_own_height(b) || free::height_of(&b.attrs).is_none() {
+        return false;
+    }
+    b.attrs.remove(free::ATTR_H);
+    true
+}
+
+/// Ответ на `h` у текстового блока: почему высота не ставится.
+pub(super) fn text_height_note(i: usize, b: &DocBlock) -> String {
+    let why = match b.kind {
+        BlockKind::Toggle { .. } => {
+            "a folded toggle is one line tall, and the blocks below it move down when it unfolds"
+        }
+        _ => "its height follows its content",
+    };
+    format!(
+        "h not set: #{i} {} sizes itself — {why}. h is only for shapes, images, boards, charts, mind maps \
+         and calendars",
+        kind_label(b)
+    )
+}
+
+/// Секция заголовка на холсте: блоки после него по документу до заголовка
+/// того же или старшего уровня, стоящие в его колонке (тот же `x`) не выше
+/// него. 14.09.2026 модель передвинула «Кредитная карта (БЦК)» и «План
+/// погашения», а пункты под ними остались на прежнем месте — у заголовка на
+/// холсте нет «содержимого», пока его не собрать так.
+pub(super) fn section_of(model: &DocModel, i: usize) -> Vec<usize> {
+    let Some(head) = model.blocks.get(i) else { return Vec::new() };
+    let BlockKind::Heading { level, .. } = &head.kind else { return Vec::new() };
+    let Some((hx, hy)) = free::pos_of(&head.attrs) else { return Vec::new() };
+    let mut out = Vec::new();
+    for (j, b) in model.blocks.iter().enumerate().skip(i + 1) {
+        if let BlockKind::Heading { level: l, .. } = &b.kind {
+            if l <= level {
+                break;
+            }
+        }
+        if let Some((x, y)) = free::pos_of(&b.attrs) {
+            if (x - hx).abs() < 1.0 && y >= hy {
+                out.push(j);
+            }
+        }
+    }
+    out
+}
+
+/// Сдвинуть секцию `members` вслед за заголовком `i`, который стоял в `old`.
+/// Возвращает строку для ответа (с наложениями сдвинутых), если что-то
+/// сдвинулось.
+pub(super) fn carry_section(model: &mut DocModel, i: usize, old: Option<(f32, f32)>, members: &[usize]) -> Option<String> {
+    let (ox, oy) = old?;
+    let (nx, ny) = free::pos_of(&model.blocks[i].attrs)?;
+    let (dx, dy) = (nx - ox, ny - oy);
+    if members.is_empty() || (dx.abs() < 0.05 && dy.abs() < 0.05) {
+        return None;
+    }
+    for &j in members {
+        if let Some((x, y)) = free::pos_of(&model.blocks[j].attrs) {
+            free::set_pos(&mut model.blocks[j].attrs, x + dx, y + dy);
+        }
+        drop_text_height(&mut model.blocks[j]);
+    }
+    let mut s = format!(
+        "its section moved along (dx={} dy={}): {} — section=false moves the heading alone",
+        fnum(dx),
+        fnum(dy),
+        indices_text(members)
+    );
+    for &j in members {
+        if let Some(note) = overlap_note(model, j) {
+            s.push_str(&format!("\n#{j} {note}"));
+        }
+    }
+    Some(s)
+}
+
+/// С какой пустоты над блоком она попадает в список блоков, px.
+const GAP_NOTE_PX: f32 = 200.0;
+
+/// Пустота над закреплённым блоком: ближайший блок выше в той же полосе по
+/// `x` кончается намного выше. 14.09.2026 («Долги и кредиты») под свёрнутым
+/// toggle было 1900 px пустоты, а список блоков её не показывал — модель
+/// чинила наложения вместо того, чтобы поднять доску.
+fn gap_note(model: &DocModel, i: usize) -> Option<String> {
+    let me = &model.blocks[i];
+    if is_line(me) {
+        return None;
+    }
+    let (x, y, w, _) = block_rect(me)?;
+    let (j, bottom) = model
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(j, b)| *j != i && !is_line(b))
+        .filter_map(|(j, b)| block_rect(b).map(|r| (j, r)))
+        .filter(|(_, r)| r.1 < y && x < r.0 + r.2 - 1.0 && r.0 < x + w - 1.0)
+        .map(|(j, r)| (j, r.1 + r.3))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let gap = y - bottom;
+    (gap >= GAP_NOTE_PX).then(|| format!("!! gap {} px above it (below #{j})", fnum(gap.round())))
 }
 
 /// Параметры [`arrange_column`]. `x`/`y` — начало колонки (иначе — под
@@ -268,6 +389,7 @@ pub(super) fn arrange_column(model: &mut DocModel, a: &Arrange) -> Vec<usize> {
         let w = a.w.or_else(|| free::width_of(&b.attrs)).unwrap_or(DEFAULT_BLOCK_W);
         free::set_pos(&mut b.attrs, x.round(), y.round());
         free::set_width(&mut b.attrs, w);
+        drop_text_height(b);
         if needs_own_height(b) && free::height_of(&b.attrs).is_none() {
             let h = est_height(b, w).round();
             free::set_height(&mut b.attrs, h);
@@ -277,7 +399,7 @@ pub(super) fn arrange_column(model: &mut DocModel, a: &Arrange) -> Vec<usize> {
                 canonicalize_line(b, shape);
             }
         }
-        let h = free::height_of(&b.attrs).unwrap_or_else(|| est_height(b, w));
+        let h = block_height(b, w);
         y = (y + h + a.gap).round();
     }
     targets
@@ -355,7 +477,7 @@ pub(super) fn block_line(i: usize, b: &DocBlock) -> String {
         Some((x, y)) => s.push_str(&format!(" · x={} y={} w={}", fnum(x), fnum(y), fnum(w))),
         None => s.push_str(" · flow"),
     }
-    match free::height_of(&b.attrs) {
+    match own_height(b) {
         Some(h) => s.push_str(&format!(" h={}", fnum(h))),
         None => s.push_str(&format!(" h=~{}", fnum(est_height(b, w)))),
     }
@@ -394,6 +516,10 @@ pub(super) fn blocks_text(model: &DocModel) -> String {
     for (i, b) in model.blocks.iter().enumerate() {
         out.push_str(&block_line(i, b));
         out.push('\n');
+        if let Some(note) = gap_note(model, i) {
+            out.push_str(&note);
+            out.push('\n');
+        }
         push_children(&mut out, &i.to_string(), b, 1);
     }
     out
@@ -426,6 +552,8 @@ pub(super) fn fragment_blocks(md: &str, geom: &Geom, last: bool) -> Result<Vec<D
     }
     if !geom.is_empty() {
         let idx = if last { blocks.len() - 1 } else { 0 };
+        // Текст высоту берёт по содержимому — `h` редактор у него не рисует.
+        let geom = if needs_own_height(&blocks[idx]) { *geom } else { Geom { h: None, ..*geom } };
         geom.apply(&mut blocks[idx].attrs);
     }
     Ok(blocks)

@@ -93,6 +93,11 @@ fn resolve_block_list(model: &DocModel, v: &Json) -> Result<Vec<usize>, String> 
     Ok(uniq)
 }
 
+/// Пояснения к ответу строками (пустая строка, если их нет).
+fn notes_text(notes: &[String]) -> String {
+    notes.iter().map(|n| format!("{n}\n")).collect()
+}
+
 pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let op = str_field(v, "op")
         .ok_or("missing \"op\" (list | read | insert | set_markdown | delete | move | nest | unnest | set_attrs | pin | unpin)")?;
@@ -101,6 +106,9 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let block_arg = |model: &DocModel| -> Result<usize, String> {
         resolve_block(model, &ref_field(v, "block").ok_or("missing \"block\" (index from blocks op=list or find:<text>)")?)
     };
+    // Заголовок на холсте переезжает вместе со своей секцией.
+    let carry_sections = bool_field(v, "section") != Some(false);
+    let section = |model: &DocModel, i: usize| if carry_sections { section_of(model, i) } else { Vec::new() };
     match op {
         "list" => Ok(format!("{}{}\n", blocks_text(&model), page_line(ctx, &id))),
         "read" => {
@@ -177,11 +185,22 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         "move" => {
             let i = block_arg(&model)?;
-            let geom = parse_geom(v)?;
+            let mut geom = parse_geom(v)?;
             let has_pos = usize_field(v, "index").is_some() || ref_field(v, "after").is_some() || ref_field(v, "before").is_some();
-            if !has_pos && geom.x.is_none() {
+            if !has_pos && geom.x.is_none() && geom.w.is_none() && geom.h.is_none() {
                 return Err("pass index / after / before (order) and/or x + y (place on the canvas)".to_string());
             }
+            let mut notes = Vec::new();
+            if !needs_own_height(&model.blocks[i]) {
+                if geom.h.take().is_some() {
+                    notes.push(text_height_note(i, &model.blocks[i]));
+                }
+                drop_text_height(&mut model.blocks[i]);
+            }
+            // Секция считается по порядку документа — при смене порядка её
+            // индексы уже не те, заголовок тогда едет один.
+            let members = if has_pos { Vec::new() } else { section(&model, i) };
+            let old = free::pos_of(&model.blocks[i].attrs);
             let mut changes = Vec::new();
             let mut at = i;
             if has_pos {
@@ -196,7 +215,7 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 at = target;
                 changes.push(format!("order #{i} → #{target}"));
             }
-            if geom.x.is_some() {
+            if !geom.is_empty() {
                 geom.apply(&mut model.blocks[at].attrs);
                 if let BlockKind::Shape { shape } = model.blocks[at].kind {
                     if shape.is_line() {
@@ -204,9 +223,19 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     }
                 }
                 changes.push("placed on the canvas".to_string());
+                notes.extend(carry_section(&mut model, at, old, &members));
             }
             store_model(ctx, &id, &model)?;
-            Ok(format!("moved: {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, at), page_line(ctx, &id)))
+            if changes.is_empty() {
+                changes.push("nothing changed".to_string());
+            }
+            Ok(format!(
+                "moved: {}\n{}\n{}{}\n",
+                changes.join(", "),
+                block_line_checked(&model, at),
+                notes_text(&notes),
+                page_line(ctx, &id)
+            ))
         }
         "nest" => {
             let i = block_arg(&model)?;
@@ -302,14 +331,36 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         "set_attrs" => {
             let i = block_arg(&model)?;
-            let pairs = attrs_arg(v)?;
-            let changes = apply_attrs(&mut model.blocks[i], &pairs)?;
+            let mut pairs = attrs_arg(v)?;
+            let mut notes = Vec::new();
+            if !needs_own_height(&model.blocks[i]) {
+                let before = pairs.len();
+                pairs.retain(|(k, _)| !k.trim().eq_ignore_ascii_case("h"));
+                if pairs.len() != before {
+                    notes.push(text_height_note(i, &model.blocks[i]));
+                }
+                drop_text_height(&mut model.blocks[i]);
+            }
+            let members = section(&model, i);
+            let old = free::pos_of(&model.blocks[i].attrs);
+            let changes = if pairs.is_empty() { Vec::new() } else { apply_attrs(&mut model.blocks[i], &pairs)? };
+            notes.extend(carry_section(&mut model, i, old, &members));
             store_model(ctx, &id, &model)?;
-            Ok(format!("set {}\n{}\n{}\n", changes.join(", "), block_line_checked(&model, i), page_line(ctx, &id)))
+            let head = if changes.is_empty() { "nothing set".to_string() } else { format!("set {}", changes.join(", ")) };
+            Ok(format!("{head}\n{}\n{}{}\n", block_line_checked(&model, i), notes_text(&notes), page_line(ctx, &id)))
         }
         "pin" => {
             let i = block_arg(&model)?;
-            let geom = parse_geom(v)?;
+            let mut geom = parse_geom(v)?;
+            let mut notes = Vec::new();
+            if !needs_own_height(&model.blocks[i]) {
+                if geom.h.take().is_some() {
+                    notes.push(text_height_note(i, &model.blocks[i]));
+                }
+                drop_text_height(&mut model.blocks[i]);
+            }
+            let members = section(&model, i);
+            let old = free::pos_of(&model.blocks[i].attrs);
             let (x, y) = match (geom.x, geom.y) {
                 (Some(x), Some(y)) => (x, y),
                 _ => {
@@ -333,8 +384,16 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     canonicalize_line(&mut model.blocks[i], shape);
                 }
             }
+            notes.extend(carry_section(&mut model, i, old, &members));
             store_model(ctx, &id, &model)?;
-            Ok(format!("pinned at x={} y={}\n{}\n{}\n", fnum(x), fnum(y), block_line_checked(&model, i), page_line(ctx, &id)))
+            Ok(format!(
+                "pinned at x={} y={}\n{}\n{}{}\n",
+                fnum(x),
+                fnum(y),
+                block_line_checked(&model, i),
+                notes_text(&notes),
+                page_line(ctx, &id)
+            ))
         }
         "arrange" => {
             let geom = parse_geom(v)?;

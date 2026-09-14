@@ -74,26 +74,59 @@ pub(super) fn validate_attr(key: &str, value: &str) -> Result<Option<String>, St
     }
 }
 
-/// Атрибуты из аргумента `attrs`: JSON-объект либо строка `{k=v …}` /
-/// `k=v k=v` / JSON-текст.
+/// Ключи атрибутов, которые `set_attrs` берёт и прямо из аргументов, как
+/// `pin`: 14.09.2026 модель прислала `{"op":"set_attrs","block":14,"h":2100}`
+/// и получила «missing attrs».
+const PLAIN_ATTR_ARGS: [&str; 23] = [
+    "x", "y", "w", "h", "color", "bg", "size", "weight", "align", "fill", "stroke", "sw", "dash", "radius", "opacity", "x1",
+    "y1", "x2", "y2", "cx1", "cy1", "cx2", "cy2",
+];
+
+/// Атрибуты из аргумента `attrs` (JSON-объект либо строка `{k=v …}` /
+/// `k=v k=v` / JSON-текст) и из тех же ключей прямо в аргументах — `attrs`
+/// важнее. `null` прямо в аргументах ничего не снимает: модели шлют пустые
+/// поля схемы, и `"x": null` рядом со стилем открепил бы блок.
 pub(super) fn attrs_arg(v: &Json) -> Result<Vec<(String, String)>, String> {
-    let raw = v.get("attrs").ok_or("missing \"attrs\" (object {key: value}; empty or null value clears)")?;
+    let mut out = match v.get("attrs") {
+        None | Some(Json::Null) => Vec::new(),
+        Some(raw) => attrs_value(raw)?,
+    };
+    for key in PLAIN_ATTR_ARGS {
+        let Some(val) = v.get(key).filter(|val| !val.is_null()) else { continue };
+        if !out.iter().any(|(k, _)| k.trim().eq_ignore_ascii_case(key)) {
+            out.push((key.to_string(), attr_text(val)));
+        }
+    }
+    if out.is_empty() {
+        return Err(if v.get("attrs").is_some_and(|a| !a.is_null()) {
+            "\"attrs\" is empty".to_string()
+        } else {
+            "missing \"attrs\" (object {key: value}; empty or null value clears)".to_string()
+        });
+    }
+    Ok(out)
+}
+
+fn attr_text(val: &Json) -> String {
+    match val {
+        Json::Null => String::new(),
+        Json::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn attrs_value(raw: &Json) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     match raw {
         Json::Object(map) => {
             for (k, val) in map {
-                let s = match val {
-                    Json::Null => String::new(),
-                    Json::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                out.push((k.clone(), s));
+                out.push((k.clone(), attr_text(val)));
             }
         }
         Json::String(s) => {
             let t = s.trim();
-            if let Ok(Json::Object(map)) = serde_json::from_str::<Json>(t) {
-                return attrs_arg(&serde_json::json!({ "attrs": map }));
+            if let Ok(parsed @ Json::Object(_)) = serde_json::from_str::<Json>(t) {
+                return attrs_value(&parsed);
             }
             let braced = if t.starts_with('{') { t.to_string() } else { format!("{{{t}}}") };
             let parsed = parse_attr_block(&braced).ok_or_else(|| format!("can't parse attrs \"{t}\" — pass an object"))?;
@@ -102,9 +135,6 @@ pub(super) fn attrs_arg(v: &Json) -> Result<Vec<(String, String)>, String> {
             }
         }
         _ => return Err("\"attrs\" must be an object {key: value}".to_string()),
-    }
-    if out.is_empty() {
-        return Err("\"attrs\" is empty".to_string());
     }
     Ok(out)
 }

@@ -540,7 +540,9 @@ pub(super) fn build_all() -> Vec<Tool> {
                 where h=~ marks a height the editor estimated; a reply line \
                 starting with !! free layout lists blocks still unplaced on \
                 a page with pinned ones, and !! overlaps names blocks whose \
-                frames intersect.",
+                frames intersect. !! gap N px above it (in the block list) \
+                marks empty space over a block: close it by moving that \
+                block up — a heading brings the blocks of its section along.",
             schema: notes_schema(),
         },
         Tool {
@@ -884,14 +886,26 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "description": "Block height in px (≥ 20). Required on a \
                 free-layout page for shapes, images, boards, charts, mind maps \
                 and calendars — without it they get a default 200 px and can \
-                sit on top of the next block. Text blocks size themselves."
+                sit on top of the next block. Text blocks (paragraphs, \
+                headings, lists, tables, callouts, toggles) size themselves \
+                and take no h — a folded toggle is one line tall and the \
+                blocks below it move down when it unfolds, so never reserve \
+                room for its content."
+        })),
+        ("section", json!({
+            "type": "boolean",
+            "description": "blocks set_attrs / pin / move of a HEADING to new x/y: \
+                its section — the blocks under it in its column up to the \
+                next heading of the same or higher level — moves along by \
+                the same offset (default). false moves the heading alone."
         })),
         ("attrs", json!({
             "type": "object",
             "additionalProperties": true,
             "description": "blocks set_attrs: attributes to set; null or \"\" \
                 clears one. Text: color, bg (#rrggbb), size (6..160), weight \
-                (bold|normal), align (left|center|right). Geometry: x y w h. \
+                (bold|normal), align (left|center|right). Geometry: x y w h \
+                (also accepted as plain arguments next to op=set_attrs). \
                 Shapes: fill, stroke (#rrggbb or none), sw (0..40), dash \
                 (0..60), radius (0..200), opacity (0..100); line points x1 y1 \
                 x2 y2 cx1 cy1 cx2 cy2 are relative to the block — prefer \

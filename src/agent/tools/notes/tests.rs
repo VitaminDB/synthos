@@ -311,6 +311,66 @@ fn layout_free_pins_blocks_in_a_column() {
     assert!(out.contains("arranged 1 blocks in a column at x=40") && out.contains("y=164") && !out.contains("!! free layout"), "{out}");
 }
 
+/// Живой случай 14.09.2026 (MyLife, «Долги и кредиты»): модель поставила
+/// свёрнутому toggle `h=2100`, передвинула заголовки без их пунктов и два
+/// десятка вызовов уводила блоки от наложения на эту рамку. Теперь текстовый
+/// блок `h` не берёт (редактор её и не рисует), `x y h` принимаются и без
+/// `attrs`, пустота над блоком видна в списке, заголовок едет с секцией.
+#[test]
+fn toggle_takes_no_height_and_headings_carry_their_sections() {
+    let ctx = ctx();
+    let md = "## Кредитная карта\n\n- Лимит\n- Долг\n\n> [!toggle] Полная таблица\n>\n> | A | B |\n> | --- | --- |\n> | 1 | 2 |\n\n## Доска долгов\n\nТекст доски\n";
+    let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Долги", "layout": "free", "content": md})));
+    let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+    assert!(listed.contains("#3 toggle \"Полная таблица\"") && listed.contains("#4 heading2 \"Доска долгов\""), "{listed}");
+
+    // h у toggle прямо в аргументах, как у pin: не ставится, ответ объясняет.
+    let out = call(ctx, "blocks", serde_json::json!({"op": "set_attrs", "page": &page, "block": 3, "h": 2100}));
+    assert!(out.starts_with("nothing set\n") && out.contains("h not set: #3 toggle sizes itself — a folded toggle"), "{out}");
+    let out = call(ctx, "blocks", serde_json::json!({"op": "move", "page": &page, "block": 3, "h": 2100}));
+    assert!(out.starts_with("moved: nothing changed") && out.contains("h not set"), "{out}");
+    assert!(!ctx.page_markdown(&page).contains("h=2100"), "{}", ctx.page_markdown(&page));
+
+    // Страница, где h у toggle уже записана: рамка — по содержимому, h снимается при правке.
+    let mut model = load_model(ctx, &page);
+    free::set_height(&mut model.blocks[3].attrs, 2100.0);
+    store_model(ctx, &page, &model).unwrap();
+    let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+    assert!(!listed.contains("h=2100") && !listed.contains("!! overlaps"), "{listed}");
+
+    // Пустота над доской — как 1900 px под свёрнутым toggle — видна в списке.
+    let model = load_model(ctx, &page);
+    let toggle = block_rect(&model.blocks[3]).unwrap();
+    let (head, text) = (block_rect(&model.blocks[4]).unwrap(), block_rect(&model.blocks[5]).unwrap());
+    call(ctx, "blocks", serde_json::json!({"op": "set_attrs", "page": &page, "block": 4, "attrs": {"y": toggle.1 + 1900.0}}));
+    let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+    assert!(listed.contains("px above it (below #3)"), "{listed}");
+
+    // Заголовок поднимает свою секцию одним вызовом.
+    let y = (toggle.1 + toggle.3 + 24.0).round();
+    let out = call(ctx, "blocks", serde_json::json!({"op": "set_attrs", "page": &page, "block": 4, "x": 40, "y": y}));
+    assert!(out.contains("its section moved along") && out.contains("): #5 — section=false"), "{out}");
+    let model = load_model(ctx, &page);
+    assert!(free::height_of(&model.blocks[3].attrs).is_some(), "h у toggle, которого не касались, остаётся в файле");
+    let (head2, text2) = (block_rect(&model.blocks[4]).unwrap(), block_rect(&model.blocks[5]).unwrap());
+    assert_eq!((head2.1, text2.1 - head2.1), (y, text.1 - head.1));
+    let listed = call(ctx, "blocks", serde_json::json!({"op": "list", "page": &page}));
+    assert!(!listed.contains("!! gap"), "{listed}");
+
+    // section=false — заголовок один; по умолчанию едут пункты и toggle, а
+    // заголовок того же уровня и его текст — нет.
+    let out = call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 900, "y": 40, "section": false}));
+    assert!(!out.contains("section moved"), "{out}");
+    assert_eq!(free::pos_of(&load_model(ctx, &page).blocks[1].attrs).unwrap().0, 40.0);
+    call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 40, "y": 40, "section": "false"}));
+    let out = call(ctx, "blocks", serde_json::json!({"op": "move", "page": &page, "block": 0, "x": 900, "y": 40}));
+    assert!(out.contains("): #1, #2, #3 —"), "{out}");
+    let model = load_model(ctx, &page);
+    let xs: Vec<f32> = model.blocks.iter().map(|b| free::pos_of(&b.attrs).unwrap().0).collect();
+    assert_eq!(xs, vec![900.0, 900.0, 900.0, 900.0, 40.0, 40.0]);
+    assert!(free::height_of(&model.blocks[3].attrs).is_none(), "перенос toggle снял h: {}", ctx.page_markdown(&page));
+}
+
 /// `only=all` не уносит в колонку поставленный календарь (14.09.2026, MyLife:
 /// календарь слева, колонка текста справа — после arrange календарь уехал в
 /// хвост колонки, модель перебирала y по кругу).
@@ -412,10 +472,12 @@ fn shapes_create_update_and_connect() {
     // connect: незакреплённые блоки — ошибка; закрепим и соединим.
     let err = dispatch(ctx, "shape", &serde_json::json!({"op": "connect", "page": &page, "from": 0, "to": 1})).unwrap_err();
     assert!(err.contains("no coordinates"), "{err}");
-    call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 0, "y": 0, "w": 100, "h": 40}));
-    call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 1, "x": 400, "y": 0, "w": 100, "h": 40}));
+    // У абзаца h не ставится — высота по содержимому (одна строка — 32 px).
+    let out = call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 0, "x": 0, "y": 0, "w": 100, "h": 40}));
+    assert!(out.contains("h not set: #0 paragraph sizes itself"), "{out}");
+    call(ctx, "blocks", serde_json::json!({"op": "pin", "page": &page, "block": 1, "x": 400, "y": 0, "w": 100}));
     let out = call(ctx, "shape", serde_json::json!({"op": "connect", "page": &page, "from": "find:Старт", "to": "find:Финиш"}));
-    assert!(out.contains("connected #0 → #1 with arrow") && out.contains("from (100,20) to (400,20)"), "{out}");
+    assert!(out.contains("connected #0 → #1 with arrow") && out.contains("from (100,16) to (400,16)"), "{out}");
     let out = call(ctx, "shape", serde_json::json!({"op": "delete", "page": &page, "block": 4}));
     assert!(out.contains("deleted #4 shape:arrow"), "{out}");
     assert!(dispatch(ctx, "shape", &serde_json::json!({"op": "delete", "page": &page, "block": 0})).is_err());

@@ -3250,23 +3250,55 @@ fn call_key(call: &ChatToolCall) -> String {
 /// Ключ вызова с числами под маской: `{"y":160}` и `{"y":920}` — один ключ,
 /// а разные строки (`find`, заголовки, id страниц) — разные. Для guard'а
 /// петли, в которой модель подбирает координаты при том же результате.
+///
+/// Числа в аргументах-адресах ([`ADDRESS_ARGS`]: номер блока, позиция в
+/// документе, id) остаются как есть — это не величина, а другой объект.
+/// Под маской перенос блока #24 и блока #14 сливался в один ключ, ответы у
+/// них разные, и счётчик сбрасывался на каждой смене блока: пинг-понг трёх
+/// блоков по y (14.09.2026, MyLife, «Долги и кредиты») guard не видел.
 fn numeric_masked_key(call: &ChatToolCall) -> String {
-    let key = call_key(call);
-    let mut out = String::with_capacity(key.len());
-    let mut in_number = false;
-    for ch in key.chars() {
-        if ch.is_ascii_digit() || (in_number && ch == '.') {
-            if !in_number {
-                out.push('#');
-                in_number = true;
+    fn mask_text(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut in_number = false;
+        for ch in s.chars() {
+            if ch.is_ascii_digit() || (in_number && ch == '.') {
+                if !in_number {
+                    out.push('#');
+                    in_number = true;
+                }
+            } else {
+                in_number = false;
+                out.push(ch);
             }
-        } else {
-            in_number = false;
-            out.push(ch);
+        }
+        out
+    }
+    fn mask(v: &serde_json::Value) -> serde_json::Value {
+        use serde_json::Value;
+        match v {
+            Value::Number(_) => Value::String("#".to_string()),
+            Value::String(s) => Value::String(mask_text(s)),
+            Value::Array(a) => Value::Array(a.iter().map(mask).collect()),
+            Value::Object(m) => Value::Object(
+                m.iter()
+                    .map(|(k, x)| (k.clone(), if ADDRESS_ARGS.contains(&k.as_str()) { x.clone() } else { mask(x) }))
+                    .collect(),
+            ),
+            other => other.clone(),
         }
     }
-    out
+    let args = call.function.arguments.as_deref().unwrap_or("").trim();
+    match serde_json::from_str::<serde_json::Value>(args) {
+        Ok(v) => format!("{}\u{1f}{}", tool_name(call), mask(&v)),
+        Err(_) => mask_text(&call_key(call)),
+    }
 }
+
+/// Аргументы, числа в которых — адрес объекта, а не подбираемая величина.
+const ADDRESS_ARGS: &[&str] = &[
+    "block", "blocks", "index", "after", "before", "into", "parent", "child", "from", "to", "page", "pages", "board",
+    "card", "column", "task", "node", "event", "id",
+];
 
 /// «Форма» вызова: инструмент, дискриминанты действия (`action`, `op`, …) и
 /// набор имён аргументов — без их значений.
@@ -4596,13 +4628,41 @@ mod tests {
             numeric_masked_key(&call("notes", r#"{"action":"update","page":"p1","find":"a","replace":"b"}"#)),
             numeric_masked_key(&call("notes", r#"{"action":"update","page":"p1","find":"c","replace":"d"}"#))
         );
-        // Перенос разных блоков — ключ один, но ответы называют разные блоки.
+        // Перенос разных блоков — разные ключи: номер блока — адрес.
         let mut moves = HashMap::new();
         let mv = |b: u32| call("notes", &format!(r#"{{"action":"blocks","op":"move","page":"p1","block":{b},"x":40,"y":40}}"#));
+        assert_ne!(numeric_masked_key(&mv(1)), numeric_masked_key(&mv(2)));
         for (b, label) in [(1, "heading1 \"Семья\""), (2, "table \"Дата · Человек\""), (3, "todo \"Подарки\"")] {
             let n = note_outcome(&mut moves, &numeric_masked_key(&mv(b)), &format!("moved\n#{b} {label} · x=40 y=40\n"));
             assert_eq!(n, 0, "{label}");
         }
+    }
+
+    /// Пинг-понг 14.09.2026 (MyLife, «Долги и кредиты»): `set_attrs` гонял
+    /// #14, #24 и #25 по y вперемешку, ответ у каждого блока по сути один.
+    /// С номером блока под маской ключ был общий, и смена блока сбрасывала
+    /// счётчик; теперь у каждого блока свой.
+    #[test]
+    fn numeric_masked_key_sees_a_ping_pong_of_several_blocks() {
+        let set = |b: u32, x: u32, y: u32| {
+            call(
+                "notes",
+                &format!(r#"{{"action":"blocks","attrs":{{"x":{x},"y":{y}}},"block":{b},"op":"set_attrs","page":"Долги и кредиты"}}"#),
+            )
+        };
+        let answer = |b: u32, x: u32, y: u32| match b {
+            14 => format!("set x={x}, y={y}\n#14 toggle \"Полная таблица графика (52 платежа)\" · x={x} y={y} w=720 h=2100\n!! overlaps #24 (x=40 y=1825 w=1520 h=44.4)\n"),
+            _ => format!("set x={x}, y={y}\n#24 heading2 \"Доска долгов\" · x={x} y={y} w=1520 h=~44.4\n!! overlaps #14 (x=840 y=1025 w=720 h=2100)\n"),
+        };
+        let mut outcomes = HashMap::new();
+        let mut last_24 = 0;
+        for (b, x, y) in [(24, 840, 1365), (14, 840, 1025), (24, 40, 1825), (14, 840, 1025), (24, 840, 1825)] {
+            let n = note_outcome(&mut outcomes, &numeric_masked_key(&set(b, x, y)), &answer(b, x, y));
+            if b == 24 {
+                last_24 = n;
+            }
+        }
+        assert_eq!(last_24, NUMERIC_STAGNANT_WARN_AT, "четвёртый перенос #24 guard уже не исполнит");
     }
 
     #[test]

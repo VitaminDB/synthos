@@ -574,10 +574,30 @@ fn layout_text(l: &PageLayout) -> String {
         g => format!("{} step {}", grid_name(g), fnum(l.grid_step)),
     };
     format!(
-        "layout: canvas · grid: {grid} · snap: {} · bg: {}",
+        "layout: canvas · grid: {grid} · snap: {} · bg: {} · props panel: {}",
         if l.snap { format!("on step {}", fnum(l.snap_step)) } else { "off".to_string() },
-        if l.bg.is_empty() { "theme" } else { l.bg.as_str() }
+        if l.bg.is_empty() { "theme" } else { l.bg.as_str() },
+        props_panel_name(l.props_hidden)
     )
+}
+
+fn props_panel_name(hidden: bool) -> &'static str {
+    if hidden { "hidden" } else { "shown" }
+}
+
+/// `props_panel`: правая панель свойств страницы — `shown`/`true` или
+/// `hidden`/`false`; возвращает «скрыта ли».
+fn props_panel_arg(v: &Json) -> Result<Option<bool>, String> {
+    match v.get("props_panel") {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Bool(shown)) => Ok(Some(!shown)),
+        Some(Json::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "shown" | "show" | "visible" | "open" | "on" | "true" | "yes" => Ok(Some(false)),
+            "hidden" | "hide" | "collapsed" | "closed" | "close" | "off" | "false" | "no" => Ok(Some(true)),
+            other => Err(format!("unknown props_panel \"{other}\" (shown | hidden)")),
+        },
+        Some(other) => Err(format!("\"props_panel\" must be \"shown\" or \"hidden\", got {other}")),
+    }
 }
 
 fn grid_name(g: PageGrid) -> &'static str {
@@ -589,12 +609,13 @@ fn grid_name(g: PageGrid) -> &'static str {
     }
 }
 
-/// Раскладка страницы из аргументов `layout grid grid_step snap snap_step`;
-/// возвращает список изменений.
+/// Раскладка страницы из аргументов `layout grid grid_step snap snap_step
+/// bg props_panel`; возвращает список изменений.
 fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, String> {
     let mut l: PageLayout = ctx.page_layout(id);
     let mut arrange_after = false;
     let mut changes = Vec::new();
+    let props_hidden = props_panel_arg(v)?;
     // Раскладка у страницы одна — холст. `layout=free` оставлен как
     // «разложи, что не закреплено, колонкой»; режима «поток» больше нет,
     // и просьбу переключиться на него честнее отклонить, чем принять
@@ -648,6 +669,11 @@ fn apply_layout_args(ctx: NotesCtx, id: &str, v: &Json) -> Result<Vec<String>, S
     if !changes.is_empty() {
         ctx.set_page_layout(id, l);
     }
+    // После `set_page_layout`: тот пишет узел целиком, из снимка `l`.
+    if let Some(hidden) = props_hidden {
+        ctx.set_props_hidden(id, hidden);
+        changes.push(format!("props panel: {}", props_panel_name(hidden)));
+    }
     if arrange_after {
         // Блоки без координат встают колонкой в порядке документа.
         // Редактор на экране сделал бы то же по настоящим
@@ -673,7 +699,43 @@ fn pin_flow_blocks(ctx: NotesCtx, id: &str) -> Result<usize, String> {
 }
 
 pub(super) fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
-    let id = page_arg(ctx, v, "page")?;
+    let many = v.get("pages").is_some_and(|p| !p.is_null())
+        || str_field(v, "page").is_some_and(|p| is_all_pages(ctx, p));
+    if !many {
+        let id = page_arg(ctx, v, "page")?;
+        return update_one(ctx, &id, v);
+    }
+    let ids = read_targets(ctx, v)?;
+    if let [id] = ids.as_slice() {
+        return update_one(ctx, id, v);
+    }
+    update_many(ctx, &ids, v)
+}
+
+/// `update` на нескольких страницах сразу (`pages`, `page="all"`,
+/// `depth`): только настройки страницы, одинаковые для каждой. «Скрой
+/// панель свойств везде» по вызову на страницу стоило бы локальной модели
+/// хода с полным префиллом на каждую.
+fn update_many(ctx: NotesCtx, ids: &[String], v: &Json) -> Result<String, String> {
+    const SETTINGS: &str = "props_panel, grid, grid_step, snap, snap_step, bg";
+    if let Some(k) = ["title", "icon", "content", "find", "layout"].into_iter().find(|k| v.get(k).is_some_and(|x| !x.is_null())) {
+        return Err(format!(
+            "\"{k}\" is set one page at a time; update on several pages (pages / page=\"all\") takes only \
+             page settings: {SETTINGS}"
+        ));
+    }
+    let mut changes = Vec::new();
+    for id in ids {
+        changes = apply_layout_args(ctx, id, v)?;
+        if changes.is_empty() {
+            return Err(format!("nothing to update: pass page settings ({SETTINGS})"));
+        }
+    }
+    Ok(format!("{}\napplied to {} pages\n", changes.join("\n"), ids.len()))
+}
+
+fn update_one(ctx: NotesCtx, id: &str, v: &Json) -> Result<String, String> {
+    let id = id.to_string();
     let mut changes: Vec<String> = Vec::new();
 
     if let Some(title) = str_field(v, "title") {
@@ -729,7 +791,8 @@ pub(super) fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
 
     if changes.is_empty() {
         return Err(
-            "nothing to update: pass title, icon, layout/grid/snap, content (+mode) or find/replace".to_string()
+            "nothing to update: pass title, icon, layout/grid/snap/props_panel, content (+mode) or find/replace"
+                .to_string()
         );
     }
     let mut out = changes.join("\n");

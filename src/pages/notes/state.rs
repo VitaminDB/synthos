@@ -478,6 +478,21 @@ impl NotesCtx {
         });
     }
 
+    /// Скрыть или показать панель свойств страницы, не трогая ширину
+    /// (агент: у страницы, где панель ещё не двигали, её нет). Если это
+    /// активная страница, панель на экране следует за деревом —
+    /// см. `right_panel::install_props_panel_memory`.
+    pub fn set_props_hidden(&self, id: &str, hidden: bool) {
+        if self.props_panel(id).1 == hidden {
+            return;
+        }
+        self.edit_tree(|t| {
+            if let Some(n) = t.find_mut(id) {
+                n.layout.props_hidden = hidden;
+            }
+        });
+    }
+
     /// Раскладка активной страницы в терминах редактора.
     pub fn active_doc_layout(&self) -> DocLayout {
         let Some(id) = self.active.get() else { return DocLayout::default() };

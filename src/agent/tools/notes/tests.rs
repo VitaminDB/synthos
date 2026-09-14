@@ -1110,6 +1110,56 @@ fn blocks_read_takes_a_list_and_the_whole_page() {
     assert!(dispatch(ctx, "blocks", &serde_json::json!({"op": "read", "page": &page, "block": "9"})).is_err());
 }
 
+/// Живой чат MyLife (14.09.2026): «Во всех страницах сделай правую панель
+/// свойств скрытой» — агент ответил, что панелью управлять нечем. Теперь
+/// `update props_panel` на странице и на всех сразу, `read` её показывает,
+/// а открытая страница прячет панель на экране — эффект памяти не
+/// перезаписывает правку значением с экрана.
+#[test]
+fn props_panel_is_set_by_the_tool_and_followed_on_screen() {
+    use syngui::signal::drain_and_run_effects;
+    let ctx = ctx();
+    let a = page_id(&call(ctx, "create", serde_json::json!({"title": "Холст"})));
+    let b = page_id(&call(ctx, "create", serde_json::json!({"title": "Заметка"})));
+    let visible = syngui::prelude::use_signal(true);
+    let ratio = syngui::prelude::use_signal(0.7f32);
+    ctx.active.set(Some(a.clone()));
+    crate::pages::notes::right_panel::sync_props_panel(ctx, visible, ratio);
+    drain_and_run_effects();
+    assert!(visible.get_untracked());
+
+    let out = call(ctx, "update", serde_json::json!({"page": &a, "props_panel": "hidden"}));
+    assert!(out.contains("props panel: hidden"), "{out}");
+    assert_eq!(ctx.props_panel(&a), (None, true), "ширина не тронута");
+    drain_and_run_effects();
+    assert!(!visible.get_untracked(), "открытая страница прячет панель на экране");
+    assert!(ctx.props_panel(&a).1, "эффект не вернул значение с экрана");
+    let read = call(ctx, "read", serde_json::json!({"page": &a}));
+    assert!(read.contains("· props panel: hidden"), "{read}");
+
+    // Пользователь снова открыл панель — это уходит в страницу.
+    visible.set(true);
+    drain_and_run_effects();
+    assert!(!ctx.props_panel(&a).1);
+
+    // Все страницы одним вызовом; bool тоже годится.
+    let out = call(ctx, "update", serde_json::json!({"page": "all", "props_panel": false}));
+    assert!(out.contains("props panel: hidden") && out.contains("applied to 2 pages"), "{out}");
+    drain_and_run_effects();
+    assert!(!visible.get_untracked() && ctx.props_panel(&b).1);
+    ctx.active.set(Some(b.clone()));
+    drain_and_run_effects();
+    assert!(!visible.get_untracked());
+
+    let out = call(ctx, "update", serde_json::json!({"pages": [&a], "props_panel": "shown", "title": "Холст 2"}));
+    assert!(out.contains("props panel: shown") && out.contains("renamed"), "одна страница в pages — обычный update: {out}");
+    let err = dispatch(ctx, "update", &serde_json::json!({"page": "all", "title": "Все"})).unwrap_err();
+    assert!(err.starts_with("\"title\" is set one page at a time") && err.contains("props_panel"), "{err}");
+    let err = dispatch(ctx, "update", &serde_json::json!({"page": "all"})).unwrap_err();
+    assert!(err.starts_with("nothing to update"), "{err}");
+    assert!(dispatch(ctx, "update", &serde_json::json!({"page": &a, "props_panel": "maybe"})).is_err());
+}
+
 /// Панель свойств помнится за страницей и уезжает в бандл: у каждой
 /// страницы своё положение разделителя и свой «скрыта».
 #[test]

@@ -42,35 +42,64 @@ use super::state::{LiveObject, NotesCtx, TAB_LINKS, TAB_PROPS};
 /// нужды в панели разные.
 ///
 /// Эффект работает в обе стороны через один и тот же сигнал каркаса:
-/// сменилась активная страница — вливаем её значения; тронул пользователь
-/// — пишем обратно. Развести направления помогает `applied` — id страницы,
-/// чьи значения сейчас лежат в сигналах.
+/// сменилась активная страница или её узел поправили извне (агент,
+/// `notes update props_panel=…`) — вливаем значения дерева; тронул
+/// пользователь — пишем обратно.
 pub fn install_props_panel_memory() {
     let ctx = use_context::<NotesCtx>();
     let app = use_context::<crate::context::AppCtx>();
     let (_, visible) = app.panels.notes;
-    let ratio = app.notes_right_split_ratio;
-    let applied: RwSignal<Option<String>> = use_signal(None);
+    sync_props_panel(ctx, visible, app.notes_right_split_ratio);
+}
+
+/// Последняя сверка сигналов каркаса с деревом: страница, `(ratio,
+/// visible)` сигналов и `(props_ratio, props_hidden)` узла.
+#[derive(Clone, PartialEq)]
+struct PanelSync {
+    page: String,
+    ui: (f32, bool),
+    stored: (Option<f32>, bool),
+}
+
+/// Тело [`install_props_panel_memory`] над явными сигналами (для тестов).
+/// Направление решает снимок прошлой сверки: разошлись сигналы — это
+/// пользователь, разошлось только дерево — правка извне. Без снимка
+/// правка агента на активной странице тут же затиралась бы значениями с
+/// экрана.
+pub fn sync_props_panel(ctx: NotesCtx, visible: RwSignal<bool>, ratio: RwSignal<f32>) {
+    let last: RwSignal<Option<PanelSync>> = use_signal(None);
 
     create_effect(move || {
         let Some(id) = ctx.active.get() else { return };
-        // Подписка на оба сигнала нужна в любой ветке, иначе после смены
-        // страницы эффект перестал бы слышать перетаскивание разделителя.
-        let (r, v) = (ratio.get(), visible.get());
-        if applied.get_untracked().as_deref() != Some(id.as_str()) {
-            let (stored, hidden) = ctx.props_panel(&id);
-            applied.set(Some(id));
+        // Подписки нужны в любой ветке, иначе после смены страницы эффект
+        // перестал бы слышать разделитель или правки дерева.
+        let ui = (ratio.get(), visible.get());
+        let _ = ctx.tree_rev.get();
+        let stored = ctx.props_panel(&id);
+        let prev = last.get_untracked().filter(|s| s.page == id);
+        let from_tree = match &prev {
+            Some(p) if p.ui == ui && p.stored == stored => return,
+            Some(p) => p.ui == ui,
+            None => true,
+        };
+        if from_tree {
+            let (stored_ratio, hidden) = stored;
             if visible.get_untracked() != !hidden {
                 visible.set(!hidden);
             }
-            if let Some(stored) = stored {
-                if (ratio.get_untracked() - stored).abs() > f32::EPSILON {
-                    ratio.set(stored);
+            if let Some(stored_ratio) = stored_ratio {
+                if (ratio.get_untracked() - stored_ratio).abs() > f32::EPSILON {
+                    ratio.set(stored_ratio);
                 }
             }
-            return;
+        } else {
+            ctx.set_props_panel(&id, ui.0, !ui.1);
         }
-        ctx.set_props_panel(&id, r, !v);
+        last.set(Some(PanelSync {
+            stored: ctx.props_panel(&id),
+            ui: (ratio.get_untracked(), visible.get_untracked()),
+            page: id,
+        }));
     });
 }
 

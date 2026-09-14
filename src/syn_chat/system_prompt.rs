@@ -288,7 +288,10 @@ const NOTES_RULES: &str =
      the column. blocks op=pin / move place blocks (x y, w, h), \
      op=set_attrs styles them (color, bg, size, align, weight). \
      update sets the page grid (none|dots|lines|cross, \
-     grid_step) and snap (snap, snap_step).\n\
+     grid_step), snap (snap, snap_step) and the right \
+     Properties panel, which every page remembers \
+     (props_panel=hidden|shown; page=\"all\" — all pages in \
+     one call).\n\
      - Shapes and arrows: shape op=create kind=rect|ellipse|\
      triangle|diamond with x y w h and fill/stroke/sw/dash/\
      radius/opacity; lines, arrows and curves take absolute end \

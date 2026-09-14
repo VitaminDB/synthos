@@ -473,8 +473,9 @@ pub(super) fn build_all() -> Vec<Tool> {
                 with coordinates; pages=[…], depth=all or page=\"all\" read \
                 many pages, a whole subtree or the whole project in ONE \
                 call), create / update / move / delete / \
-                duplicate (pages; update also sets grid/snap and inserts \
-                content at a position), open (show a page to the user), \
+                duplicate (pages; update also sets grid/snap, shows or \
+                hides the page's right Properties panel and inserts content \
+                at a position), open (show a page to the user), \
                 attach (file or chat attachment → media block), blocks \
                 (op=list | read | insert | set_markdown | delete | move | \
                 nest | unnest | set_attrs | pin | unpin — blocks by index, \
@@ -500,6 +501,12 @@ pub(super) fn build_all() -> Vec<Tool> {
                 rewriting a whole page. Pages are addressed by id (12 hex) \
                 or exact title; blocks by index from blocks op=list; boards \
                 and charts by id, or implicitly when the page has one. \
+                PROPERTIES PANEL. The right panel of the Notes mode \
+                (Properties | Links tabs) is remembered by each page: \
+                update props_panel=hidden|shown sets it, read shows it in \
+                the layout line, and the screen follows at once when that \
+                page is open. For every page at once: update page=\"all\" \
+                props_panel=hidden — ONE call; pages=[…] takes a list. \
                 NESTING. What a toggle hides — and what a callout, a quote or \
                 a list item holds — are its nested blocks, written in markdown \
                 as quote lines: EVERY line of the content, table rows \
@@ -626,7 +633,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 for duplicate titles use \"Parent / Title\" or the id. \
                 Required by read, update, move, delete, duplicate, attach \
                 and by kanban/gantt op=create. read also takes \"all\" — \
-                every page of the project in one reply."
+                every page of the project in one reply; so does update for \
+                page settings (props_panel, grid, snap, bg)."
         })),
         ("pages", json!({
             "type": "array",
@@ -635,7 +643,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 always prefer this over one call per page. \"all\" as the \
                 only item reads the whole project. Everything that fits in \
                 one reply comes back; the pages that did not fit are listed \
-                at the end by id."
+                at the end by id. update: the same page settings \
+                (props_panel, grid, grid_step, snap, snap_step, bg) on every \
+                listed page in one call."
         })),
         ("depth", json!({
             "type": "string",
@@ -967,6 +977,14 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "create/update: page background #rrggbb / #rrggbbaa \
                 (painted under the grid); none = theme."
+        })),
+        ("props_panel", json!({
+            "type": "string",
+            "enum": ["shown", "hidden"],
+            "description": "create/update: the right Properties panel of the \
+                Notes mode while this page is open — each page remembers its \
+                own. With page=\"all\" / pages=[…] update sets it on many \
+                pages in one call."
         })),
         ("column_width", json!({
             "type": "number",

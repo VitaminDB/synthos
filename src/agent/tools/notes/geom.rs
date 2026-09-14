@@ -172,7 +172,14 @@ fn est_height(b: &DocBlock, w: f32) -> f32 {
         _ => {
             let chars = b.kind.text().map(|t| t.text().chars().count()).unwrap_or(0);
             let own = text_lines(chars, w, 8.5) * 24.0 + 8.0;
-            let children: f32 = b.kind.children().map(|c| c.iter().map(|x| est_height(x, w - 24.0)).sum()).unwrap_or(0.0);
+            // Свёрнутый toggle рисуется одной строкой заголовка. С детьми в
+            // оценке arrange ставил блок под ним на высоту развёрнутой
+            // таблицы — на странице «Долги и кредиты» под свёрнутым toggle
+            // осталась пустота в 1900 px (14.09.2026).
+            let children: f32 = match &b.kind {
+                BlockKind::Toggle { collapsed: true, .. } => 0.0,
+                kind => kind.children().map(|c| c.iter().map(|x| est_height(x, w - 24.0)).sum()).unwrap_or(0.0),
+            };
             own + children
         }
     }

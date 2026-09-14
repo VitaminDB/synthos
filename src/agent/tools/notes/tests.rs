@@ -366,6 +366,31 @@ fn arrange_stacks_blocks_and_overlaps_are_reported() {
     assert!(out.contains("!! overlaps") && out.contains("#3 (x=100 y=100 w=200 h=100)"), "{out}");
 }
 
+/// Свёрнутый toggle занимает на холсте одну строку заголовка: arrange ставит
+/// следующий блок сразу под ним, а не на высоту спрятанной таблицы
+/// (14.09.2026, «Долги и кредиты» — 1900 px пустоты). Развёрнутый считается
+/// с содержимым.
+#[test]
+fn arrange_counts_collapsed_toggle_without_children() {
+    let ctx = ctx();
+    let rows: String = (1..=40).map(|i| format!("> | {i} | {} |\n", i * 100)).collect();
+    let md = format!("> [!toggle] Полная таблица\n>\n> | № | Сумма |\n> | --- | --- |\n{rows}\nПосле таблицы\n");
+    let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Свёрнутая таблица", "content": md})));
+    call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page}));
+    let model = load_model(ctx, &page);
+    assert_eq!(model.blocks.len(), 2, "таблица внутри toggle");
+    let toggle = block_rect(&model.blocks[0]).unwrap();
+    let after = block_rect(&model.blocks[1]).unwrap();
+    assert!(toggle.3 < 60.0, "свёрнутый toggle — одна строка: {toggle:?}");
+    assert!(after.1 <= toggle.1 + toggle.3 + 24.0 + 1.0, "пустота под свёрнутым toggle: {toggle:?} {after:?}");
+
+    let open = page_id(&call(ctx, "create", serde_json::json!({"title": "Открытая таблица", "content": md.replacen("[!toggle]", "[!toggle]{open}", 1)})));
+    call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &open}));
+    let model = load_model(ctx, &open);
+    let toggle = block_rect(&model.blocks[0]).unwrap();
+    assert!(toggle.3 > 40.0 * 35.0, "развёрнутый toggle — с таблицей: {toggle:?}");
+}
+
 /// Фигуры: рамка из x y w h, линия из абсолютных концов (рамка считается
 /// сама), connect между закреплёнными блоками, ошибка для незакреплённого.
 #[test]

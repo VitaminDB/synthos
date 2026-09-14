@@ -155,7 +155,10 @@ fn est_height(b: &DocBlock, w: f32) -> f32 {
         BlockKind::Media { .. } => free::height_of(&b.attrs).unwrap_or(220.0),
         BlockKind::Divider => 17.0,
         BlockKind::Embed { .. } => free::height_of(&b.attrs).unwrap_or(200.0),
-        BlockKind::Table { rows, .. } => (rows.len() as f32 + 1.0) * 30.0,
+        // Строка таблицы в DocStyle по умолчанию: 15·1.55 + 2·6 = 35.25 px,
+        // плюс рамка 2 px. С оценкой 30 px блок под таблицей из 10 строк
+        // вставал на её последнюю строку.
+        BlockKind::Table { rows, .. } => (rows.len() as f32 + 1.0) * 35.25 + 2.0,
         BlockKind::CodeBlock { code, .. } => code.lines().count().max(1) as f32 * 20.0 + 16.0,
         BlockKind::Heading { level, text } => {
             let size = match level {

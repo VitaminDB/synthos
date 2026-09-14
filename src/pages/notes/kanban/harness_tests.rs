@@ -409,3 +409,46 @@ fn ctrl_c_in_card_editor_without_selection_copies_whole_card() {
     w.h.tree.modifiers.ctrl = false;
     assert_eq!(COPIED.with(|c| c.borrow().clone()), [("k0".to_string(), CopyKind::Full)]);
 }
+
+// ─── Таймеры колонок ──────────────────────────────────────────────────────
+
+/// Колонка с правилом: значок в её шапке и чип отсчёта на карточке. Такт
+/// без срабатываний сдвигает только отсчёт (`tick`), доска не
+/// перестраивается; просроченная карточка уезжает по такту сама, и в
+/// колонке без правил чипа у неё нет.
+#[test]
+fn column_timer_shows_icon_and_countdown_and_moves_the_card_on_tick() {
+    let mut d = doc_with_cards(&["Зависла"]);
+    let doing = d.columns[1].id.clone();
+    d.columns[0].move_after_hours = Some(72);
+    d.columns[0].move_to = Some(doing);
+    let handle = KanbanHandle::new(d);
+    // Первый такт — штамп `entered` у карточки без него; записей журнала
+    // нет, но ревизия растёт — штамп уйдёт на диск автосейвом.
+    let rev0 = handle.revision.get_untracked();
+    handle.sweep();
+    assert!(handle.lock().cards[0].entered.is_some());
+    assert!(handle.revision.get_untracked() > rev0, "штампы такта должны сохраняться");
+    let mut handles = HashMap::new();
+    handles.insert("b1".to_string(), handle.clone());
+    let mut w = World::new("![[kanban:b1]]{h=340}\n", handles);
+    assert_eq!(w.h.find_by_class("notes-kanban-lane-timer").len(), 1, "значок только у колонки с правилом");
+    assert_eq!(w.h.find_by_class("timer").len(), 1, "чип отсчёта на карточке");
+
+    let (rev, tick) = (handle.structure_rev.get_untracked(), handle.tick.get_untracked());
+    handle.sweep();
+    assert_eq!(handle.structure_rev.get_untracked(), rev, "такт без срабатываний не перестраивает доску");
+    assert_eq!(handle.tick.get_untracked(), tick + 1, "а сдвигает отсчёт");
+
+    {
+        let mut doc = handle.lock();
+        let entered = doc.cards[0].entered.unwrap();
+        doc.cards[0].entered = Some(entered - 73 * 3600);
+    }
+    handle.sweep();
+    assert_eq!(column_ids(&handle, 1), ["k0"], "73 ч в «Todo» — карточка в «Doing»");
+    assert!(column_ids(&handle, 0).is_empty());
+    w.settle();
+    assert_eq!(w.h.find_by_class("timer").len(), 0, "в «Doing» правил нет — и чипа нет");
+    assert_eq!(w.h.find_by_class("notes-kanban-lane-timer").len(), 1);
+}

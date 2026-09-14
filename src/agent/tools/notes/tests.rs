@@ -1402,3 +1402,79 @@ fn tool_description_points_at_the_now_line() {
     let t = crate::agent::tools::descriptor::Tool::by_key("notes").expect("notes зарегистрирован");
     assert!(t.description.contains("`now:` line"), "{}", t.description);
 }
+
+/// Таймеры колонок через инструмент: правила на колонках, отсчёт в read,
+/// переезд «В работе» → «Просроченные» и истечение хранения по минутному
+/// такту (`sweep`), журнал с актором `timer`, возврат из архива в свою
+/// колонку с новым отсчётом. Время не ждём — штамп `entered` сдвигаем назад.
+#[test]
+fn column_timers_move_and_expire_cards() {
+    use crate::pages::notes::kanban::{now_secs, KanbanHandle};
+    let ctx = ctx();
+    let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Таймеры"})));
+    let out = call(ctx, "kanban", serde_json::json!({"op": "create", "page": &page, "columns": ["Бэклог", "В работе", "Просроченные", "Готово"]}));
+    let board = out.lines().find_map(|l| l.strip_prefix("kanban:")).unwrap().split(' ').next().unwrap().to_string();
+    let args = |extra: serde_json::Value| {
+        let mut a = serde_json::json!({"op": "update_column", "board": &board});
+        for (k, v) in extra.as_object().unwrap() {
+            a[k] = v.clone();
+        }
+        a
+    };
+    let out = call(ctx, "kanban", args(serde_json::json!({"column": "В работе", "move_after_hours": 72, "move_to": "Просроченные"})));
+    assert!(out.contains("after 72h cards move to \"Просроченные\""), "{out}");
+    assert!(out.contains("· after 72h → \"Просроченные\" · 0 cards"), "правило в строке колонки: {out}");
+    let out = call(ctx, "kanban", args(serde_json::json!({"column": "Просроченные", "keep_hours": "3d"})));
+    assert!(out.contains("keeps cards 72h") && out.contains("· keeps 72h · 0 cards"), "{out}");
+    // Ошибки: часы без цели, цель — сама колонка, мусор в часах.
+    let err = dispatch(ctx, "kanban", &args(serde_json::json!({"column": "Бэклог", "move_after_hours": 5}))).unwrap_err();
+    assert!(err.contains("needs \"move_to\""), "{err}");
+    let err = dispatch(ctx, "kanban", &args(serde_json::json!({"column": "Бэклог", "move_after_hours": 5, "move_to": "Бэклог"}))).unwrap_err();
+    assert!(err.contains("another column"), "{err}");
+    assert!(dispatch(ctx, "kanban", &args(serde_json::json!({"column": "Бэклог", "keep_hours": "мусор"}))).is_err());
+
+    call(ctx, "kanban", serde_json::json!({"op": "add_card", "board": &board, "column": "В работе", "title": "Зависла"}));
+    let out = call(ctx, "kanban", serde_json::json!({"op": "read", "board": &board}));
+    assert!(out.contains("\"Зависла\"") && out.contains("moves to \"Просроченные\" in 3d"), "{out}");
+
+    let handle: KanbanHandle = match ctx.object("kanban", &board) {
+        Some(LiveObject::Kanban { handle, .. }) => handle,
+        _ => panic!("доска"),
+    };
+    let rewind = |hours: i64| {
+        let mut doc = handle.lock();
+        let card = doc.cards.iter_mut().find(|c| c.title == "Зависла").expect("карточка на доске");
+        card.entered = card.entered.map(|e| e - hours * 3600);
+    };
+    // 73 ч в «В работе» — такт переносит; штамп — момент срабатывания, а не
+    // «сейчас»: из 72 ч хранения в «Просроченных» час уже прошёл.
+    rewind(73);
+    handle.sweep();
+    let doc = handle.lock().clone();
+    let card = doc.cards.iter().find(|c| c.title == "Зависла").unwrap();
+    assert_eq!(doc.column_name(&card.column), "Просроченные");
+    let left = doc.next_timer(card).unwrap().at - now_secs();
+    assert!((70 * 3600..=71 * 3600 + 5).contains(&left), "осталось {left} с");
+
+    // Ещё 72 ч — хранение вышло: карточка в архиве, а не стёрта.
+    rewind(72);
+    handle.sweep();
+    let doc = handle.lock().clone();
+    assert!(doc.cards.iter().all(|c| c.title != "Зависла"), "{doc:?}");
+    assert!(doc.archive.iter().any(|c| c.title == "Зависла" && c.done.is_none()), "{doc:?}");
+    let out = call(ctx, "log", serde_json::json!({"since": "today", "actor": "timer"}));
+    assert!(out.contains("moved by the column timer \"В работе\" → \"Просроченные\""), "{out}");
+    assert!(out.contains("its time in \"Просроченные\" ran out"), "{out}");
+
+    // Возврат — в свою колонку, отсчёт с начала.
+    let out = call(ctx, "kanban", serde_json::json!({"op": "unarchive", "board": &board, "card": "Зависла"}));
+    assert!(out.contains("archive in 3d"), "{out}");
+    let doc = handle.lock().clone();
+    let card = doc.cards.iter().find(|c| c.title == "Зависла").unwrap();
+    assert_eq!(doc.column_name(&card.column), "Просроченные");
+
+    // Удаление колонки-цели гасит эскалацию; 0 выключает хранение.
+    call(ctx, "kanban", serde_json::json!({"op": "delete_column", "board": &board, "column": "Просроченные"}));
+    let out = call(ctx, "kanban", args(serde_json::json!({"column": "В работе", "keep_hours": 0})));
+    assert!(out.contains("keeps cards forever") && !out.contains("after 72h"), "{out}");
+}

@@ -324,7 +324,12 @@ const NOTES_RULES: &str =
      leave the board into the archive after set_style \
      archive_after days (read archived=true, op=unarchive). \
      op=set_style also sets column_width, lane_bg, card_bg, \
-     show_counts.\n\
+     show_counts. Column timers (update_column): keep_hours — a \
+     card staying longer leaves the board into the archive; \
+     move_after_hours + move_to — a card staying longer moves to \
+     that column by itself (In progress 72h → Overdue). The timer \
+     counts from the moment the card entered the column; read \
+     shows the rules and each card's countdown.\n\
      - Planning a card in time: duration is the estimate (1d, 2h, \
      90m), start/end are the planned dates; kanban op=schedule \
      {card, date=today|tomorrow|yyyy-mm-dd, time, duration} fills \

@@ -257,6 +257,7 @@ pub fn fresh_copy(card: &KanbanCard) -> KanbanCard {
     c.id = item_id("k");
     c.created = None;
     c.done = None;
+    c.entered = None;
     c
 }
 

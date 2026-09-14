@@ -25,6 +25,7 @@ use syngui::input::{CursorIcon, DragData};
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{ClipboardKey, DocumentEditor};
+use syngui::widgets::feedback::Tooltip;
 use syngui::widgets::overlay::{ContextMenu, Draggable, DropArea, DropInfo};
 use syngui::widgets::{Date, DatePicker, Dropdown, DropdownItem, GestureDetector, Image, ImageFit, MenuItem, PopupMenu, ProgressBar, SpinBox};
 
@@ -33,10 +34,13 @@ use crate::icons::*;
 use super::super::calendar::model::fmt_hm;
 use super::super::gantt::calendar::{civil_from_days, days_from_civil, parse_days, short_date, today_days};
 use super::drag_strip::DragStrip;
-use super::model::{parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Moment, Priority, Repeat, DAY_MIN};
+use super::model::{
+    parse_tags, preview_text, tag_color, CardFile, DropSpot, KanbanCard, KanbanColumn, KanbanDoc, Moment, Priority, Repeat, TimerAction,
+    DAY_MIN, HOUR_SECS,
+};
 pub use super::sinks::DRAG_TYPE_BLOCK;
 use super::clip::{self, CopyKind};
-use super::{drop_block, drop_card, BoardEnv, KanbanHandle};
+use super::{drop_block, drop_card, now_secs, BoardEnv, KanbanHandle};
 
 pub const DRAG_TYPE_CARD: &str = "notes-kanban-card";
 
@@ -147,6 +151,10 @@ fn lane(
                     .class("notes-kanban-lane-name"),
             ),
         );
+    // Значок таймеров: правила колонки — в подсказке, настройка — в панели свойств.
+    if let Some(rules) = column_timer_text(doc, column) {
+        header = header.child(Tooltip::new(Icon::new(MI_TIMER).class("notes-kanban-lane-timer"), rules));
+    }
     if doc.style.show_counts {
         header = header.child(Text::new(format!("{}", cards_in.len())).class("notes-kanban-lane-count"));
     }
@@ -440,6 +448,9 @@ fn card(
     }
     if c.due.is_some() || c.done.is_some() || c.repeat != Repeat::None || c.checklist().is_some() {
         body = body.child(footer_row(c));
+    }
+    if doc.next_timer(c).is_some() {
+        body = body.child(Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).child(timer_chip(handle, &c.id)));
     }
     if selected {
         body = body.child(card_fields(env, handle, c, lane_width));
@@ -825,6 +836,153 @@ pub fn dates_text(card: &KanbanCard) -> Option<String> {
         parts.push(format!("{} {}", tr!("notes.kanban.done_at"), short_date(d)));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// Остаток времени коротко: «40 мин», «5 ч», «3 д 4 ч» (меньше минуты —
+/// «1 мин»: такт таймеров — раз в минуту).
+pub fn fmt_left(secs: i64) -> String {
+    let min = ((secs.max(60) + 59) / 60) as u64;
+    if min < 60 {
+        return tr!("notes.kanban.timer.m", n = min);
+    }
+    let hours = min.div_ceil(60);
+    if hours < 48 {
+        return tr!("notes.kanban.timer.h", n = hours);
+    }
+    let (d, h) = (hours / 24, hours % 24);
+    if h == 0 {
+        tr!("notes.kanban.timer.d", n = d)
+    } else {
+        format!("{} {}", tr!("notes.kanban.timer.d", n = d), tr!("notes.kanban.timer.h", n = h))
+    }
+}
+
+/// Первая буква заглавной: части подписей таймера склеиваются через « · ».
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// «В колонке 2 д 3 ч · в архив через 5 ч» / «… · в «Просроченные» через
+/// 5 ч» — пребывание карточки и ближайший таймер; `None` — у колонки нет
+/// правил времени.
+pub fn timer_text(doc: &KanbanDoc, card: &KanbanCard, now: i64) -> Option<String> {
+    let timer = doc.next_timer(card)?;
+    let stay = tr!("notes.kanban.timer.in_column", t = fmt_left(now - card.entered.unwrap_or(now)));
+    let left = fmt_left(timer.at - now);
+    let what = match &timer.action {
+        TimerAction::Expire => tr!("notes.kanban.timer.expire_in", t = left),
+        TimerAction::Move(to) => tr!("notes.kanban.timer.move_in", column = doc.column_name(to), t = left),
+    };
+    Some(format!("{stay} · {what}"))
+}
+
+/// «Хранит 72 ч · через 72 ч → «Просроченные»» — правила колонки для
+/// подсказки у значка в шапке; `None` — правил нет.
+pub fn column_timer_text(doc: &KanbanDoc, column: &KanbanColumn) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(h) = column.keep_hours {
+        parts.push(tr!("notes.kanban.timer.keeps", t = fmt_left(h as i64 * HOUR_SECS)));
+    }
+    if let (Some(h), Some(to)) = (column.move_after_hours, column.move_to.as_deref()) {
+        if doc.columns.iter().any(|c| c.id == to && c.id != column.id) {
+            parts.push(tr!("notes.kanban.timer.moves", t = fmt_left(h as i64 * HOUR_SECS), column = doc.column_name(to)));
+        }
+    }
+    (!parts.is_empty()).then(|| capitalize(&parts.join(" · ")))
+}
+
+/// Чип обратного отсчёта в подвале карточки: значок действия (архив либо
+/// переезд) и остаток; меньше часа (или десятой доли срока) — «скоро».
+/// Свой `Reactive` по такту доски: раз в минуту перерисовывается только он.
+fn timer_chip(handle: &KanbanHandle, card_id: &str) -> impl Widget {
+    let h = handle.clone();
+    let id = card_id.to_string();
+    Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let _ = h.tick.get();
+        let now = now_secs();
+        let doc = h.lock();
+        let (Some(card), Some(timer)) = (doc.card(&id), doc.card(&id).and_then(|c| doc.next_timer(c))) else {
+            return vec![Box::new(DecoratedBox::new())];
+        };
+        let left = timer.at - now;
+        let span = (timer.at - card.entered.unwrap_or(now)).max(1);
+        let soon = left < HOUR_SECS || left * 10 < span;
+        let icon = match timer.action {
+            TimerAction::Expire => MI_HOURGLASS_TOP,
+            TimerAction::Move(_) => MI_ARROW_FORWARD,
+        };
+        let tip = timer_text(&doc, card, now).unwrap_or_default();
+        drop(doc);
+        // Классы по одному: `Row::class` не делит строку по пробелам.
+        let mut chip = Row::new().gap(3.0).cross_axis_alignment(CrossAxisAlignment::Center).class("notes-kanban-due").class("timer");
+        if soon {
+            chip = chip.class("soon");
+        }
+        let chip = chip
+            .child(Icon::new(icon).class("notes-kanban-due-icon"))
+            .child(Text::new(fmt_left(left)).class("notes-kanban-due-text"));
+        vec![Box::new(Tooltip::new(chip, tip))]
+    })
+}
+
+/// Поля таймеров колонки для панели свойств: «Хранить, ч», «Перенос через,
+/// ч» и — когда перенос задан — «Перенести в»; подсказка, если хранение
+/// истекает раньше переноса. Часы вводятся текстом и применяются по Enter
+/// или потере фокуса, а не спинбоксом: правило сразу действует на
+/// карточки, и шаги 1, 2, 3… по дороге к 72 унесли бы в архив всё, что
+/// лежит дольше.
+pub fn column_timer_fields(
+    handle: &KanbanHandle,
+    doc: &KanbanDoc,
+    column: &KanbanColumn,
+) -> (Vec<(String, Box<dyn Widget>)>, Option<String>) {
+    let mut fields: Vec<(String, Box<dyn Widget>)> = Vec::new();
+    let (h, id) = (handle.clone(), column.id.clone());
+    fields.push((tr!("notes.props.kanban.keep_hours"), hours_field(column.keep_hours, move |v| h.set_column_keep(&id, v))));
+    let (h, id, to) = (handle.clone(), column.id.clone(), column.move_to.clone());
+    fields.push((
+        tr!("notes.props.kanban.move_after"),
+        hours_field(column.move_after_hours, move |v| h.set_column_move(&id, v, to.clone())),
+    ));
+    if column.move_after_hours.is_some() || column.move_to.is_some() {
+        let mut items = vec![DropdownItem::new("", tr!("notes.props.kanban.move_to.none"))];
+        for c in doc.columns.iter().filter(|c| c.id != column.id) {
+            items.push(DropdownItem::new(c.id.clone(), c.name.clone()));
+        }
+        let (h, id, hours) = (handle.clone(), column.id.clone(), column.move_after_hours);
+        let pick = Dropdown::with_items(items)
+            .selected(column.move_to.as_deref().unwrap_or(""))
+            .width(140.0)
+            .on_change(move |v| h.set_column_move(&id, hours, Some(v.to_string())))
+            .class("notes-kanban-field");
+        fields.push((tr!("notes.props.kanban.move_to"), Box::new(pick)));
+    }
+    let valid_target = column.move_to.as_deref().is_some_and(|t| doc.columns.iter().any(|c| c.id == t && c.id != column.id));
+    let conflict = match (column.keep_hours, column.move_after_hours) {
+        (Some(keep), Some(after)) => valid_target && keep < after,
+        _ => false,
+    };
+    (fields, conflict.then(|| tr!("notes.props.kanban.timer_conflict")))
+}
+
+/// Поле часов таймера: пусто — «∞ всегда»; мусор не применяется.
+fn hours_field(value: Option<u32>, on_set: impl Fn(Option<u32>) + Send + Sync + 'static) -> Box<dyn Widget> {
+    Box::new(
+        TextField::with_text(value.map(|h| h.to_string()).unwrap_or_default())
+            .placeholder(tr!("notes.props.kanban.forever"))
+            .width(96.0)
+            .submit_on_focus_lost(true)
+            .on_submit(move |v: &str| {
+                if let Ok(hours) = super::model::parse_hours(v) {
+                    on_set(hours);
+                }
+            })
+            .class("notes-props-field"),
+    )
 }
 
 /// Метки через запятую.

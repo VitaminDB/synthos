@@ -109,6 +109,8 @@ fn log_line(ctx: NotesCtx, e: &LogEntry, boards: &mut Vec<(String, String)>) -> 
         ),
         ("card", "archive") => format!("card \"{}\" archived (from \"{}\")", e.title, e.from),
         ("card", "restore") => format!("card \"{}\" restored to \"{}\"", e.title, e.to),
+        ("card", "expire") => format!("card \"{}\" archived: its time in \"{}\" ran out", e.title, e.from),
+        ("card", "auto_move") => format!("card \"{}\" moved by the column timer \"{}\" → \"{}\"", e.title, e.from, e.to),
         ("card", "repeat") => format!("card \"{}\" next repeat created: {}", e.title, e.to),
         ("event", "add") => format!("event \"{}\" added on {}", e.title, e.to),
         ("event", "delete") => format!("event \"{}\" deleted (was {})", e.title, e.from),
@@ -153,8 +155,8 @@ pub(super) fn log_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     }
     if let Some(a) = str_field(v, "actor") {
         let a = a.to_ascii_lowercase();
-        if !["user", "agent"].contains(&a.as_str()) {
-            return Err(format!("bad \"actor\" \"{a}\" (user | agent)"));
+        if !["user", "agent", "timer"].contains(&a.as_str()) {
+            return Err(format!("bad \"actor\" \"{a}\" (user | agent | timer)"));
         }
         q.actor = Some(a);
     }

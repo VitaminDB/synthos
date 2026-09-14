@@ -875,6 +875,21 @@ document-editor {
     font-size: 10px;
     color: var(--text-subtle);
 }
+/* Таймеры колонок: обратный отсчёт на карточке и значок в шапке колонки. */
+.notes-kanban-due.timer.soon {
+    background-color: var(--primary-soft);
+}
+.notes-kanban-due.timer.soon .notes-kanban-due-icon {
+    color: var(--warning);
+}
+.notes-kanban-due.timer.soon .notes-kanban-due-text {
+    color: var(--warning);
+    font-weight: 600;
+}
+.notes-kanban-lane-timer {
+    font-size: 14px;
+    color: var(--text-subtle);
+}
 /* Флаг «готово» у колонки в панели свойств. */
 .notes-props-col-done {
     width: 24px;

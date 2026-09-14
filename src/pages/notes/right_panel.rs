@@ -602,6 +602,14 @@ fn kanban_props(ctx: NotesCtx, handle: KanbanHandle) -> impl Widget {
                         .on_change(move |v| h_w.set_column_width(&id_w, Some(v as f32)))
                         .class("notes-props-field"),
                 ));
+            // Таймеры колонки: хранение и перенос по времени пребывания.
+            let (fields, hint) = kanban::view::column_timer_fields(&handle, &doc, column);
+            for (label, field) in fields {
+                col = col.child(field_row(label, Stack::new().children(vec![field])));
+            }
+            if let Some(hint) = hint {
+                col = col.child(Text::new(hint).max_lines(2).class("notes-props-hint"));
+            }
         }
         let h_add = handle.clone();
         col = col.child(

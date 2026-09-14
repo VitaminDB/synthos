@@ -35,6 +35,22 @@ use model::{item_id, next_color, CardChange, CardFile, DropSpot, KanbanCard, Kan
 use super::activity::{ActivityLogHandle, LogEntry};
 use super::gantt::calendar::today_days;
 
+/// «Сейчас» для таймеров колонок, unix-секунды.
+pub fn now_secs() -> i64 {
+    crate::agent::time::unix_secs() as i64
+}
+
+/// Такт таймеров колонок: доводка всех загруженных досок (сроки хранения и
+/// эскалации срабатывают и без правок). Зовётся раз в минуту из таймера
+/// напоминаний — отдельного пробуждения UI нет.
+pub fn sweep_boards(ctx: super::state::NotesCtx) {
+    for obj in ctx.objects.get_untracked().iter() {
+        if let super::state::LiveObject::Kanban { handle, .. } = obj {
+            handle.sweep();
+        }
+    }
+}
+
 /// Поиск доски по id (перенос карточек между досками): в приложении — пул
 /// объектов `NotesCtx`, в тестах — карта.
 pub type Boards = Arc<dyn Fn(&str) -> Option<KanbanHandle> + Send + Sync>;
@@ -128,6 +144,9 @@ pub struct KanbanHandle {
     pub hover: RwSignal<Option<DropSpot>>,
     /// Высота переносимой карточки (плейсхолдер); 0 — по умолчанию.
     pub drag_h: RwSignal<f32>,
+    /// Минутный такт таймеров колонок: по нему перерисовывается только
+    /// обратный отсчёт на карточках, не вся доска.
+    pub tick: RwSignal<u64>,
     /// Редакторы карточек: ручка + исходник на момент начала правки.
     editors: Arc<Mutex<HashMap<String, (DocumentEditorHandle, Arc<String>)>>>,
     /// Журнал проекта и id доски в нём (`kanban:<id>`); без него правки
@@ -147,6 +166,7 @@ impl KanbanHandle {
             selected: use_signal(None),
             hover: use_signal(None),
             drag_h: use_signal(0.0),
+            tick: use_signal(0),
             editors: Arc::new(Mutex::new(HashMap::new())),
             log: None,
             project_rev: None,
@@ -167,15 +187,41 @@ impl KanbanHandle {
         self
     }
 
-    /// Доводка при загрузке (штампы, автоархив) — без записи в журнал
-    /// «добавлений»: карточки не новые, а просто без штампа.
+    /// Доводка без правки: при загрузке (штампы, автоархив) и раз в минуту
+    /// ([`sweep_boards`]) — таймеры колонок срабатывают, даже когда доску
+    /// никто не трогает. В журнал идут архив и срабатывания таймеров, а не
+    /// штампы у старых карточек. Пока карточку правят, доска ждёт
+    /// следующего такта: редактор не должен исчезать из-под курсора.
     pub fn sweep(&self) {
-        let changes = self.lock().sweep(today_days());
-        if !changes.is_empty() {
-            self.bump();
-            self.structure_rev.set(self.structure_rev.get_untracked() + 1);
-            self.report(changes.into_iter().filter(|c| c.kind == model::CardChangeKind::Archived).collect());
+        if self.editing.get_untracked().is_some() {
+            return;
         }
+        let (changes, dirty, timers) = {
+            let mut doc = self.lock();
+            let before = doc.clone();
+            let changes = doc.sweep(today_days(), now_secs());
+            (changes, *doc != before, doc.columns.iter().any(|c| c.has_timer()))
+        };
+        if changes.is_empty() {
+            // Одни штампы (старым карточкам — `entered`/`created`): записей в
+            // журнале нет, но на диск они обязаны попасть — иначе после
+            // перезапуска отсчёт таймеров начинался бы заново.
+            if dirty {
+                self.bump();
+            }
+            // Ничего не сработало — сдвинуть только обратный отсчёт.
+            if timers {
+                self.tick.set(self.tick.get_untracked() + 1);
+            }
+            return;
+        }
+        let gone = self.selected.get_untracked().filter(|id| self.lock().card(id).is_none());
+        if gone.is_some() {
+            self.selected.set(None);
+        }
+        self.bump();
+        self.structure_rev.set(self.structure_rev.get_untracked() + 1);
+        self.report(changes.into_iter().filter(|c| c.auto || c.kind == model::CardChangeKind::Archived).collect());
     }
 
     fn report(&self, changes: Vec<CardChange>) {
@@ -184,7 +230,12 @@ impl KanbanHandle {
             return;
         }
         log.record_all(changes.into_iter().map(|c| {
-            LogEntry::now("card", c.kind.key()).object(object.clone()).item(c.card).title(c.title).from_to(c.from, c.to)
+            let mut entry =
+                LogEntry::now("card", c.kind.key()).object(object.clone()).item(c.card).title(c.title).from_to(c.from, c.to);
+            if c.auto {
+                entry.actor = "timer".to_string();
+            }
+            entry
         }));
     }
 
@@ -218,7 +269,7 @@ impl KanbanHandle {
             let mut doc = self.lock();
             let before = doc.clone();
             f(&mut doc);
-            doc.reconcile(&before, today_days())
+            doc.reconcile(&before, today_days(), now_secs())
         };
         self.bump();
         self.structure_rev.set(self.structure_rev.get_untracked() + 1);
@@ -235,7 +286,7 @@ impl KanbanHandle {
 
     pub fn add_column(&self, name: &str) -> String {
         let id = item_id("c");
-        let column = KanbanColumn { id: id.clone(), name: name.to_string(), color: String::new(), width: None, done: false };
+        let column = KanbanColumn::new(id.clone(), name, "", false);
         self.edit(|doc| doc.columns.push(column));
         id
     }
@@ -247,6 +298,36 @@ impl KanbanHandle {
             self.edit(|doc| {
                 if let Some(c) = doc.columns.iter_mut().find(|c| c.id == id) {
                     c.done = done;
+                }
+            });
+        }
+    }
+
+    /// Хранение карточек колонки, часы; `None` (или 0) — всегда. Сразу
+    /// применяется к карточкам, лежащим дольше.
+    pub fn set_column_keep(&self, id: &str, hours: Option<u32>) {
+        let hours = hours.filter(|h| *h > 0);
+        let changed = self.lock().columns.iter().any(|c| c.id == id && c.keep_hours != hours);
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.columns.iter_mut().find(|c| c.id == id) {
+                    c.keep_hours = hours;
+                }
+            });
+        }
+    }
+
+    /// Эскалация колонки: через `hours` часов пребывания — в колонку `to`.
+    /// Цель, совпадающая с самой колонкой, не ставится.
+    pub fn set_column_move(&self, id: &str, hours: Option<u32>, to: Option<String>) {
+        let hours = hours.filter(|h| *h > 0);
+        let to = to.filter(|t| !t.is_empty() && t != id);
+        let changed = self.lock().columns.iter().any(|c| c.id == id && (c.move_after_hours != hours || c.move_to != to));
+        if changed {
+            self.edit(|doc| {
+                if let Some(c) = doc.columns.iter_mut().find(|c| c.id == id) {
+                    c.move_after_hours = hours;
+                    c.move_to = to;
                 }
             });
         }
@@ -306,6 +387,10 @@ impl KanbanHandle {
                 .or_else(|| (idx + 1 < doc.columns.len()).then_some(idx + 1))
                 .map(|i| doc.columns[i].id.clone());
             doc.columns.remove(idx);
+            // Эскалация в удалённую колонку больше некуда вести.
+            for c in doc.columns.iter_mut().filter(|c| c.move_to.as_deref() == Some(id)) {
+                c.move_to = None;
+            }
             match heir {
                 Some(h) => doc.cards.iter_mut().filter(|c| c.column == id).for_each(|c| c.column = h.clone()),
                 None => doc.cards.retain(|c| c.column != id),

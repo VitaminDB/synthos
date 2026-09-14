@@ -314,6 +314,9 @@ fn toast_batch(batch: &[Reminder]) {
 /// Проверка «сейчас» на main-потоке с тостами приложения.
 pub fn check_now() {
     let ctx = use_context::<NotesCtx>();
+    // Такт таймеров колонок досок — на том же минутном пробуждении, до
+    // сбора напоминаний: истёкшие и перенесённые карточки уже на месте.
+    super::kanban::sweep_boards(ctx);
     let mut batch = Vec::new();
     check(ctx, crate::agent::time::local_now(), &mut |r| batch.push(r.clone()));
     if !batch.is_empty() {

@@ -182,10 +182,71 @@ pub(super) fn card_line(c: &KanbanCard) -> String {
     s
 }
 
+use crate::pages::notes::kanban::model::{parse_hours, KanbanDoc, TimerAction};
+use crate::pages::notes::kanban::now_secs;
+
+/// Таймеры колонки из `keep_hours`, `move_after_hours`, `move_to`
+/// (add_column / update_column); пустой список — ни одного не передали.
+/// Непереданное остаётся как было: `move_to` без часов берёт прежние часы.
+fn column_timers(handle: &KanbanHandle, col: &KanbanColumn, v: &Json) -> Result<Vec<String>, String> {
+    let hours = |key: &str| -> Result<Option<Option<u32>>, String> {
+        match raw_string(v, key) {
+            None => Ok(None),
+            Some(raw) => parse_hours(&raw)
+                .map(Some)
+                .map_err(|_| format!("bad \"{key}\" \"{raw}\" (hours: 72 | 3d | 12h; 0 / none = off)")),
+        }
+    };
+    let mut changes = Vec::new();
+    if let Some(keep) = hours("keep_hours")? {
+        handle.set_column_keep(&col.id, keep);
+        changes.push(keep.map(|h| format!("keeps cards {h}h")).unwrap_or_else(|| "keeps cards forever".to_string()));
+    }
+    let after = hours("move_after_hours")?;
+    let target = match raw_string(v, "move_to") {
+        None => None,
+        Some(raw) if matches!(raw.trim().to_ascii_lowercase().as_str(), "" | "none" | "null" | "off") => Some(None),
+        Some(raw) => {
+            let to = resolve_column(handle, &raw)?;
+            if to.id == col.id {
+                return Err(format!("\"move_to\" must be another column, not \"{}\" itself", col.name));
+            }
+            Some(Some(to.id))
+        }
+    };
+    if after.is_none() && target.is_none() {
+        return Ok(changes);
+    }
+    let current = handle.lock().columns.iter().find(|c| c.id == col.id).cloned().unwrap_or_else(|| col.clone());
+    let hours = after.unwrap_or(current.move_after_hours);
+    let to = target.unwrap_or(current.move_to);
+    if hours.is_some() && to.is_none() {
+        return Err("\"move_after_hours\" needs \"move_to\" — the column the cards move to".to_string());
+    }
+    handle.set_column_move(&col.id, hours, to.clone());
+    changes.push(match (hours, to) {
+        (Some(h), Some(to)) => format!("after {h}h cards move to \"{}\"", handle.lock().column_name(&to)),
+        _ => "no timed move".to_string(),
+    });
+    Ok(changes)
+}
+
+/// Отсчёт таймера карточки для вывода: « · in column 2d 3h · archive in 5h».
+fn timer_suffix(doc: &KanbanDoc, c: &KanbanCard, now: i64) -> String {
+    let Some(timer) = doc.next_timer(c) else { return String::new() };
+    let left = |secs: i64| fmt_duration(((secs.max(60) + 59) / 60) as u32);
+    let stay = left(now - c.entered.unwrap_or(now));
+    match &timer.action {
+        TimerAction::Expire => format!(" · in column {stay} · archive in {}", left(timer.at - now)),
+        TimerAction::Move(to) => format!(" · in column {stay} · moves to \"{}\" in {}", doc.column_name(to), left(timer.at - now)),
+    }
+}
+
 /// Текст доски: шапка, колонки, карточки по колонкам; `full` — с
 /// markdown-содержимым карточек.
 pub(super) fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String {
     let doc = handle.lock();
+    let now = now_secs();
     let mut out = String::new();
     out.push_str(&format!(
         "kanban:{id} · columns: {} · cards: {}{}{}{}\n",
@@ -210,8 +271,15 @@ pub(super) fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String 
     }
     for col in &doc.columns {
         let cards = doc.cards_of(&col.id);
+        let mut rules = String::new();
+        if let Some(h) = col.keep_hours {
+            rules.push_str(&format!(" · keeps {h}h"));
+        }
+        if let (Some(h), Some(to)) = (col.move_after_hours, col.move_to.as_deref()) {
+            rules.push_str(&format!(" · after {h}h → \"{}\"", doc.column_name(to)));
+        }
         out.push_str(&format!(
-            "  column {} \"{}\"{}{}{} · {} card{}\n",
+            "  column {} \"{}\"{}{}{}{rules} · {} card{}\n",
             col.id,
             col.name,
             if col.done { " · DONE column" } else { "" },
@@ -221,7 +289,7 @@ pub(super) fn board_text(id: &str, handle: &KanbanHandle, full: bool) -> String 
             if cards.len() == 1 { "" } else { "s" }
         ));
         for c in cards {
-            out.push_str(&format!("    {}\n", card_line(c)));
+            out.push_str(&format!("    {}{}\n", card_line(c), timer_suffix(&doc, c, now)));
             if full && !c.md.trim().is_empty() {
                 for l in c.md.trim_end().lines() {
                     out.push_str(&format!("      | {l}\n"));
@@ -240,7 +308,8 @@ const KANBAN_OPS_HELP: &str = "kanban ops (every op but create addresses the boa
 or page=<page with one board>): \
 create {page, columns, done_column, title, x y w h} · read {archived} · \
 set_style {column_width, lane_bg, card_bg, show_counts, archive_after} · \
-add_column {name, color, width, done} · update_column {column, name, color, width, done} · \
+add_column {name, color, width, done, keep_hours, move_after_hours, move_to} · \
+update_column {column, name, color, width, done, keep_hours, move_after_hours, move_to} · \
 delete_column {column} · \
 add_card {title = the new card's text, column, md, priority, tags, due, duration, start, end, repeat, before} · \
 update_card {card, title, md, priority, tags, due, duration, start, end, repeat, column, before} · \
@@ -263,13 +332,7 @@ pub(super) fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     doc.columns = names
                         .iter()
                         .enumerate()
-                        .map(|(i, name)| KanbanColumn {
-                            id: item_id("c"),
-                            name: name.clone(),
-                            color: PALETTE[i % PALETTE.len()].to_string(),
-                            width: None,
-                            done: false,
-                        })
+                        .map(|(i, name)| KanbanColumn::new(item_id("c"), name.clone(), PALETTE[i % PALETTE.len()], false))
                         .collect();
                     doc.detect_done_column();
                 });
@@ -382,12 +445,15 @@ pub(super) fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
             if let Some(d) = bool_field(v, "done") {
                 handle.set_column_done(&cid, d);
             }
-            Ok(format!("added column {cid} \"{name}\"\n{}", board_text(&id, &handle, false)))
+            let col = resolve_column(&handle, &cid)?;
+            let timers = column_timers(&handle, &col, v)?;
+            let timers = if timers.is_empty() { String::new() } else { format!(" ({})", timers.join(", ")) };
+            Ok(format!("added column {cid} \"{name}\"{timers}\n{}", board_text(&id, &handle, false)))
         }
         "update_column" => {
             let (id, handle) = kanban_handle(ctx, v)?;
             let col = resolve_column(&handle, str_field(v, "column").ok_or("missing \"column\"")?)?;
-            let mut changes = Vec::new();
+            let mut changes = column_timers(&handle, &col, v)?;
             if let Some(name) = str_field(v, "name") {
                 handle.rename_column(&col.id, name);
                 changes.push(format!("renamed to \"{name}\""));
@@ -411,7 +477,9 @@ pub(super) fn kanban_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 changes.push(if d { "done column".to_string() } else { "not a done column".to_string() });
             }
             if changes.is_empty() {
-                return Err("nothing to update: pass name, color, width or done".to_string());
+                return Err(
+                    "nothing to update: pass name, color, width, done, keep_hours, move_after_hours or move_to".to_string(),
+                );
             }
             Ok(format!("column {}: {}\n{}", col.id, changes.join(", "), board_text(&id, &handle, false)))
         }

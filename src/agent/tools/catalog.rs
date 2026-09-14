@@ -784,8 +784,12 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 with one board> for every op but create): create {page, \
                 columns, done_column, title} | read {archived} | set_style \
                 {column_width, lane_bg, card_bg, show_counts, archive_after} | \
-                add_column {name, color, width, done} | update_column {column, \
-                name, color, width, done} | delete_column {column} | add_card \
+                add_column {name, color, width, done, keep_hours, \
+                move_after_hours, move_to} | update_column {column, name, color, \
+                width, done, keep_hours, move_after_hours, move_to} (column \
+                timers, counted from the moment a card entered the column: \
+                keep_hours — older cards go to the archive; move_after_hours + \
+                move_to — they move to that column) | delete_column {column} | add_card \
                 {title = the new card's text, column, md, priority, tags, due, \
                 duration, start, end, repeat, before} | update_card {card, \
                 title, md, priority, tags, due, duration, start, end, repeat, \
@@ -1359,6 +1363,25 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": ["integer", "string"],
             "description": "kanban set_style: days after a card is done before \
                 it moves off the board into the archive (0 / none = never)."
+        })),
+        ("keep_hours", json!({
+            "type": ["integer", "string"],
+            "description": "kanban add_column/update_column: how long a card may \
+                stay in this column — hours (72), or 3d / 12h; after that it \
+                leaves the board into the archive (op=unarchive brings it back \
+                to the same column). 0 / none / forever = keep forever."
+        })),
+        ("move_after_hours", json!({
+            "type": ["integer", "string"],
+            "description": "kanban add_column/update_column: after this many \
+                hours in the column (72, 3d) a card moves to the move_to column \
+                by itself — e.g. In progress → Overdue. 0 / none = off."
+        })),
+        ("move_to", json!({
+            "type": "string",
+            "description": "kanban add_column/update_column: the column (name, id \
+                or 1-based number) cards move to after move_after_hours; none \
+                clears it."
         })),
         ("done_column", json!({
             "type": "string",

@@ -16,6 +16,16 @@
 //! [`KanbanDoc::reconcile`]: она же возвращает список изменений для журнала
 //! проекта, поэтому и мышиный перенос, и вызов агента журналируются
 //! одинаково, без правок в каждом месте.
+//!
+//! **Таймеры колонок.** Карточка помнит, когда попала в свою колонку
+//! (`entered`, unix-секунды; сбрасывается при любом переезде, а не считается
+//! от создания). У колонки два правила: хранение `keep_hours` — пролежавшая
+//! дольше карточка уходит в архив доски (мягкое удаление: возврат — в ту же
+//! колонку), и эскалация `move_after_hours` + `move_to` — переезд в другую
+//! колонку («В работе» 72 ч → «Просроченные»). Срабатывает то, что
+//! наступает раньше. Правила проверяет та же доводка: после правок и раз в
+//! минуту без них (`KanbanHandle::sweep`). Автоархив закрытых
+//! (`archive_after`) от них не зависит — он считает дни от штампа `done`.
 
 use serde::{Deserialize, Serialize};
 use syngui::core::Color;
@@ -60,6 +70,62 @@ pub struct KanbanColumn {
     /// Колонка «готово»: карточки в ней считаются закрытыми (штамп `done`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub done: bool,
+    /// Хранение: через сколько часов пребывания в колонке карточка уходит в
+    /// архив доски; `None` — хранится всегда.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_hours: Option<u32>,
+    /// Эскалация: через сколько часов пребывания карточка переезжает в
+    /// колонку `move_to`; без колонки правило не действует.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_after_hours: Option<u32>,
+    /// id колонки эскалации.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_to: Option<String>,
+}
+
+impl KanbanColumn {
+    pub fn new(id: String, name: impl Into<String>, color: impl Into<String>, done: bool) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            color: color.into(),
+            width: None,
+            done,
+            keep_hours: None,
+            move_after_hours: None,
+            move_to: None,
+        }
+    }
+
+    /// Задано ли у колонки хоть одно правило времени.
+    pub fn has_timer(&self) -> bool {
+        self.keep_hours.is_some() || (self.move_after_hours.is_some() && self.move_to.is_some())
+    }
+}
+
+/// Секунд в часе — единица таймеров колонок.
+pub const HOUR_SECS: i64 = 3600;
+
+/// Сколько шагов по таймерам делает одна доводка: хватает на цепочку
+/// A → B → C, пропущенную закрытым приложением, и не крутится вечно на
+/// взаимных правилах A ⇄ B (остаток — на следующем такте).
+const TIMER_HOPS: usize = 16;
+
+/// Что таймер колонки сделает с карточкой.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimerAction {
+    /// Срок хранения вышел — в архив доски.
+    Expire,
+    /// Эскалация — в колонку с этим id.
+    Move(String),
+}
+
+/// Ближайшее срабатывание таймера карточки.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CardTimer {
+    /// Момент срабатывания, unix-секунды.
+    pub at: i64,
+    pub action: TimerAction,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +160,10 @@ pub struct KanbanCard {
     /// День закрытия (переезда в колонку «готово»); снимается при возврате.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done: Option<String>,
+    /// Когда карточка попала в свою колонку, unix-секунды — отсчёт таймеров
+    /// колонки. Ставится доводкой при появлении и при каждом переезде.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entered: Option<i64>,
     /// Повтор: закрытие рождает следующую карточку со сдвинутым сроком.
     #[serde(default, skip_serializing_if = "Repeat::is_none")]
     pub repeat: Repeat,
@@ -166,6 +236,7 @@ impl KanbanCard {
             end: None,
             created: None,
             done: None,
+            entered: None,
             repeat: Repeat::None,
             files: Vec::new(),
         }
@@ -189,6 +260,7 @@ impl KanbanCard {
         next.due = Some(days_to_iso(next_due));
         next.created = None;
         next.done = None;
+        next.entered = None;
         next.md = uncheck(&self.md);
         // План (начало/конец) едет за сроком: на тот же период, чтобы
         // полоса следующей привычки встала в календарь сама.
@@ -420,6 +492,19 @@ pub fn parse_duration(s: &str) -> Option<u32> {
     (units > 0 && total >= 1.0).then(|| total.round().min(u32::MAX as f64) as u32)
 }
 
+/// Часы таймера колонки из строки: `72`, `72h`, `3d`, `1d 12h`, `90m`
+/// (вверх до целого часа). Пусто, `0`, `∞`, `none`, `forever` — правила нет.
+/// `Err` — мусор.
+#[allow(clippy::result_unit_err)]
+pub fn parse_hours(s: &str) -> Result<Option<u32>, ()> {
+    let t = s.trim().to_lowercase();
+    if matches!(t.as_str(), "" | "0" | "∞" | "inf" | "none" | "null" | "off" | "never" | "forever" | "always" | "всегда") {
+        return Ok(None);
+    }
+    let min = parse_duration(&t).ok_or(())?;
+    Ok(Some(min.div_ceil(60).max(1)))
+}
+
 /// Оценка строкой: `1d`, `2h`, `1d 4h`, `90m`; ноль — пусто.
 pub fn fmt_duration(min: u32) -> String {
     if min == 0 {
@@ -569,6 +654,8 @@ pub struct CardChange {
     pub from: String,
     /// Куда / что стало.
     pub to: String,
+    /// Изменение сделал таймер колонки, а не человек или агент.
+    pub auto: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -586,6 +673,10 @@ pub enum CardChangeKind {
     Restored,
     /// Родилась следующая карточка повтора (`card` — новая).
     Repeated,
+    /// Вышел срок хранения в колонке — карточка ушла в архив.
+    Expired,
+    /// Эскалация: таймер колонки перенёс карточку в другую.
+    AutoMoved,
 }
 
 impl CardChangeKind {
@@ -603,6 +694,8 @@ impl CardChangeKind {
             CardChangeKind::Archived => "archive",
             CardChangeKind::Restored => "restore",
             CardChangeKind::Repeated => "repeat",
+            CardChangeKind::Expired => "expire",
+            CardChangeKind::AutoMoved => "auto_move",
         }
     }
 }
@@ -790,13 +883,7 @@ impl KanbanDoc {
                 .iter()
                 .zip(colors)
                 .enumerate()
-                .map(|(i, (name, color))| KanbanColumn {
-                    id: item_id("c"),
-                    name: name.to_string(),
-                    color: color.to_string(),
-                    width: None,
-                    done: i == 2,
-                })
+                .map(|(i, (name, color))| KanbanColumn::new(item_id("c"), *name, color, i == 2))
                 .collect(),
             cards: Vec::new(),
             style: KanbanStyle::default(),
@@ -848,11 +935,88 @@ impl KanbanDoc {
         self.columns.iter().find(|c| !c.done).or(self.columns.first())
     }
 
-    /// Доводка после правки против снимка `before`: штампы `created`/`done`,
-    /// следующие карточки повторов, автоархив; возвращает изменения для
-    /// журнала. Перенос в колонку «готово» записывается одним `Done` (с
-    /// исходной колонкой), а не `Moved` + `Done`.
-    pub fn reconcile(&mut self, before: &KanbanDoc, today: i64) -> Vec<CardChange> {
+    /// Доводка после правки против снимка `before`: штампы `created`/`done`/
+    /// `entered`, следующие карточки повторов, таймеры колонок, автоархив;
+    /// возвращает изменения для журнала. Перенос в колонку «готово»
+    /// записывается одним `Done` (с исходной колонкой), а не `Moved` + `Done`.
+    /// `today` — локальный день, `now` — unix-секунды (таймеры колонок).
+    pub fn reconcile(&mut self, before: &KanbanDoc, today: i64, now: i64) -> Vec<CardChange> {
+        let mut changes = self.stamp(before, today, now);
+        // Таймеры: снимок → срабатывание → та же сверка против снимка. Всё,
+        // что она нашла, сделал таймер (`auto`); переезд в «готово» так же
+        // закрывает карточку и рождает повтор.
+        let hops = if self.columns.iter().any(KanbanColumn::has_timer) { TIMER_HOPS } else { 0 };
+        for _ in 0..hops {
+            let mid = self.clone();
+            let fired = self.fire_timers(now);
+            if fired.is_empty() {
+                break;
+            }
+            for mut c in self.stamp(&mid, today, now) {
+                let action = fired.iter().find(|(id, _)| *id == c.card).map(|(_, a)| a);
+                c.kind = match (c.kind, action) {
+                    (CardChangeKind::Moved, Some(TimerAction::Move(_))) => CardChangeKind::AutoMoved,
+                    (CardChangeKind::Archived, Some(TimerAction::Expire)) => CardChangeKind::Expired,
+                    (kind, _) => kind,
+                };
+                c.auto = true;
+                changes.push(c);
+            }
+        }
+        self.auto_archive(today, &mut changes);
+        changes
+    }
+
+    /// Ближайший таймер карточки: хранение или эскалация её колонки — что
+    /// наступит раньше (в один момент — переезд). `None` — правил нет, цель
+    /// эскалации пропала или у карточки ещё нет штампа `entered`.
+    pub fn next_timer(&self, card: &KanbanCard) -> Option<CardTimer> {
+        let entered = card.entered?;
+        let col = self.columns.iter().find(|c| c.id == card.column)?;
+        let at = |h: u32| entered + h as i64 * HOUR_SECS;
+        let expire = col.keep_hours.filter(|h| *h > 0).map(|h| CardTimer { at: at(h), action: TimerAction::Expire });
+        let target = col.move_to.as_deref().filter(|t| *t != col.id && self.columns.iter().any(|c| c.id == *t));
+        let escalate = match (col.move_after_hours.filter(|h| *h > 0), target) {
+            (Some(h), Some(to)) => Some(CardTimer { at: at(h), action: TimerAction::Move(to.to_string()) }),
+            _ => None,
+        };
+        match (expire, escalate) {
+            (Some(e), Some(m)) => Some(if e.at < m.at { e } else { m }),
+            (e, m) => e.or(m),
+        }
+    }
+
+    /// Сработавшие к `now` таймеры — по шагу на карточку: истёкшая уходит в
+    /// архив, эскалация переносит в конец целевой колонки со штампом
+    /// `entered` на момент срабатывания, а не на «сейчас»: цепочка правил,
+    /// пропущенная закрытым приложением, проходится с настоящими сроками.
+    fn fire_timers(&mut self, now: i64) -> Vec<(String, TimerAction)> {
+        let due: Vec<(String, CardTimer)> = self
+            .cards
+            .iter()
+            .filter_map(|c| self.next_timer(c).filter(|t| t.at <= now).map(|t| (c.id.clone(), t)))
+            .collect();
+        for (id, timer) in &due {
+            match &timer.action {
+                TimerAction::Expire => {
+                    if let Some(pos) = self.cards.iter().position(|c| c.id == *id) {
+                        let card = self.cards.remove(pos);
+                        self.archive.push(card);
+                    }
+                }
+                TimerAction::Move(to) => {
+                    self.move_card(id, to, None);
+                    if let Some(c) = self.card_mut(id) {
+                        c.entered = Some(timer.at);
+                    }
+                }
+            }
+        }
+        due.into_iter().map(|(id, t)| (id, t.action)).collect()
+    }
+
+    /// Штампы и повторы против снимка `before` — без таймеров и автоархива.
+    fn stamp(&mut self, before: &KanbanDoc, today: i64, now: i64) -> Vec<CardChange> {
         let today_iso = days_to_iso(today);
         let mut changes = Vec::new();
         let mut spawned: Vec<KanbanCard> = Vec::new();
@@ -861,9 +1025,20 @@ impl KanbanDoc {
                 card.created = Some(today_iso.clone());
             }
             let prev = before.cards.iter().find(|c| c.id == card.id);
+            // Отсчёт пребывания: с появления на доске (новая, из архива, с
+            // другой доски) и с каждого переезда. Переезд по таймеру ставит
+            // свой штамп — его не трогаем; старым карточкам без штампа —
+            // «сейчас», а не дата создания.
+            let entered_now = match prev {
+                None => true,
+                Some(p) => (p.column != card.column && card.entered == p.entered) || card.entered.is_none(),
+            };
+            if entered_now {
+                card.entered = Some(now);
+            }
             let (cid, ctitle) = (card.id.clone(), card.title.clone());
             let mut change = |kind: CardChangeKind, from: String, to: String| {
-                changes.push(CardChange { card: cid.clone(), title: ctitle.clone(), kind, from, to });
+                changes.push(CardChange { card: cid.clone(), title: ctitle.clone(), kind, from, to, auto: false });
             };
             match prev {
                 None => {
@@ -913,7 +1088,14 @@ impl KanbanDoc {
                 continue;
             }
             let kind = if self.archive.iter().any(|c| c.id == p.id) { CardChangeKind::Archived } else { CardChangeKind::Deleted };
-            changes.push(CardChange { card: p.id.clone(), title: p.title.clone(), kind, from: before.column_name(&p.column), to: String::new() });
+            changes.push(CardChange {
+                card: p.id.clone(),
+                title: p.title.clone(),
+                kind,
+                from: before.column_name(&p.column),
+                to: String::new(),
+                auto: false,
+            });
         }
         for card in spawned {
             let column = self.column_name(&card.column);
@@ -923,43 +1105,46 @@ impl KanbanDoc {
                 kind: CardChangeKind::Repeated,
                 from: String::new(),
                 to: format!("{column} · due {}", card.due.clone().unwrap_or_default()),
+                auto: false,
             });
             let mut card = card;
             card.created = Some(today_iso.clone());
+            card.entered = Some(now);
             // Сразу под остальными карточками своей колонки.
             let at = self.cards.iter().rposition(|c| c.column == card.column).map(|i| i + 1).unwrap_or(self.cards.len());
             self.cards.insert(at, card);
         }
-        if let Some(days) = self.archive_after {
-            let mut i = 0;
-            while i < self.cards.len() {
-                let old = self.cards[i]
-                    .done
-                    .as_deref()
-                    .and_then(parse_days)
-                    .is_some_and(|d| today - d >= days as i64);
-                if old {
-                    let card = self.cards.remove(i);
-                    changes.push(CardChange {
-                        card: card.id.clone(),
-                        title: card.title.clone(),
-                        kind: CardChangeKind::Archived,
-                        from: self.column_name(&card.column),
-                        to: String::new(),
-                    });
-                    self.archive.push(card);
-                } else {
-                    i += 1;
-                }
-            }
-        }
         changes
     }
 
-    /// Доводка без правки (при загрузке): штампы и автоархив.
-    pub fn sweep(&mut self, today: i64) -> Vec<CardChange> {
+    /// Автоархив: закрытые `archive_after` и более дней назад уходят с доски.
+    fn auto_archive(&mut self, today: i64, changes: &mut Vec<CardChange>) {
+        let Some(days) = self.archive_after else { return };
+        let mut i = 0;
+        while i < self.cards.len() {
+            let old = self.cards[i].done.as_deref().and_then(parse_days).is_some_and(|d| today - d >= days as i64);
+            if old {
+                let card = self.cards.remove(i);
+                changes.push(CardChange {
+                    card: card.id.clone(),
+                    title: card.title.clone(),
+                    kind: CardChangeKind::Archived,
+                    from: self.column_name(&card.column),
+                    to: String::new(),
+                    auto: false,
+                });
+                self.archive.push(card);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Доводка без правки (при загрузке и по минутному такту): штампы,
+    /// таймеры колонок, автоархив.
+    pub fn sweep(&mut self, today: i64, now: i64) -> Vec<CardChange> {
         let before = self.clone();
-        self.reconcile(&before, today)
+        self.reconcile(&before, today, now)
     }
 
     /// Карточка с доски — в архив (закрывается штампом, если ещё открыта).
@@ -973,16 +1158,17 @@ impl KanbanDoc {
         true
     }
 
-    /// Карточка из архива — обратно на доску, в колонку «готово» (иначе в
-    /// свою прежнюю либо первую), в конец. Штамп закрытия обновляется на
+    /// Карточка из архива — обратно на доску, в конец колонки: закрытая — в
+    /// колонку «готово», незакрытая (ушла по сроку хранения колонки) — в
+    /// свою прежнюю; нет такой — в первую. Штамп закрытия обновляется на
     /// `today`: иначе автоархив унёс бы её обратно той же доводкой; прежняя
-    /// дата остаётся в журнале.
+    /// дата остаётся в журнале. Отсчёт таймеров колонки начнётся заново —
+    /// доводка ставит `entered` вернувшейся карточке.
     pub fn unarchive_card(&mut self, id: &str, today: i64) -> bool {
         let Some(pos) = self.archive.iter().position(|c| c.id == id) else { return false };
         let mut card = self.archive.remove(pos);
-        let column = self
-            .done_column()
-            .or_else(|| self.columns.iter().find(|c| c.id == card.column))
+        let own = self.columns.iter().find(|c| c.id == card.column);
+        let column = if card.done.is_some() { self.done_column().or(own) } else { own.or_else(|| self.open_column()) }
             .or_else(|| self.columns.first())
             .map(|c| c.id.clone())
             .unwrap_or_default();
@@ -1218,12 +1404,13 @@ mod tests {
     #[test]
     fn reconcile_stamps_repeats_and_archives() {
         let today = days_from_civil(2026, 9, 8);
+        let now = today * 86_400;
         let mut d = doc();
         assert!(d.columns[2].done, "третья колонка шаблона — «готово»");
         let (todo, done_col) = (d.columns[0].id.clone(), d.columns[2].id.clone());
         // Первая доводка: штампы создания без «добавлений» в журнал (карточки уже были).
         let before = d.clone();
-        let changes = d.reconcile(&before, today);
+        let changes = d.reconcile(&before, today, now);
         assert!(changes.is_empty(), "{changes:?}");
         assert!(d.cards.iter().all(|c| c.created.as_deref() == Some("2026-09-08")));
         // Переезд в «готово» с недельным повтором.
@@ -1232,7 +1419,7 @@ mod tests {
         d.cards[0].due = Some("2026-09-01".into());
         d.cards[0].md = "- [x] полить\n- [ ] удобрить".into();
         d.move_card("k0", &done_col, None);
-        let changes = d.reconcile(&before, today);
+        let changes = d.reconcile(&before, today, now);
         let kinds: Vec<CardChangeKind> = changes.iter().map(|c| c.kind).collect();
         assert!(kinds.contains(&CardChangeKind::Done) && !kinds.contains(&CardChangeKind::Moved), "{changes:?}");
         assert!(kinds.contains(&CardChangeKind::DueChanged) && kinds.contains(&CardChangeKind::Repeated), "{changes:?}");
@@ -1249,22 +1436,22 @@ mod tests {
         // Возврат снимает штамп.
         let before = d.clone();
         d.move_card("k0", &todo, None);
-        let changes = d.reconcile(&before, today + 1);
+        let changes = d.reconcile(&before, today + 1, now);
         assert_eq!(changes.iter().map(|c| c.kind).collect::<Vec<_>>(), [CardChangeKind::Reopened]);
         assert!(d.card("k0").unwrap().done.is_none());
         // Автоархив: закрытая 10 дней назад при archive_after=7 уходит в архив.
         d.move_card("k1", &done_col, None);
         let before = d.clone();
-        d.reconcile(&before, today);
+        d.reconcile(&before, today, now);
         d.card_mut("k1").unwrap().done = Some("2026-08-25".into());
         d.archive_after = Some(7);
-        let changes = d.sweep(today);
+        let changes = d.sweep(today, now);
         assert_eq!(changes.iter().map(|c| c.kind).collect::<Vec<_>>(), [CardChangeKind::Archived]);
         assert!(d.card("k1").is_none() && d.archive.iter().any(|c| c.id == "k1"));
         // Возврат из архива — в колонку «готово», запись Restored.
         let before = d.clone();
         assert!(d.unarchive_card("k1", today));
-        let changes = d.reconcile(&before, today);
+        let changes = d.reconcile(&before, today, now);
         assert_eq!(changes.iter().map(|c| c.kind).collect::<Vec<_>>(), [CardChangeKind::Restored]);
         assert_eq!(d.card("k1").unwrap().column, done_col);
         assert_eq!(d.card("k1").unwrap().done.as_deref(), Some("2026-09-08"), "штамп обновлён, автоархив не уносит");
@@ -1274,11 +1461,103 @@ mod tests {
         let mut fresh = KanbanCard::new("k9".into(), todo.clone());
         fresh.title = "Новая".into();
         d.cards.push(fresh);
-        let changes = d.reconcile(&before, today);
+        let changes = d.reconcile(&before, today, now);
         let mut kinds: Vec<CardChangeKind> = changes.iter().map(|c| c.kind).collect();
         kinds.sort_by_key(|k| k.key());
         assert_eq!(kinds, [CardChangeKind::Added, CardChangeKind::Deleted]);
         assert_eq!(d.card("k9").unwrap().created.as_deref(), Some("2026-09-08"));
+    }
+
+    /// Таймеры колонок: отсчёт от входа в колонку (не от создания), ручной
+    /// перенос сбрасывает его, эскалация ставит штамп на момент срабатывания
+    /// — цепочка A → B → C проходится одной доводкой и закрывает карточку в
+    /// «готово»; хранение уносит в архив, возврат — в свою колонку с новым
+    /// отсчётом; при равных сроках — переезд, негодная цель гасит правило;
+    /// взаимные правила не зацикливают доводку.
+    #[test]
+    fn column_timers_move_expire_and_chain() {
+        let today = days_from_civil(2026, 9, 14);
+        let h = HOUR_SECS;
+        let t0 = today * 86_400;
+        let mut d = doc();
+        let (todo, doing, done_col) = (d.columns[0].id.clone(), d.columns[1].id.clone(), d.columns[2].id.clone());
+        // Старые карточки без штампа получают «сейчас», а не дату создания.
+        let before = d.clone();
+        d.reconcile(&before, today, t0);
+        assert!(d.cards.iter().all(|c| c.entered == Some(t0)), "{d:?}");
+        // Todo: через 2 ч → Doing; Doing: через 3 ч → Done, хранение 10 ч.
+        d.columns[0].move_after_hours = Some(2);
+        d.columns[0].move_to = Some(doing.clone());
+        d.columns[1].move_after_hours = Some(3);
+        d.columns[1].move_to = Some(done_col.clone());
+        d.columns[1].keep_hours = Some(10);
+        // Ручной перенос сбрасывает отсчёт.
+        let before = d.clone();
+        d.move_card("k1", &doing, None);
+        d.reconcile(&before, today, t0 + h);
+        assert_eq!(d.card("k1").unwrap().entered, Some(t0 + h));
+        assert_eq!(
+            d.next_timer(d.card("k1").unwrap()),
+            Some(CardTimer { at: t0 + 4 * h, action: TimerAction::Move(done_col.clone()) })
+        );
+        // 5 ч без правок: k0 прошёл Todo → Doing (в t0+2ч) → Done (в t0+5ч) за одну доводку.
+        let changes = d.sweep(today, t0 + 5 * h);
+        let k0 = d.card("k0").unwrap();
+        assert_eq!(k0.column, done_col);
+        assert_eq!(k0.entered, Some(t0 + 5 * h), "штамп — момент срабатывания");
+        assert!(k0.done.is_some(), "переезд в «готово» по таймеру закрывает карточку");
+        let k0_changes: Vec<(CardChangeKind, bool)> = changes.iter().filter(|c| c.card == "k0").map(|c| (c.kind, c.auto)).collect();
+        assert_eq!(k0_changes, [(CardChangeKind::AutoMoved, true), (CardChangeKind::Done, true)]);
+        assert!(d.cards_of(&doing).is_empty(), "k1 и k2 тоже уехали: {d:?}");
+
+        // Хранение: Doing хранит 1 ч без переноса — новая карточка уходит в архив незакрытой.
+        d.columns[1].move_to = None;
+        d.columns[1].keep_hours = Some(1);
+        let before = d.clone();
+        let mut k3 = KanbanCard::new("k3".into(), doing.clone());
+        k3.title = "Зависла".into();
+        d.cards.push(k3);
+        d.reconcile(&before, today, t0 + 6 * h);
+        let changes = d.sweep(today, t0 + 7 * h);
+        assert_eq!(changes.iter().map(|c| (c.kind, c.auto)).collect::<Vec<_>>(), [(CardChangeKind::Expired, true)]);
+        assert!(d.card("k3").is_none() && d.archive.iter().any(|c| c.id == "k3" && c.done.is_none()), "{d:?}");
+        // Возврат — в свою колонку, отсчёт заново.
+        let before = d.clone();
+        assert!(d.unarchive_card("k3", today));
+        let changes = d.reconcile(&before, today, t0 + 8 * h);
+        assert_eq!(changes.iter().map(|c| c.kind).collect::<Vec<_>>(), [CardChangeKind::Restored]);
+        assert_eq!(d.card("k3").unwrap().column, doing);
+        assert_eq!(d.card("k3").unwrap().entered, Some(t0 + 8 * h));
+
+        // Равные сроки — переезд; цель — сама колонка или пропавшая — правило гасит.
+        d.columns[1].move_after_hours = Some(1);
+        d.columns[1].move_to = Some(todo.clone());
+        let k3 = d.card("k3").unwrap().clone();
+        assert_eq!(d.next_timer(&k3).unwrap().action, TimerAction::Move(todo.clone()));
+        d.columns[1].move_to = Some(doing.clone());
+        assert_eq!(d.next_timer(&k3).unwrap().action, TimerAction::Expire);
+        d.columns[1].move_to = Some("нет".into());
+        d.columns[1].keep_hours = None;
+        assert!(d.next_timer(&k3).is_none());
+
+        // Взаимные правила A ⇄ B: не больше TIMER_HOPS шагов за доводку.
+        let mut ping = doc();
+        let (a, b) = (ping.columns[0].id.clone(), ping.columns[1].id.clone());
+        ping.columns[0].move_after_hours = Some(1);
+        ping.columns[0].move_to = Some(b);
+        ping.columns[1].move_after_hours = Some(1);
+        ping.columns[1].move_to = Some(a);
+        ping.sweep(today, t0);
+        let changes = ping.sweep(today, t0 + 1000 * h);
+        assert!(changes.len() <= TIMER_HOPS * ping.cards.len(), "{}", changes.len());
+
+        // Часы из строки.
+        assert_eq!(parse_hours("72"), Ok(Some(72)));
+        assert_eq!(parse_hours("3d"), Ok(Some(72)));
+        assert_eq!(parse_hours("90m"), Ok(Some(2)));
+        assert_eq!(parse_hours("∞"), Ok(None));
+        assert_eq!(parse_hours(" "), Ok(None));
+        assert!(parse_hours("мусор").is_err());
     }
 
     #[test]

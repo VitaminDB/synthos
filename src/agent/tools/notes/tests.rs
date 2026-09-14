@@ -311,6 +311,21 @@ fn layout_free_pins_blocks_in_a_column() {
     assert!(out.contains("arranged 1 blocks in a column at x=40") && out.contains("y=164") && !out.contains("!! free layout"), "{out}");
 }
 
+/// `only=all` не уносит в колонку поставленный календарь (14.09.2026, MyLife:
+/// календарь слева, колонка текста справа — после arrange календарь уехал в
+/// хвост колонки, модель перебирала y по кругу).
+#[test]
+fn arrange_all_keeps_placed_objects_in_place() {
+    let ctx = ctx();
+    let page = page_id(&call(ctx, "create", serde_json::json!({"title": "Дни рождения", "content": "# Дни рождения\n\nТекст\n"})));
+    call(ctx, "calendar", serde_json::json!({"op": "create", "page": &page, "view": "month", "x": 40, "y": 160, "w": 940, "h": 700}));
+    let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page, "only": "all", "x": 1040, "y": 160, "w": 860}));
+    assert!(out.contains("arranged 2 blocks") && out.contains("kept in place"), "{out}");
+    assert!(out.contains("x=40 y=160 w=940 h=700"), "календарь на месте: {out}");
+    let out = call(ctx, "blocks", serde_json::json!({"op": "arrange", "page": &page, "only": "everything", "x": 1040, "y": 160, "w": 860}));
+    assert!(out.contains("arranged 3 blocks") && !out.contains("kept in place"), "{out}");
+}
+
 /// `blocks op=arrange`: одна команда кладёт неприкреплённые блоки под
 /// закреплённые; `only=all` перекладывает всё; предупреждение о наложении
 /// появляется у pin/shape и не мешает линиям.

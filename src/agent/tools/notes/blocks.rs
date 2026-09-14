@@ -338,16 +338,17 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         }
         "arrange" => {
             let geom = parse_geom(v)?;
-            let all = match str_field(v, "only").map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-                None | Some("flow") | Some("unpinned") => false,
-                Some("all") => true,
-                Some(other) => return Err(format!("unknown \"only\" \"{other}\" (flow | all)")),
+            let (all, objects) = match str_field(v, "only").map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+                None | Some("flow") | Some("unpinned") => (false, false),
+                Some("all") => (true, false),
+                Some("everything") => (true, true),
+                Some(other) => return Err(format!("unknown \"only\" \"{other}\" (flow | all | everything)")),
             };
             let gap = f32_field(v, "gap").unwrap_or(ARRANGE_GAP);
             if !(0.0..=400.0).contains(&gap) {
                 return Err("\"gap\" must be within 0..400 px".to_string());
             }
-            let a = Arrange { x: geom.x, y: geom.y, w: geom.w, gap, all };
+            let a = Arrange { x: geom.x, y: geom.y, w: geom.w, gap, all, objects };
             let placed = arrange_column(&mut model, &a);
             if placed.is_empty() {
                 return Ok(format!(
@@ -363,13 +364,33 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 .map(|r| r.1 + r.3)
                 .fold(0.0f32, f32::max);
             let lines: Vec<String> = placed.iter().map(|&i| block_line_checked(&model, i)).collect();
+            // Поставленные объекты `only=all` не трогает — и говорит об этом
+            // прямо: 14.09.2026 модель не заметила, что календарь уехал в
+            // хвост колонки, и перебирала y по кругу.
+            let kept: Vec<String> = if all && !objects {
+                (0..model.blocks.len())
+                    .filter(|i| !placed.contains(i) && needs_own_height(&model.blocks[*i]))
+                    .map(|i| block_line_checked(&model, i))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let kept_text = if kept.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "kept in place — only=all does not re-stack placed objects (only=everything does):\n{}\n",
+                    kept.join("\n")
+                )
+            };
             Ok(format!(
-                "arranged {} blocks in a column at x={} (gap {}); the column ends at y={}\n{}\n{}\n",
+                "arranged {} blocks in a column at x={} (gap {}); the column ends at y={}\n{}\n{}{}\n",
                 placed.len(),
                 fnum(first),
                 fnum(gap),
                 fnum(bottom),
                 lines.join("\n"),
+                kept_text,
                 page_line(ctx, &id)
             ))
         }

@@ -165,6 +165,15 @@ const STAGNANT_STOP_AT: usize = 3;
 /// нет: восьми одинаковых вызовов на одно сообщение пользователя не требует
 /// ни один законный сценарий.
 const TOTAL_STOP_AT: usize = 8;
+/// Сколько раз вызов, отличающийся от прежних только числами (координаты,
+/// размеры, отступы), может вернуть по сути тот же результат (отпечаток без
+/// чисел), прежде чем guard перестанет его исполнять. 14.09.2026, чат MyLife:
+/// `blocks op=arrange` одной страницы с y=160, 920, 160, 1650, 250, 160 —
+/// точные ключи разные, форма одна подряд (это не чередование), ответ тот же:
+/// модель подбирала числа вместо того, чтобы прочитать ответ.
+const NUMERIC_STAGNANT_WARN_AT: usize = 2;
+/// Порог остановки хода: такой вызов уже не исполнен, а модель пришла снова.
+const NUMERIC_STAGNANT_STOP_AT: usize = 3;
 /// Сколько периодов чередования по «форме» вызова (см. [`call_shape`])
 /// переводят ход в анти-loop сэмплинг.
 ///
@@ -1710,6 +1719,8 @@ struct RepeatState {
     /// По каждому вызову: отпечаток его последнего результата и сколько раз
     /// подряд этот результат повторился (см. [`STAGNANT_WARN_AT`]).
     outcomes: HashMap<String, (u64, usize)>,
+    /// То же по ключам с числами под маской (см. [`numeric_masked_key`]).
+    masked_outcomes: HashMap<String, (u64, usize)>,
 }
 
 /// Сколько полных периодов «A, B, A, B…» (A ≠ B) лежит в хвосте `keys`.
@@ -1786,6 +1797,7 @@ fn repeat_state_from(msgs: &[ChatMsg]) -> RepeatState {
     // Какой вызов ждёт своего результата: guard считает стагнацию по выводу,
     // а в ленте вывод лежит отдельным сообщением со ссылкой на id вызова.
     let mut awaiting: HashMap<String, String> = HashMap::new();
+    let mut awaiting_masked: HashMap<String, String> = HashMap::new();
     for m in msgs.iter().skip(from) {
         if m.compacted_iter.is_some() {
             continue;
@@ -1803,12 +1815,19 @@ fn repeat_state_from(msgs: &[ChatMsg]) -> RepeatState {
                     remember_call(&mut st.recent, &key);
                     remember_call(&mut st.recent_shapes, &call_shape(c));
                     awaiting.insert(c.id.clone(), key.clone());
+                    let masked = numeric_masked_key(c);
+                    if masked != key {
+                        awaiting_masked.insert(c.id.clone(), masked);
+                    }
                     st.last = Some(key);
                 }
             }
             ChatMsgKind::ToolResult { tool_call_id, .. } => {
                 if let Some(key) = awaiting.remove(tool_call_id) {
                     note_outcome(&mut st.outcomes, &key, &m.body);
+                }
+                if let Some(masked) = awaiting_masked.remove(tool_call_id) {
+                    note_outcome(&mut st.masked_outcomes, &masked, &m.body);
                 }
             }
             _ => {}
@@ -1865,6 +1884,7 @@ async fn run_agent_loop(
                 recent: mut recent_keys,
                 mut recent_shapes,
                 outcomes: mut call_outcomes,
+                masked_outcomes: mut numeric_outcomes,
             },
     } = settings;
     let model_cap = model.model.config().max_seq_len;
@@ -2587,12 +2607,18 @@ async fn run_agent_loop(
             let shape_periods = alternation_periods(&recent_shapes);
             // Сколько раз подряд этот же вызов уже вернул тот же результат.
             let stagnant = call_outcomes.get(&key).map(|(_, n)| *n).unwrap_or(0);
+            // То же, но вызов отличается от прежних только числами (без чисел
+            // в аргументах это тот же счётчик, что выше — не считаем дважды).
+            let masked = numeric_masked_key(chat_call);
+            let numeric_stagnant =
+                if masked != key { numeric_outcomes.get(&masked).map(|(_, n)| *n).unwrap_or(0) } else { 0 };
             last_call = Some(key.clone());
             // Новый вызов — петля разорвана, возвращаем сэмплинг пользователя.
             if consecutive < REPEAT_WARN_AT
                 && periods < ALTERNATION_WARN_AT
                 && shape_periods < SHAPE_ALTERNATION_ANTI_LOOP_AT
                 && stagnant == 0
+                && numeric_stagnant == 0
                 && total < REPEAT_HINT_AT
             {
                 anti_loop = false;
@@ -2600,6 +2626,7 @@ async fn run_agent_loop(
             if consecutive >= REPEAT_STOP_AT
                 || periods >= ALTERNATION_STOP_AT
                 || stagnant >= STAGNANT_STOP_AT
+                || numeric_stagnant >= NUMERIC_STAGNANT_STOP_AT
                 || total >= TOTAL_STOP_AT
             {
                 let text = if consecutive >= REPEAT_STOP_AT {
@@ -2621,6 +2648,13 @@ async fn run_agent_loop(
                          ничего, агент ходит по кругу.",
                         tool_name(chat_call)
                     )
+                } else if numeric_stagnant >= NUMERIC_STAGNANT_STOP_AT {
+                    format!(
+                        "Остановлено: `{}` вызывается с теми же аргументами, меняются \
+                         только числа, а результат по сути один и тот же — агент \
+                         подбирает числа по кругу.",
+                        tool_name(chat_call)
+                    )
                 } else {
                     format!(
                         "Остановлено: `{}` с этими аргументами вызван {total}-й раз за \
@@ -2637,6 +2671,7 @@ async fn run_agent_loop(
             if consecutive >= REPEAT_WARN_AT
                 || periods >= ALTERNATION_WARN_AT
                 || stagnant >= STAGNANT_WARN_AT
+                || numeric_stagnant >= NUMERIC_STAGNANT_WARN_AT
             {
                 let text = if consecutive >= REPEAT_WARN_AT {
                     format!(
@@ -2657,7 +2692,7 @@ async fn run_agent_loop(
                          текстовый ответ по тому, что уже известно.",
                         tool_name(chat_call)
                     )
-                } else {
+                } else if stagnant >= STAGNANT_WARN_AT {
                     format!(
                         "Вызов `{}` с этими аргументами уже {} раза вернул один и тот же \
                          результат (он выше) — повторно он не исполнен. Если нужного \
@@ -2667,6 +2702,17 @@ async fn run_agent_loop(
                         tool_name(chat_call),
                         stagnant + 1
                     )
+                } else {
+                    format!(
+                        "Вызов `{}` с теми же аргументами, кроме чисел, уже {} раза вернул \
+                         по сути один и тот же результат (он выше) — подбор чисел ничего не \
+                         меняет, поэтому этот вызов не исполнен. Перечитай последний \
+                         результат целиком: что именно в нём не так? Проверь состояние \
+                         другим действием и смени подход — либо дай текстовый ответ по \
+                         тому, что уже известно.",
+                        tool_name(chat_call),
+                        numeric_stagnant + 1
+                    )
                 };
                 log::warn!(
                     "[syn_chat] guard повторов: `{}` {}, вызов пропущен",
@@ -2675,10 +2721,18 @@ async fn run_agent_loop(
                         "повторён"
                     } else if periods >= ALTERNATION_WARN_AT {
                         "чередуется"
-                    } else {
+                    } else if stagnant >= STAGNANT_WARN_AT {
                         "возвращает тот же результат"
+                    } else {
+                        "меняет только числа при том же результате"
                     }
                 );
+                // Пропущенный вызов тоже в счёт: придёт с ним снова — стоп.
+                if numeric_stagnant >= NUMERIC_STAGNANT_WARN_AT {
+                    if let Some(entry) = numeric_outcomes.get_mut(&masked) {
+                        entry.1 += 1;
+                    }
+                }
                 anti_loop = true;
                 push_tool_result(&chat_id, chat_call, text.clone(), true);
                 history.push(Message::tool_named(tool_name(chat_call), text));
@@ -2770,6 +2824,9 @@ async fn run_agent_loop(
                     }
                 }
                 note_outcome(&mut call_outcomes, &key, &res.content);
+                if masked != key {
+                    note_outcome(&mut numeric_outcomes, &masked, &res.content);
+                }
                 tools::budget::spend(&res.content);
                 let mut for_history = res.content;
                 for_history.push_str(&note);
@@ -2823,6 +2880,9 @@ async fn run_agent_loop(
             // Результат учтён — со следующего вызова guard знает, изменилось
             // ли что-нибудь (см. [`STAGNANT_WARN_AT`]).
             note_outcome(&mut call_outcomes, &key, &outcome.content);
+            if masked != key {
+                note_outcome(&mut numeric_outcomes, &masked, &outcome.content);
+            }
             if total >= REPEAT_HINT_AT {
                 // Не подряд — исполняем (после правки файла та же команда
                 // сборки законна), но если результат не меняется, модель
@@ -3185,6 +3245,27 @@ fn call_key(call: &ChatToolCall) -> String {
         .map(|v| v.to_string())
         .unwrap_or_else(|_| args.to_string());
     format!("{}\u{1f}{}", tool_name(call), canonical)
+}
+
+/// Ключ вызова с числами под маской: `{"y":160}` и `{"y":920}` — один ключ,
+/// а разные строки (`find`, заголовки, id страниц) — разные. Для guard'а
+/// петли, в которой модель подбирает координаты при том же результате.
+fn numeric_masked_key(call: &ChatToolCall) -> String {
+    let key = call_key(call);
+    let mut out = String::with_capacity(key.len());
+    let mut in_number = false;
+    for ch in key.chars() {
+        if ch.is_ascii_digit() || (in_number && ch == '.') {
+            if !in_number {
+                out.push('#');
+                in_number = true;
+            }
+        } else {
+            in_number = false;
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// «Форма» вызова: инструмент, дискриминанты действия (`action`, `op`, …) и
@@ -4483,6 +4564,45 @@ mod tests {
             "guard точных ключей эту петлю и не видел — тест ловит регресс наоборот"
         );
         assert!(alternation_periods(&shapes) >= SHAPE_ALTERNATION_ANTI_LOOP_AT);
+    }
+
+    /// Петля 14.09.2026 (чат MyLife): `arrange` одной страницы, меняется
+    /// только y, ответ по сути тот же. Точные ключи разные и не чередуются,
+    /// форма одна подряд — ловит ключ с числами под маской.
+    #[test]
+    fn numeric_masked_key_sees_a_loop_over_coordinates() {
+        let arrange = |y: u32| {
+            format!(r#"{{"action":"blocks","gap":24,"only":"all","op":"arrange","page":"73db23908f82","w":860,"x":1040,"y":{y}}}"#)
+        };
+        let answer = |y: u32| {
+            format!(
+                "arranged 13 blocks in a column at x=1040 (gap 24); the column ends at y={}\n#0 heading1 \"Календарь\" · x=1040 y={y} w=860 h=~97.6\n#12 embed:calendar:3c07c2fd3135 · x=1040 y={} w=860 h=700\npage: 73db23908f82 · \"Календарь\"\n",
+                y + 1774,
+                y + 1074
+            )
+        };
+        let mut outcomes = HashMap::new();
+        let mut last = 0;
+        for y in [160, 920, 160] {
+            let c = call("notes", &arrange(y));
+            let masked = numeric_masked_key(&c);
+            assert_ne!(masked, call_key(&c));
+            assert_eq!(masked, numeric_masked_key(&call("notes", &arrange(1650))));
+            last = note_outcome(&mut outcomes, &masked, &answer(y));
+        }
+        assert_eq!(last, NUMERIC_STAGNANT_WARN_AT, "четвёртый такой вызов guard уже не исполнит");
+        // Разные правки одной страницы — разные строки: это не петля.
+        assert_ne!(
+            numeric_masked_key(&call("notes", r#"{"action":"update","page":"p1","find":"a","replace":"b"}"#)),
+            numeric_masked_key(&call("notes", r#"{"action":"update","page":"p1","find":"c","replace":"d"}"#))
+        );
+        // Перенос разных блоков — ключ один, но ответы называют разные блоки.
+        let mut moves = HashMap::new();
+        let mv = |b: u32| call("notes", &format!(r#"{{"action":"blocks","op":"move","page":"p1","block":{b},"x":40,"y":40}}"#));
+        for (b, label) in [(1, "heading1 \"Семья\""), (2, "table \"Дата · Человек\""), (3, "todo \"Подарки\"")] {
+            let n = note_outcome(&mut moves, &numeric_masked_key(&mv(b)), &format!("moved\n#{b} {label} · x=40 y=40\n"));
+            assert_eq!(n, 0, "{label}");
+        }
     }
 
     #[test]

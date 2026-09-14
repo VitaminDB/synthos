@@ -727,10 +727,12 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("only", json!({
             "type": "string",
-            "enum": ["flow", "all"],
+            "enum": ["flow", "all", "everything"],
             "description": "blocks op=arrange: flow (default) — stack only \
                 blocks without coordinates below the pinned ones; all — \
-                re-stack every block of the page in document order."
+                re-stack every text block in document order, placed objects \
+                (calendar, board, chart, mind map, media, shapes) keep their \
+                spot; everything — move those too."
         })),
         ("query", json!({
             "type": "string",

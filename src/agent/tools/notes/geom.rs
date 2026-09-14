@@ -196,12 +196,17 @@ pub(super) struct Arrange {
     pub(super) y: Option<f32>,
     pub(super) w: Option<f32>,
     pub(super) gap: f32,
+    /// Перекладывать и блоки с координатами (`only=all`).
     pub(super) all: bool,
+    /// …включая поставленные объекты — календарь, доску, график, карту,
+    /// картинку, фигуру (`only=everything`). Без этого `only=all` уносил в
+    /// хвост колонки календарь, поставленный рядом с ней (14.09.2026, MyLife).
+    pub(super) objects: bool,
 }
 
 impl Default for Arrange {
     fn default() -> Self {
-        Self { x: None, y: None, w: None, gap: ARRANGE_GAP, all: false }
+        Self { x: None, y: None, w: None, gap: ARRANGE_GAP, all: false, objects: false }
     }
 }
 
@@ -217,7 +222,10 @@ const ARRANGE_ORIGIN: f32 = 40.0;
 /// Возвращает индексы разложенных блоков.
 pub(super) fn arrange_column(model: &mut DocModel, a: &Arrange) -> Vec<usize> {
     let targets: Vec<usize> = (0..model.blocks.len())
-        .filter(|&i| a.all || free::pos_of(&model.blocks[i].attrs).is_none())
+        .filter(|&i| {
+            let b = &model.blocks[i];
+            free::pos_of(&b.attrs).is_none() || (a.all && (a.objects || !needs_own_height(b)))
+        })
         .collect();
     if targets.is_empty() {
         return targets;
@@ -267,7 +275,7 @@ pub(super) fn arrange_column(model: &mut DocModel, a: &Arrange) -> Vec<usize> {
 
 /// Блок, у которого нет собственной высоты по содержимому: без `h` редактор
 /// возьмёт свою (200 px), и оценка агента с ней разойдётся.
-fn needs_own_height(b: &DocBlock) -> bool {
+pub(super) fn needs_own_height(b: &DocBlock) -> bool {
     matches!(b.kind, BlockKind::Shape { .. } | BlockKind::Media { .. } | BlockKind::Embed { .. })
 }
 

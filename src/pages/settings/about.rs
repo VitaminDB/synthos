@@ -4,6 +4,7 @@ use syngui::prelude::*;
 use syngui::widgets::GestureDetector;
 use syngui::widgets::visual::{Image, ImageFit};
 
+use crate::components::titlebar;
 use crate::icons::*;
 
 const LOGO_SVG: &[u8] = include_bytes!("../../../packaging/synthos.svg");
@@ -29,7 +30,9 @@ pub fn view() -> impl Widget {
                         ]),
 
                         section(tr!("settings.about.section.links"), vec![
-                            link_row(MI_CODE, tr!("settings.about.source_code"), "https://github.com/vitamindb/synthos"),
+                            // Те же ссылки, что у чипов в шапке окна.
+                            link_row(MI_FAVORITE, tr!("settings.about.donate"), titlebar::DONATE_URL),
+                            link_row(MI_CODE, tr!("settings.about.source_code"), titlebar::GITHUB_URL),
                             link_row(MI_BOOK, tr!("settings.about.license_apache"), "https://www.apache.org/licenses/LICENSE-2.0"),
                             link_row(MI_BOOK, tr!("settings.about.license_mit"), "https://opensource.org/licenses/MIT"),
                         ]),

@@ -59,12 +59,14 @@ fn chips_open_links_without_dragging_window_and_highlight_on_hover() {
     let engine = h.apply_mss(synthos::styles::styles());
     settle(&mut h, &engine);
 
-    // ── Вид: две пилюли высоты `beta`, у GitHub — логотип ─────────────
+    // ── Вид: два чипа без рамки, у GitHub — логотип ───────────────────
     let chips = h.find_by_class("titlebar-chip");
     assert_eq!(chips.len(), 2, "два чипа");
     for &chip in &chips {
         let size = h.element_bounds(chip).size;
-        assert_eq!(size.height, 16.0, "высота пилюли");
+        assert_eq!(size.height, 20.0, "высота чипа");
+        let border = h.element_mss(chip).and_then(|m| m.border_width);
+        assert!(border.is_none_or(|w| w == 0.0), "у чипа рамка: {border:?}");
         assert!(size.width > 30.0, "чип схлопнут: {size:?}");
     }
     let logo = h.find_by_class("titlebar-chip-logo");
@@ -106,4 +108,43 @@ fn chips_open_links_without_dragging_window_and_highlight_on_hover() {
     assert!(h.find_by_class("titlebar-chip--hover").is_empty(), "подсветка осталась после ухода");
     let logo = h.find_by_class("titlebar-chip-logo")[0];
     assert_eq!(h.element_mss(logo).and_then(|m| m.color_tint), tint_idle, "цвет логотипа не вернулся");
+}
+
+/// Чипы стоят у правого края шапки — рядом с кнопками окна, а заголовок не
+/// сдвигается: при центрированном он ровно посередине, чипы внутри правой
+/// распорки.
+#[test]
+fn chips_sit_at_the_right_edge_and_keep_the_title_centered() {
+    syngui::signal::allow_signal_reads_on_this_thread();
+    const W: f32 = 1000.0;
+    for centered in [true, false] {
+        let row = Row::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .children(titlebar::middle(centered, 12.0));
+        let mut h = TestHarness::new(Box::new(DecoratedBox::new().class("titlebar").child(row)));
+        let engine = h.apply_mss(synthos::styles::styles());
+        syngui::signal::drain_and_run_effects();
+        h.rebuild();
+        h.apply_styles(&engine);
+        h.layout(W, 32.0);
+
+        let heading = h.element_bounds(h.find_by_class("titlebar-heading")[0]);
+        let chips = h.find_by_class("titlebar-chip");
+        assert_eq!(chips.len(), 2);
+        let first = h.element_bounds(chips[0]);
+        let last = h.element_bounds(chips[1]);
+        // У `.titlebar` 16 px слева; справа — 8 px до кнопок окна и отступ чипа
+        // внутри детектора.
+        let right_gap = W - (last.origin.x + last.size.width);
+        assert!((0.0..=12.0).contains(&right_gap), "centered={centered}: чипы не у правого края, зазор {right_gap}");
+        assert!(first.origin.x > heading.origin.x + heading.size.width, "centered={centered}: чипы левее заголовка");
+        if centered {
+            let mid = heading.origin.x + heading.size.width / 2.0;
+            let content_mid = 16.0 + (W - 16.0) / 2.0;
+            assert!((mid - content_mid).abs() <= 1.0, "заголовок сдвинут: центр {mid}, ждали {content_mid}");
+        } else {
+            assert!(heading.origin.x <= 16.0 + 12.0 + 1.0, "заголовок не слева: {}", heading.origin.x);
+        }
+    }
 }

@@ -87,39 +87,27 @@
     text-transform: none;
 }
 
-/* Чипы-ссылки Donate / GitHub — те же метрики, что у пилюль выше (высота,
- * скругление, подпись `.titlebar-badge-text`), плюс иконка и отклик на
- * наведение. Фон и рамка — `:hover` самой подложки (с переходом); цвет
- * иконки и подписи — класс `--hover`, который ставит `titlebar::link_chip`:
- * hover у потомка считается по его собственным границам, не по чипу. */
-.titlebar-divider {
-    width: 1px;
-    height: 12px;
-    margin: 0 2px;
-    background-color: var(--border);
-}
-
+/* Чипы-ссылки Donate / GitHub у кнопок окна — без рамки и подложки, как
+ * сами кнопки: подпись `.titlebar-badge-text` с иконкой, подложка только
+ * при наведении (`:hover` самого чипа, с переходом). Цвет иконки и подписи —
+ * класс `--hover`, который ставит `titlebar::link_chip`: hover у потомка
+ * считается по его собственным границам, не по чипу. */
 .titlebar-chip {
-    height: 16px;
-    padding: 0 7px 0 5px;
+    height: 20px;
+    padding: 0 8px 0 7px;
     border-radius: var(--radius-pill);
-    border-width: 1px;
-    background-color: var(--bg-search);
-    border-color: var(--border-soft);
+    background-color: transparent;
     cursor: pointer;
-    transition: background-color var(--duration-fast) var(--ease-standard),
-                border-color var(--duration-fast) var(--ease-standard);
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .titlebar-chip:hover {
     background-color: var(--surface-hover);
-    border-color: var(--border-strong);
 }
 
 /* Полупрозрачная роза, а не токен: читается и на светлых, и на тёмных темах. */
 .titlebar-chip.titlebar-chip-donate:hover {
     background-color: rgba(229, 72, 122, 0.12);
-    border-color: #E5487A;
 }
 
 .titlebar-chip-text {
@@ -128,12 +116,12 @@
 
 .titlebar-chip-icon {
     color: #E5487A;
-    icon-size: 10px;
+    icon-size: 11px;
 }
 
 .titlebar-chip-logo {
-    width: 10px;
-    height: 10px;
+    width: 11px;
+    height: 11px;
     color-tint: var(--text-muted);
 }
 

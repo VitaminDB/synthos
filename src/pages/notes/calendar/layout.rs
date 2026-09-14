@@ -170,7 +170,7 @@ mod tests {
     use crate::pages::notes::calendar::{ExternalKind, ExternalRef};
 
     fn occ(id: &str, day: i64, first: bool, time: Option<(u32, u32)>) -> Occurrence {
-        Occurrence { event: id.to_string(), day, time, first, last: false }
+        Occurrence { event: id.to_string(), day, start: day, time, first, last: false, done: false }
     }
 
     fn ext(day: i64, end: i64) -> ExternalItem {

@@ -234,9 +234,9 @@ impl MonthElement {
         arr.chips.iter().rposition(|c| c.rect.contains(p)).map(Hover::Chip)
     }
 
-    fn open_edit(&self, id: &str, anchor: Rect) {
+    fn open_edit(&self, id: &str, day: i64, anchor: Rect) {
         if let Some(e) = self.data.store.event(id) {
-            self.handle.open_edit(e.clone(), anchor);
+            self.handle.open_edit(e.clone(), day, anchor);
         }
     }
 
@@ -399,7 +399,7 @@ impl Element for MonthElement {
                 ItemRef::Event(id) => {
                     let e = self.data.store.event(id);
                     let color = e.map(|e| self.data.store.color_of(e)).and_then(|c| color_of(&c)).unwrap_or(pal.accent);
-                    (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), self.data.selected.as_deref() == Some(id.as_str()))
+                    (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done_at(chip.day)), self.data.selected.as_deref() == Some(id.as_str()))
                 }
                 ItemRef::External(i) => {
                     let ext = &self.data.external[*i];
@@ -455,12 +455,14 @@ impl Element for MonthElement {
                     Some(Hover::Chip(i)) => {
                         let chip = &arr.chips[i];
                         if let ItemRef::Event(id) = &chip.item {
+                            // Галочка — отметка этого вхождения: у повтора
+                            // соседние дни остаются открытыми.
                             if chip.done_box.is_some_and(|bx| bx.contains(*position)) {
-                                let done = self.data.store.event(id).is_some_and(|e| e.done);
-                                self.env.store.update_event(id, |e| e.done = !done);
+                                let done = self.data.store.event(id).is_some_and(|e| e.done_at(chip.day));
+                                self.env.store.set_event_done(id, chip.day, !done);
                                 return EventResult::Handled;
                             }
-                            self.handle.select(Some(id.clone()));
+                            self.handle.select_at(id.clone(), chip.day);
                         }
                         let grab_day = self.day_at(*position).unwrap_or(chip.day);
                         self.drag = Some(ChipDrag { target: chip.item.clone(), start: *position, moved: false, grab_day, over: None });
@@ -520,7 +522,7 @@ impl Element for MonthElement {
                     (ItemRef::Event(id), false) => {
                         let arr = self.arrange();
                         let anchor = arr.chips.iter().rev().find(|c| c.rect.contains(*position)).map(|c| c.rect).unwrap_or(self.base.bounds);
-                        self.open_edit(id, anchor);
+                        self.open_edit(id, drag.grab_day, anchor);
                     }
                     // Внешняя полоса: перенос сдвигает её задачу на столько
                     // же дней, клик без переноса — открывает её страницу.

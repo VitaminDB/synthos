@@ -1655,6 +1655,7 @@ fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
         let _ = handle.structure_rev.get();
         let _ = store.revision.get();
         let selected = handle.selected.get();
+        let selected_at = handle.selected_at.get();
         let doc = handle.lock().clone();
         let data = store.lock().clone();
         let mut col = Column::new()
@@ -1662,7 +1663,7 @@ fn calendar_props(ctx: NotesCtx, handle: CalendarHandle) -> impl Widget {
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .class("notes-props");
         if let Some(e) = selected.as_deref().and_then(|id| data.event(id)).cloned() {
-            col = col.child(calendar_event_props(&store, &handle, &data, e));
+            col = col.child(calendar_event_props(&store, &handle, &data, e, selected_at));
         }
         col = col.child(calendar_view_props(ctx, &handle, &doc, &data));
         col = col.child(calendar_style_props(&handle, &doc.style));
@@ -1676,9 +1677,13 @@ fn calendar_event_props(
     handle: &CalendarHandle,
     data: &super::calendar::model::CalendarStore,
     e: super::calendar::model::CalEvent,
+    selected_at: Option<i64>,
 ) -> impl Widget {
     use syngui::widgets::input::{DatePicker, Date};
     let id = e.id.clone();
+    // День вхождения: выбранный в сетке, иначе сегодня (у повтора), иначе
+    // дата события.
+    let occ_day = selected_at.or_else(|| e.is_repeating().then(super::gantt::calendar::today_days)).or_else(|| e.day()).unwrap_or_default();
     let s = store.clone();
     let id_t = id.clone();
     let title = TextField::with_text(e.title.clone())
@@ -1706,10 +1711,19 @@ fn calendar_event_props(
                 s.move_event(&id_d, day, None);
             }
         });
+    // У повтора «сделано» — отметка одного вхождения (с датой в подписи);
+    // в день без вхождения отмечать нечего — строки нет.
     let s = store.clone();
     let id_done = id.clone();
-    let done = switch_row(tr!("notes.calendar.event.done"), e.done, move |on| {
-        s.update_event(&id_done, move |e| e.done = on);
+    let done = e.instance_at(occ_day).or((!e.is_repeating()).then_some(occ_day)).map(|start| {
+        let label = if e.is_repeating() {
+            format!("{} · {}", tr!("notes.calendar.event.done"), super::calendar::model::day_month(start))
+        } else {
+            tr!("notes.calendar.event.done")
+        };
+        switch_row(label, e.done_at(occ_day), move |on| {
+            s.set_event_done(&id_done, occ_day, on);
+        })
     });
     let s = store.clone();
     let id_c = id.clone();
@@ -1737,20 +1751,22 @@ fn calendar_event_props(
         .gap(6.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(ToolButton::new(MI_EDIT).text(tr!("app.edit")).on_click(move || {
-            h_open.open_edit(e_open.clone(), syngui::core::Rect::new(syngui::core::Point::new(0.0, 40.0), syngui::core::Size::new(1.0, 1.0)))
+            h_open.open_edit(e_open.clone(), occ_day, syngui::core::Rect::new(syngui::core::Point::new(0.0, 40.0), syngui::core::Size::new(1.0, 1.0)))
         }))
         .child(ToolButton::new(MI_DELETE).text(tr!("notes.calendar.event.delete")).on_click(move || {
             s_del.remove_event(&id_del);
             h_del.select(None);
         }));
-    Column::new()
+    let mut col = Column::new()
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .child(Text::new(tr!("notes.props.calendar.event")).class("notes-links-section"))
         .child(field_row(tr!("notes.props.mindmap.text"), title))
-        .child(field_row(tr!("notes.calendar.event.date"), date))
-        .child(done)
-        .child(field_row(tr!("notes.calendar.event.calendar"), calendar))
+        .child(field_row(tr!("notes.calendar.event.date"), date));
+    if let Some(done) = done {
+        col = col.child(done);
+    }
+    col.child(field_row(tr!("notes.calendar.event.calendar"), calendar))
         .child(field_row(tr!("notes.props.color"), color))
         .child(actions)
 }

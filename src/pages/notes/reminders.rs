@@ -221,7 +221,7 @@ pub fn collect(ctx: NotesCtx, now: (i64, u32)) -> Vec<Reminder> {
     let s = store.lock();
     for occ in s.occurrences(today, today + 1, &[]) {
         let Some(e) = s.event(&occ.event) else { continue };
-        if e.done || !occ.first {
+        if occ.done || !occ.first {
             continue;
         }
         let (kind, at) = if occ.day == today {

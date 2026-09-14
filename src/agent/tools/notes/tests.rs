@@ -548,6 +548,18 @@ fn calendar_through_the_tool() {
     assert!(!weekend.contains("Зарядка"), "{weekend}");
     let monday = call(ctx, "calendar", serde_json::json!({"op": "list_events", "from": "2026-09-21", "to": "2026-09-21"}));
     assert!(monday.contains("Зарядка"), "{monday}");
+    // «Сделано» у повтора — отметка одного дня: пятница не закрывает понедельник.
+    let out = call(ctx, "calendar", serde_json::json!({"op": "complete", "event": "Зарядка", "on": "2026-09-18"}));
+    assert!(out.contains("occurrence 2026-09-18 done") && out.contains("done on 2026-09-18"), "{out}");
+    {
+        let store = ctx.calendar_store();
+        let s = store.lock();
+        let e = s.events.iter().find(|e| e.title == "Зарядка").unwrap();
+        let d = |iso: &str| crate::pages::notes::gantt::calendar::parse_days(iso).unwrap();
+        assert!(e.done_at(d("2026-09-18")) && !e.done_at(d("2026-09-21")), "{:?}", e.done_on);
+    }
+    let err = dispatch(ctx, "calendar", &serde_json::json!({"op": "complete", "event": "Зарядка", "on": "2026-09-19"})).unwrap_err();
+    assert!(err.contains("no occurrence on 2026-09-19") && err.contains("nearest: 2026-09-18, 2026-09-21"), "{err}");
     // skip_days считается от целой недели, а не от прежней маски.
     let out = call(ctx, "calendar", serde_json::json!({"op": "update_event", "event": "Зарядка", "skip_days": ["вс"]}));
     assert!(out.contains("repeat daily on mon,tue,wed,thu,fri,sat"), "{out}");

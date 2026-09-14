@@ -429,9 +429,10 @@ impl TimeElement {
         }
     }
 
-    fn open_edit(&self, id: &str, anchor: Rect) {
+    fn open_edit(&self, id: &str, day: Option<i64>, anchor: Rect) {
         if let Some(e) = self.data.store.event(id) {
-            self.handle.open_edit(e.clone(), anchor);
+            let day = day.or_else(|| e.day()).unwrap_or_default();
+            self.handle.open_edit(e.clone(), day, anchor);
         }
     }
 }
@@ -555,7 +556,7 @@ impl Element for TimeElement {
                     let e = self.data.store.event(id);
                     let color = e.map(|e| self.data.store.color_of(e)).and_then(|c| color_of(&c)).unwrap_or(pal.accent);
                     let occ = self.data.occurrences.iter().find(|o| &o.event == id && o.day == slot.date);
-                    (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), self.data.selected.as_deref() == Some(id.as_str()), occ.and_then(|o| o.time))
+                    (color, e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done_at(slot.date)), self.data.selected.as_deref() == Some(id.as_str()), occ.and_then(|o| o.time))
                 }
                 ItemRef::External(i) => {
                     let ext = &self.data.external[*i];
@@ -683,7 +684,7 @@ impl Element for TimeElement {
                                 } else {
                                     DragMode::Move
                                 };
-                                self.handle.select(Some(id.clone()));
+                                self.handle.select_at(id.clone(), slot.date);
                                 (time, mode)
                             }
                             // Внешнюю полосу за кромку не растягиваем: её длина
@@ -767,8 +768,10 @@ impl Element for TimeElement {
                     match target {
                         ItemRef::Event(id) => {
                             let (slots, _) = self.slots();
-                            let anchor = slots.iter().rev().find(|s| s.rect.contains(*position)).map(|s| s.rect).unwrap_or(self.base.bounds);
-                            self.open_edit(&id, anchor);
+                            let slot = slots.iter().rev().find(|s| s.rect.contains(*position));
+                            let anchor = slot.map(|s| s.rect).unwrap_or(self.base.bounds);
+                            let day = slot.map(|s| s.date).or_else(|| self.handle.selected_at.get_untracked());
+                            self.open_edit(&id, day, anchor);
                         }
                         ItemRef::External(i) => {
                             if let Some(page) = self.data.external.get(i).map(|e| e.page.clone()) {

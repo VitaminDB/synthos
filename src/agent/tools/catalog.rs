@@ -1105,7 +1105,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("on", json!({
             "type": "string",
             "description": "calendar: the date of the event you mean when several \
-                share a title (yyyy-mm-dd)."
+                share a title (yyyy-mm-dd). complete, and update_event with done, \
+                on a repeating event: the occurrence to mark (default today)."
         })),
         ("date", json!({
             "type": "string",
@@ -1133,6 +1134,8 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         ("done", json!({
             "type": ["boolean", "string"],
             "description": "calendar complete/update_event: mark the event done. \
+                A repeating event is marked per occurrence (the one on \"on\", \
+                default today): done on Friday leaves Monday open. \
                 kanban add_column/update_column: true = this is the board's \
                 DONE column — cards moved into it get a done date (and a \
                 repeating card spawns its next occurrence). tasks: false \

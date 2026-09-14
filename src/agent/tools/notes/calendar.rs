@@ -41,20 +41,35 @@ fn resolve_event(store: &CalendarStore, s: &str, on: Option<i64>) -> Result<Stri
         return Ok(t.to_string());
     }
     let key = t.to_lowercase();
-    let hits: Vec<&CalEvent> = store
-        .events
-        .iter()
-        .filter(|e| e.title.trim().to_lowercase() == key)
-        .filter(|e| on.is_none_or(|d| e.day() == Some(d)))
-        .collect();
+    let titled: Vec<&CalEvent> = store.events.iter().filter(|e| e.title.trim().to_lowercase() == key).collect();
+    // `on` — день вхождения: у повтора это любой его день, а не только первый.
+    let hits: Vec<&CalEvent> = titled.iter().copied().filter(|e| on.is_none_or(|d| e.instance_at(d).is_some())).collect();
     match hits.len() {
         1 => Ok(hits[0].id.clone()),
-        0 => Err(format!("event \"{s}\" not found — ids and titles are in calendar op=list_events")),
+        0 => match (titled.as_slice(), on) {
+            ([one], Some(d)) => Err(no_occurrence(one, d)),
+            _ => Err(format!("event \"{s}\" not found — ids and titles are in calendar op=list_events")),
+        },
         n => Err(format!(
             "{n} events are titled \"{s}\" — pass the id or a date: {}",
             hits.iter().map(|e| format!("{} ({})", e.id, e.date)).collect::<Vec<_>>().join(", ")
         )),
     }
+}
+
+/// Ошибка «в этот день вхождения нет» с ближайшими датами до и после.
+fn no_occurrence(e: &CalEvent, day: i64) -> String {
+    let mut near = Vec::new();
+    e.expand(day - 62, day + 62, &mut near);
+    let prev = near.iter().filter(|o| o.first && o.start < day).last().map(|o| days_to_iso(o.start));
+    let next = near.iter().find(|o| o.first && o.start > day).map(|o| days_to_iso(o.start));
+    let around: Vec<String> = [prev, next].into_iter().flatten().collect();
+    format!(
+        "event \"{}\" has no occurrence on {}{} — pass on=<a date it happens>; every repeat is marked done on its own",
+        e.title,
+        days_to_iso(day),
+        if around.is_empty() { String::new() } else { format!(" (nearest: {})", around.join(", ")) }
+    )
 }
 
 fn event_line(store: &CalendarStore, e: &CalEvent) -> String {
@@ -78,7 +93,16 @@ fn event_line(store: &CalendarStore, e: &CalEvent) -> String {
             s.push_str(&format!(" until {u}"));
         }
     }
-    if e.done {
+    if e.is_repeating() {
+        // У повтора отметки по дням: последние три, остальные числом.
+        let n = e.done_on.len();
+        if n > 0 {
+            s.push_str(&format!(" · done on {}", e.done_on[n.saturating_sub(3)..].join(", ")));
+            if n > 3 {
+                s.push_str(&format!(" (+{} earlier)", n - 3));
+            }
+        }
+    } else if e.done {
         s.push_str(" · done");
     }
     if !e.color.is_empty() {
@@ -321,10 +345,6 @@ fn apply_event_fields(ctx: NotesCtx, store: &CalendarStore, e: &mut CalEvent, v:
         e.note = n;
         changes.push("note".to_string());
     }
-    if let Some(d) = bool_field(v, "done") {
-        e.done = d;
-        changes.push("done".to_string());
-    }
     if let Some(r) = str_field(v, "repeat") {
         // `weekdays` / `weekends` — сокращения: ежедневный повтор плюс маска
         // дней недели (одно событие вместо дюжины отдельных).
@@ -384,6 +404,15 @@ fn apply_event_fields(ctx: NotesCtx, store: &CalendarStore, e: &mut CalEvent, v:
     if let Some(l) = raw_string(v, "link") {
         e.link = if l.trim().is_empty() || l.eq_ignore_ascii_case("none") { None } else { Some(resolve_page_ref(ctx, &l)?) };
         changes.push("link".to_string());
+    }
+    // После повтора и дат: у повтора «сделано» — отметка вхождения в день
+    // `on` (иначе сегодня), а не всей серии.
+    if let Some(d) = bool_field(v, "done") {
+        let day = day_arg(v, "on")?.unwrap_or_else(today_days);
+        if !e.set_done_at(day, d) {
+            return Err(no_occurrence(e, day));
+        }
+        changes.push("done".to_string());
     }
     Ok(changes)
 }
@@ -571,10 +600,20 @@ pub(super) fn calendar_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                 return Ok(format!("deleted event \"{title}\" ({id})\n"));
             }
             if op == "complete" {
+                // Повтор отмечается по дню: `on`, иначе сегодня.
                 let done = bool_field(v, "done").unwrap_or(true);
-                store.update_event(&id, |e| e.done = done);
+                let day = on.unwrap_or_else(today_days);
+                let ev = snapshot.event(&id).ok_or("event vanished")?;
+                if !store.set_event_done(&id, day, done) {
+                    return Err(no_occurrence(ev, day));
+                }
                 let s = store.lock();
-                return Ok(format!("event {}\n", event_line(&s, s.event(&id).ok_or("event vanished")?)));
+                let e = s.event(&id).ok_or("event vanished")?;
+                let which = match e.instance_at(day) {
+                    Some(start) if e.is_repeating() => format!(" (occurrence {} {})", days_to_iso(start), if done { "done" } else { "reopened" }),
+                    _ => String::new(),
+                };
+                return Ok(format!("event{which} {}\n", event_line(&s, e)));
             }
             let mut event = snapshot.event(&id).cloned().ok_or("event vanished")?;
             let mut changes = apply_event_fields(ctx, &snapshot, &mut event, v)?;

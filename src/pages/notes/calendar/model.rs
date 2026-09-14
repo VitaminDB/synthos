@@ -251,8 +251,14 @@ pub struct CalEvent {
     pub end: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_day: bool,
+    /// «Сделано» разового события. У повторяющегося не используется: у
+    /// каждого повтора своя отметка в `done_on`, иначе отметка пятницы
+    /// оставалась и в понедельник.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub done: bool,
+    /// Сделанные повторы: ISO-дата первого дня вхождения.
+    #[serde(default, rename = "done_dates", skip_serializing_if = "Vec::is_empty")]
+    pub done_on: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
     /// Свой цвет поверх цвета календаря.
@@ -284,6 +290,7 @@ impl CalEvent {
             end: None,
             all_day: true,
             done: false,
+            done_on: Vec::new(),
             note: String::new(),
             color: String::new(),
             repeat: Repeat::None,
@@ -313,6 +320,159 @@ impl CalEvent {
         let e = self.end.unwrap_or(s + 30).max(s + 5).min(24 * 60);
         Some((s.min(24 * 60 - 5), e))
     }
+
+    pub fn is_repeating(&self) -> bool {
+        !self.repeat.is_none()
+    }
+
+    /// Первый день вхождения, накрывающего `day`; `None` — в этот день
+    /// события нет.
+    pub fn instance_at(&self, day: i64) -> Option<i64> {
+        let mut out = Vec::new();
+        self.expand(day, day, &mut out);
+        out.first().map(|o| o.start)
+    }
+
+    /// Сделано ли вхождение, накрывающее `day`: у разового — `done`, у
+    /// повтора — отметка именно этого повтора.
+    pub fn done_at(&self, day: i64) -> bool {
+        if !self.is_repeating() {
+            return self.done;
+        }
+        self.instance_at(day).is_some_and(|start| self.instance_done(start))
+    }
+
+    /// Отметить вхождение, накрывающее `day`. `false` — у повтора нет
+    /// вхождения в этот день (отмечать нечего).
+    pub fn set_done_at(&mut self, day: i64, done: bool) -> bool {
+        if !self.is_repeating() {
+            self.done = done;
+            return true;
+        }
+        let Some(start) = self.instance_at(day) else { return false };
+        let iso = days_to_iso(start);
+        self.done_on.retain(|d| *d != iso);
+        if done {
+            self.done_on.push(iso);
+            self.done_on.sort();
+        }
+        true
+    }
+
+    fn instance_done(&self, start: i64) -> bool {
+        self.done_on.iter().any(|d| parse_days(d) == Some(start))
+    }
+
+    /// Отметки по форме события: у повтора общий `done` не живёт (прежние
+    /// файлы хранили его на всю серию — он снимается, а не размазывается
+    /// на каждый день), у разового не живут отметки повторов.
+    pub fn fix_done(&mut self) {
+        if self.is_repeating() {
+            self.done = false;
+            self.done_on.retain(|d| parse_days(d).is_some());
+            self.done_on.sort();
+            self.done_on.dedup();
+        } else {
+            self.done_on.clear();
+        }
+    }
+
+    /// Вхождения события в диапазон дней `[from, to]` (включительно), без
+    /// сортировки.
+    pub fn expand(&self, from: i64, to: i64, out: &mut Vec<Occurrence>) {
+        let e = self;
+        let Some((s, en)) = e.span() else { return };
+        let len = en - s;
+        let until = e.until.as_deref().and_then(parse_days).unwrap_or(i64::MAX);
+        let time = e.time_span();
+        let done_days: Vec<i64> = e.done_on.iter().filter_map(|d| parse_days(d)).collect();
+        let mut push = |start_day: i64| {
+            let done = if e.is_repeating() { done_days.contains(&start_day) } else { e.done };
+            for d in start_day..=start_day + len {
+                if d < from || d > to {
+                    continue;
+                }
+                out.push(Occurrence { event: e.id.clone(), day: d, start: start_day, time, first: d == start_day, last: d == start_day + len, done });
+            }
+        };
+        match e.repeat {
+            Repeat::None => push(s),
+            // Фильтр по дням недели превращает и еженедельный повтор в
+            // обход по дням: «каждую неделю по пн/ср/пт» — это те же
+            // дни маски, а не одно вхождение в неделю.
+            Repeat::Daily | Repeat::Weekly if !e.days.is_any() => {
+                let mut d = s.max(from - len);
+                while d <= to && d <= until {
+                    if d >= s && e.days.allows(d) {
+                        push(d);
+                    }
+                    d += 1;
+                }
+            }
+            Repeat::Daily => {
+                let mut d = s.max(from - len);
+                while d <= to && d <= until {
+                    if d >= s {
+                        push(d);
+                    }
+                    d += 1;
+                }
+            }
+            Repeat::Weekly => {
+                let mut d = s;
+                if from - len > s {
+                    d = s + ((from - len - s) / 7) * 7;
+                }
+                while d <= to && d <= until {
+                    if d >= s {
+                        push(d);
+                    }
+                    d += 7;
+                }
+            }
+            Repeat::Monthly => {
+                let (y0, m0, day0) = civil_from_days(s);
+                let mut k = 0i64;
+                loop {
+                    let (y, m) = add_months(y0, m0, k);
+                    if let Some(d) = valid_day(y, m, day0) {
+                        if d > to || d > until {
+                            break;
+                        }
+                        if d >= s && e.days.allows(d) {
+                            push(d);
+                        }
+                    } else if days_from_civil(y, m, 1) > to {
+                        break;
+                    }
+                    k += 1;
+                    if k > 12 * 200 {
+                        break;
+                    }
+                }
+            }
+            Repeat::Yearly => {
+                let (y0, m0, day0) = civil_from_days(s);
+                let mut y = y0;
+                loop {
+                    if let Some(d) = valid_day(y, m0, day0) {
+                        if d > to || d > until {
+                            break;
+                        }
+                        if d >= s && e.days.allows(d) {
+                            push(d);
+                        }
+                    } else if days_from_civil(y, m0, 1) > to {
+                        break;
+                    }
+                    y += 1;
+                    if y > y0 + 200 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Вхождение события в конкретный день (развёртка повторов и многодневных).
@@ -320,11 +480,15 @@ impl CalEvent {
 pub struct Occurrence {
     pub event: String,
     pub day: i64,
+    /// Первый день вхождения (у повтора — день этого повтора).
+    pub start: i64,
     /// Минуты начала/конца, `None` — весь день.
     pub time: Option<(u32, u32)>,
     /// Первый/последний день многодневного события.
     pub first: bool,
     pub last: bool,
+    /// Сделано ли это вхождение (у повтора — свой день, не вся серия).
+    pub done: bool,
 }
 
 impl CalendarStore {
@@ -370,6 +534,7 @@ impl CalendarStore {
                 e.end = Some(en.min(24 * 60));
             }
             e.days = Weekdays::from_bits(e.days.bits());
+            e.fix_done();
         }
     }
 
@@ -415,6 +580,7 @@ impl CalendarStore {
         if event.start.is_none() {
             event.all_day = true;
         }
+        event.fix_done();
         let id = event.id.clone();
         self.events.push(event);
         id
@@ -443,95 +609,7 @@ impl CalendarStore {
             if !filter.is_empty() && !filter.iter().any(|c| *c == e.calendar) {
                 continue;
             }
-            let Some((s, en)) = e.span() else { continue };
-            let len = en - s;
-            let until = e.until.as_deref().and_then(parse_days).unwrap_or(i64::MAX);
-            let time = e.time_span();
-            let mut push = |start_day: i64| {
-                for d in start_day..=start_day + len {
-                    if d < from || d > to {
-                        continue;
-                    }
-                    out.push(Occurrence { event: e.id.clone(), day: d, time, first: d == start_day, last: d == start_day + len });
-                }
-            };
-            match e.repeat {
-                Repeat::None => push(s),
-                // Фильтр по дням недели превращает и еженедельный повтор в
-                // обход по дням: «каждую неделю по пн/ср/пт» — это те же
-                // дни маски, а не одно вхождение в неделю.
-                Repeat::Daily | Repeat::Weekly if !e.days.is_any() => {
-                    let mut d = s.max(from - len);
-                    while d <= to && d <= until {
-                        if d >= s && e.days.allows(d) {
-                            push(d);
-                        }
-                        d += 1;
-                    }
-                }
-                Repeat::Daily => {
-                    let mut d = s.max(from - len);
-                    while d <= to && d <= until {
-                        if d >= s {
-                            push(d);
-                        }
-                        d += 1;
-                    }
-                }
-                Repeat::Weekly => {
-                    let mut d = s;
-                    if from - len > s {
-                        d = s + ((from - len - s) / 7) * 7;
-                    }
-                    while d <= to && d <= until {
-                        if d >= s {
-                            push(d);
-                        }
-                        d += 7;
-                    }
-                }
-                Repeat::Monthly => {
-                    let (y0, m0, day0) = civil_from_days(s);
-                    let mut k = 0i64;
-                    loop {
-                        let (y, m) = add_months(y0, m0, k);
-                        if let Some(d) = valid_day(y, m, day0) {
-                            if d > to || d > until {
-                                break;
-                            }
-                            if d >= s && e.days.allows(d) {
-                                push(d);
-                            }
-                        } else if days_from_civil(y, m, 1) > to {
-                            break;
-                        }
-                        k += 1;
-                        if k > 12 * 200 {
-                            break;
-                        }
-                    }
-                }
-                Repeat::Yearly => {
-                    let (y0, m0, day0) = civil_from_days(s);
-                    let mut y = y0;
-                    loop {
-                        if let Some(d) = valid_day(y, m0, day0) {
-                            if d > to || d > until {
-                                break;
-                            }
-                            if d >= s && e.days.allows(d) {
-                                push(d);
-                            }
-                        } else if days_from_civil(y, m0, 1) > to {
-                            break;
-                        }
-                        y += 1;
-                        if y > y0 + 200 {
-                            break;
-                        }
-                    }
-                }
-            }
+            e.expand(from, to, &mut out);
         }
         out.sort_by(|a, b| {
             a.day.cmp(&b.day).then_with(|| match (a.time, b.time) {
@@ -572,6 +650,12 @@ pub fn parse_hm(s: &str) -> Option<u32> {
 
 pub fn fmt_hm(min: u32) -> String {
     format!("{:02}:{:02}", (min / 60).min(23), min % 60)
+}
+
+/// `ДД.ММ` — день повтора в подписи «Сделано».
+pub fn day_month(day: i64) -> String {
+    let (_, m, d) = civil_from_days(day);
+    format!("{d:02}.{m:02}")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -974,6 +1058,51 @@ mod tests {
         assert!(!sept.iter().any(|o| s.event(&o.event).unwrap().title == "Оплата"), "5 сентября — суббота");
         let oct = s.occurrences(d("2026-10-01"), d("2026-10-31"), &[]);
         assert_eq!(oct.iter().filter(|o| s.event(&o.event).unwrap().title == "Оплата").count(), 1, "5 октября — понедельник");
+    }
+
+    #[test]
+    fn repeat_done_is_per_occurrence() {
+        let d = |iso: &str| parse_days(iso).unwrap();
+        // «Забрать» по будням: отметка пятницы не перетекает на понедельник.
+        let mut s = CalendarStore::template("Личное");
+        let mut e = CalEvent::new(&s.calendars[0].id, "Забрать", d("2026-09-07"));
+        e.repeat = Repeat::Daily;
+        e.days = Weekdays::WEEKDAYS;
+        assert!(e.set_done_at(d("2026-09-11"), true));
+        assert!(e.done_at(d("2026-09-11")));
+        assert!(!e.done_at(d("2026-09-14")), "понедельник открыт");
+        assert!(!e.done, "общий флаг серии не ставится");
+        assert!(!e.set_done_at(d("2026-09-12"), true), "в субботу вхождения нет");
+        s.add_event(e.clone());
+        let marks: Vec<(i64, bool)> = s.occurrences(d("2026-09-10"), d("2026-09-14"), &[]).iter().map(|o| (o.day - d("2026-09-10"), o.done)).collect();
+        assert_eq!(marks, [(0, false), (1, true), (4, false)]);
+        let json = s.serialize();
+        assert!(json.contains("done_dates") && !json.contains("\"done\""), "{json}");
+        assert_eq!(CalendarStore::parse(&json).unwrap(), s);
+        assert!(e.set_done_at(d("2026-09-11"), false));
+        assert!(e.done_on.is_empty(), "снять — только свой день");
+
+        // Многодневный повтор отмечается днём начала вхождения.
+        let mut trip = CalEvent::new("c", "Выезд", d("2026-09-05"));
+        trip.end_date = Some("2026-09-06".into());
+        trip.repeat = Repeat::Weekly;
+        assert!(trip.set_done_at(d("2026-09-13"), true), "воскресенье второй поездки");
+        assert_eq!(trip.done_on, ["2026-09-12"]);
+        assert!(trip.done_at(d("2026-09-12")) && !trip.done_at(d("2026-09-06")));
+
+        // Прежние файлы хранили `done` на всей серии: он снимается, а не
+        // красит каждый день.
+        let old = CalendarStore::parse(r#"{"events":[{"id":"x","calendar":"c","title":"t","date":"2026-09-07","repeat":"daily","only_days":"weekdays","done":true}]}"#).unwrap();
+        assert!(!old.events[0].done_at(d("2026-09-14")));
+        assert!(!old.serialize().contains("\"done\""));
+
+        // Разовое событие — по-прежнему один флаг; отметок повторов у него нет.
+        let mut once = CalEvent::new("c", "Разово", d("2026-09-14"));
+        assert!(once.set_done_at(d("2020-01-01"), true));
+        assert!(once.done && once.done_at(d("2026-09-14")));
+        trip.repeat = Repeat::None;
+        trip.fix_done();
+        assert!(trip.done_on.is_empty());
     }
 
     #[test]

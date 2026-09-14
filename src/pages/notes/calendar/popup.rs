@@ -17,7 +17,7 @@ use syngui::widgets::{Dropdown, DropdownItem, GestureDetector, ToolButton};
 use crate::icons::*;
 use crate::pages::notes::gantt::calendar::{civil_from_days, days_from_civil, days_to_iso, parse_days};
 
-use super::model::{CalEvent, Repeat, Weekdays};
+use super::model::{day_month, CalEvent, Repeat, Weekdays};
 use super::{CalendarEnv, CalendarHandle};
 
 const PRESET_COLORS: &[&str] = &["", "#EE5E48", "#E8A33D", "#4FBF7A", "#4F8CFF", "#C08FE8", "#8B95A6", "#2EC4B6"];
@@ -305,7 +305,7 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
         match d.id {
             None => {
                 let id = store_save.add_event(ev);
-                h_save.select(Some(id));
+                h_save.select_at(id, d.day);
             }
             Some(id) => {
                 store_save.update_event(&id, |e| {
@@ -317,20 +317,29 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
         }
         h_save.close_popup();
     });
+    // «Сделано» у повтора — отметка того дня, с которого открыт попап;
+    // дата в подписи, чтобы не казалось, что закрывается вся серия.
     let h_done = handle.clone();
     let store_done = env.store.clone();
-    let done_now = e.done;
+    let occ_day = draft.day;
+    let done_now = e.done_at(occ_day);
     let id_done = draft.id.clone();
+    let done_label = if e.is_repeating() {
+        format!("{} · {}", tr!("notes.calendar.event.done"), day_month(e.instance_at(occ_day).unwrap_or(occ_day)))
+    } else {
+        tr!("notes.calendar.event.done")
+    };
     let done = ToolButton::new(if done_now { MI_CHECK_BOX } else { MI_CHECK_BOX_OUTLINE_BLANK })
-        .text(tr!("notes.calendar.event.done"))
+        .text(done_label)
         .on_click(move || {
             if let Some(id) = &id_done {
-                store_done.update_event(id, |e| e.done = !done_now);
+                store_done.set_event_done(id, occ_day, !done_now);
                 h_done.close_popup();
             } else {
                 h_done.draft.update(|dr| {
                     if let Some(dr) = dr {
-                        dr.event.done = !dr.event.done;
+                        let next = !dr.event.done_at(dr.day);
+                        dr.event.set_done_at(dr.day, next);
                     }
                 });
             }
@@ -439,7 +448,7 @@ fn day_body(env: CalendarEnv, handle: CalendarHandle, data: &super::view::GridDa
         let (color, name, done, is_event) = match &s.item {
             ItemRef::Event(id) => {
                 let e = data.store.event(id);
-                (e.map(|e| data.store.color_of(e)).unwrap_or_else(|| accent.clone()), e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done), true)
+                (e.map(|e| data.store.color_of(e)).unwrap_or_else(|| accent.clone()), e.map(|e| e.title.clone()).unwrap_or_default(), e.is_some_and(|e| e.done_at(day)), true)
             }
             ItemRef::External(i) => {
                 let ext = &data.external[*i];
@@ -474,7 +483,7 @@ fn day_body(env: CalendarEnv, handle: CalendarHandle, data: &super::view::GridDa
             GestureDetector::new()
                 .cursor(syngui::input::CursorIcon::Pointer)
                 .on_click(move || match (&item, &event, &page) {
-                    (ItemRef::Event(_), Some(e), _) => h.open_edit(e.clone(), anchor),
+                    (ItemRef::Event(_), Some(e), _) => h.open_edit(e.clone(), day, anchor),
                     (ItemRef::External(_), _, Some(p)) => {
                         h.close_day_popup();
                         (env.open_page)(p);

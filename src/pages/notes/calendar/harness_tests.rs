@@ -232,11 +232,11 @@ fn event_popup_weekday_chips_filter_the_repeat() {
     // Разовое событие: строки дней нет.
     let mut once = store.lock().events[0].clone();
     once.repeat = Repeat::None;
-    handle.open_edit(once, anchor);
+    handle.open_edit(once, day("2026-09-14"), anchor);
     w.settle();
     assert!(w.h.find_by_class("notes-calendar-day-chip").is_empty(), "без повтора дни недели не нужны");
 
-    handle.open_edit(store.lock().events[0].clone(), anchor);
+    handle.open_edit(store.lock().events[0].clone(), day("2026-09-14"), anchor);
     w.settle();
     // Выключаем субботу и воскресенье — остаются будни.
     for wd in [5usize, 6] {
@@ -248,6 +248,45 @@ fn event_popup_weekday_chips_filter_the_repeat() {
     }
     let draft = handle.draft.get_untracked().expect("черновик");
     assert_eq!(draft.event.days, Weekdays::WEEKDAYS, "маска черновика: пн–пт");
+}
+
+/// Галочка чипа у повтора отмечает только свой день: пятница не закрывает
+/// понедельник (раньше `done` жил на всей серии).
+#[test]
+fn month_done_box_marks_only_that_repeat() {
+    // 2026-08-31 — понедельник, первая строка сетки сентября.
+    let mut e = CalEvent::new("", "Забрать", day("2026-08-31"));
+    e.repeat = Repeat::Daily;
+    e.days = Weekdays::WEEKDAYS;
+    let (mut w, handle, store) = world(CalView::Month, vec![e]);
+    let id = store.lock().events[0].id.clone();
+    let grid = w.grid("notes-calendar-month");
+    let (from, _) = range_of(CalView::Month, handle.anchor(), 0);
+    let cw = grid.size.width / 7.0;
+    let ch = (grid.size.height - 22.0) / 6.0;
+    // Галочка 10 px: чип с отступом 3 px, квадрат в 5 px от его края; по
+    // высоте — середина чипа 20 px под строкой номера дня (20 + 2).
+    let done_box = |d: i64| {
+        let idx = d - from;
+        Point::new(grid.origin.x + (idx % 7) as f32 * cw + 3.0 + 10.0, grid.origin.y + 22.0 + (idx / 7) as f32 * ch + 22.0 + 10.0)
+    };
+    let (fri, mon) = (day("2026-09-04"), day("2026-09-07"));
+    w.click(done_box(fri));
+    {
+        let s = store.lock();
+        let e = s.event(&id).unwrap();
+        assert!(e.done_at(fri), "пятница отмечена: {:?}", e.done_on);
+        assert!(!e.done_at(mon), "понедельник остался открытым");
+        assert!(!e.done, "общий флаг серии не ставится");
+    }
+    assert!(!handle.popup_open.get_untracked(), "галочка не открывает попап");
+    w.settle();
+    w.click(done_box(mon));
+    assert_eq!(store.lock().event(&id).unwrap().done_on, ["2026-09-04", "2026-09-07"]);
+    // Повторный клик снимает только свой день.
+    w.settle();
+    w.click(done_box(fri));
+    assert_eq!(store.lock().event(&id).unwrap().done_on, ["2026-09-07"]);
 }
 
 #[test]

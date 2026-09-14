@@ -232,10 +232,19 @@ impl CalendarStoreHandle {
                 if e.start.is_none() {
                     e.all_day = true;
                 }
+                e.fix_done();
                 ok = true;
             }
         });
         ok
+    }
+
+    /// «Сделано» вхождения, накрывающего `day`: у повтора — только этот
+    /// повтор, у разового — всё событие. `false` — вхождения в этот день нет.
+    pub fn set_event_done(&self, id: &str, day: i64, done: bool) -> bool {
+        let mut marked = false;
+        self.update_event(id, |e| marked = e.set_done_at(day, done));
+        marked
     }
 
     pub fn remove_event(&self, id: &str) -> bool {
@@ -281,8 +290,18 @@ fn event_changes(before: &[CalEvent], after: &[CalEvent]) -> Vec<LogEntry> {
         match before.iter().find(|b| b.id == e.id) {
             None => out.push(entry("add", e).from_to(String::new(), e.date.clone())),
             Some(b) => {
-                if b.done != e.done {
-                    out.push(entry(if e.done { "done" } else { "reopen" }, e).from_to(String::new(), e.date.clone()));
+                // Смена формы (разовое ↔ повтор) снимает отметки сама — это
+                // не «снова открыто».
+                if b.is_repeating() == e.is_repeating() {
+                    if b.done != e.done {
+                        out.push(entry(if e.done { "done" } else { "reopen" }, e).from_to(String::new(), e.date.clone()));
+                    }
+                    for d in e.done_on.iter().filter(|d| !b.done_on.contains(d)) {
+                        out.push(entry("done", e).from_to(String::new(), d.clone()));
+                    }
+                    for d in b.done_on.iter().filter(|d| !e.done_on.contains(d)) {
+                        out.push(entry("reopen", e).from_to(String::new(), d.clone()));
+                    }
                 }
                 if b.date != e.date {
                     out.push(entry("move", e).from_to(b.date.clone(), e.date.clone()));
@@ -304,6 +323,9 @@ pub struct EventDraft {
     /// `None` — новое событие.
     pub id: Option<String>,
     pub event: CalEvent,
+    /// День вхождения, с которого открыт попап: «Сделано» у повтора
+    /// отмечает этот повтор, а не всю серию.
+    pub day: i64,
 }
 
 #[derive(Clone)]
@@ -313,6 +335,9 @@ pub struct CalendarHandle {
     pub structure_rev: RwSignal<u64>,
     /// Выбранное событие (id) — поля в панели свойств.
     pub selected: RwSignal<Option<String>>,
+    /// День выбранного вхождения: «сделано» повтора в панели свойств
+    /// относится к нему.
+    pub selected_at: RwSignal<Option<i64>>,
     /// Выбранный день (дни от эпохи) — подсветка в сетке.
     pub selected_day: RwSignal<Option<i64>>,
     /// Попап события: открыт ли, якорь, черновик.
@@ -334,6 +359,7 @@ impl CalendarHandle {
             revision: use_signal(0),
             structure_rev: use_signal(0),
             selected: use_signal(None),
+            selected_at: use_signal(None),
             selected_day: use_signal(None),
             popup_open: use_signal(false),
             popup_anchor: use_signal(Rect::zero()),
@@ -466,6 +492,17 @@ impl CalendarHandle {
     pub fn select(&self, id: Option<String>) {
         if self.selected.get_untracked() != id {
             self.selected.set(id);
+            if self.selected_at.get_untracked().is_some() {
+                self.selected_at.set(None);
+            }
+        }
+    }
+
+    /// Выбрать событие вместе с днём вхождения (повтор в сетке).
+    pub fn select_at(&self, id: String, day: i64) {
+        self.select(Some(id));
+        if self.selected_at.get_untracked() != Some(day) {
+            self.selected_at.set(Some(day));
         }
     }
 
@@ -478,18 +515,18 @@ impl CalendarHandle {
             e.all_day = false;
         }
         self.close_day_popup();
-        self.draft.set(Some(EventDraft { id: None, event: e }));
+        self.draft.set(Some(EventDraft { id: None, event: e, day }));
         self.popup_anchor.set(anchor);
         self.popup_open.set(true);
         self.select(None);
         self.selected_day.set(Some(day));
     }
 
-    /// Открыть попап правки события.
-    pub fn open_edit(&self, event: CalEvent, anchor: Rect) {
+    /// Открыть попап правки события с вхождения в день `day`.
+    pub fn open_edit(&self, event: CalEvent, day: i64, anchor: Rect) {
         self.close_day_popup();
-        self.select(Some(event.id.clone()));
-        self.draft.set(Some(EventDraft { id: Some(event.id.clone()), event }));
+        self.select_at(event.id.clone(), day);
+        self.draft.set(Some(EventDraft { id: Some(event.id.clone()), event, day }));
         self.popup_anchor.set(anchor);
         self.popup_open.set(true);
     }

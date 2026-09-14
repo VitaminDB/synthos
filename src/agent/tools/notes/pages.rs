@@ -716,9 +716,15 @@ pub(super) fn update_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
         let replace = raw_string(v, "replace").unwrap_or_default();
         let all = bool_field(v, "all").unwrap_or(false);
         let mut model = load_model(ctx, &id);
-        let n = replace_in_blocks(&mut model, &find, &replace, all)?;
+        let r = replace_in_blocks(&mut model, &find, &replace, all)?;
         store_model(ctx, &id, &model)?;
-        changes.push(format!("replaced {n} occurrence{}", if n == 1 { "" } else { "s" }));
+        changes.push(format!("replaced {} occurrence{}", r.n, if r.n == 1 { "" } else { "s" }));
+        if let Some(t) = r.approx {
+            changes.push(format!(
+                "find did not match word for word — replaced the closest text instead:\n{t}\n(read the page if \
+                 that was not the fragment you meant)"
+            ));
+        }
     }
 
     if changes.is_empty() {

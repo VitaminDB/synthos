@@ -563,23 +563,102 @@ fn find_matches(text: &str, find: &str) -> Vec<(usize, usize)> {
     Vec::new()
 }
 
-/// «Не нашлось» с подсказкой: если первая строка многострочного `find`
-/// на странице есть — в каком блоке, чтобы модель не переписывала всё.
-fn not_found_hint(text: &str, spans: &[(usize, usize)], find: &str) -> String {
-    let mut lines = find.lines().map(str::trim).filter(|l| !l.is_empty());
-    if let (Some(first), Some(_)) = (lines.next(), lines.next()) {
-        if let Some(&(s, _)) = find_matches(text, first).first() {
-            let block = spans.iter().position(|&(_, e)| e > s).unwrap_or(0);
-            return format!(
-                "find text not found on the page, but its first line is at block #{block} — the lines \
-                 after it differ: read the page again and copy the fragment, or rewrite those blocks \
-                 with blocks op=set_markdown"
-            );
+/// Слова для сверки по смыслу: нижний регистр, без разметки и пунктуации.
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+}
+
+/// Похожесть наборов слов (коэффициент Дайса по мультимножествам): 1 — те
+/// же слова, 0 — ни одного общего. Порядок слов не важен.
+fn dice(a: &[String], b: &[String]) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let mut rest: Vec<&String> = b.iter().collect();
+    let mut common = 0;
+    for w in a {
+        if let Some(p) = rest.iter().position(|x| *x == w) {
+            rest.swap_remove(p);
+            common += 1;
         }
+    }
+    2.0 * common as f32 / (a.len() + b.len()) as f32
+}
+
+/// Кусок страницы из стольких же непустых строк, сколько в `find`.
+#[derive(Clone, Copy, Debug)]
+struct Near {
+    start: usize,
+    end: usize,
+    score: f32,
+    /// Длина куска к длине `find` (по непустым строкам, в символах).
+    len_ratio: f32,
+}
+
+/// Окна текста страницы из стольких же непустых строк, сколько в `find`,
+/// похожие первыми. Границы — без отступа первой строки и хвостовых пробелов.
+fn nearest_windows(text: &str, find: &str) -> Vec<Near> {
+    let find_lines: Vec<&str> = find.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let k = find_lines.len();
+    if k == 0 {
+        return Vec::new();
+    }
+    let fw = words(find);
+    let flen: usize = find_lines.iter().map(|l| l.chars().count()).sum();
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    let mut off = 0;
+    for l in text.split('\n') {
+        let t = l.trim();
+        if !t.is_empty() {
+            let s = off + (l.len() - l.trim_start().len());
+            lines.push((s, s + t.len()));
+        }
+        off += l.len() + 1;
+    }
+    let mut out: Vec<Near> = lines
+        .windows(k)
+        .map(|w| {
+            let (start, end) = (w[0].0, w[k - 1].1);
+            let len: usize = w.iter().map(|&(s, e)| text[s..e].chars().count()).sum();
+            Near { start, end, score: dice(&fw, &words(&text[start..end])), len_ratio: len as f32 / flen.max(1) as f32 }
+        })
+        .collect();
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
+    out
+}
+
+/// Похожий кусок, который заменяется вместо дословного: `find` — целые
+/// строки (та же длина ±25 %), в нём не меньше пяти слов, похожесть ≥ 0,8 и
+/// второй кандидат заметно хуже. Иначе это уже догадка — лучше ошибка.
+fn confident_near(near: &[Near], find: &str) -> Option<Near> {
+    let best = *near.first()?;
+    let second = near.get(1).map_or(0.0, |n| n.score);
+    (words(find).len() >= 5 && best.score >= 0.8 && best.score - second >= 0.2 && (0.75..=1.33).contains(&best.len_ratio))
+        .then_some(best)
+}
+
+/// «Не нашлось» с ближайшим текстом страницы дословно — модель исправит
+/// вызов сразу, без повторного `read`.
+fn not_found_hint(text: &str, spans: &[(usize, usize)], near: &[Near]) -> String {
+    if let Some(n) = near.first().filter(|n| n.score >= 0.4) {
+        let block = spans.iter().position(|&(_, e)| e > n.start).unwrap_or(0);
+        return format!(
+            "find text not found on the page. The closest text is in block #{block}:\n{}\nIf that is \
+             the fragment you mean, put it into find exactly as shown",
+            &text[n.start..n.end]
+        );
     }
     "find text not found on the page — read the page and copy the fragment from its markdown \
      (spacing, line breaks and **/_/` marks may differ, the words must match)"
         .to_string()
+}
+
+/// Итог `find`/`replace`.
+#[derive(Debug)]
+pub(super) struct Replaced {
+    pub n: usize,
+    /// Дословно не нашлось — заменён единственный похожий кусок (его текст).
+    pub approx: Option<String>,
 }
 
 /// Заменить блоки `first..=last` разбором `md`. Атрибуты (место на холсте,
@@ -623,14 +702,25 @@ fn replace_block_range(model: &mut DocModel, first: usize, last: usize, md: &str
 /// несколько блоков: они перепарсиваются вместе, атрибуты переходят к
 /// новым. Не нашлось дословно — сверка без разницы в пробелах, затем и без
 /// знаков разметки (14.09.2026 три строки «Текущая роль» не находились:
-/// соседние пункты списка склеивались через пустую строку).
-pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str, all: bool) -> Result<usize, String> {
+/// соседние пункты списка склеивались через пустую строку). Слова не те
+/// (модель пересказала строку по памяти) — заменяется единственный
+/// уверенно похожий кусок, и результат его называет; иначе ошибка с
+/// ближайшим текстом.
+pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str, all: bool) -> Result<Replaced, String> {
     let (text, spans) = page_spans(model);
-    let matches = find_matches(&text, find);
-    let n = matches.len();
-    if n == 0 {
-        return Err(not_found_hint(&text, &spans, find));
+    let mut matches = find_matches(&text, find);
+    let mut approx = None;
+    if matches.is_empty() {
+        let near = nearest_windows(&text, find);
+        let Some(best) = confident_near(&near, find).filter(|_| !all) else {
+            return Err(not_found_hint(&text, &spans, &near));
+        };
+        // Строка целиком с переводом строки на конце — уходит и он.
+        let end = if find.ends_with('\n') && text[best.end..].starts_with('\n') { best.end + 1 } else { best.end };
+        approx = Some(text[best.start..best.end].to_string());
+        matches.push((best.start, end));
     }
+    let n = matches.len();
     if n > 1 && !all {
         return Err(format!(
             "find text occurs {n} times — pass all=true to replace every occurrence, or a longer \
@@ -665,5 +755,5 @@ pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str,
         md.push_str(&text[at..to]);
         replace_block_range(model, first, last, &md);
     }
-    Ok(n)
+    Ok(Replaced { n, approx })
 }

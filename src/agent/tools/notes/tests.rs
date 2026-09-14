@@ -113,12 +113,12 @@ fn plain_markdown_strips_style_sidecar_and_write_keeps_it() {
     assert!(merged.contains("2 {bg=#243149 color=#FF8800 x=40 y=60}"), "{merged}");
     // Правка через find/replace идёт по блоку — атрибуты остаются.
     let mut model = parse_document(md);
-    let n = replace_in_blocks(&mut model, "Второй", "Второй и главный", false).unwrap();
+    let n = replace_in_blocks(&mut model, "Второй", "Второй и главный", false).unwrap().n;
     assert_eq!(n, 1);
     let out = serialize_document(&model);
     assert!(out.contains("Второй и главный") && out.contains("1 {bg=#243149 color=#FF8800 x=40 y=60}"), "{out}");
     // Фрагмент через два блока тоже заменяется; стиль второго остаётся при нём.
-    let n = replace_in_blocks(&mut model, "Первый\n\nВторой и главный", "Первый\n\nВторой, итог", false).unwrap();
+    let n = replace_in_blocks(&mut model, "Первый\n\nВторой и главный", "Первый\n\nВторой, итог", false).unwrap().n;
     assert_eq!(n, 1);
     let out = serialize_document(&model);
     assert!(out.contains("Второй, итог") && out.contains("1 {bg=#243149 color=#FF8800 x=40 y=60}"), "{out}");
@@ -143,7 +143,8 @@ fn find_replace_matches_what_read_shows() {
         "- Компания: Бета\n- Должность: **ведущий инженер**\n- Стаж: 5 лет",
         false,
     )
-    .unwrap();
+    .unwrap()
+    .n;
     assert_eq!(n, 1);
     let out = serialize_document(&model);
     assert!(out.contains("- Компания: Бета\n- Должность: **ведущий инженер**\n- Стаж: 5 лет"), "{out}");
@@ -157,9 +158,36 @@ fn find_replace_matches_what_read_shows() {
     assert!(out.contains("Прошлая роль:") && out.contains("- Должность: техлид\n"), "{out}");
     assert!(!out.contains("**"), "{out}");
 
-    // Первая строка есть, дальше расхождение — подсказка с номером блока.
+    // Значение другое, слов мало — не догадка: ошибка с ближайшим текстом дословно.
     let err = replace_in_blocks(&mut model, "Прошлая роль:\n\n- Компания: Гамма", "x", false).unwrap_err();
-    assert!(err.contains("first line is at block #1"), "{err}");
+    assert!(err.contains("closest text is in block #1") && err.contains("Прошлая роль:\n\n- Компания: Бета"), "{err}");
+}
+
+/// Модель пересказала строку по памяти (14.09.2026, MyLife: «трекеры,
+/// ритуалы, правила» вместо «трекеры, системы, ритуалы» — дважды «not
+/// found», пока не перечитала страницу): единственная уверенно похожая
+/// строка заменяется и называется в результате; сомнительное — ошибка.
+#[test]
+fn find_replace_takes_the_one_close_line_and_names_it() {
+    let md = "## Разделы жизни\n\n- [[Здоровье и энергия]] — сон, спорт, питание, привычки\n- [[Отношения и семья]] — близкие, друзья, ритуалы\n- [[Привычки и дисциплина]] — трекеры, системы, ритуалы\n- [[Идеи и заметки]] — бред, инсайты, список идей\n";
+    let mut model = parse_document(md);
+    let r = replace_in_blocks(&mut model, "- [[Привычки и дисциплина]] — трекеры, ритуалы, правила\n", "", false).unwrap();
+    assert_eq!(r.n, 1);
+    assert_eq!(r.approx.as_deref(), Some("- [[Привычки и дисциплина]] — трекеры, системы, ритуалы"));
+    let out = serialize_document(&model);
+    assert!(!out.contains("Привычки и дисциплина"), "{out}");
+    assert!(out.contains("- [[Отношения и семья]] — близкие, друзья, ритуалы\n- [[Идеи и заметки]]"), "соседи на месте: {out}");
+
+    // Мало слов — ничего не трогаем, показываем ближайшее.
+    let err = replace_in_blocks(&mut model, "- [[Идеи]] — мысли, инсайты", "x", false).unwrap_err();
+    assert!(err.contains("- [[Идеи и заметки]] — бред, инсайты, список идей"), "{err}");
+    // Две строки одинаково похожи — тоже не догадка.
+    let mut twins = parse_document("- план на неделю спорт сон еда\n- план на неделю спорт сон вода\n");
+    let err = replace_in_blocks(&mut twins, "- план на неделю спорт сон чай", "x", false).unwrap_err();
+    assert!(err.contains("closest text"), "{err}");
+    // Фрагмент из середины строки (длина не та) — тоже нет.
+    let mut line = parse_document("Сегодня купить молоко хлеб сыр масло яйца и забрать посылку на почте\n");
+    assert!(replace_in_blocks(&mut line, "купить молоко хлеб сыр масло чай", "x", false).is_err());
 }
 
 /// Блоки: список с геометрией, вставка в позицию, атрибуты, закрепление,

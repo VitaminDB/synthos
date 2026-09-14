@@ -680,7 +680,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
             "type": "string",
             "description": "update: markdown fragment to replace — copy it from \
                 read; it may span several blocks, and spacing, line breaks or \
-                **/_/` marks may differ. Must occur once unless all=true."
+                **/_/` marks may differ. Whole lines with a word or two off are \
+                matched to the one clearly closest line(s), named in the result. \
+                Must occur once unless all=true."
         })),
         ("replace", json!({
             "type": "string",

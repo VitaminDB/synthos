@@ -117,9 +117,49 @@ fn plain_markdown_strips_style_sidecar_and_write_keeps_it() {
     assert_eq!(n, 1);
     let out = serialize_document(&model);
     assert!(out.contains("Второй и главный") && out.contains("1 {bg=#243149 color=#FF8800 x=40 y=60}"), "{out}");
-    let err = replace_in_blocks(&mut model, "Первый\n\nВторой", "x", false).unwrap_err();
-    assert!(err.contains("spans several blocks"), "{err}");
+    // Фрагмент через два блока тоже заменяется; стиль второго остаётся при нём.
+    let n = replace_in_blocks(&mut model, "Первый\n\nВторой и главный", "Первый\n\nВторой, итог", false).unwrap();
+    assert_eq!(n, 1);
+    let out = serialize_document(&model);
+    assert!(out.contains("Второй, итог") && out.contains("1 {bg=#243149 color=#FF8800 x=40 y=60}"), "{out}");
     assert!(replace_in_blocks(&mut model, "нет такого", "x", false).unwrap_err().contains("not found"));
+}
+
+/// find/replace сверяется с тем же текстом, что агент видит в read: строки
+/// списка идут без пустой строки, фрагмент может задеть несколько блоков,
+/// пробелы и знаки разметки могут расходиться со скопированным. 14.09.2026
+/// три строки «Текущая роль» не находились, модель ушла в set_markdown.
+#[test]
+fn find_replace_matches_what_read_shows() {
+    let md = "# Резюме\n\nТекущая роль:\n\n- Компания: Альфа\n- Должность: **инженер**\n- Стаж: 3 года\n\nИтог\n\n```doc-layout\n2 40 120 300\n3 40 150 300\n4 40 180 300\n```\n";
+    let mut model = parse_document(md);
+    let (text, _) = page_spans(&model);
+    assert_eq!(format!("{text}\n"), plain_markdown(md), "сверка идёт по тексту из read");
+
+    // Три пункта списка разом — как их копирует модель.
+    let n = replace_in_blocks(
+        &mut model,
+        "- Компания: Альфа\n- Должность: **инженер**\n- Стаж: 3 года",
+        "- Компания: Бета\n- Должность: **ведущий инженер**\n- Стаж: 5 лет",
+        false,
+    )
+    .unwrap();
+    assert_eq!(n, 1);
+    let out = serialize_document(&model);
+    assert!(out.contains("- Компания: Бета\n- Должность: **ведущий инженер**\n- Стаж: 5 лет"), "{out}");
+    assert!(out.contains("2 {w=300 x=40 y=120}") && out.contains("4 {w=300 x=40 y=180}"), "пункты остались на своих местах холста: {out}");
+
+    // Пробелы и перевод строки расходятся.
+    replace_in_blocks(&mut model, "Текущая   роль:\n", "Прошлая роль:", false).unwrap();
+    // Скопирован отрисованный текст, без `**`: закрывающие не повисают.
+    replace_in_blocks(&mut model, "Должность: ведущий инженер", "Должность: техлид", false).unwrap();
+    let out = serialize_document(&model);
+    assert!(out.contains("Прошлая роль:") && out.contains("- Должность: техлид\n"), "{out}");
+    assert!(!out.contains("**"), "{out}");
+
+    // Первая строка есть, дальше расхождение — подсказка с номером блока.
+    let err = replace_in_blocks(&mut model, "Прошлая роль:\n\n- Компания: Гамма", "x", false).unwrap_err();
+    assert!(err.contains("first line is at block #1"), "{err}");
 }
 
 /// Блоки: список с геометрией, вставка в позицию, атрибуты, закрепление,

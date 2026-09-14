@@ -678,8 +678,9 @@ pub(crate) fn notes_schema() -> serde_json::Value {
         })),
         ("find", json!({
             "type": "string",
-            "description": "update: exact markdown fragment to replace — copy \
-                it from read. Must occur once unless all=true."
+            "description": "update: markdown fragment to replace — copy it from \
+                read; it may span several blocks, and spacing, line breaks or \
+                **/_/` marks may differ. Must occur once unless all=true."
         })),
         ("replace", json!({
             "type": "string",

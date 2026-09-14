@@ -153,6 +153,73 @@ pub fn normalize_args(raw: &str) -> String {
     }
 }
 
+/// Аргументы, приведённые к типам схемы инструмента: `"True"` в поле
+/// `boolean` — `true`, `"30"` в `integer` — число. Локальная модель пишет
+/// булево строкой (питоновское `True`), а строгий serde-разбор ронял вызов
+/// на «invalid type: string». Поля, где схема разрешает строку, не
+/// трогаются. Только для исполнения: в ленте и промпте остаются аргументы,
+/// как их сгенерировала модель (префикс-KV).
+pub fn coerce_args(tool: &str, args: &str) -> String {
+    let Some(tool) = super::descriptor::Tool::by_key(tool) else { return args.to_string() };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(args) else { return args.to_string() };
+    if !coerce_to_schema(&mut v, &tool.schema) {
+        return args.to_string();
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| args.to_string())
+}
+
+/// Привести значение к JSON-схеме на месте (объекты — по `properties`,
+/// массивы — по `items`); `true` — что-то поменялось.
+pub fn coerce_to_schema(v: &mut serde_json::Value, schema: &serde_json::Value) -> bool {
+    use serde_json::Value as Json;
+    if let Json::Object(map) = v {
+        let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else { return false };
+        let mut changed = false;
+        for (k, val) in map.iter_mut() {
+            if let Some(s) = props.get(k) {
+                changed |= coerce_to_schema(val, s);
+            }
+        }
+        return changed;
+    }
+    if let Json::Array(items) = v {
+        let Some(s) = schema.get("items") else { return false };
+        return items.iter_mut().fold(false, |changed, it| coerce_to_schema(it, s) | changed);
+    }
+    let types: Vec<&str> = match schema.get("type") {
+        Some(Json::String(t)) => vec![t.as_str()],
+        Some(Json::Array(a)) => a.iter().filter_map(|t| t.as_str()).collect(),
+        _ => Vec::new(),
+    };
+    let allows = |t: &str| types.contains(&t);
+    let next = match &*v {
+        Json::String(s) if !types.is_empty() && !allows("string") => {
+            let t = s.trim();
+            let as_bool = || match t.to_ascii_lowercase().as_str() {
+                "true" | "yes" | "on" | "1" => Some(Json::Bool(true)),
+                "false" | "no" | "off" | "0" => Some(Json::Bool(false)),
+                _ => None,
+            };
+            (if allows("boolean") { as_bool() } else { None })
+                .or_else(|| if allows("integer") { t.parse::<i64>().ok().map(Json::from) } else { None })
+                .or_else(|| if allows("number") { t.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Json::Number) } else { None })
+        }
+        Json::Number(n) if allows("boolean") && !allows("integer") && !allows("number") => match n.as_i64() {
+            Some(0) => Some(Json::Bool(false)),
+            Some(1) => Some(Json::Bool(true)),
+            _ => None,
+        },
+        _ => None,
+    };
+    match next {
+        Some(n) => {
+            *v = n;
+            true
+        }
+        None => false,
+    }
+}
+
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
 pub(crate) const TOOL_KEYS: [&str; 11] = [
@@ -192,7 +259,7 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     let name = call.function.name.clone().unwrap_or_default();
     let name = canonical_tool_name(&name).to_string();
     let raw_args = call.function.arguments.as_deref().unwrap_or("");
-    let normalized = normalize_args(raw_args);
+    let normalized = coerce_args(&name, &normalize_args(raw_args));
     let args = normalized.as_str();
 
     let result = match name.as_str() {
@@ -369,6 +436,44 @@ mod tests {
         let out = execute(&call).await;
         assert!(out.error && out.invalid_args, "{out:?}");
         assert!(out.content.starts_with("Invalid arguments JSON: "), "{}", out.content);
+    }
+
+    /// `"True"` вместо `true` (дважды подряд у wizard, 14.09.2026) — не повод
+    /// ронять вызов: строка приводится к типу схемы.
+    #[test]
+    fn string_booleans_and_numbers_follow_the_schema() {
+        use crate::agent::tools::catalog::KEY_WIZARD;
+        let out = coerce_args(
+            KEY_WIZARD,
+            r#"{"question":"q","allow_free_text":"True","required":"False","timeout_sec":"30","options":[{"label":"true","allow_free_text":"yes"}]}"#,
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["allow_free_text"], true);
+        assert_eq!(v["required"], false);
+        assert_eq!(v["timeout_sec"], 30);
+        assert_eq!(v["options"][0]["allow_free_text"], true, "вложенные поля по items");
+        assert_eq!(v["options"][0]["label"], "true", "строковое поле не трогается");
+        // Непонятное слово остаётся — ошибку честно отдаст разбор.
+        let odd = coerce_args(KEY_WIZARD, r#"{"question":"q","required":"maybe"}"#);
+        assert!(odd.contains("\"maybe\""), "{odd}");
+        // Схема разрешает строку (`done` у notes: boolean | string) — как есть.
+        let notes = coerce_args(KEY_NOTES, r#"{"action":"calendar","done":"True"}"#);
+        assert!(notes.contains("\"True\""), "{notes}");
+        assert_eq!(coerce_args("weather", r#"{"x":"True"}"#), r#"{"x":"True"}"#);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn wizard_accepts_python_style_booleans() {
+        let call = ChatToolCall {
+            id: "w1".to_string(),
+            kind: "function".to_string(),
+            function: crate::agent::schema::ChatToolCallFunction {
+                name: Some("wizard".to_string()),
+                arguments: Some(r#"{"question":"Роль?","options":[{"label":"A"},{"label":"B"}],"allow_free_text":"True","required":"True"}"#.to_string()),
+            },
+        };
+        let out = execute(&call).await;
+        assert!(!out.error, "{}", out.content);
     }
 
     #[test]

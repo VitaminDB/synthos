@@ -56,7 +56,12 @@ impl WizardSpec {
 /// Разбор и нормализация аргументов: пустые подписи выбрасываются, без
 /// вариантов панель становится полем свободного ответа.
 pub fn parse_spec(args_json: &str) -> Result<WizardSpec, String> {
-    let value: serde_json::Value = serde_json::from_str(args_json).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(args_json).map_err(|e| e.to_string())?;
+    // Панель ленты разбирает сырые аргументы вызова, мимо исполнителя:
+    // `"True"` приводится к типам схемы и здесь.
+    if let Some(tool) = super::descriptor::Tool::by_key(super::catalog::KEY_WIZARD) {
+        super::executor::coerce_to_schema(&mut value, &tool.schema);
+    }
     let mut spec: WizardSpec = serde_json::from_value(value).map_err(|e| e.to_string())?;
     spec.question = spec.question.trim().to_string();
     if spec.question.is_empty() {
@@ -148,6 +153,9 @@ mod tests {
         assert_eq!(spec.timeout_sec, None);
         let free = parse_spec(r#"{"question":"Как назвать?"}"#).unwrap();
         assert!(free.allow_free_text && free.options.is_empty());
+        // Булево строкой — как пишет локальная модель; панель не должна пропасть.
+        let py = parse_spec(r#"{"question":"q","options":[{"label":"A","allow_free_text":"False"}],"allow_free_text":"True","required":"True"}"#).unwrap();
+        assert!(py.allow_free_text && py.required && !py.options[0].allow_free_text);
     }
 
     #[test]

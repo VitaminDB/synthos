@@ -443,22 +443,193 @@ pub(super) fn replace_block(model: &mut DocModel, i: usize, md: &str) -> Result<
     Ok(insert_blocks(model, fresh, InsertPos::Index(i)))
 }
 
-/// `find`/`replace` по блокам: совпадение ищется внутри markdown одного
-/// верхнеуровневого блока, блок перепарсивается с сохранением атрибутов.
-pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str, all: bool) -> Result<usize, String> {
-    let per_block: Vec<usize> = model.blocks.iter().map(|b| block_markdown(b).matches(find).count()).collect();
-    let n: usize = per_block.iter().sum();
-    if n == 0 {
-        let joined: String = model.blocks.iter().map(block_markdown).collect::<Vec<_>>().join("\n");
-        return Err(if joined.contains(find) {
-            "find text spans several blocks — replace it with blocks op=set_markdown, or update with \
-             content"
-                .to_string()
+/// Плоский текст страницы по верхнеуровневым блокам — как его сериализует
+/// документ и видит агент в `read`: соседние элементы списка через перевод
+/// строки, остальные блоки через пустую строку. Плюс байтовый диапазон
+/// каждого блока в этом тексте.
+pub(super) fn page_spans(model: &DocModel) -> (String, Vec<(usize, usize)>) {
+    let mut text = String::new();
+    let mut spans = Vec::with_capacity(model.blocks.len());
+    let mut prev_item = false;
+    for (i, b) in model.blocks.iter().enumerate() {
+        let item = b.kind.is_list_item();
+        if i > 0 {
+            text.push_str(if prev_item && item { "\n" } else { "\n\n" });
+        }
+        let md = block_markdown(b);
+        let start = text.len();
+        text.push_str(md.strip_suffix('\n').unwrap_or(&md));
+        spans.push((start, text.len()));
+        prev_item = item;
+    }
+    (text, spans)
+}
+
+/// Насколько вольно сверять `find` со страницей: без разницы в пробелах и
+/// переводах строк; ещё и без знаков разметки (`**`, `_`, `` ` ``, `~`,
+/// `\`) — модель копирует отрисованный текст.
+#[derive(Clone, Copy, PartialEq)]
+enum Loose {
+    Spacing,
+    Markup,
+}
+
+const MARKUP: [char; 5] = ['*', '_', '`', '~', '\\'];
+
+/// Текст в сравнимой форме и для каждого её символа — байтовый диапазон в
+/// исходнике (пробельный пробег — один пробел на весь пробег).
+fn loosen(s: &str, level: Loose) -> (String, Vec<(usize, usize)>) {
+    let mut out = String::new();
+    let mut map: Vec<(usize, usize)> = Vec::new();
+    let mut in_space = false;
+    for (i, c) in s.char_indices() {
+        let end = i + c.len_utf8();
+        if level == Loose::Markup && MARKUP.contains(&c) {
+            continue;
+        }
+        if c.is_whitespace() {
+            if in_space {
+                if let Some(last) = map.last_mut() {
+                    last.1 = end;
+                }
+                continue;
+            }
+            in_space = true;
+            out.push(' ');
         } else {
-            "find text not found on the page — read the page and copy the fragment exactly \
-             (the page is compared as markdown, not as rendered text)"
-                .to_string()
-        });
+            in_space = false;
+            out.push(c);
+        }
+        map.push((i, end));
+    }
+    (out, map)
+}
+
+/// Знаки разметки, разрезанные границей вольного совпадения (`**инженер`
+/// без закрывающих), забираются в диапазон — иначе замена оставит висящие
+/// `**`. Считаются пробеги знака, а не символы: `**` — один разделитель.
+fn widen_markup(text: &str, mut s: usize, mut e: usize) -> (usize, usize) {
+    for c in ['*', '_', '`', '~'] {
+        let mut runs = 0;
+        let mut prev = false;
+        for ch in text[s..e].chars() {
+            let on = ch == c;
+            if on && !prev {
+                runs += 1;
+            }
+            prev = on;
+        }
+        if runs % 2 == 0 {
+            continue;
+        }
+        let after = text[e..].chars().take_while(|&x| x == c).count();
+        if after > 0 {
+            e += after * c.len_utf8();
+        } else {
+            s -= text[..s].chars().rev().take_while(|&x| x == c).count() * c.len_utf8();
+        }
+    }
+    (s, e)
+}
+
+/// Вхождения `find` в текст страницы: сперва дословно, потом всё вольнее —
+/// первый уровень, где что-то нашлось. Диапазоны — байты `text`.
+fn find_matches(text: &str, find: &str) -> Vec<(usize, usize)> {
+    let exact: Vec<(usize, usize)> = text.match_indices(find).map(|(i, m)| (i, i + m.len())).collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+    for level in [Loose::Spacing, Loose::Markup] {
+        let (hay, map) = loosen(text, level);
+        let (needle, _) = loosen(find, level);
+        let needle = needle.trim();
+        if needle.is_empty() {
+            continue;
+        }
+        let starts: Vec<usize> = hay.char_indices().map(|(i, _)| i).collect();
+        let found: Vec<(usize, usize)> = hay
+            .match_indices(needle)
+            .map(|(a, m)| {
+                let first = starts.partition_point(|&x| x < a);
+                let last = starts.partition_point(|&x| x < a + m.len()) - 1;
+                let (s, e) = (map[first].0, map[last].1);
+                if level == Loose::Markup { widen_markup(text, s, e) } else { (s, e) }
+            })
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+    }
+    Vec::new()
+}
+
+/// «Не нашлось» с подсказкой: если первая строка многострочного `find`
+/// на странице есть — в каком блоке, чтобы модель не переписывала всё.
+fn not_found_hint(text: &str, spans: &[(usize, usize)], find: &str) -> String {
+    let mut lines = find.lines().map(str::trim).filter(|l| !l.is_empty());
+    if let (Some(first), Some(_)) = (lines.next(), lines.next()) {
+        if let Some(&(s, _)) = find_matches(text, first).first() {
+            let block = spans.iter().position(|&(_, e)| e > s).unwrap_or(0);
+            return format!(
+                "find text not found on the page, but its first line is at block #{block} — the lines \
+                 after it differ: read the page again and copy the fragment, or rewrite those blocks \
+                 with blocks op=set_markdown"
+            );
+        }
+    }
+    "find text not found on the page — read the page and copy the fragment from its markdown \
+     (spacing, line breaks and **/_/` marks may differ, the words must match)"
+        .to_string()
+}
+
+/// Заменить блоки `first..=last` разбором `md`. Атрибуты (место на холсте,
+/// оформление) переходят к новым блокам: сперва к блоку с тем же markdown,
+/// остальным — от ближайшего по порядку ещё не отданного старого.
+fn replace_block_range(model: &mut DocModel, first: usize, last: usize, md: &str) {
+    let old: Vec<DocBlock> = model.blocks.drain(first..=last).collect();
+    let mut fresh = parse_document(md).blocks;
+    let old_md: Vec<String> = old.iter().map(block_markdown).collect();
+    let mut used = vec![false; old.len()];
+    let mut heirs: Vec<Option<usize>> = fresh
+        .iter()
+        .map(|b| {
+            let key = block_markdown(b);
+            let i = (0..old.len()).find(|&i| !used[i] && old_md[i] == key)?;
+            used[i] = true;
+            Some(i)
+        })
+        .collect();
+    for (k, heir) in heirs.iter_mut().enumerate() {
+        if heir.is_none() {
+            *heir = (0..old.len()).filter(|&i| !used[i]).min_by_key(|&i| i.abs_diff(k));
+            if let Some(i) = *heir {
+                used[i] = true;
+            }
+        }
+    }
+    for (b, heir) in fresh.iter_mut().zip(&heirs) {
+        let Some(i) = *heir else { continue };
+        for (k, v) in old[i].attrs.0.iter() {
+            if b.attrs.get(k).is_none() {
+                b.attrs.set(k.clone(), v.clone());
+            }
+        }
+    }
+    insert_blocks(model, fresh, InsertPos::Index(first));
+}
+
+/// `find`/`replace` по тексту страницы — тому же, что агент видит в `read`
+/// (строки списка без пустой строки между ними). Совпадение может задеть
+/// несколько блоков: они перепарсиваются вместе, атрибуты переходят к
+/// новым. Не нашлось дословно — сверка без разницы в пробелах, затем и без
+/// знаков разметки (14.09.2026 три строки «Текущая роль» не находились:
+/// соседние пункты списка склеивались через пустую строку).
+pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str, all: bool) -> Result<usize, String> {
+    let (text, spans) = page_spans(model);
+    let matches = find_matches(&text, find);
+    let n = matches.len();
+    if n == 0 {
+        return Err(not_found_hint(&text, &spans, find));
     }
     if n > 1 && !all {
         return Err(format!(
@@ -466,14 +637,33 @@ pub(super) fn replace_in_blocks(model: &mut DocModel, find: &str, replace: &str,
              unique fragment"
         ));
     }
-    // С конца — индексы впереди не съезжают.
-    for i in (0..model.blocks.len()).rev() {
-        if per_block[i] == 0 {
-            continue;
+    // Совпадение → блоки, которые оно задевает; правки одних и тех же
+    // блоков сливаются в одну.
+    let mut groups: Vec<(usize, usize, Vec<(usize, usize)>)> = Vec::new();
+    for &(s, e) in &matches {
+        let first = spans.iter().position(|&(_, be)| be > s).unwrap_or(spans.len() - 1);
+        let last = spans.iter().rposition(|&(bs, _)| bs < e).unwrap_or(first).max(first);
+        match groups.last_mut() {
+            Some(g) if first <= g.1 => {
+                g.1 = g.1.max(last);
+                g.2.push((s, e));
+            }
+            _ => groups.push((first, last, vec![(s, e)])),
         }
-        let md = block_markdown(&model.blocks[i]);
-        let new_md = if all { md.replace(find, replace) } else { md.replacen(find, replace, 1) };
-        replace_block(model, i, &new_md)?;
+    }
+    // С конца — индексы впереди не съезжают.
+    for (first, last, ms) in groups.into_iter().rev() {
+        let from = spans[first].0.min(ms[0].0);
+        let to = spans[last].1.max(ms[ms.len() - 1].1);
+        let mut md = String::new();
+        let mut at = from;
+        for (s, e) in ms {
+            md.push_str(&text[at..s]);
+            md.push_str(replace);
+            at = e;
+        }
+        md.push_str(&text[at..to]);
+        replace_block_range(model, first, last, &md);
     }
     Ok(n)
 }

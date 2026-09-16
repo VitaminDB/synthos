@@ -68,7 +68,11 @@ pub fn allow_close() -> bool {
 
 /// Дописать на диск то, что ждало автосейва по дебаунсу.
 fn flush_pending_writes() {
-    crate::pages::notes::autosave::flush_all();
+    let notes = use_context::<crate::pages::notes::NotesCtx>();
+    crate::pages::notes::autosave::enqueue_dirty(notes);
+    if let Err(e) = crate::pages::notes::autosave::flush_all() {
+        log::error!("notes: при выходе проект не записан: {e}");
+    }
     crate::syn_chat::autosave::flush_for_exit();
 }
 

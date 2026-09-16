@@ -144,6 +144,7 @@ pub const MI_THERMOSTAT: &str          = "\u{F076}";
 pub const MI_FOLDER: &str              = "\u{E2C7}";
 pub const MI_DESCRIPTION: &str         = "\u{E873}";
 pub const MI_SAVE: &str                = "\u{E161}";
+pub const MI_SAVE_AS: &str             = "\u{EB60}";
 pub const MI_WRAP_TEXT: &str           = "\u{E25B}";
 // File-type icons. Используются в [`pages::code_editor::file_icons::icon_for_path`]
 // для визуального различения файлов в дереве и списке открытых вкладок.

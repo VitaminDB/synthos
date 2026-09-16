@@ -34,7 +34,6 @@ pub fn run(search: &SearchCtx, item: &SearchItem, secondary: bool) {
         SearchAction::Note(id) => {
             let notes = use_context::<crate::pages::notes::NotesCtx>();
             notes.activate(&id);
-            notes.open_tile();
             navigate("notes");
         }
         SearchAction::Settings(section) => open_settings(section),

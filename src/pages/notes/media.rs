@@ -473,7 +473,7 @@ pub fn ingest_dropped_file(ctx: NotesCtx, page_id: String, file: PathBuf, token:
         if std::fs::create_dir_all(&dir).is_ok() {
             let _ = std::fs::write(dir.join(&name), &bytes);
         }
-        autosave::queue_bytes(&project::asset_path(&name), bytes);
+        autosave::queue_bytes_to(&project_path, &project::asset_path(&name), bytes);
         let url = format!("asset:{name}");
         syngui::async_runtime::run_on_main_thread(move || {
             if handle.patch_media(&token, &url) {
@@ -505,7 +505,7 @@ pub fn ingest_bytes(project_path: &Path, bytes: Vec<u8>, ext: &str) -> String {
     if std::fs::create_dir_all(&dir).is_ok() {
         let _ = std::fs::write(dir.join(&name), &bytes);
     }
-    autosave::queue_bytes(&project::asset_path(&name), bytes);
+    autosave::queue_bytes_to(project_path, &project::asset_path(&name), bytes);
     format!("asset:{name}")
 }
 
@@ -576,18 +576,22 @@ pub fn looks_like_svg(text: &str) -> bool {
             && t.contains("<svg"))
 }
 
-/// Все sha256 общего CAS, на которые ещё ссылаются страницы проекта
-/// (`blob:` первой волны) — чтобы GC блобов чатов их не выбросил.
+/// Все sha256 общего CAS, на которые ещё ссылаются страницы проектов
+/// (`blob:` первой волны) — чтобы GC блобов чатов их не выбросил. Смотрит
+/// открытые и недавние проекты и файл времён одного проекта.
 pub fn collect_blob_refs(referenced: &mut HashSet<String>) {
     let cfg = crate::config::AppConfig::load();
-    let path = project::resolve_project_path(&cfg.notes_project_path);
-    if !path.is_file() {
-        return;
-    }
-    let tree = project::read_tree(&path);
-    for node in tree.all() {
-        if let Some(content) = project::read_text(&path, &project::page_path(&node.id)) {
-            collect_blob_refs_in(&content, referenced);
+    let mut paths: Vec<PathBuf> = vec![project::resolve_project_path(&cfg.notes_project_path)];
+    paths.extend(cfg.notes_projects.iter().flatten().map(|p| PathBuf::from(&p.path)));
+    paths.extend(cfg.notes_recent.iter().map(PathBuf::from));
+    paths.sort();
+    paths.dedup();
+    for path in paths.into_iter().filter(|p| p.is_file()) {
+        let tree = project::read_tree(&path);
+        for node in tree.all() {
+            if let Some(content) = project::read_text(&path, &project::page_path(&node.id)) {
+                collect_blob_refs_in(&content, referenced);
+            }
         }
     }
 }

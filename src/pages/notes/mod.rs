@@ -8,7 +8,8 @@
 //! contents::body      editor_pane::body (DocumentEditor)   right_panel::body
 //! ```
 //!
-//! Проект — одна плитка нав-рейла (`RailEntry::Notes`); страницы
+//! Каждый открытый проект — своя плитка нав-рейла (`RailEntry::Notes`),
+//! страница показывает активный ([`projects`]); страницы проекта
 //! переключаются в дереве. Положения разделителей —
 //! `AppCtx.notes_{left,right}_split_ratio`, видимость — `AppCtx.panels.notes`.
 
@@ -42,6 +43,8 @@ pub mod links;
 pub mod media;
 pub mod mindmap;
 pub mod project;
+pub mod project_ui;
+pub mod projects;
 pub mod reminders;
 pub mod right_panel;
 pub mod state;
@@ -113,6 +116,13 @@ fn center_header() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let project = ctx.project_title.get();
+        if ctx.project_path.get().as_os_str().is_empty() {
+            return vec![Box::new(panel_header::center(CenterSpec::new(panel_header::identity_text(
+                MI_EDIT_NOTE,
+                tr!("notes.title"),
+                String::new(),
+            ))))];
+        }
         if ctx.show_graph.get() {
             return vec![Box::new(panel_header::center(
                 CenterSpec::new(panel_header::identity_text(MI_HUB, tr!("notes.graph.title"), project))

@@ -118,6 +118,37 @@
     color: var(--text-muted);
 }
 
+/* Экран без открытого проекта: недавние проекты под кнопками. */
+.notes-start-recent {
+    margin-top: 14px;
+    width: 420px;
+}
+.notes-start-recent-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 0px 8px 4px 8px;
+}
+.notes-start-recent-row {
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+.notes-start-recent-row:hover {
+    background-color: var(--surface-hover);
+}
+.notes-start-recent-icon {
+    font-size: 16px;
+    color: var(--text-subtle);
+}
+.notes-start-recent-name {
+    font-size: 13px;
+    color: var(--text);
+}
+.notes-start-recent-path {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 /* Палитра DocumentEditor из токенов темы (дефолты виджета — тёмные). */
 document-editor {
     --doc-text-color: var(--text);

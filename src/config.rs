@@ -699,18 +699,31 @@ pub struct AppConfig {
     /// Папка vault'а первой волны — источник разовой миграции в проект.
     #[serde(default)]
     pub notes_vault_path: String,
-    /// Файл проекта заметок (`.syn`). Пусто — дефолт
-    /// `~/Documents/SynthOS Notes.syn` (см. `pages::notes::project`).
+    /// Файл проекта заметок (`.syn`) времён одного проекта. Пусто — дефолт
+    /// `~/Documents/SynthOS Notes.syn` (см. `pages::notes::project`). Теперь
+    /// только источник миграции в `notes_projects`.
     #[serde(default)]
     pub notes_project_path: String,
     /// Активная страница (id), раскрытые узлы дерева и плитка рейла
-    /// (штамп открытия; None — плитка закрыта).
+    /// (штамп открытия; None — плитка закрыта) — тоже времён одного
+    /// проекта, читаются только миграцией.
     #[serde(default)]
     pub notes_active: Option<String>,
     #[serde(default)]
     pub notes_expanded: Vec<String>,
     #[serde(default)]
     pub notes_tile_opened_at: Option<u64>,
+    /// Открытые проекты заметок — по плитке рейла на каждый. `None` —
+    /// конфиг ещё не видел нескольких проектов: список собирается из полей
+    /// выше (см. `pages::notes::projects::restore`).
+    #[serde(default)]
+    pub notes_projects: Option<Vec<NotesProjectConfig>>,
+    /// Проект, который показан на странице заметок (путь файла).
+    #[serde(default)]
+    pub notes_active_project: String,
+    /// Недавние проекты, свежие первыми.
+    #[serde(default)]
+    pub notes_recent: Vec<String>,
     /// Видимость левой/правой панели по страницам — тогглы в общей шапке.
     #[serde(default)]
     pub panels: PanelsConfig,
@@ -1234,6 +1247,9 @@ impl Default for AppConfig {
             notes_active: None,
             notes_expanded: Vec::new(),
             notes_tile_opened_at: None,
+            notes_projects: None,
+            notes_active_project: String::new(),
+            notes_recent: Vec::new(),
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
             chat_recent_emoji: Vec::new(),
@@ -1295,6 +1311,18 @@ pub fn default_settings_left_split_ratio() -> f32 {
 /// Настройки: правая панель ~24% (≈360px при 1600px).
 pub fn default_settings_right_split_ratio() -> f32 {
     0.76
+}
+
+/// Открытый проект заметок: файл, плитка рейла и где в нём остановились.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NotesProjectConfig {
+    pub path: String,
+    /// Штамп появления плитки в рейле (unix-миллисекунды).
+    pub opened_at: u64,
+    /// Активная страница (id) и раскрытые узлы дерева.
+    pub active_page: Option<String>,
+    pub expanded: Vec<String>,
 }
 
 /// Видимость боковых панелей по страницам. Каждая страница трёхпанельного

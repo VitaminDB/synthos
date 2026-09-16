@@ -5,17 +5,19 @@
 //! (доски, диаграммы, карты, календари, графики) загружаются лениво и
 //! держатся в пулах `pages`/`objects`
 //! — у каждого своя ручка с сигналом ревизии, на который подписан автосейв.
-//! Активная страница одна; плитка рейла одна на проект.
+//! Активная страница одна; плитка рейла — на каждый открытый проект.
+//! Сигналы контекста держат **активный** проект, остальные открытые лежат
+//! стешем в `projects` (см. [`super::projects`]).
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use syngui::core::{Point, Rect};
 use syngui::prelude::*;
 use syngui::widgets::input::document_editor::{DocGrid, DocLayout, DocOp, DocumentEditorHandle};
 
-use crate::config::{now_millis, AppConfig};
+use crate::config::AppConfig;
 
 use super::activity::{ActivityLog, ActivityLogHandle, LogEntry};
 use super::autosave;
@@ -32,6 +34,7 @@ use super::mindmap::model::MindmapDoc;
 use super::mindmap::MindmapHandle;
 use super::gantt::calendar::{days_to_iso, parse_days};
 use super::project::{self, PageGrid, PageLayout, PageNode, ProjectTree};
+use super::projects::OpenProject;
 use super::reminders::{Reminder, ReminderStateHandle};
 
 /// Загруженная страница: исходник для виджета (fingerprint стабилен между
@@ -137,9 +140,14 @@ pub enum TreeDropHint {
 
 #[derive(Clone, Copy)]
 pub struct NotesCtx {
+    /// Файл активного проекта; пустой путь — ни одного проекта не открыто.
     pub project_path: RwSignal<PathBuf>,
-    /// Имя проекта — подпись плитки рейла (имя файла без расширения).
+    /// Имя активного проекта (имя файла без расширения).
     pub project_title: RwSignal<String>,
+    /// Открытые проекты — по плитке рейла на каждый, в порядке открытия.
+    pub projects: RwSignal<Vec<OpenProject>>,
+    /// Недавние файлы проектов, свежие первыми.
+    pub recent: RwSignal<Vec<PathBuf>>,
     pub tree: RwSignal<Arc<ProjectTree>>,
     /// Ревизия дерева — подписка автосейва.
     pub tree_rev: RwSignal<u64>,
@@ -175,8 +183,6 @@ pub struct NotesCtx {
     /// каждую правку, а виджеты с чужими данными (календарь, Гант с
     /// досками) по ней пересобирают свой внешний слой.
     pub objects_rev: RwSignal<u64>,
-    /// Плитка проекта на рейле: штамп открытия (None — закрыта).
-    pub tile_opened_at: RwSignal<Option<u64>>,
     /// Строка дерева в режиме переименования.
     pub renaming: RwSignal<Option<String>>,
     /// Подсказка дропа в дереве страниц (см. [`TreeDropHint`]). `None` —
@@ -192,56 +198,22 @@ pub struct NotesCtx {
 }
 
 impl NotesCtx {
-    /// Открыть (или создать, мигрировав старую папку) проект и восстановить
-    /// активную страницу, раскрытые узлы и плитку.
+    /// Восстановить открытые проекты из конфига (при первом запуске после
+    /// обновления — мигрировать единственный проект) и загрузить активный:
+    /// его страницу, раскрытые узлы.
     pub fn new_or_restore(cfg: &AppConfig) -> Self {
-        let path = project::resolve_project_path(&cfg.notes_project_path);
-        if !path.exists() {
-            let legacy = project::legacy_vault_path(&cfg.notes_vault_path);
-            let migrated = project::migrate_folder(&legacy);
-            let (tree, files) = migrated.unwrap_or_else(|| (ProjectTree::new(), Vec::new()));
-            match project::create(&path, &tree, files) {
-                Ok(()) => log::info!(
-                    "notes: создан проект {} ({} страниц)",
-                    path.display(),
-                    tree.all().len()
-                ),
-                Err(e) => log::error!("notes: не удалось создать проект {}: {e}", path.display()),
-            }
-        } else {
-            project::compact_if_needed(&path);
-        }
-        autosave::set_project_path(path.clone());
-        let tree = project::read_tree(&path);
-        let index = VaultIndex::build(&tree, |id| project::read_text(&path, &project::page_path(id)));
-
-        let active = cfg
-            .notes_active
-            .clone()
-            .filter(|id| tree.find(id).is_some())
-            .or_else(|| tree.first_id());
-        let mut expanded: HashSet<String> = cfg
-            .notes_expanded
-            .iter()
-            .filter(|id| tree.find(id).is_some())
-            .cloned()
-            .collect();
-        if let Some(id) = &active {
-            for (pid, _) in tree.path_of(id) {
-                if pid != *id {
-                    expanded.insert(pid);
-                }
-            }
-        }
-        autosave::mark_saved(project::TREE_PATH, 0);
+        let restored = super::projects::restore(cfg);
+        autosave::set_project_path(PathBuf::new());
         let ctx = Self {
-            project_title: use_signal(project::project_title(&path)),
-            project_path: use_signal(path),
-            tree: use_signal(Arc::new(tree)),
+            project_title: use_signal(String::new()),
+            project_path: use_signal(PathBuf::new()),
+            projects: use_signal(restored.projects),
+            recent: use_signal(restored.recent),
+            tree: use_signal(Arc::new(ProjectTree::new())),
             tree_rev: use_signal(0),
             objects_rev: use_signal(0),
-            expanded: use_signal(expanded),
-            active: use_signal(active),
+            expanded: use_signal(HashSet::new()),
+            active: use_signal(None),
             show_graph: use_signal(false),
             pages: use_signal(Vec::new()),
             objects: use_signal(Vec::new()),
@@ -255,9 +227,8 @@ impl NotesCtx {
             viewer_file: use_signal(None),
             right_tab: use_signal(TAB_PROPS),
             left_tab: use_signal(TAB_PAGES),
-            index: use_signal(Arc::new(index)),
+            index: use_signal(Arc::new(VaultIndex::default())),
             doc_epoch: use_signal(0),
-            tile_opened_at: use_signal(cfg.notes_tile_opened_at),
             renaming: use_signal(None),
             tree_drop: use_signal(None),
             icon_picker_page: use_signal(None),
@@ -268,10 +239,20 @@ impl NotesCtx {
         };
         // Восстановленная (или первая) страница загружается сразу: иначе
         // дерево её подсвечивает, а редактор показывает «пусто» до клика.
-        if let Some(id) = ctx.active.get_untracked() {
-            ctx.page(&id);
+        if let Some(path) = restored.active {
+            ctx.activate_project(&path, false);
         }
         ctx
+    }
+
+    /// Открыт ли какой-нибудь проект (без подписки).
+    pub fn has_project(&self) -> bool {
+        !self.project_path.get_untracked().as_os_str().is_empty()
+    }
+
+    /// Открыт ли проект с этим файлом (путь — нормализованный).
+    pub fn is_open(&self, path: &Path) -> bool {
+        self.projects.get_untracked().iter().any(|p| p.path == path)
     }
 
     // ─── Дерево ───────────────────────────────────────────────────────────
@@ -917,26 +898,6 @@ impl NotesCtx {
         let mut idx = (*self.index.get_untracked()).clone();
         idx.update_page(id, content);
         self.index.set(Arc::new(idx));
-    }
-
-    // ─── Плитка и персист ─────────────────────────────────────────────────
-
-    pub fn open_tile(&self) {
-        if self.tile_opened_at.get_untracked().is_none() {
-            self.tile_opened_at.set(Some(now_millis()));
-        }
-    }
-
-    pub fn close_tile(&self) {
-        autosave::flush_all();
-        self.tile_opened_at.set(None);
-    }
-
-    /// Снимок для конфига: активная страница, раскрытые узлы, плитка.
-    pub fn persist(&self) -> (Option<String>, Vec<String>, Option<u64>) {
-        let mut expanded: Vec<String> = self.expanded.get().into_iter().collect();
-        expanded.sort();
-        (self.active.get(), expanded, self.tile_opened_at.get())
     }
 }
 

@@ -399,6 +399,7 @@ fn card(
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .child(
                 DocumentEditor::new()
+                    .inline_toolbar(false)
                     .markdown((*source).clone())
                     .handle(&editor)
                     .autofocus(true)

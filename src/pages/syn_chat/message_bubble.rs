@@ -1193,9 +1193,10 @@ fn open_notes_link(body: &str) -> impl Widget {
     GestureDetector::new()
         .on_click(move || {
             let notes = use_context::<NotesCtx>();
-            notes.open_tile();
+            // Страница могла остаться в другом открытом проекте — агент
+            // создавал её до смены плитки.
             if let Some(id) = &page_id {
-                notes.activate(id);
+                notes.open_page_anywhere(id);
             }
             crate::rail::navigate("notes");
         })

@@ -26,6 +26,9 @@ use super::state::NotesCtx;
 pub fn body() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if ctx.project_path.get().as_os_str().is_empty() {
+            return vec![Box::new(super::project_ui::start_screen())];
+        }
         if ctx.show_graph.get() {
             return vec![Box::new(super::graph::page(ctx))];
         }
@@ -35,6 +38,7 @@ pub fn body() -> impl Widget {
         let page_id = page.id.clone();
         let layout = ctx.active_doc_layout();
         let editor = DocumentEditor::new()
+            .inline_toolbar(false)
             .markdown((*page.source).clone())
             .handle(&page.handle)
             .links(super::links::provider(ctx))

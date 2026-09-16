@@ -606,7 +606,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let chat_window_size = syn_chat_ctx.chat_window_size;
 
     create_effect(move || {
-        let (notes_active_state, notes_expanded_state, notes_tile_state) = notes_ctx.persist();
+        let notes_state = notes_ctx.persist();
         let sessions = code.sessions.get();
         let active_id = code.active_id.get();
         let sessions_cfg: Vec<config::CodeSessionConfig> = sessions
@@ -756,11 +756,12 @@ fn install_config_autosave(ctx: &AppCtx) {
             settings_right_split_ratio: settings_right_split.get(),
             notes_left_split_ratio: notes_left_split.get(),
             notes_right_split_ratio: notes_right_split.get(),
-            // Активная страница, раскрытые узлы и плитка заметок: `.get()`
-            // внутри `persist` подписывают effect на их смену.
-            notes_active: notes_active_state,
-            notes_expanded: notes_expanded_state,
-            notes_tile_opened_at: notes_tile_state,
+            // Открытые проекты заметок (плитки, активная страница и
+            // раскрытые узлы каждого) и недавние: `.get()` внутри `persist`
+            // подписывают effect на их смену.
+            notes_projects: Some(notes_state.projects),
+            notes_active_project: notes_state.active_project,
+            notes_recent: notes_state.recent,
             panels: panels.to_config(),
             rail_separators: rail_separators.get(),
             rail_order: rail_order.get(),
@@ -975,7 +976,7 @@ fn build_app() -> impl Widget {
     let notification_view = components::notification::view(ctx.notifications.clone());
     // Оболочка обёрнута хоткей-скоупом поиска: Ctrl+K / Ctrl+F работают на
     // любой странице, а сама панель живёт отдельным overlay-слоем.
-    let shell = search::hotkey_scope(mgui! {
+    let shell = search::hotkey_scope(pages::notes::project_ui::hotkey_scope(mgui! {
         DecoratedBox::new().class("window-backdrop") => [
             DecoratedBox::new().clip(true).class("shell") => [
                 Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
@@ -994,7 +995,7 @@ fn build_app() -> impl Widget {
                 ]
             ]
         ]
-    });
+    }));
     // Диалоги закрытия плиток рейла живут здесь, а не на страницах:
     // «Закрыть» в контекстном меню плитки доступно с любого маршрута.
     mgui! {

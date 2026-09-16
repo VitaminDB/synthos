@@ -144,6 +144,12 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     run_on_main_thread(move || {
         let ctx = use_context::<NotesCtx>();
+        // Агент работает с активным проектом; если ни один не открыт —
+        // открывается недавний (или дефолтный) и появляется его плитка.
+        if let Err(e) = ctx.ensure_project() {
+            let _ = tx.send(Err(format!("no notes project is open and none could be opened: {}", e.message())));
+            return;
+        }
         // Правки от имени агента — так они помечены в журнале проекта.
         let _agent = crate::pages::notes::activity::agent_scope();
         let _ = tx.send(dispatch(ctx, &action, &v));

@@ -218,10 +218,7 @@ fn workspaces_segment() -> impl Widget {
                 RailEntry::Chat(m) => {
                     Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
                 }
-                RailEntry::Notes(_) => {
-                    let title = use_context::<crate::pages::notes::NotesCtx>().project_title.get();
-                    Box::new(note_tile(title, active, entry.clone()))
-                }
+                RailEntry::Notes { path, .. } => Box::new(note_tile(path, active, entry.clone())),
                 RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
             };
             col = col.child(Stack::new().children(vec![tile]));
@@ -395,7 +392,11 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
 
 /// Плитка проекта заметок: иконка режима в скруглённой рамке, подпись —
 /// имя файла проекта.
-fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
+/// Плитка проекта заметок: подпись — имя файла, подсказка — полный путь
+/// (два проекта с одним именем в разных папках различимы).
+fn note_tile(path: &std::path::Path, is_selected: bool, entry: RailEntry) -> impl Widget {
+    let title = crate::pages::notes::project::project_title(path);
+    let hint = path.display().to_string();
     let icon = MI_EDIT_NOTE;
     let ring_class = if is_selected {
         "nav-rail-item nav-rail-note-tile selected"
@@ -405,7 +406,7 @@ fn note_tile(title: String, is_selected: bool, entry: RailEntry) -> impl Widget 
     let body = DecoratedBox::new()
         .class(ring_class)
         .child(Center::new().child(Icon::new(icon).class("nav-rail-note-icon")));
-    tile_with_label(Tooltip::new(body, title.clone()), title, is_selected, entry)
+    tile_with_label(Tooltip::new(body, hint), title, is_selected, entry)
 }
 
 /// Разделитель: тонкая линия в широкой невидимой зоне — чтобы по ней можно
@@ -454,7 +455,9 @@ fn add_button() -> impl Widget {
             MenuItem::new("code", tr!("nav.add.code")).icon(MI_CODE),
             MenuItem::new("nodes", tr!("nav.add.nodes")).icon(MI_HUB),
             MenuItem::new("chat", tr!("nav.add.chat")).icon(MI_CHAT),
-            MenuItem::new("note", tr!("nav.add.note")).icon(MI_EDIT_NOTE),
+            MenuItem::new("note", tr!("nav.add.note"))
+                .icon(MI_EDIT_NOTE)
+                .children(crate::pages::notes::project_ui::add_menu_items()),
             MenuItem::separator(),
             MenuItem::new("separator", tr!("nav.add.separator")).icon(MI_HORIZONTAL_RULE),
         ])
@@ -464,7 +467,7 @@ fn add_button() -> impl Widget {
             "code" => rail::new_code_session(),
             "nodes" => rail::new_graph(),
             "chat" => rail::new_chat(),
-            "note" => rail::new_note(),
+            id if crate::pages::notes::project_ui::handle_menu(id) => {}
             "separator" => rail::add_separator(),
             _ => {}
         });

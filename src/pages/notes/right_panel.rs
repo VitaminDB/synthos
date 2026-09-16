@@ -837,6 +837,7 @@ fn mindmap_node_props(ctx: NotesCtx, handle: &MindmapHandle, doc: &MindmapDoc, n
         .class("notes-mindmap-note")
         .child(
             DocumentEditor::new()
+                .inline_toolbar(false)
                 .markdown((*source).clone())
                 .handle(&editor)
                 .plain(true)

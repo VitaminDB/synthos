@@ -834,10 +834,8 @@ pub(super) fn duplicate_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> 
     Ok(format!("duplicated\n{}\n", page_line(ctx, &copy)))
 }
 
-/// Показать страницу пользователю: плитка проекта, активная страница,
-/// маршрут «Заметки».
+/// Показать страницу пользователю: активная страница, маршрут «Заметки».
 fn show_page(ctx: NotesCtx, id: Option<&str>) {
-    ctx.open_tile();
     if let Some(id) = id {
         ctx.activate(id);
     }

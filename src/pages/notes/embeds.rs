@@ -316,6 +316,7 @@ impl EmbedFactory for NotesEmbedFactory {
                 .child(page_header(ctx, id, title))
                 .child(
                     DocumentEditor::new()
+                        .inline_toolbar(false)
                         .markdown(content)
                         .read_only(true)
                         .links(super::links::provider(ctx))

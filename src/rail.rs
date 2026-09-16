@@ -15,6 +15,8 @@
 //! собирает их в один отсортированный список и знает, что значит «открыть»
 //! и «закрыть» плитку каждого типа.
 
+use std::path::PathBuf;
+
 use syngui::prelude::*;
 
 use crate::agent::state::ChatMeta;
@@ -30,8 +32,8 @@ pub enum RailEntry {
     Code(CodeSession),
     Graph(OpenTab),
     Chat(ChatMeta),
-    /// Проект «Заметок» — одна плитка на проект; число — штамп открытия.
-    Notes(u64),
+    /// Открытый проект «Заметок» — плитка на каждый файл `.syn`.
+    Notes { path: PathBuf, opened_at: u64 },
     /// Тонкая линия между плитками; число — штамп создания (он же ключ
     /// для удаления).
     Separator(u64),
@@ -46,7 +48,7 @@ impl RailEntry {
             RailEntry::Code(s) => format!("code:{}", s.created_at),
             RailEntry::Graph(t) => format!("graph:{}", t.id.0),
             RailEntry::Chat(m) => format!("chat:{}", m.id),
-            RailEntry::Notes(_) => "notes".to_string(),
+            RailEntry::Notes { path, .. } => notes_key(path),
             RailEntry::Separator(ts) => format!("sep:{ts}"),
         }
     }
@@ -58,7 +60,7 @@ impl RailEntry {
             RailEntry::Graph(t) => t.created_at.get_untracked(),
             // Чаты хранят секунды.
             RailEntry::Chat(m) => m.created_at.saturating_mul(1000),
-            RailEntry::Notes(ts) => *ts,
+            RailEntry::Notes { opened_at, .. } => *opened_at,
             RailEntry::Separator(ts) => *ts,
         }
     }
@@ -70,9 +72,14 @@ impl RailEntry {
             RailEntry::Code(s) => (1, format!("{:020}", s.id)),
             RailEntry::Graph(t) => (2, format!("{:020}", t.id.0)),
             RailEntry::Chat(m) => (3, m.id.clone()),
-            RailEntry::Notes(_) => (4, String::new()),
+            RailEntry::Notes { path, .. } => (4, path.display().to_string()),
         }
     }
+}
+
+/// Ключ плитки проекта заметок.
+pub fn notes_key(path: &std::path::Path) -> String {
+    format!("notes:{}", path.display())
 }
 
 /// Собрать список плиток. Читает сигналы через `.get()`, так что вызов
@@ -107,10 +114,10 @@ pub fn entries() -> Vec<RailEntry> {
         }
         out.push(RailEntry::Chat(m));
     }
-    if let Some(ts) = notes.tile_opened_at.get() {
-        // Подпись плитки — имя проекта; `.get()` перерисует при смене.
-        let _ = notes.project_title.get();
-        out.push(RailEntry::Notes(ts));
+    // Подпись плитки — имя файла; `.get()` перерисует при открытии,
+    // закрытии и «Сохранить как».
+    for p in notes.projects.get() {
+        out.push(RailEntry::Notes { path: p.path, opened_at: p.opened_at });
     }
     for ts in app.rail_separators.get() {
         out.push(RailEntry::Separator(ts));
@@ -124,9 +131,15 @@ pub fn entries() -> Vec<RailEntry> {
     // неизвестные (новые плитки) — следом, по времени создания.
     let order = app.rail_order.get();
     if !order.is_empty() {
+        // Ключ `notes` — плитка времён одного проекта: её место в ручном
+        // порядке достаётся первому проекту.
+        let first_notes = out.iter().find(|e| matches!(e, RailEntry::Notes { .. })).map(RailEntry::key);
         let rank = |e: &RailEntry| {
             let k = e.key();
-            order.iter().position(|o| *o == k).unwrap_or(usize::MAX)
+            order
+                .iter()
+                .position(|o| *o == k || (o == "notes" && first_notes.as_deref() == Some(k.as_str())))
+                .unwrap_or(usize::MAX)
         };
         out.sort_by_key(rank);
     }
@@ -198,7 +211,11 @@ pub fn open(entry: &RailEntry) {
             }
             navigate("syn_chat");
         }
-        RailEntry::Notes(_) => navigate("notes"),
+        RailEntry::Notes { path, .. } => {
+            let notes = use_context::<NotesCtx>();
+            notes.switch_project(path);
+            navigate("notes");
+        }
         RailEntry::Separator(_) => {}
     }
 }
@@ -214,11 +231,15 @@ pub fn request_close(entry: &RailEntry) {
         RailEntry::Chat(m) => {
             use_context::<SynChatCtx>().pending_archive.set(Some(m.clone()));
         }
-        // Проект остаётся на диске (хвост автосейва дописывается) — плитка
-        // просто закрывается; с самой страницы уходим.
-        RailEntry::Notes(_) => {
-            use_context::<NotesCtx>().close_tile();
-            if use_context::<AppCtx>().current_route.get_untracked() == "notes" {
+        // Хвост автосейва дописывается, плитка уходит; последний проект
+        // закрыт — со страницы заметок уходим.
+        RailEntry::Notes { path, .. } => {
+            let notes = use_context::<NotesCtx>();
+            if let Err(e) = notes.close_project(path) {
+                crate::pages::notes::project_ui::report_error(&e);
+                return;
+            }
+            if !notes.has_project() && use_context::<AppCtx>().current_route.get_untracked() == "notes" {
                 navigate("syn_chat");
             }
         }
@@ -243,7 +264,9 @@ pub fn is_active(entry: &RailEntry) -> bool {
             // В плавающем окне чат «открыт» с любой страницы.
             same && (chat.chat_detached.get() || route == "syn_chat")
         }
-        RailEntry::Notes(_) => route == "notes",
+        RailEntry::Notes { path, .. } => {
+            route == "notes" && use_context::<NotesCtx>().project_path.get() == *path
+        }
         RailEntry::Separator(_) => false,
     }
 }
@@ -269,15 +292,19 @@ pub fn new_chat() {
     navigate("syn_chat");
 }
 
-/// Заметки из меню «+»: показать плитку проекта и режим; в пустом
-/// проекте сразу создаётся первая страница.
-pub fn new_note() {
-    let notes = use_context::<NotesCtx>();
-    notes.open_tile();
-    if notes.tree.get_untracked().is_empty() {
-        notes.create_page(None, &tr!("notes.untitled"));
+/// Плитка сменила ключ («Сохранить как» перевело проект на другой файл):
+/// ручной порядок рейла сохраняет её место.
+pub fn rename_key(old: &str, new: &str) {
+    let app = use_context::<AppCtx>();
+    if app.rail_order.get_untracked().iter().any(|k| k == old) {
+        app.rail_order.update(|v| {
+            for k in v.iter_mut() {
+                if k == old {
+                    *k = new.to_string();
+                }
+            }
+        });
     }
-    navigate("notes");
 }
 
 /// Разделитель со штампом «сейчас» — встаёт после последней плитки.

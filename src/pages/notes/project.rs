@@ -24,7 +24,7 @@
 //! растёт с каждым коммитом, поэтому при открытии проект уплотняется
 //! ([`compact_if_needed`]), когда мусора больше половины.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -437,6 +437,26 @@ fn expand_home(p: &str) -> String {
     p.to_string()
 }
 
+/// Путь, по которому проект узнаётся среди открытых: `~` раскрыт,
+/// существующий файл — канонический (симлинк и относительный путь не
+/// откроют тот же проект второй плиткой).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    let expanded = PathBuf::from(expand_home(&path.to_string_lossy()));
+    std::fs::canonicalize(&expanded).unwrap_or(expanded)
+}
+
+/// Файл нового проекта из диалога: расширение `.syn` дописывается, если
+/// его не ввели («План» → «План.syn», «v1.2» → «v1.2.syn»).
+pub fn with_syn_extension(path: &Path) -> PathBuf {
+    let has_syn = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("syn"));
+    if has_syn {
+        return path.to_path_buf();
+    }
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(".syn");
+    path.with_file_name(name)
+}
+
 /// Имя проекта для плитки рейла — имя файла без расширения.
 pub fn project_title(path: &Path) -> String {
     path.file_stem()
@@ -454,6 +474,62 @@ pub enum WriteOp {
 
 pub type ProjectResult<T> = Result<T, String>;
 
+/// Почему файл не открылся как проект заметок.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProbeError {
+    Missing,
+    /// Бандл, но не заметки (модель, датасет).
+    NotNotes,
+    /// Не бандл или битый файл.
+    Unreadable(String),
+}
+
+/// Проверить, что файл — проект заметок: бандл с `purpose = "notes"` либо
+/// с деревом страниц внутри.
+pub fn probe(path: &Path) -> Result<(), ProbeError> {
+    if !path.is_file() {
+        return Err(ProbeError::Missing);
+    }
+    let bundle = Bundle::open(path).map_err(|e| ProbeError::Unreadable(e.to_string()))?;
+    if bundle.meta().purpose == BUNDLE_PURPOSE || bundle.list_files().any(|e| e.name == TREE_PATH) {
+        Ok(())
+    } else {
+        Err(ProbeError::NotNotes)
+    }
+}
+
+/// Копия проекта в другой файл — «Сохранить как». Пишется уплотнённой:
+/// журнал правок исходника в копию не попадает. Файл назначения, если был,
+/// заменяется; у копии свой id бандла.
+pub fn save_copy(src: &Path, dst: &Path) -> ProjectResult<()> {
+    rewrite(src, dst, Some(format!("notes-{}", new_id())))
+}
+
+/// Переписать проект в `dst` одними живыми файлами (`dst == src` —
+/// уплотнение на месте). `synaptix_bundle::compact` для заметок не годится:
+/// он требует чанк тензоров, которого у проекта нет, и молча отказывал.
+/// Запись — через временный файл и rename, открытые карты старого файла
+/// дочитывают свой inode.
+fn rewrite(src: &Path, dst: &Path, new_bundle_id: Option<String>) -> ProjectResult<()> {
+    let bundle = Bundle::open(src).map_err(|e| e.to_string())?;
+    let meta = bundle.meta();
+    let mut builder = BundleBuilder::new(new_bundle_id.unwrap_or_else(|| meta.id.clone()), meta.version.clone())
+        .arch(meta.arch.clone())
+        .purpose(meta.purpose.clone());
+    let files: Vec<(String, FileTag)> = bundle.list_files().map(|e| (e.name.clone(), e.tag.unwrap_or(FileTag::Doc))).collect();
+    for (name, tag) in files {
+        let bytes = bundle.read_file(&name).map_err(|e| e.to_string())?.into_owned();
+        builder = builder.add_file_bytes(&name, bytes, tag).map_err(|e| e.to_string())?;
+    }
+    drop(bundle);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let result = builder.write(dst).map_err(|e| e.to_string());
+    invalidate(dst);
+    result
+}
+
 /// Создать пустой проект (или из готового набора файлов — миграция).
 pub fn create(path: &Path, tree: &ProjectTree, files: Vec<(String, Vec<u8>)>) -> ProjectResult<()> {
     if let Some(parent) = path.parent() {
@@ -467,7 +543,9 @@ pub fn create(path: &Path, tree: &ProjectTree, files: Vec<(String, Vec<u8>)>) ->
     for (p, bytes) in files {
         builder = builder.add_file_bytes(&p, bytes, tag_for(&p)).map_err(|e| e.to_string())?;
     }
-    builder.write(path).map_err(|e| e.to_string())
+    let result = builder.write(path).map_err(|e| e.to_string());
+    invalidate(path);
+    result
 }
 
 fn tag_for(path: &str) -> FileTag {
@@ -498,7 +576,7 @@ pub fn apply_ops(path: &Path, ops: &[WriteOp]) -> ProjectResult<()> {
         }
     }
     editor.commit().map_err(|e| e.to_string())?;
-    invalidate_cache();
+    invalidate(path);
     Ok(())
 }
 
@@ -517,35 +595,39 @@ pub fn compact_if_needed(path: &Path) {
     drop(bundle);
     let dead = size.saturating_sub(alive);
     if dead > alive.max(1024 * 1024) {
-        if let Err(e) = synaptix_bundle::compact(path, path) {
+        if let Err(e) = rewrite(path, path, None) {
             log::warn!("notes: уплотнение {} не удалось: {e}", path.display());
         } else {
             log::info!("notes: проект уплотнён ({size} → живых {alive} байт)");
         }
-        invalidate_cache();
+        invalidate(path);
     }
 }
 
 // ─────────────────────────── Чтение (кэш mmap) ───────────────────────────
 
-fn cache() -> &'static Mutex<Option<(PathBuf, Arc<Bundle>)>> {
-    static C: OnceLock<Mutex<Option<(PathBuf, Arc<Bundle>)>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(None))
+/// Карты открытых проектов — по одной на файл: при нескольких открытых
+/// проектах одна общая ячейка переоткрывала бы файл на каждом чтении.
+fn cache() -> &'static Mutex<HashMap<PathBuf, Arc<Bundle>>> {
+    static C: OnceLock<Mutex<HashMap<PathBuf, Arc<Bundle>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Открытый на чтение бандл (mmap). Пересоздаётся после каждого commit'а —
 /// append-only формат означает, что старая карта не видит новых чанков.
+/// Пустой путь — проекта нет, и это не ошибка.
 pub fn bundle(path: &Path) -> Option<Arc<Bundle>> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
     let mut guard = cache().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((p, b)) = guard.as_ref() {
-        if p == path {
-            return Some(b.clone());
-        }
+    if let Some(b) = guard.get(path) {
+        return Some(b.clone());
     }
     match Bundle::open(path) {
         Ok(b) => {
             let arc = Arc::new(b);
-            *guard = Some((path.to_path_buf(), arc.clone()));
+            guard.insert(path.to_path_buf(), arc.clone());
             Some(arc)
         }
         Err(e) => {
@@ -555,8 +637,9 @@ pub fn bundle(path: &Path) -> Option<Arc<Bundle>> {
     }
 }
 
-pub fn invalidate_cache() {
-    *cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+/// Сбросить карту файла (после записи или закрытия проекта).
+pub fn invalidate(path: &Path) {
+    cache().lock().unwrap_or_else(|e| e.into_inner()).remove(path);
 }
 
 pub fn read_bytes(path: &Path, bundle_path: &str) -> Option<Vec<u8>> {
@@ -839,6 +922,44 @@ mod tests {
         compact_if_needed(&path);
         assert_eq!(read_text(&path, &page_path("a")).as_deref(), Some("# A2"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Журнал правок растёт с каждым commit'ом; уплотнение оставляет одни
+    /// живые файлы (раньше `synaptix_bundle::compact` отказывал проекту без
+    /// тензоров, и файл рос бесконечно).
+    #[test]
+    fn compaction_drops_dead_chunks_and_keeps_files() {
+        let dir = std::env::temp_dir().join(format!("synthos-notes-compact-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.syn");
+        let tree = sample_tree();
+        create(&path, &tree, vec![(page_path("a"), b"start".to_vec()), (asset_path("x.png"), vec![7u8; 1000])]).unwrap();
+        let big = "x".repeat(300_000);
+        for i in 0..8 {
+            apply_ops(&path, &[WriteOp::Put { path: page_path("a"), bytes: format!("{i}{big}").into_bytes() }]).unwrap();
+        }
+        let before = std::fs::metadata(&path).unwrap().len();
+        compact_if_needed(&path);
+        let after = std::fs::metadata(&path).unwrap().len();
+        assert!(after * 3 < before, "уплотнение не сработало: {before} → {after}");
+        assert_eq!(read_text(&path, &page_path("a")).unwrap(), format!("7{big}"));
+        assert_eq!(read_bytes(&path, &asset_path("x.png")).unwrap(), vec![7u8; 1000]);
+        assert_eq!(read_tree(&path), tree);
+        assert_eq!(probe(&path), Ok(()));
+
+        let copy = dir.join("copy.syn");
+        save_copy(&path, &copy).unwrap();
+        assert_eq!(read_text(&copy, &page_path("a")).unwrap(), format!("7{big}"));
+        assert_ne!(Bundle::open(&copy).unwrap().meta().id, Bundle::open(&path).unwrap().meta().id);
+        assert_eq!(probe(&dir.join("нет.syn")), Err(ProbeError::Missing));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn syn_extension_is_added_once() {
+        assert_eq!(with_syn_extension(Path::new("/a/План")), PathBuf::from("/a/План.syn"));
+        assert_eq!(with_syn_extension(Path::new("/a/v1.2")), PathBuf::from("/a/v1.2.syn"));
+        assert_eq!(with_syn_extension(Path::new("/a/b.SYN")), PathBuf::from("/a/b.SYN"));
     }
 
     #[test]

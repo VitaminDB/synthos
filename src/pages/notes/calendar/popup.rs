@@ -286,6 +286,7 @@ fn body(env: CalendarEnv, handle: CalendarHandle) -> impl Widget {
     });
     let note = DecoratedBox::new().class("notes-calendar-note").child(
         DocumentEditor::new()
+            .inline_toolbar(false)
             .markdown(e.note.clone())
             .handle(&note_handle)
             .plain(true)

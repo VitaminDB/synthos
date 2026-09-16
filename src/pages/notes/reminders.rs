@@ -287,6 +287,16 @@ pub fn check(ctx: NotesCtx, now: (i64, u32), notify: &mut dyn FnMut(&Reminder)) 
     ctx.reminders.set(Arc::new(list));
 }
 
+/// Пересобрать список колокольчика без тостов — после смены активного
+/// проекта: иначе до минутного такта колокольчик показывал бы чужие сроки.
+pub fn refresh_list(ctx: NotesCtx) {
+    if !ctx.has_project() {
+        ctx.reminders.set(Arc::new(Vec::new()));
+        return;
+    }
+    ctx.reminders.set(Arc::new(collect(ctx, crate::agent::time::local_now())));
+}
+
 /// Тост приложения по напоминанию; больше четырёх за раз — одним общим.
 fn toast_batch(batch: &[Reminder]) {
     let app = use_context::<AppCtx>();
@@ -314,6 +324,9 @@ fn toast_batch(batch: &[Reminder]) {
 /// Проверка «сейчас» на main-потоке с тостами приложения.
 pub fn check_now() {
     let ctx = use_context::<NotesCtx>();
+    if !ctx.has_project() {
+        return;
+    }
     // Такт таймеров колонок досок — на том же минутном пробуждении, до
     // сбора напоминаний: истёкшие и перенесённые карточки уже на месте.
     super::kanban::sweep_boards(ctx);

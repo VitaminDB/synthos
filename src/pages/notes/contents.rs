@@ -143,6 +143,15 @@ pub fn header() -> impl Widget {
     // Две вкладки в узкой панели не помещаются подписями — показываем
     // название только активной, а переключение отдаём иконке соседней.
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        // Без проекта — только меню проектов: страниц и блоков нет.
+        if ctx.project_path.get().as_os_str().is_empty() {
+            let row = Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(DecoratedBox::new().class("grow").child(panel_header::side_title(MI_LIST_ALT, tr!("notes.tree.title"))))
+                .child(super::project_ui::menu_button());
+            return vec![Box::new(row)];
+        }
         let blocks = ctx.left_tab.get() == TAB_BLOCKS;
         let (icon, title) = if blocks {
             (MI_LAYERS, tr!("notes.blocks.title"))
@@ -158,6 +167,7 @@ pub fn header() -> impl Widget {
             .gap(6.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .child(DecoratedBox::new().class("grow").child(panel_header::side_title(icon, title)))
+            .child(super::project_ui::menu_button())
             .child(panel_header::action_button(other_icon, other_title, move || {
                 ctx.left_tab.set(if blocks { TAB_PAGES } else { TAB_BLOCKS });
             }));
@@ -170,14 +180,12 @@ pub fn header() -> impl Widget {
                     tr!("notes.tree.new_page"),
                     move || {
                         ctx.create_page(None, &tr!("notes.untitled"));
-                        ctx.open_tile();
                         rail::navigate("notes");
                     },
                 ))
                 .child(panel_header::action_button(MI_TODAY, tr!("notes.journal.today"), move || {
                     let id = ctx.journal_page(crate::agent::time::local_today_days());
                     ctx.activate(&id);
-                    ctx.open_tile();
                     rail::navigate("notes");
                 }))
                 .child(panel_header::action_button(MI_HUB, tr!("notes.graph.title"), move || {
@@ -192,6 +200,13 @@ pub fn header() -> impl Widget {
 pub fn body() -> impl Widget {
     let ctx = use_context::<NotesCtx>();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        if ctx.project_path.get().as_os_str().is_empty() {
+            return vec![Box::new(
+                DecoratedBox::new()
+                    .class("notes-tree-empty")
+                    .child(Text::new(tr!("notes.project.none.tree")).class("notes-tree-empty-text")),
+            )];
+        }
         match ctx.left_tab.get() {
             TAB_BLOCKS => vec![Box::new(super::blocks::body())],
             _ => vec![Box::new(pages())],
@@ -366,10 +381,7 @@ fn row(
     let id_click = id.clone();
     let drag = Draggable::new(DRAG_TYPE_PAGE, id.clone())
         .label(r.title.clone())
-        .on_click(move || {
-            ctx.activate(&id_click);
-            ctx.open_tile();
-        })
+        .on_click(move || ctx.activate(&id_click))
         .child(body);
 
     let id_over = id.clone();

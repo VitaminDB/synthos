@@ -303,6 +303,8 @@ fn frames_to_rgba_impl(
             height: h as u32,
             rgba: Arc::from(rgba.into_boxed_slice()),
             pts_sec: i as f64 / fps,
+            seek_generation: 0,
+            surface: None,
         }));
         on_progress(i + 1, total);
     }

@@ -7403,6 +7403,7 @@ dependencies = [
  "js-sys",
  "libc",
  "log",
+ "oboe",
  "percent-encoding",
  "pollster",
  "portable-pty",

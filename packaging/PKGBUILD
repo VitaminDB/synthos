@@ -1,8 +1,8 @@
 # Maintainer: Alexeyev Vitaly
 pkgname=synthos
-pkgver=0.1.0
-pkgrel=251
-pkgdesc="Synthos — локальная AI-студия: node-редактор (video/audio/music/image) + чат, редактор кода, голосовой ввод"
+pkgver=0.2.0
+pkgrel=252
+pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода"
 license=("MIT" "Apache-2.0")
 arch=("x86_64")
 url="https://github.com/VitaminDB/synthos"

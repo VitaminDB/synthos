@@ -1,0 +1,188 @@
+name: release
+
+# Релиз собирается на self-hosted runner'е (Arch Linux, NVIDIA + CUDA toolkit):
+# бинарь линкуется с системными ffmpeg/gtk3/vulkan, поэтому собирать его надо
+# там же, где будут ставить пакет. Триггер — только тег и ручной запуск: на
+# публичном репозитории self-hosted runner не должен трогать код из форков.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Тег или коммит для сборки"
+        required: true
+        default: master
+      draft:
+        description: "Черновик релиза (не публиковать сразу)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Сборка пакета (Arch, self-hosted)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 300
+
+    env:
+      CARGO_TERM_COLOR: always
+      # target вне workspace: переживает очистку рабочей директории раннера,
+      # поэтому вторая сборка идёт по инкременту, а не с нуля.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../synthos-ci-target
+      # 24 ядра машины минус запас, чтобы рабочий стол оставался живым.
+      CARGO_BUILD_JOBS: "16"
+
+    steps:
+      - name: synthos
+        uses: actions/checkout@v4
+        with:
+          path: synthos
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Прочитать пины зависимостей
+        id: pins
+        working-directory: synthos
+        run: |
+          get() { grep -E "^$1=" packaging/deps.lock | tail -1 | cut -d= -f2 | tr -d '[:space:]'; }
+          syngui="$(get syngui)"; synaptix="$(get synaptix)"
+          echo "syngui=${syngui:-master}"   >> "$GITHUB_OUTPUT"
+          echo "synaptix=${synaptix:-master}" >> "$GITHUB_OUTPUT"
+          echo "syngui:   ${syngui:-master}"
+          echo "synaptix: ${synaptix:-master}"
+
+      - name: syngui
+        uses: actions/checkout@v4
+        with:
+          repository: VitaminDB/syngui
+          path: syngui
+          ref: ${{ steps.pins.outputs.syngui }}
+
+      - name: synaptix
+        uses: actions/checkout@v4
+        with:
+          repository: VitaminDB/synaptix
+          path: synaptix
+          ref: ${{ steps.pins.outputs.synaptix }}
+
+      - name: Сверить версию тега с Cargo.toml и PKGBUILD
+        id: version
+        working-directory: synthos
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.ref || github.ref_name }}"
+          cargo_ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          pkgver="$(grep -m1 '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
+          pkgrel="$(grep -m1 '^pkgrel=' packaging/PKGBUILD | cut -d= -f2)"
+
+          if [ "$cargo_ver" != "$pkgver" ]; then
+            echo "::error::Cargo.toml version=$cargo_ver, PKGBUILD pkgver=$pkgver — разошлись"
+            exit 1
+          fi
+
+          # Тег обязан совпадать с версией; ручной запуск с master этого не требует.
+          case "$ref" in
+            v*)
+              if [ "${ref#v}" != "$cargo_ver" ]; then
+                echo "::error::тег $ref не совпадает с версией $cargo_ver"
+                exit 1
+              fi
+              tag="$ref" ;;
+            *)  tag="v$cargo_ver-build$pkgrel" ;;
+          esac
+
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "pkgver=$pkgver"   >> "$GITHUB_OUTPUT"
+          echo "pkgrel=$pkgrel"   >> "$GITHUB_OUTPUT"
+
+      - name: cargo build --release
+        working-directory: synthos
+        run: |
+          set -euo pipefail
+          # Сборка забирает десятки гигабайт RAM; если памяти не хватит, OOM-killer
+          # должен убить её, а не запущенный synthos с моделью в pinned-памяти.
+          choom -n 1000 -p $$ >/dev/null
+          nice -n 10 cargo build --release -p synthos
+          ls -lh "$CARGO_TARGET_DIR/release/synthos"
+
+      - name: makepkg
+        working-directory: synthos/packaging
+        run: |
+          set -euo pipefail
+          # PKGBUILD ждёт бинарь в $WORKSPACE_ROOT/target/release — CARGO_TARGET_DIR
+          # вынесен, поэтому подкладываем симлинк.
+          ln -sfn "$CARGO_TARGET_DIR" ../target
+          # PKGBUILD страхует от «pkgrel подняли после сборки», сравнивая mtime.
+          # В CI сборка только что прошла в этом же job, а checkout проставил
+          # файлам свежий mtime — снимаем ложное срабатывание при инкременте.
+          touch ../target/release/synthos
+          makepkg -f --nodeps --noconfirm
+          ls -lh ./*.pkg.tar.zst
+
+      - name: Собрать tarball и контрольные суммы
+        id: artifacts
+        working-directory: synthos
+        run: |
+          set -euo pipefail
+          ver="${{ steps.version.outputs.pkgver }}"
+          rel="${{ steps.version.outputs.pkgrel }}"
+          out="$GITHUB_WORKSPACE/dist"
+          rm -rf "$out" && mkdir -p "$out"
+
+          stage="$(mktemp -d)/synthos-$ver"
+          mkdir -p "$stage"
+          install -Dm755 "$CARGO_TARGET_DIR/release/synthos" "$stage/bin/synthos"
+          install -Dm644 packaging/synthos.desktop "$stage/share/applications/synthos.desktop"
+          install -Dm644 packaging/synthos.svg \
+            "$stage/share/icons/hicolor/scalable/apps/synthos.svg"
+          install -Dm644 README.md LICENSE-MIT LICENSE-APACHE -t "$stage/"
+
+          tar --zstd -C "$(dirname "$stage")" -cf \
+            "$out/synthos-$ver-x86_64-linux.tar.zst" "synthos-$ver"
+          cp packaging/synthos-"$ver"-"$rel"-x86_64.pkg.tar.zst "$out/"
+
+          ( cd "$out" && sha256sum ./* > SHA256SUMS )
+          ls -lh "$out"
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Опубликовать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: synthos
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          draft=""
+          [ "${{ github.event.inputs.draft }}" = "true" ] && draft="--draft"
+
+          notes="$(mktemp)"
+          {
+            echo "Сборка \`${{ steps.version.outputs.pkgver }}-${{ steps.version.outputs.pkgrel }}\`."
+            echo ""
+            echo "| Файл | Для чего |"
+            echo "|---|---|"
+            echo "| \`synthos-*.pkg.tar.zst\` | Arch Linux: \`sudo pacman -U ./synthos-*.pkg.tar.zst\` |"
+            echo "| \`synthos-*-x86_64-linux.tar.zst\` | Остальные дистрибутивы (линковка против библиотек Arch) |"
+            echo ""
+            echo "Собрано из:"
+            echo "- synthos \`$(git rev-parse --short HEAD)\`"
+            echo "- syngui \`${{ steps.pins.outputs.syngui }}\`"
+            echo "- synaptix \`${{ steps.pins.outputs.synaptix }}\`"
+            echo ""
+            echo "Веса моделей в релиз не входят — скачиваются из Hugging Face внутри приложения."
+          } > "$notes"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${{ steps.artifacts.outputs.dir }}"/* --clobber
+          else
+            gh release create "$tag" $draft \
+              --title "synthos $tag" --notes-file "$notes" \
+              "${{ steps.artifacts.outputs.dir }}"/*
+          fi

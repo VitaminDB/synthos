@@ -200,6 +200,12 @@ performance analyses quoted above (`qwen4exp_perf_2026.md`, `gemma4_2026.md`,
 - [syngui](https://github.com/VitaminDB/syngui) — the GUI framework.
 - [synaptix](https://github.com/VitaminDB/synaptix) — the inference and training engine.
 
+## How it is built
+
+One developer, with Claude (Anthropic) as a daily coding assistant. The architecture, the
+engine work and the benchmarks above are mine; the assistant carries a large share of the
+typing, the tests and the refactors.
+
 ## Support
 
 synthos is free and open source, written by one person. If it is useful to you, you can

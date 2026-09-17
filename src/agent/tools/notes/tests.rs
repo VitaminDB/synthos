@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::config::AppConfig;
-use crate::pages::notes::project;
+use crate::pages::notes::{autosave, project};
 
 /// Контекст заметок над временным проектом. Каталоги строк — русские:
 /// названия колонок шаблона и корня журнала берутся через `tr!`.
@@ -1614,4 +1614,175 @@ fn column_timers_move_and_expire_cards() {
     call(ctx, "kanban", serde_json::json!({"op": "delete_column", "board": &board, "column": "Просроченные"}));
     let out = call(ctx, "kanban", args(serde_json::json!({"column": "В работе", "keep_hours": 0})));
     assert!(out.contains("keeps cards forever") && !out.contains("after 72h"), "{out}");
+}
+
+/// Файл проекта с одной страницей; возвращает (файл, id страницы).
+fn project_file(dir: &Path, name: &str, title: &str, text: &str) -> (PathBuf, String) {
+    let path = dir.join(format!("{name}.syn"));
+    let mut tree = project::ProjectTree::new();
+    let page = project::PageNode::new(title);
+    let id = page.id.clone();
+    tree.insert(None, None, page);
+    project::create(&path, &tree, vec![(project::page_path(&id), text.as_bytes().to_vec())]).unwrap();
+    (project::normalize_path(&path), id)
+}
+
+/// Два открытых проекта, показан первый.
+fn two_projects() -> (NotesCtx, (PathBuf, String), (PathBuf, String), PathBuf) {
+    syngui::i18n::register_catalogs(&crate::i18n::CATALOGS);
+    syngui::i18n::set_language(syngui::i18n::Lang::new("ru"));
+    let dir = project::normalize_path(&std::env::temp_dir().join(format!("synthos-notes-tool-{}", project::new_id())));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = project_file(&dir, "SynthOS Notes", "Моя Жизнь", "про жизнь");
+    let b = project_file(&dir, "Notes", "Рецепты", "борщ со сметаной");
+    let cfg = AppConfig {
+        notes_projects: Some(
+            [&a.0, &b.0]
+                .iter()
+                .enumerate()
+                .map(|(i, p)| crate::config::NotesProjectConfig {
+                    path: p.display().to_string(),
+                    opened_at: 1000 + i as u64,
+                    ..Default::default()
+                })
+                .collect(),
+        ),
+        notes_active_project: a.0.display().to_string(),
+        notes_vault_path: dir.join("no-vault").display().to_string(),
+        ..AppConfig::default()
+    };
+    (NotesCtx::new_or_restore(&cfg), a, b, dir)
+}
+
+fn call_any(ctx: NotesCtx, action: &str, args: serde_json::Value) -> String {
+    projects::dispatch_any(ctx, action, &args).unwrap_or_else(|e| panic!("{action} {args}: {e}"))
+}
+
+/// Живой чат MyLife (17.09.2026): открыты «SynthOS Notes» и «Notes»,
+/// модель звала `list {path: …/Notes.syn}` и дважды получала дерево
+/// показанного проекта — второй инструменту виден не был.
+#[test]
+fn list_and_search_see_every_open_project() {
+    let (ctx, (a, a_page), (b, b_page), _dir) = two_projects();
+
+    let out = call_any(ctx, "list", serde_json::json!({}));
+    assert!(out.contains("2 notes projects are open"), "{out}");
+    assert!(out.contains("--- Project \"SynthOS Notes\" · shown in Notes ---") && out.contains(&a_page), "{out}");
+    assert!(out.contains("--- Project \"Notes\" ---") && out.contains(&b_page) && out.contains("\"Рецепты\""), "{out}");
+    assert!(out.contains(&format!("file: {}", b.display())), "{out}");
+    // UI не переключился.
+    assert_eq!(ctx.project_path.get_untracked(), a);
+    assert_eq!(ctx.active.get_untracked().as_deref(), Some(a_page.as_str()));
+
+    // Файл проекта в `path` — тот самый вызов модели.
+    let out = call_any(ctx, "list", serde_json::json!({"path": b.display().to_string()}));
+    assert!(out.contains("--- Project \"Notes\" ---") && out.contains(&b_page), "{out}");
+    assert!(!out.contains(&a_page), "{out}");
+    let out = call_any(ctx, "list", serde_json::json!({"project": "notes.syn"}));
+    assert!(out.contains(&b_page) && !out.contains(&a_page), "{out}");
+
+    let out = call_any(ctx, "search", serde_json::json!({"query": "борщ"}));
+    assert!(out.contains("--- Project \"Notes\" ---") && out.contains(&b_page), "{out}");
+    assert!(!out.contains("SynthOS Notes\""), "где не нашлось — без шапки: {out}");
+    let out = call_any(ctx, "search", serde_json::json!({"query": "нигде"}));
+    assert!(out.contains("in any open project (\"SynthOS Notes\", \"Notes\")"), "{out}");
+
+    let err = projects::dispatch_any(ctx, "list", &serde_json::json!({"project": "Рабочие"})).unwrap_err();
+    assert!(err.contains("no notes project \"Рабочие\"") && err.contains("\"Notes\" ("), "{err}");
+    let err = projects::dispatch_any(ctx, "read", &serde_json::json!({"page": "Нет такой"})).unwrap_err();
+    assert!(err.contains("looked in project \"SynthOS Notes\"") && err.contains("pass project"), "{err}");
+    assert_eq!(ctx.project_path.get_untracked(), a);
+}
+
+/// Правка неактивного проекта: UI остаётся на своём, правка — в стеше
+/// вместе с undo и уходит в файл своего проекта.
+#[test]
+fn edits_in_another_project_keep_the_shown_one() {
+    let (ctx, (a, a_page), (b, b_page), _dir) = two_projects();
+    let a_rev = ctx.tree_rev.get_untracked();
+
+    let out = call_any(ctx, "update", serde_json::json!({"project": "Notes", "page": "Рецепты", "content": "борщ без сметаны"}));
+    assert!(out.starts_with(&format!("project: \"Notes\" · {}", b.display())), "{out}");
+    let out = call_any(ctx, "create", serde_json::json!({"project": "Notes", "title": "Салаты"}));
+    let salads = page_id(&out);
+    assert_eq!(ctx.project_path.get_untracked(), a);
+    assert_eq!(ctx.active.get_untracked().as_deref(), Some(a_page.as_str()));
+    assert_eq!(ctx.tree_rev.get_untracked(), a_rev, "дерево показанного проекта не тронуто");
+    assert!(ctx.tree.get_untracked().find(&salads).is_none());
+
+    // Id страницы другого проекта находит его сам.
+    let out = call_any(ctx, "read", serde_json::json!({"page": &b_page}));
+    assert!(out.starts_with("project: \"Notes\"") && out.contains("борщ без сметаны"), "{out}");
+    let out = call_any(ctx, "read", serde_json::json!({"pages": [&salads]}));
+    assert!(out.contains("\"Салаты\""), "{out}");
+
+    // Только свои файлы: очередь автосейва общая у параллельных тестов.
+    autosave::flush_project(&a).unwrap();
+    autosave::flush_project(&b).unwrap();
+    project::invalidate(&b);
+    assert_eq!(project::read_text(&b, &project::page_path(&b_page)).unwrap().trim(), "борщ без сметаны");
+    assert_eq!(project::read_tree(&b).title_of(&salads).as_deref(), Some("Салаты"));
+    project::invalidate(&a);
+    assert_eq!(project::read_text(&a, &project::page_path(&a_page)).unwrap().trim(), "про жизнь");
+    assert!(project::read_tree(&a).find(&salads).is_none());
+
+    // Плитка «Notes»: правка на месте, Ctrl+Z её откатывает.
+    assert!(ctx.switch_project(&b));
+    let page = ctx.page(&b_page).unwrap();
+    assert_eq!(page.markdown().trim(), "борщ без сметаны");
+    assert!(page.handle.history_state().get_untracked().0, "undo правки агента пережил стеш");
+}
+
+/// Закрытый проект по пути открывается плиткой, не уводя пользователя.
+#[test]
+fn project_path_opens_a_closed_file_quietly() {
+    let (ctx, (a, _), (b, b_page), dir) = two_projects();
+    ctx.close_project(&b).unwrap();
+    let (c, c_page) = project_file(&dir, "Архив", "Старое", "давнее");
+
+    let out = call_any(ctx, "list", serde_json::json!({}));
+    assert!(out.contains("--- Closed projects") && out.contains(&format!("\"Notes\" · {}", b.display())), "{out}");
+    assert!(!out.contains(&b_page), "{out}");
+
+    let out = call_any(ctx, "read", serde_json::json!({"project": c.display().to_string(), "page": "Старое"}));
+    assert!(out.contains("давнее"), "{out}");
+    assert!(ctx.is_open(&c));
+    // Недавний закрытый — по названию.
+    let out = call_any(ctx, "read", serde_json::json!({"project": "Notes", "page": &b_page}));
+    assert!(out.contains("борщ"), "{out}");
+    assert!(ctx.is_open(&b));
+    assert_eq!(ctx.project_path.get_untracked(), a);
+    assert!(ctx.tree.get_untracked().find(&c_page).is_none());
+
+    let err = projects::dispatch_any(ctx, "list", &serde_json::json!({"project": dir.join("нет.syn").display().to_string()})).unwrap_err();
+    assert!(err.starts_with("no file ") && err.contains("Open notes projects:"), "{err}");
+    // У attach в `path` — вкладываемый файл, а не проект.
+    let err = projects::dispatch_any(ctx, "attach", &serde_json::json!({"page": "Моя Жизнь", "path": dir.join("нет.syn").display().to_string()})).unwrap_err();
+    assert!(err.starts_with("can't read"), "{err}");
+}
+
+/// Обзоры идут по всем открытым проектам, а id доски из них находит свой
+/// проект: карточку из сводки правят, не называя проект.
+#[test]
+fn overviews_and_board_ids_cover_every_open_project() {
+    let (ctx, (a, _), (b, b_page), _dir) = two_projects();
+    let today = days_to_iso(today_days());
+    let out = call_any(ctx, "kanban", serde_json::json!({"project": "Notes", "op": "create", "page": &b_page, "columns": ["Купить", "Куплено"]}));
+    let board = out.lines().find_map(|l| l.strip_prefix("kanban:")).unwrap().split(' ').next().unwrap().to_string();
+    call_any(ctx, "kanban", serde_json::json!({"op": "add_card", "board": &board, "column": "Купить", "title": "Свёкла", "due": &today}));
+    assert_eq!(ctx.project_path.get_untracked(), a);
+    assert!(!ctx.has_object("kanban", &board));
+
+    let out = call_any(ctx, "agenda", serde_json::json!({}));
+    assert!(out.contains("=== Project \"Notes\" ===") && out.contains("Свёкла"), "{out}");
+    assert!(out.contains("Nothing to show in project \"SynthOS Notes\""), "{out}");
+    assert_eq!(out.matches("tasks {due=").count(), 1, "подсказка один раз: {out}");
+    let out = call_any(ctx, "tasks", serde_json::json!({"due": "today"}));
+    assert!(out.contains("=== Project \"Notes\" ===") && out.contains("Свёкла"), "{out}");
+
+    let out = call_any(ctx, "kanban", serde_json::json!({"op": "move_card", "board": format!("kanban:{board}"), "card": "Свёкла", "column": "Куплено"}));
+    assert!(out.starts_with(&format!("project: \"Notes\" · {}", b.display())), "{out}");
+    let out = call_any(ctx, "tasks", serde_json::json!({"board": &board, "column": "Куплено"}));
+    assert!(out.contains("Свёкла") && !out.contains("=== Project"), "{out}");
+    assert_eq!(ctx.project_path.get_untracked(), a);
 }

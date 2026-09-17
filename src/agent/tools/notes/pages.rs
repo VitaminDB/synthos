@@ -4,9 +4,15 @@
 use super::*;
 
 pub(super) fn list_impl(ctx: NotesCtx) -> Result<String, String> {
+    Ok(clip_list(project_tree(ctx, "")) + LIST_HINT)
+}
+
+/// Шапка проекта и дерево его страниц; `note` дописывается в шапку (какой
+/// это из открытых проектов).
+pub(super) fn project_tree(ctx: NotesCtx, note: &str) -> String {
     let tree = ctx.tree.get_untracked();
     let mut out = String::new();
-    out.push_str("--- Project ---\n");
+    out.push_str(&format!("--- Project \"{}\"{note} ---\n", ctx.project_title.get_untracked()));
     out.push_str(&format!("file: {}\n", ctx.project_path.get_untracked().display()));
     let active = ctx
         .active
@@ -18,43 +24,47 @@ pub(super) fn list_impl(ctx: NotesCtx) -> Result<String, String> {
     out.push_str("--- Pages (indent = nesting; size in words; objects embedded in the page after ·) ---\n");
     if tree.is_empty() {
         out.push_str("(no pages yet — notes create makes one)\n");
-    } else {
-        fn walk(ctx: NotesCtx, nodes: &[crate::pages::notes::project::PageNode], depth: usize, out: &mut String) {
-            for n in nodes {
-                let icon = n.icon.as_deref().filter(|i| !i.is_empty()).map(|i| format!(" {i}")).unwrap_or_default();
-                let md = ctx.page_markdown(&n.id);
-                let objects: Vec<String> =
-                    object_refs(&md).iter().map(|(k, id)| format!(" · {k}:{id}")).collect();
-                out.push_str(&format!(
-                    "{}{} \"{}\"{icon} · {} words{}\n",
-                    "  ".repeat(depth),
-                    n.id,
-                    n.title,
-                    count_words(&plain_markdown(&md)),
-                    objects.concat()
-                ));
-                walk(ctx, &n.children, depth + 1, out);
-            }
-        }
-        walk(ctx, &tree.roots, 0, &mut out);
-        // Дерево на тысячу страниц само по себе больше окна. Клипа поверх
-        // ответа `notes` нет (инструмент отвечает за свой размер сам),
-        // поэтому список режется здесь — по строке, а не посреди неё.
-        let budget = ReadBudget::take();
-        if !budget.fits((0, 0), ReadBudget::cost(&out)) {
-            out = budget.clip_lines(out, "the tree is longer than the context left");
+        return out;
+    }
+    fn walk(ctx: NotesCtx, nodes: &[crate::pages::notes::project::PageNode], depth: usize, out: &mut String) {
+        for n in nodes {
+            let icon = n.icon.as_deref().filter(|i| !i.is_empty()).map(|i| format!(" {i}")).unwrap_or_default();
+            let md = ctx.page_markdown(&n.id);
+            let objects: Vec<String> =
+                object_refs(&md).iter().map(|(k, id)| format!(" · {k}:{id}")).collect();
+            out.push_str(&format!(
+                "{}{} \"{}\"{icon} · {} words{}\n",
+                "  ".repeat(depth),
+                n.id,
+                n.title,
+                count_words(&plain_markdown(&md)),
+                objects.concat()
+            ));
+            walk(ctx, &n.children, depth + 1, out);
         }
     }
-    out.push_str(
-        "---\nread {page} shows the markdown, boards and charts on the page and its links; \
-         read {pages: [\"id\", \"id\"]} or {page, depth=all} or {page=\"all\"} brings back \
-         several pages, a whole subtree or the whole project in ONE call — use it instead of \
-         reading page by page; update {page, content | find+replace | mode=append} edits it; \
-         kanban / gantt / chart {op=create, page} add a board, a Gantt chart or a \
-         line/bar/pie/radar/gauge chart.\n",
-    );
-    Ok(out)
+    walk(ctx, &tree.roots, 0, &mut out);
+    out
 }
+
+/// Дерево на тысячу страниц само по себе больше окна. Клипа поверх ответа
+/// `notes` нет (инструмент отвечает за свой размер сам), поэтому список
+/// режется здесь — по строке, а не посреди неё.
+pub(super) fn clip_list(out: String) -> String {
+    let budget = ReadBudget::take();
+    if budget.fits((0, 0), ReadBudget::cost(&out)) {
+        out
+    } else {
+        budget.clip_lines(out, "the tree is longer than the context left")
+    }
+}
+
+pub(super) const LIST_HINT: &str = "---\nread {page} shows the markdown, boards and charts on the page and its links; \
+     read {pages: [\"id\", \"id\"]} or {page, depth=all} or {page=\"all\"} brings back \
+     several pages, a whole subtree or the whole project in ONE call — use it instead of \
+     reading page by page; update {page, content | find+replace | mode=append} edits it; \
+     kanban / gantt / chart {op=create, page} add a board, a Gantt chart or a \
+     line/bar/pie/radar/gauge chart.\n";
 
 pub(super) fn search_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
     let query = str_field(v, "query").ok_or("missing \"query\"")?;
@@ -182,7 +192,7 @@ impl ReadBudget {
 
     /// Список страниц длиннее бюджета: дерево на тысячу страниц само по
     /// себе больше окна.
-    fn clip_lines(&self, text: String, why: &str) -> String {
+    pub(super) fn clip_lines(&self, text: String, why: &str) -> String {
         self.clip_by_lines(text, |keep, total, spent| {
             format!("--- Cut after {keep} of {total} lines: {why}{} ---\n", self.note(spent))
         })

@@ -264,6 +264,12 @@ const NOTES_RULES: &str =
      - Start with list (page tree, ids, the boards/charts on each \
      page) or search; read a page before editing it — update \
      with content and mode=replace overwrites the whole page.\n\
+     - Several projects (.syn files) can be open at once, a tile \
+     each. list, search, agenda, tasks and log cover all of them; \
+     every other action \
+     works in the project shown in Notes unless you pass \
+     project=<title or path to the .syn> (page and board ids from \
+     another project find their project by themselves).\n\
      - Read in bulk, not page by page: read takes pages=[…] \
      (several pages at once), depth=all (the page with its \
      whole subtree) and page=\"all\" (the entire project), and \

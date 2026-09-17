@@ -4,15 +4,20 @@
 //! `NotesCtx` один, и его сигналы держат **активный** проект — всё, что
 //! рисуют страница заметок и видит агент. Остальные открытые проекты лежат
 //! стешем ([`ProjectStash`]): те же ручки страниц и объектов, поэтому
-//! переключение плиткой не теряет ни правок, ни истории undo. Ручки
-//! неактивного проекта никто не правит (UI и агент работают с активным), а
-//! перед сменой всё грязное уходит в очередь автосейва с путём своего файла
-//! ([`autosave::enqueue_dirty`]) — запись догоняет уже без сигналов.
+//! переключение плиткой не теряет ни правок, ни истории undo. UI ручки
+//! неактивного проекта не трогает, а перед сменой всё грязное уходит в
+//! очередь автосейва с путём своего файла ([`autosave::enqueue_dirty`]) —
+//! запись догоняет уже без сигналов.
+//!
+//! Агент видит все открытые проекты, и UI при этом не переключается:
+//! неактивный проект он правит в отдельном контексте
+//! ([`NotesCtx::with_project`]) над теми же ручками стеша.
 //!
 //! Сохранение — прежний автосейв; «Сохранить» лишь пишет очередь сразу, а
 //! «Сохранить как» кладёт уплотнённую копию в новый файл и переводит на неё
 //! плитку (старый файл остаётся как был).
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,6 +36,15 @@ use super::state::{LiveObject, LivePage, NotesCtx};
 
 /// Сколько недавних проектов помнить.
 pub const RECENT_MAX: usize = 10;
+
+thread_local! {
+    /// Контекст, в котором агент работает с неактивным проектом
+    /// ([`NotesCtx::with_project`]). Слоты сигналов syngui не
+    /// освобождаются — контекст заводится один раз на поток и
+    /// переиспользуется; на время работы он вынут из ячейки, и вложенный
+    /// вызов получит свой.
+    static DETACHED: Cell<Option<NotesCtx>> = const { Cell::new(None) };
+}
 
 /// Состояние неактивного открытого проекта — всё, что `NotesCtx` держит в
 /// сигналах про проект.
@@ -263,6 +277,16 @@ impl NotesCtx {
 
     /// Открыть файл проекта новой плиткой (уже открытый — просто показать).
     pub fn open_project(&self, path: &Path) -> ProjectOpResult {
+        let path = self.open_project_quietly(path)?;
+        self.switch_project(&path);
+        self.remember_recent(&path);
+        Ok(())
+    }
+
+    /// Открыть файл проекта плиткой, не показывая его: агент работает в
+    /// нём, а пользователь остаётся там, где был. Показывается, только если
+    /// другого открытого проекта нет. Возвращает нормализованный путь.
+    pub fn open_project_quietly(&self, path: &Path) -> std::result::Result<PathBuf, ProjectError> {
         let path = project::normalize_path(path);
         if !self.is_open(&path) {
             project::probe(&path).map_err(|e| ProjectError::from_probe(&path, e))?;
@@ -271,10 +295,49 @@ impl NotesCtx {
             autosave::forget_project(&path);
             project::invalidate(&path);
             self.projects.update(|v| v.push(OpenProject::new(path.clone(), now_millis())));
+            self.remember_recent(&path);
         }
-        self.switch_project(&path);
-        self.remember_recent(&path);
-        Ok(())
+        if !self.has_project() {
+            self.switch_project(&path);
+        }
+        Ok(path)
+    }
+
+    /// Выполнить `f` над открытым проектом `path` так, будто он активен, не
+    /// трогая того, что показывает UI. Для активного проекта это сам
+    /// `self`. Неактивный выкладывается из стеша (или читается с диска) в
+    /// отдельный контекст; после `f` его состояние — с правками и историей
+    /// undo — возвращается в стеш, а грязное уходит в очередь автосейва
+    /// своего файла, как при смене плитки. `None` — среди открытых такого
+    /// нет.
+    pub fn with_project<R>(&self, path: &Path, f: impl FnOnce(NotesCtx) -> R) -> Option<R> {
+        if self.project_path.get_untracked() == path {
+            return Some(f(*self));
+        }
+        let target = self.projects.get_untracked().into_iter().find(|p| p.path == path)?;
+        let (stash, fresh) = match target.stash {
+            Some(s) => (*s, false),
+            None => (load_stash(path, target.saved_active, target.saved_expanded), true),
+        };
+        let home = autosave::project_path();
+        let detached = DETACHED.with(Cell::take).unwrap_or_else(|| NotesCtx::blank(Vec::new(), Vec::new()));
+        // Доски и диаграммы запоминают сигнал ревизии объектов контекста,
+        // в котором загружены, — он должен быть тем, что слушает UI: туда
+        // проект попадёт, когда пользователь переключится на его плитку.
+        let ctx = NotesCtx { objects_rev: self.objects_rev, ..detached };
+        ctx.apply_stash(path, stash, fresh);
+        let out = f(ctx);
+        autosave::enqueue_dirty(ctx);
+        let stash = ctx.take_stash();
+        ctx.apply_empty();
+        autosave::set_project_path(home);
+        DETACHED.with(|d| d.set(Some(detached)));
+        self.projects.update(|v| {
+            if let Some(p) = v.iter_mut().find(|p| p.path == path) {
+                p.stash = Some(Box::new(stash));
+            }
+        });
+        Some(out)
     }
 
     /// Новый проект в файле `path` (расширение `.syn` дописывается) с одной
@@ -405,22 +468,54 @@ impl NotesCtx {
             self.activate(page_id);
             return true;
         }
-        let active = self.project_path.get_untracked();
-        for p in self.projects.get_untracked() {
-            if p.path == active {
-                continue;
+        match self.projects_with_page(page_id).first() {
+            Some(path) => {
+                self.switch_project(path);
+                self.activate(page_id);
+                true
             }
-            let has = match &p.stash {
+            None => false,
+        }
+    }
+
+    /// Неактивные открытые проекты, в дереве которых есть страница с этим
+    /// id, в порядке плиток. Больше одного — у копии «Сохранить как» те же
+    /// id страниц.
+    pub fn projects_with_page(&self, page_id: &str) -> Vec<PathBuf> {
+        let active = self.project_path.get_untracked();
+        self.projects
+            .get_untracked()
+            .into_iter()
+            .filter(|p| p.path != active)
+            .filter(|p| match &p.stash {
                 Some(s) => s.tree.find(page_id).is_some(),
                 None => project::read_tree(&p.path).find(page_id).is_some(),
-            };
-            if has {
-                self.switch_project(&p.path);
-                self.activate(page_id);
-                return true;
-            }
-        }
-        false
+            })
+            .map(|p| p.path)
+            .collect()
+    }
+
+    /// То же для объекта (доски, диаграммы, карты, календаря, графика):
+    /// в пуле стеша либо файлом в бандле.
+    pub fn projects_with_object(&self, kind: &str, id: &str) -> Vec<PathBuf> {
+        let active = self.project_path.get_untracked();
+        let file = project::object_path(kind, id);
+        self.projects
+            .get_untracked()
+            .into_iter()
+            .filter(|p| p.path != active)
+            .filter(|p| {
+                p.stash.as_ref().is_some_and(|s| s.objects.iter().any(|o| o.id() == id))
+                    || project::read_text(&p.path, &file).is_some()
+            })
+            .map(|p| p.path)
+            .collect()
+    }
+
+    /// Есть ли объект в показанном проекте (без загрузки).
+    pub fn has_object(&self, kind: &str, id: &str) -> bool {
+        self.objects.get_untracked().iter().any(|o| o.id() == id)
+            || project::read_text(&self.project_path.get_untracked(), &project::object_path(kind, id)).is_some()
     }
 
     fn remember_recent(&self, path: &Path) {

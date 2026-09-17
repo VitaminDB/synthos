@@ -204,11 +204,22 @@ impl NotesCtx {
     pub fn new_or_restore(cfg: &AppConfig) -> Self {
         let restored = super::projects::restore(cfg);
         autosave::set_project_path(PathBuf::new());
-        let ctx = Self {
+        let ctx = Self::blank(restored.projects, restored.recent);
+        // Восстановленная (или первая) страница загружается сразу: иначе
+        // дерево её подсвечивает, а редактор показывает «пусто» до клика.
+        if let Some(path) = restored.active {
+            ctx.activate_project(&path, false);
+        }
+        ctx
+    }
+
+    /// Контекст без активного проекта: свежие сигналы с пустым состоянием.
+    pub(super) fn blank(projects: Vec<OpenProject>, recent: Vec<PathBuf>) -> Self {
+        Self {
             project_title: use_signal(String::new()),
             project_path: use_signal(PathBuf::new()),
-            projects: use_signal(restored.projects),
-            recent: use_signal(restored.recent),
+            projects: use_signal(projects),
+            recent: use_signal(recent),
             tree: use_signal(Arc::new(ProjectTree::new())),
             tree_rev: use_signal(0),
             objects_rev: use_signal(0),
@@ -236,13 +247,7 @@ impl NotesCtx {
             icon_picker_open: use_signal(false),
             doc_menu_open: use_signal(false),
             doc_menu_pos: use_signal(Point::zero()),
-        };
-        // Восстановленная (или первая) страница загружается сразу: иначе
-        // дерево её подсвечивает, а редактор показывает «пусто» до клика.
-        if let Some(path) = restored.active {
-            ctx.activate_project(&path, false);
         }
-        ctx
     }
 
     /// Открыт ли какой-нибудь проект (без подписки).

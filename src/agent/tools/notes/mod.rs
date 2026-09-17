@@ -35,6 +35,14 @@
 //!   координатах холста), изменить, удалить, `connect` — стрелка между
 //!   двумя закреплёнными блоками.
 //!
+//! Проекты: открытых `.syn` может быть несколько (плитка на каждый). `list`,
+//! `search`, `agenda`, `tasks` и `log` без `project` идут по всем открытым,
+//! остальные действия — в
+//! показанный в «Заметках» либо в названный `project` (название плитки или
+//! путь; закрытый проект открывается плиткой). Страница другого проекта,
+//! названная id, находит свой проект сама. Пользователь при этом остаётся
+//! на своей плитке — см. [`projects`].
+//!
 //! Адресация: страница — id (12 hex) либо название (без регистра; при
 //! совпадениях — путь «Родитель / Страница» или id); доска/диаграмма — id
 //! объекта либо страница, на которой объект один; колонка — id или
@@ -114,6 +122,7 @@ mod life;
 mod md;
 mod mindmap;
 mod pages;
+mod projects;
 mod refs;
 mod shapes;
 
@@ -144,15 +153,16 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     run_on_main_thread(move || {
         let ctx = use_context::<NotesCtx>();
-        // Агент работает с активным проектом; если ни один не открыт —
-        // открывается недавний (или дефолтный) и появляется его плитка.
+        // Без `project` агент работает с показанным проектом; если ни один
+        // не открыт — открывается недавний (или дефолтный) и появляется его
+        // плитка.
         if let Err(e) = ctx.ensure_project() {
             let _ = tx.send(Err(format!("no notes project is open and none could be opened: {}", e.message())));
             return;
         }
         // Правки от имени агента — так они помечены в журнале проекта.
         let _agent = crate::pages::notes::activity::agent_scope();
-        let _ = tx.send(dispatch(ctx, &action, &v));
+        let _ = tx.send(projects::dispatch_any(ctx, &action, &v));
     });
     rx.await
         .map_err(|e| ToolError::Spawn(e.to_string()))?
@@ -177,8 +187,9 @@ pub(super) fn now_line() -> String {
     )
 }
 
-/// Диспетчер действий; вынесен из `run`, чтобы тесты звали его с
-/// собственным `NotesCtx` без main-thread.
+/// Диспетчер действий в проекте `ctx`; вынесен из `run`, чтобы тесты звали
+/// его с собственным `NotesCtx` без main-thread. Выбор проекта —
+/// [`projects::dispatch_any`].
 pub fn dispatch(ctx: NotesCtx, action: &str, v: &Json) -> Result<String, String> {
     match action {
         "list" => list_impl(ctx),

@@ -102,6 +102,11 @@ pub fn set_project_path(path: PathBuf) {
     CURRENT.with(|c| *c.borrow_mut() = path);
 }
 
+/// Проект, куда сейчас уходят вызовы без явного файла.
+pub fn project_path() -> PathBuf {
+    current()
+}
+
 fn current() -> PathBuf {
     CURRENT.with(|c| c.borrow().clone())
 }

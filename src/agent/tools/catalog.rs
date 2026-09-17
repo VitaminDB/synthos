@@ -501,6 +501,11 @@ pub(super) fn build_all() -> Vec<Tool> {
                 rewriting a whole page. Pages are addressed by id (12 hex) \
                 or exact title; blocks by index from blocks op=list; boards \
                 and charts by id, or implicitly when the page has one. \
+                PROJECTS. Several projects (.syn files) can be open, a tile \
+                each: list, search, agenda, tasks and log cover all of them; \
+                any other action \
+                works in the project shown in Notes unless you pass \
+                project=<title or path>. \
                 PROPERTIES PANEL. The right panel of the Notes mode \
                 (Properties | Links tabs) is remembered by each page: \
                 update props_panel=hidden|shown sets it, read shows it in \
@@ -628,6 +633,17 @@ pub(crate) fn notes_schema() -> serde_json::Value {
                 done, board, column, query); log = what changed and when \
                 (cards moved/done/added, events, pages; who did it); journal \
                 = the page of a day (get or create, append content)."
+        })),
+        ("project", json!({
+            "type": "string",
+            "description": "Which notes project (.syn file) to work in: the \
+                title of an open project as list shows it (file name without \
+                .syn) or the path to a .syn file — one that is not open yet \
+                opens as a new tile. Default: the project shown in Notes. \
+                list, search, agenda, tasks and log without project cover \
+                EVERY open project; \
+                page and board ids from another project find their project by \
+                themselves."
         })),
         ("page", json!({
             "type": "string",

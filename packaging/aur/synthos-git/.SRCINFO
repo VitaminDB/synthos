@@ -1,6 +1,6 @@
 pkgbase = synthos-git
 	pkgdesc = Local AI desktop studio: agentic chat, notes workspace, node editor for video/music/speech, code editor — on the native synaptix engine (git)
-	pkgver = 0.2.0.r0.g0000000
+	pkgver = 0.2.0.r375.g07d278e
 	pkgrel = 1
 	url = https://github.com/VitaminDB/synthos
 	arch = x86_64
@@ -22,6 +22,7 @@ pkgbase = synthos-git
 	provides = synthos=0.2.0
 	conflicts = synthos
 	conflicts = synthos-bin
+	options = !lto
 	source = synthos::git+https://github.com/VitaminDB/synthos.git
 	source = syngui::git+https://github.com/VitaminDB/syngui.git
 	source = synaptix::git+https://github.com/VitaminDB/synaptix.git

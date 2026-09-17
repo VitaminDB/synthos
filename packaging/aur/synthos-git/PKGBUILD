@@ -1,7 +1,7 @@
 # Maintainer: Alexeyev Vitaly <vitamindbnfkz@gmail.com>
 pkgname=synthos-git
 _pkgname=synthos
-pkgver=0.2.0.r0.g0000000
+pkgver=0.2.0.r375.g07d278e
 pkgrel=1
 pkgdesc="Local AI desktop studio: agentic chat, notes workspace, node editor for video/music/speech, code editor — on the native synaptix engine (git)"
 arch=("x86_64")
@@ -29,6 +29,12 @@ makedepends=(
 optdepends=(
     "nvidia-utils: GPU-инференс (CUDA-драйвер грузится в рантайме)"
 )
+# makepkg.conf по умолчанию включает lto и добавляет -flto=auto в CFLAGS: C-код,
+# который крейты собирают сами (встроенный SQLite у rusqlite), становится
+# LTO-байткодом GCC, а rust-lld (линкер Rust по умолчанию с 1.90) его не читает —
+# линковка падает на undefined symbol sqlite3_*. LTO самого Rust задаёт профиль
+# release в Cargo.toml, от этой опции оно не зависит.
+options=("!lto")
 provides=("$_pkgname=${pkgver%%.r*}")
 conflicts=("$_pkgname" "$_pkgname-bin")
 

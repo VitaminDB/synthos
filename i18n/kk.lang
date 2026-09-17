@@ -1817,6 +1817,13 @@ notes.project.error.not_notes = "Бұл жазбалар жобасы емес: 
 notes.project.error.already_open = "Жоба әлдеқашан ашық: {path}"
 notes.project.error.no_project = "Бірде-бір жазбалар жобасы ашылмаған"
 notes.project.error.io = "Жобаны жазу мүмкін болмады: {error}"
+notes.project.rename = "Атын өзгерту…"
+notes.project.rename_title = "Жобаның атын өзгерту"
+notes.project.rename_hint = "Файл өз қалтасында қайта аталады: {path}"
+notes.project.rename_placeholder = "Жоба атауы"
+notes.project.renamed = "«{title}» деп қайта аталды"
+notes.project.error.exists = "Бұл атаумен файл бұрыннан бар: {path}"
+notes.project.error.bad_name = "Жоба атауы жарамсыз: {name}"
 app.save = "Сақтау"
 app.edit = "Өңдеу"
 

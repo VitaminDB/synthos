@@ -1,6 +1,7 @@
 //! Команды проектов заметок в интерфейсе: подменю «Заметки ▸» в «+» рейла,
 //! меню проекта в шапке «Содержимого», экран без открытого проекта,
-//! системные диалоги и горячие клавиши Ctrl+O / Ctrl+S / Ctrl+Shift+S.
+//! системные диалоги, диалог «Переименовать» и горячие клавиши Ctrl+O /
+//! Ctrl+S / Ctrl+Shift+S.
 //!
 //! Сами операции — в [`super::projects`]; здесь только то, откуда их зовут,
 //! и как сообщить об ошибке.
@@ -13,8 +14,10 @@ use syngui::input::{Key, Modifiers};
 use syngui::prelude::*;
 use syngui::widgets::containers::IntoWidget;
 use syngui::widgets::feedback::NotificationItem;
+use syngui::mgui;
 use syngui::widgets::overlay::menu::MenuItem;
-use syngui::widgets::{GestureDetector, ToolButton};
+use syngui::widgets::overlay::PortalAnchor;
+use syngui::widgets::{GestureDetector, TextField, ToolButton};
 
 use crate::components::event_hook::{EventHook, KeyReply};
 use crate::context::AppCtx;
@@ -29,6 +32,7 @@ const ID_NEW: &str = "notes-project:new";
 const ID_OPEN: &str = "notes-project:open";
 const ID_SAVE: &str = "notes-project:save";
 const ID_SAVE_AS: &str = "notes-project:save-as";
+const ID_RENAME: &str = "notes-project:rename";
 const ID_REVEAL: &str = "notes-project:reveal";
 const ID_CLOSE: &str = "notes-project:close";
 const RECENT_PREFIX: &str = "notes-recent:";
@@ -141,6 +145,90 @@ fn close_active() {
     }
 }
 
+// ─── Переименование ─────────────────────────────────────────────────────────
+
+/// Открыть диалог «Переименовать» для открытого проекта (меню проекта,
+/// контекстное меню плитки).
+pub fn request_rename(path: &Path) {
+    use_context::<NotesCtx>().rename_target.set(Some(path.to_path_buf()));
+}
+
+fn rename(path: &Path, name: &str) {
+    let ctx = use_context::<NotesCtx>();
+    ctx.rename_target.set(None);
+    let old_key = rail::notes_key(path);
+    match ctx.rename_project(path, name) {
+        Ok(dst) if dst != path => {
+            rail::rename_key(&old_key, &rail::notes_key(&dst));
+            use_context::<AppCtx>().notifications.show(
+                NotificationItem::success(tr!("notes.project.renamed", title = project::project_title(&dst))).duration_ms(2000),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => report_error(&e),
+    }
+}
+
+/// Диалог «Переименовать проект». Смонтирован в корне приложения рядом с
+/// диалогами закрытия плиток: плитку переименовывают с любого маршрута.
+pub fn rename_dialog() -> impl Widget {
+    let is_open = use_signal(false);
+    create_effect(move || {
+        let has = use_context::<NotesCtx>().rename_target.get().is_some();
+        if is_open.get_untracked() != has {
+            is_open.set(has);
+        }
+    });
+    Portal::new()
+        .is_open(is_open)
+        .modal(true)
+        .backdrop(true)
+        .anchor(PortalAnchor::Center)
+        .on_close(|| use_context::<NotesCtx>().rename_target.set(None))
+        .child(Reactive::new(|| -> Vec<Box<dyn Widget>> {
+            match use_context::<NotesCtx>().rename_target.get() {
+                Some(path) => vec![Box::new(rename_card(path))],
+                None => vec![Box::new(DecoratedBox::new().class("code-editor-dialog-empty"))],
+            }
+        }))
+}
+
+fn rename_card(path: PathBuf) -> impl Widget {
+    let initial = project::project_title(&path);
+    let value = use_signal(initial.clone());
+    let submit_path = path.clone();
+    let ok_path = path.clone();
+    mgui! {
+        DecoratedBox::new().class("code-editor-dialog-card") => [
+            Column::new()
+                .gap(14.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    Text::new(tr!("notes.project.rename_title")).class("code-editor-dialog-title"),
+                    Text::new(tr!("notes.project.rename_hint", path = path.display().to_string())).class("code-editor-dialog-hint"),
+                    TextField::new()
+                        .text(initial)
+                        .placeholder(tr!("notes.project.rename_placeholder"))
+                        .autofocus(true)
+                        .on_change(move |s| value.set(s.to_string()))
+                        .on_submit(move |s| rename(&submit_path, s))
+                        .class("code-editor-dialog-input"),
+                    Row::new()
+                        .gap(10.0)
+                        .main_axis_alignment(MainAxisAlignment::End) => [
+                            Button::new(tr!("app.cancel"))
+                                .leading_icon(MI_CLOSE)
+                                .on_click(|| use_context::<NotesCtx>().rename_target.set(None))
+                                .class("code-editor-dialog-btn-secondary"),
+                            Button::new(tr!("app.ok"))
+                                .leading_icon(MI_CHECK)
+                                .on_click(move || rename(&ok_path, &value.get_untracked()))
+                                .class("code-editor-dialog-btn-primary"),
+                        ],
+                ]
+        ]
+    }
+}
+
 // ─── Меню ───────────────────────────────────────────────────────────────────
 
 /// Подпись недавнего проекта: имя файла, а при совпадении имён — ещё и
@@ -192,6 +280,7 @@ fn project_menu_items(ctx: NotesCtx) -> Vec<MenuItem> {
         MenuItem::separator(),
         MenuItem::new(ID_SAVE, tr!("notes.project.save")).icon(MI_SAVE).shortcut("Ctrl+S").disabled(!has),
         MenuItem::new(ID_SAVE_AS, tr!("notes.project.save_as")).icon(MI_SAVE_AS).shortcut("Ctrl+Shift+S").disabled(!has),
+        MenuItem::new(ID_RENAME, tr!("notes.project.rename")).icon(MI_DRIVE_FILE_RENAME_OUTLINE).disabled(!has),
         MenuItem::new(ID_REVEAL, tr!("notes.project.reveal")).icon(MI_FOLDER).disabled(!has),
         MenuItem::separator(),
         MenuItem::new(ID_CLOSE, tr!("notes.project.close")).icon(MI_CLOSE).disabled(!has),
@@ -210,6 +299,12 @@ pub fn handle_menu(id: &str) -> bool {
         ID_OPEN => open_dialog(),
         ID_SAVE => save_now(),
         ID_SAVE_AS => save_as_dialog(),
+        ID_RENAME => {
+            let path = use_context::<NotesCtx>().project_path.get_untracked();
+            if !path.as_os_str().is_empty() {
+                request_rename(&path);
+            }
+        }
         ID_REVEAL => {
             let path = use_context::<NotesCtx>().project_path.get_untracked();
             if path.is_file() {

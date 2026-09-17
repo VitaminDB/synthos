@@ -94,6 +94,10 @@ pub enum ProjectError {
     Missing(PathBuf),
     NotNotes(PathBuf),
     AlreadyOpen(PathBuf),
+    /// Переименование: файл с таким именем уже есть.
+    Exists(PathBuf),
+    /// Переименование: пустое имя или имя с разделителем пути.
+    BadName(String),
     NoProject,
     Io(String),
 }
@@ -105,6 +109,8 @@ impl ProjectError {
             ProjectError::Missing(p) => tr!("notes.project.error.missing", path = name(p)),
             ProjectError::NotNotes(p) => tr!("notes.project.error.not_notes", path = name(p)),
             ProjectError::AlreadyOpen(p) => tr!("notes.project.error.already_open", path = name(p)),
+            ProjectError::Exists(p) => tr!("notes.project.error.exists", path = name(p)),
+            ProjectError::BadName(n) => tr!("notes.project.error.bad_name", name = n.clone()),
             ProjectError::NoProject => tr!("notes.project.error.no_project"),
             ProjectError::Io(e) => tr!("notes.project.error.io", error = e.clone()),
         }
@@ -435,6 +441,58 @@ impl NotesCtx {
         // Резолвер медиа редактора держит путь файла — пересобрать.
         self.bump_doc_epoch();
         Ok(())
+    }
+
+    /// Переименовать файл открытого проекта в его папке: `name` — новое
+    /// название (`.syn` дописывается). Очередь автосейва сначала пишется в
+    /// старый файл, затем файл переезжает, а сохранённые ревизии, плитка,
+    /// недавние и активный путь — вслед за ним. Возвращает новый путь.
+    pub fn rename_project(&self, path: &Path, name: &str) -> std::result::Result<PathBuf, ProjectError> {
+        let stem = name.trim();
+        let has_ext = stem.len() > 4 && stem.get(stem.len() - 4..).is_some_and(|t| t.eq_ignore_ascii_case(".syn"));
+        let stem = if has_ext { &stem[..stem.len() - 4] } else { stem }.trim();
+        if stem.is_empty() || stem.contains(['/', '\\']) || stem == "." || stem == ".." {
+            return Err(ProjectError::BadName(name.trim().to_string()));
+        }
+        if !self.is_open(path) {
+            return Err(ProjectError::Missing(path.to_path_buf()));
+        }
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let dst = dir.join(format!("{stem}.syn"));
+        if dst == path {
+            return Ok(dst);
+        }
+        if dst.exists() {
+            return Err(ProjectError::Exists(dst));
+        }
+        let active = self.project_path.get_untracked() == path;
+        if active {
+            autosave::enqueue_dirty(*self);
+        }
+        autosave::flush_project(path).map_err(ProjectError::Io)?;
+        autosave::with_write_lock(|| std::fs::rename(path, &dst)).map_err(|e| ProjectError::Io(e.to_string()))?;
+        let dst = project::normalize_path(&dst);
+        project::invalidate(path);
+        autosave::forget_project(&dst);
+        autosave::rekey_project(path, &dst);
+        self.projects.update(|v| {
+            if let Some(p) = v.iter_mut().find(|p| p.path == path) {
+                p.path = dst.clone();
+            }
+        });
+        self.recent.update(|v| {
+            for p in v.iter_mut().filter(|p| p.as_path() == path) {
+                *p = dst.clone();
+            }
+        });
+        if active {
+            autosave::set_project_path(dst.clone());
+            self.project_path.set(dst.clone());
+            self.project_title.set(project::project_title(&dst));
+            // Резолвер медиа редактора держит путь файла — пересобрать.
+            self.bump_doc_epoch();
+        }
+        Ok(dst)
     }
 
     // ─── Прочее ───────────────────────────────────────────────────────────
@@ -861,6 +919,40 @@ mod tests {
         assert_eq!(again.active.get_untracked().as_deref(), Some(b_page.as_str()));
         assert!(again.switch_project(&a));
         assert_eq!(again.active.get_untracked().as_deref(), Some(second_id.as_str()), "страница A из стеша попала в конфиг");
+    }
+
+    /// Переименование активного и неактивного проекта: файл переезжает с
+    /// правками из очереди, дальнейшие правки идут в новый файл.
+    #[test]
+    fn rename_moves_file_tile_and_further_edits() {
+        let dir = temp_dir();
+        let (a, a_page) = make_project(&dir, "A", "alpha");
+        let (b, b_page) = make_project(&dir, "B", "beta");
+        let ctx = NotesCtx::new_or_restore(&cfg_with(&dir, &[&a, &b], &a));
+
+        ctx.set_page_markdown(&a_page, "alpha 2");
+        let a2 = ctx.rename_project(&a, " Работа.syn ").unwrap();
+        assert_eq!(a2, project::normalize_path(&dir.join("Работа.syn")));
+        assert!(!a.exists());
+        assert_eq!(file_text(&a2, &a_page).trim(), "alpha 2", "очередь записана до переезда");
+        assert_eq!(ctx.project_path.get_untracked(), a2);
+        assert_eq!(ctx.project_title.get_untracked(), "Работа");
+        assert_eq!(ctx.projects.get_untracked()[0].path, a2);
+        ctx.set_page_markdown(&a_page, "alpha 3");
+        ctx.save_now().unwrap();
+        assert_eq!(file_text(&a2, &a_page).trim(), "alpha 3");
+
+        // Неактивный: плитка переезжает, показанный не меняется.
+        let b2 = ctx.rename_project(&b, "Дом").unwrap();
+        assert_eq!(ctx.project_path.get_untracked(), a2);
+        assert!(ctx.is_open(&b2) && !ctx.is_open(&b));
+        assert!(ctx.switch_project(&b2));
+        assert_eq!(ctx.page(&b_page).unwrap().markdown().trim(), "beta");
+
+        assert!(matches!(ctx.rename_project(&b2, "Работа"), Err(ProjectError::Exists(_))));
+        assert!(matches!(ctx.rename_project(&b2, "  "), Err(ProjectError::BadName(_))));
+        assert!(matches!(ctx.rename_project(&b2, "a/b"), Err(ProjectError::BadName(_))));
+        assert_eq!(ctx.rename_project(&b2, "Дом").unwrap(), b2, "то же имя — ничего не делать");
     }
 
     /// Свежая установка: дефолтного файла нет — проекта тоже нет, пока его

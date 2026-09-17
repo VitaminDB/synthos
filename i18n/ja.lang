@@ -1814,6 +1814,13 @@ notes.project.error.not_notes = "ノートプロジェクトではありませ�
 notes.project.error.already_open = "プロジェクトは既に開いています: {path}"
 notes.project.error.no_project = "ノートプロジェクトが開かれていません"
 notes.project.error.io = "プロジェクトを書き込めませんでした: {error}"
+notes.project.rename = "名前を変更…"
+notes.project.rename_title = "プロジェクト名を変更"
+notes.project.rename_hint = "ファイルは同じフォルダー内で名前が変更されます: {path}"
+notes.project.rename_placeholder = "プロジェクト名"
+notes.project.renamed = "「{title}」に名前を変更しました"
+notes.project.error.exists = "同じ名前のファイルが既にあります: {path}"
+notes.project.error.bad_name = "無効なプロジェクト名です: {name}"
 app.save = "保存"
 app.edit = "編集"
 

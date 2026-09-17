@@ -148,6 +148,8 @@ pub struct NotesCtx {
     pub projects: RwSignal<Vec<OpenProject>>,
     /// Недавние файлы проектов, свежие первыми.
     pub recent: RwSignal<Vec<PathBuf>>,
+    /// Проект в диалоге «Переименовать» (`None` — диалог закрыт).
+    pub rename_target: RwSignal<Option<PathBuf>>,
     pub tree: RwSignal<Arc<ProjectTree>>,
     /// Ревизия дерева — подписка автосейва.
     pub tree_rev: RwSignal<u64>,
@@ -220,6 +222,7 @@ impl NotesCtx {
             project_path: use_signal(PathBuf::new()),
             projects: use_signal(projects),
             recent: use_signal(recent),
+            rename_target: use_signal(None),
             tree: use_signal(Arc::new(ProjectTree::new())),
             tree_rev: use_signal(0),
             objects_rev: use_signal(0),

@@ -277,12 +277,18 @@ fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) 
                 .on_drop(move |data| rail::move_before(&data.payload, &drop_key))
                 .child(tile),
         );
+    // Проект заметок — это файл: плитку можно переименовать.
+    let mut items = Vec::new();
+    if matches!(entry, RailEntry::Notes { .. }) {
+        items.push(MenuItem::new("rename", tr!("notes.project.rename")).icon(MI_DRIVE_FILE_RENAME_OUTLINE));
+    }
+    items.push(MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE));
     ContextMenu::new()
-        .items(vec![MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE)])
-        .on_select(move |action| {
-            if action == "close" {
-                rail::request_close(&entry_close);
-            }
+        .items(items)
+        .on_select(move |action| match (action, &entry_close) {
+            ("close", _) => rail::request_close(&entry_close),
+            ("rename", RailEntry::Notes { path, .. }) => crate::pages::notes::project_ui::request_rename(path),
+            _ => {}
         })
         .child(dnd)
 }

@@ -1004,6 +1004,7 @@ fn build_app() -> impl Widget {
             components::template_picker::view(),
             components::graph_close_dialog::view(),
             components::quit_dialog::view(),
+            pages::notes::project_ui::rename_dialog(),
             pages::syn_chat::archive_dialog::view(),
             pages::syn_chat::clear_dialog::view(),
             // Плавающее окно чата и кнопка-аватар свёрнутого окна — поверх

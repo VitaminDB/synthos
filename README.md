@@ -260,9 +260,9 @@ three out next to each other:
 cargo build --release            # or --profile fast-release for iteration
 ```
 
-The build needs the CUDA toolkit present (`nvcc` is read at build time to pin the CUDA
-version; the driver itself is loaded dynamically at runtime) and system FFmpeg development
-libraries. An Arch package is in [`packaging/`](packaging/) — `cargo build --release` first,
+The build needs stable Rust 1.96 or newer (the floor set by dependencies), the CUDA
+toolkit (`nvcc` is read at build time to pin the CUDA API version; the driver itself is
+loaded dynamically at runtime) and system FFmpeg development libraries. An Arch package is in [`packaging/`](packaging/) — `cargo build --release` first,
 then `makepkg` against the existing binary.
 
 ## Requirements

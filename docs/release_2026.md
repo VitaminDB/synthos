@@ -88,5 +88,5 @@ git push --follow-tags
 ## AUR
 
 См. [`packaging/aur/README.md`](../packaging/aur/README.md): `synthos-bin`
-(готовый бинарь из релиза) и `synthos-git` (сборка из трёх репозиториев, с
-пинами из `deps.lock`). Публикация — `packaging/aur/publish.sh <пакет>`.
+(готовый бинарь из релиза) и `synthos-git` (сборка master всех трёх репозиториев;
+пины `deps.lock` — только для релиза по тегу). Публикация — `packaging/aur/publish.sh <пакет>`.

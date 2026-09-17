@@ -34,6 +34,10 @@ conflicts=("$_pkgname" "$_pkgname-bin")
 
 # synthos path-зависит на соседние syngui и synaptix, и makepkg кладёт все три
 # рядом в $srcdir — ровно та раскладка, которую ждут манифесты.
+#
+# Берётся master всех трёх, а не пины из packaging/deps.lock: пины описывают
+# релиз по тегу и устаревают, как только master synthos переходит на новый API
+# syngui. Master же пушится согласованно, и окно рассинхрона — минуты.
 source=(
     "$_pkgname::git+$url.git"
     "syngui::git+https://github.com/VitaminDB/syngui.git"
@@ -48,31 +52,14 @@ pkgver() {
     printf "%s.r%s.g%s" "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
-prepare() {
-    # packaging/deps.lock хранит коммиты syngui и synaptix, на которых собран
-    # релиз. Свежий master обоих соседей с master'ом synthos может не сойтись по
-    # API, поэтому берём известно-рабочую комбинацию; пустое значение — оставляем
-    # master.
-    local lock="$srcdir/$_pkgname/packaging/deps.lock"
-    [ -f "$lock" ] || return 0
-
-    local name sha
-    for name in syngui synaptix; do
-        sha="$(grep -E "^$name=" "$lock" | tail -1 | cut -d= -f2 | tr -d '[:space:]')"
-        [ -n "$sha" ] || continue
-        msg2 "$name → $sha"
-        git -C "$srcdir/$name" checkout --quiet "$sha"
-    done
-}
-
 build() {
     cd "$srcdir/$_pkgname"
 
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     # Без --all-features: в манифесте есть фичи android и testing, они здесь
-    # только навредят. Без --frozen: Cargo.lock synthos разойдётся, как только
-    # deps.lock укажет на syngui/synaptix с другими версиями крейтов.
+    # только навредят. Без --frozen: Cargo.lock synthos не обязан совпадать с
+    # версиями крейтов на master syngui/synaptix.
     cargo build --release -p synthos
 }
 

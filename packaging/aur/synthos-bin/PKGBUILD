@@ -31,7 +31,7 @@ provides=("$_pkgname=$pkgver")
 conflicts=("$_pkgname" "$_pkgname-git")
 
 source=("$_pkgname-$pkgver.tar.zst::$url/releases/download/v$pkgver/$_pkgname-$pkgver-x86_64-linux.tar.zst")
-sha256sums=("SKIP")
+sha256sums=('64f45c859994a0e1a1412218fba21115b1121ac72335d80eef937c70bb9703d8')
 
 package() {
     cd "$srcdir/$_pkgname-$pkgver"

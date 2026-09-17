@@ -23,6 +23,6 @@ pkgbase = synthos-bin
 	conflicts = synthos
 	conflicts = synthos-git
 	source = synthos-0.2.0.tar.zst::https://github.com/VitaminDB/synthos/releases/download/v0.2.0/synthos-0.2.0-x86_64-linux.tar.zst
-	sha256sums = SKIP
+	sha256sums = 64f45c859994a0e1a1412218fba21115b1121ac72335d80eef937c70bb9703d8
 
 pkgname = synthos-bin

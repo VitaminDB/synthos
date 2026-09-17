@@ -22,24 +22,32 @@ _work/synthos-ci-target/   ← CARGO_TARGET_DIR, переживает очист
 Путь `../syngui/syngui` из манифеста synthos разрешается сам собой: соседние
 директории — ровно то, что ждут path-зависимости.
 
-## Установка runner'а (один раз)
+## Runner на этой машине (установлен 17.09.2026)
+
+- Каталог: `~/actions-runner` (версия 2.337.0, SHA-256 архива сверена с релизом
+  actions/runner), имя `synthos-builder`, метки `self-hosted, Linux, X64`.
+- Сервис — **пользовательский** systemd, без sudo:
+  `~/.config/systemd/user/actions-runner-synthos.service`. Живёт без входа в
+  сессию благодаря `loginctl enable-linger` (уже включён). `OOMScoreAdjust=500`.
+- PATH раннера зафиксирован при регистрации в `~/actions-runner/.path`: там
+  `~/.cargo/bin` и `/opt/cuda/bin`. Если переедет `nvcc` или cargo — перерегистрировать
+  или поправить `.path` и перезапустить сервис.
 
 ```sh
-# 1. Токен: Settings → Actions → Runners → New self-hosted runner
-mkdir -p ~/actions-runner && cd ~/actions-runner
-curl -o actions-runner.tar.gz -L \
-  https://github.com/actions/runner/releases/latest/download/actions-runner-linux-x64.tar.gz
-tar xzf actions-runner.tar.gz
-
-# 2. Регистрация (метки Linux/X64/self-hosted ставятся сами)
-./config.sh --url https://github.com/VitaminDB/synthos --token <TOKEN>
-
-# 3. Как systemd-сервис от своего пользователя
-sudo ./svc.sh install "$USER"
-sudo ./svc.sh start
+systemctl --user status actions-runner-synthos        # жив ли
+journalctl --user -u actions-runner-synthos -f        # лог раннера
+systemctl --user disable --now actions-runner-synthos # выключить совсем
 ```
 
-Проверка: `Settings → Actions → Runners` — статус `Idle`.
+Переустановка с нуля (токен берётся через API, веб-интерфейс не нужен):
+
+```sh
+cd ~/actions-runner
+./config.sh remove --token "$(gh api -X POST repos/VitaminDB/synthos/actions/runners/remove-token --jq .token)"
+./config.sh --unattended --url https://github.com/VitaminDB/synthos --name synthos-builder --work _work \
+  --token "$(gh api -X POST repos/VitaminDB/synthos/actions/runners/registration-token --jq .token)"
+systemctl --user restart actions-runner-synthos
+```
 
 ### Безопасность на публичном репозитории
 
@@ -48,8 +56,10 @@ Self-hosted runner на публичном репозитории — это ч�
 
 1. В `release.yml` нет триггера `pull_request` — только тег и `workflow_dispatch`.
    Форк не может запустить сборку.
-2. `Settings → Actions → General → Fork pull request workflows`: оставить
-   «Require approval for all external contributors».
+2. Одобрение workflow из форков — `all_external_contributors` (выставлено 17.09 через
+   `gh api -X PUT repos/VitaminDB/synthos/actions/permissions/fork-pr-contributor-approval`;
+   по умолчанию было `first_time_contributors` — после одного принятого PR чужой код
+   запускался бы на этой машине без спроса).
 3. Раннер работает от обычного пользователя, не от root.
 
 ## Как выпускается релиз

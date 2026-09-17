@@ -10,7 +10,7 @@ base. Everything runs on-device on the native [synaptix](https://github.com/Vita
 engine: no Python, no torch, no cloud. The UI is built with
 [syngui](https://github.com/VitaminDB/syngui).
 
-<!-- screenshot: main window, chat with a model answering + notes page visible -->
+![synthos: a notes workspace built by the agent, with the chat torn off into a floating window](docs/screenshots/notes-dashboard-floating-chat.png)
 
 ## What it is
 
@@ -35,6 +35,51 @@ paru -S synthos-git      # build from source (needs CUDA toolkit, ~2 h, ~15 GB d
 [Releases](https://github.com/VitaminDB/synthos/releases) or build from source (see
 [Build](#build)). The binary is built against Arch's library versions; on other
 distributions building from source is the reliable path.
+
+**Then pack your models** — synthos only loads `.syn` bundles, see
+[the next section](#models-pack-them-into-syn-first).
+
+## Models: pack them into `.syn` first
+
+**synthos loads models only from `.syn` bundles.** A model downloaded from Hugging Face — a
+folder of safetensors shards with `config.json` and tokenizer files, or a GGUF file — has to
+be packed into a single `.syn` file before the chat, the node editor or the agent can use it.
+It is a one-time step per model.
+
+Why one file: the bundle is read zero-copy through mmap, carries the config, tokenizer and
+chat template together with the weights, and can hold quantized weights — so the file on disk
+is exactly what gets loaded, with nothing to resolve at runtime.
+
+| | |
+|---|---|
+| ![Build a .syn — the model is recognised by itself; pick where to save and, optionally, a quantization](docs/screenshots/pack-build-syn.png) | ![Customize… — components, auxiliary files, and precision per layer group](docs/screenshots/pack-wizard-layers.png) |
+| **Build a .syn** — the model is recognised by itself; pick where to save and, optionally, a quantization | **Customize…** — components, auxiliary files, and precision per layer group |
+
+**In the app:**
+
+1. Put the downloaded model folder into your models directory (default `~/Storage/syn_models`,
+   set in **Settings → AI models → Models directory**) or any other folder.
+2. Open **Syn packages** in the left rail and add that folder to **Bookmarks**. Models that are
+   not packed yet appear under **Can be packed**.
+3. Click the model. **Build a .syn** detects the architecture, components and auxiliary files
+   by itself — choose where to save, optionally pick a quantization, and press **Build**.
+4. **Customize…** opens the full wizard: which components and auxiliary files go in, and the
+   precision of each layer group (MLP, embeddings, attention).
+
+**Other routes:**
+
+- **GGUF** — the Hugging Face browser converts a downloaded GGUF to `.syn`; the `mmproj`
+  vision projector is picked up automatically.
+- **CLI** — `synaptix convert <source> <model.syn>` from
+  [synaptix](https://github.com/VitaminDB/synaptix) does the same from a terminal.
+
+**Before you press Build:**
+
+- **Quantization (NVFP4 / MXFP8) needs an NVIDIA GPU and is lossy.** Keep the original
+  weights if you quantize — the dialog will not combine quantization with "delete sources
+  after packing".
+- Large multi-part models have packing notes of their own: LTX-2.3 with its Gemma text
+  encoder, MiniMax-H3, Muse Glimmer and Qwen3.8 — see `docs/*_syn_bundle_2026.md`.
 
 ## Features
 
@@ -65,9 +110,25 @@ distributions building from source is the reliable path.
   your own), reasoning depth, a collapsible card for each side panel, and a chat can be torn
   off into a floating window.
 
+![The agent runs a MiniMax-H3 video pipeline, hits a latent-shape error and fixes the resolution itself](docs/screenshots/agent-pipeline-self-correct.png)
+
+<details>
+<summary>More chat screenshots</summary>
+
+| | |
+|---|---|
+| ![Tools, the autotools pool and skills — toggled per chat](docs/screenshots/chat-tools-autotools-skills.png) | ![Details: tok/s, prefill time, and how much of the prompt came from the prefix-KV cache](docs/screenshots/chat-details.png) |
+| Tools, the autotools pool and skills — toggled per chat | Details: tok/s, prefill time, and how much of the prompt came from the prefix-KV cache |
+| ![Model card and sampling — per-model presets or your own](docs/screenshots/chat-sampling.png) | ![A floating chat over notes, with a message queued mid-turn](docs/screenshots/chat-floating-queue.png) |
+| Model card and sampling — per-model presets or your own | A floating chat over notes, with a message queued mid-turn |
+| ![The agent checks VRAM, frees it and starts a video run](docs/screenshots/agent-pipeline-run.png) |  |
+| The agent checks VRAM, frees it and starts a video run |  |
+
+</details>
+
 ### Notes
 
-<!-- screenshot: notes page on the canvas — kanban board + gantt + mind map -->
+![Kanban boards with labels, priorities and checklists — a card mid-drag](docs/screenshots/notes-kanban-drag.png)
 
 - **A project is one `.syn` bundle** — pages, attachments, boards and calendars live in a
   single file you can copy or back up.
@@ -86,9 +147,25 @@ distributions building from source is the reliable path.
 - **Life management** — tasks, a project journal, repeating items, reminders that fire while
   the app runs, and an archive. The agent drives all of it through the `notes` tool.
 
+<details>
+<summary>More notes screenshots</summary>
+
+| | |
+|---|---|
+| ![Mind map](docs/screenshots/notes-mindmap.png) | ![Gantt chart](docs/screenshots/notes-gantt.png) |
+| Mind map | Gantt chart |
+| ![Calendar, month view — events, board deadlines and Gantt bars](docs/screenshots/notes-calendar-month.png) | ![Calendar, week view](docs/screenshots/notes-calendar-week.png) |
+| Calendar, month view — events, board deadlines and Gantt bars | Calendar, week view |
+| ![Charts: line, bar, pie, radar](docs/screenshots/notes-charts.png) | ![Tables and a chart on one page](docs/screenshots/notes-tables-chart.png) |
+| Charts: line, bar, pie, radar | Tables and a chart on one page |
+| ![Toggles, and page properties: grid, snap, background](docs/screenshots/notes-toggles-page-props.png) |  |
+| Toggles, and page properties: grid, snap, background |  |
+
+</details>
+
 ### Node studio
 
-<!-- screenshot: node editor with an LTX video graph mid-run -->
+![The node editor: the Neuro node menu, a running graph and the models-in-memory panel](docs/screenshots/nodes-menu-models.png)
 
 - **Video** — LTX-2.3: text-to-video, image-to-video, audio-to-video, IC-LoRA control from
   depth (Depth Anything V2) or canny edges, lip-dub and retake, two-stage sampling with a
@@ -108,11 +185,26 @@ distributions building from source is the reliable path.
   family, built-in and custom templates, multi-tab graphs, run/pause/stop, per-node and
   per-run timers, a panel of loaded models, workspace autosave, Markdown annotation nodes.
 
+<details>
+<summary>More node editor screenshots</summary>
+
+| | |
+|---|---|
+| ![ACE-Step text → music graph with checkpoint, generator and player](docs/screenshots/nodes-acestep.png) |  |
+| ACE-Step text → music graph with checkpoint, generator and player |  |
+
+</details>
+
 ### Code editor
 
 - Tree view with live git-status decorations, external-change watching, syntax highlighting,
   integrated terminals. With no file open the editor steps aside and the terminal takes the
   centre.
+
+| | |
+|---|---|
+| ![Code editor with the integrated terminal](docs/screenshots/code-editor-terminal.png) | ![The terminal runs full-screen TUIs](docs/screenshots/code-terminal-btop.png) |
+| Code editor with the integrated terminal | The terminal runs full-screen TUIs |
 
 ### Knowledge base (RAG)
 
@@ -124,8 +216,9 @@ distributions building from source is the reliable path.
 - A Hugging Face browser for fetching models, with GGUF import converted in-app to `.syn`.
 - A model catalogue in Settings — one `.syn` file per model, read zero-copy via mmap, with
   "optimal" and "custom" profiles per model.
-- Syn Explorer — inspect, edit and create `.syn` bundles, with quantization applied at
-  packing time.
+- **Syn packages** — pack models into `.syn` (see
+  [above](#models-pack-them-into-syn-first)), inspect, edit and re-pack bundles, with
+  quantization applied at packing time.
 
 ### Desktop
 
@@ -186,8 +279,8 @@ then `makepkg` against the existing binary.
 No model weights are shipped. Download them yourself from Hugging Face — the same files used
 by ComfyUI / LM Studio — and you accept each model's licence. Some models (e.g. FLUX.1-dev,
 LTX-2.3, Gemma-3) are non-commercial or otherwise restricted; check the licence before use.
-Large models are packed into single `.syn` bundles with the synaptix tools; see
-`docs/*_syn_bundle_2026.md`.
+Every model must be packed into a `.syn` bundle before use — see
+[Models: pack them into `.syn` first](#models-pack-them-into-syn-first).
 
 ## Documentation
 

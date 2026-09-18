@@ -113,7 +113,9 @@ fn run() -> std::result::Result<(), String> {
              (env: H3_ENCODER=<encoder.syn|dir>, H3_LORA=<turbo.safetensors>, \
              H3_PROMPT=..., H3_IMAGE=<first_frame>, \
              H3_REFS=<a.mp4:b.png:c.wav> — референсы Ref2VA по порядку, \
-             H3_REF_IMAGE_SIZE=match|max)",
+             H3_REF_IMAGE_SIZE=match|max, \
+             H3_QUANT_DIT / H3_QUANT_ENC=nvfp4|mxfp8|dense, \
+             H3_MEMORY_MODE=auto|precomputed_adaln|block_offload)",
             args[0]
         ));
     }
@@ -213,6 +215,8 @@ fn run() -> std::result::Result<(), String> {
             encoder_path,
             lora_path,
             quant_dit_idx,
+            quant_enc_idx,
+            memory_mode_idx,
             ..
         } => {
             mp.set(Some(model_path.clone()));
@@ -220,6 +224,20 @@ fn run() -> std::result::Result<(), String> {
             lora_path.set(lora.clone());
             if let Ok(q) = std::env::var("H3_QUANT_DIT") {
                 quant_dit_idx.set(match q.as_str() {
+                    "mxfp8" => 1,
+                    "dense" => 2,
+                    _ => 0,
+                });
+            }
+            if let Ok(m) = std::env::var("H3_MEMORY_MODE") {
+                memory_mode_idx.set(match m.as_str() {
+                    "precomputed_adaln" => 1,
+                    "block_offload" => 2,
+                    _ => 0,
+                });
+            }
+            if let Ok(q) = std::env::var("H3_QUANT_ENC") {
+                quant_enc_idx.set(match q.as_str() {
                     "mxfp8" => 1,
                     "dense" => 2,
                     _ => 0,

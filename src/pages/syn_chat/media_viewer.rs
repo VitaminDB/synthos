@@ -35,7 +35,7 @@ use syngui::widgets::overlay::PortalAnchor;
 use syngui::widgets::visual::StaticWaveform;
 use syngui::StyledWidget;
 
-use crate::components::video_player::{video_player, FullscreenCtl};
+use crate::components::video_player::{FullscreenCtl, VideoPlayerView};
 use crate::icons::{
     MI_CHEVRON_LEFT, MI_CHEVRON_RIGHT, MI_CLOSE, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE,
     MI_PLAY_ARROW, MI_ZOOM_IN, MI_ZOOM_OUT,
@@ -360,9 +360,20 @@ fn video_stage(
                 active,
                 toggle: Arc::new(move || set_full(full, !full.active.get_untracked())),
             };
-            Box::new(video_player(player, Some(fullscreen)))
+            Box::new(VideoPlayerView::file(player).fullscreen(fullscreen).build())
         }
         Err(e) => Box::new(error_stage(tr!("chat.media_viewer.video_open_error", error = e))),
+    }
+}
+
+/// С какого места открыть видео: карточка ленты кладёт сюда позицию, где
+/// её плеер встал на паузу перед «во весь экран», — ролик продолжается, а не
+/// начинается заново.
+static START_AT: std::sync::Mutex<Option<(String, f64)>> = std::sync::Mutex::new(None);
+
+pub fn start_video_at(sha: &str, t: f64) {
+    if let Ok(mut g) = START_AT.lock() {
+        *g = Some((sha.to_string(), t));
     }
 }
 
@@ -381,9 +392,15 @@ fn open_video(
     }
     release_video(slot);
     let path = blobs::source_path(a);
-    let player =
+    let mut player =
         VideoPlayer::open_with_hwaccel(&path.display().to_string(), HwAccel::platform_default())
             .map_err(|e| e.to_string())?;
+    let start = START_AT.lock().ok().and_then(|mut g| g.take());
+    if let Some((_, t)) = start.filter(|(sha, t)| *sha == a.sha256 && *t > 0.5) {
+        if let Err(e) = player.seek(t) {
+            log::warn!("[media-viewer] продолжить с {t:.1}s: {e}");
+        }
+    }
     let player = Arc::new(Mutex::new(player));
     if let Ok(mut guard) = slot.lock() {
         *guard = Some((a.sha256.clone(), player.clone()));

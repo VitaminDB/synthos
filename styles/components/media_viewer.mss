@@ -125,46 +125,6 @@ ToolButton.media-viewer-close:hover {
     box-shadow: none;
 }
 
-/* Классы плеера syngui (`video_player_view`) — теперь только в ленте чата
- * (`media_inline`); размер холста там задаёт `.chat-media-video`. */
-.ffmpeg-canvas {
-    background-color: #000000;
-}
-
-ToolButton.ffmpeg-play {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background-color: rgba(255, 255, 255, 0.12);
-    color: #FFFFFF;
-    icon-size: 20px;
-}
-
-ToolButton.ffmpeg-play:hover {
-    background-color: var(--primary);
-}
-
-.ffmpeg-time {
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 12px;
-}
-
-/* Под плеером всегда чёрный фон, а ресет ToolButton красит иконку в
- * `--text-muted` — в светлой теме серое на чёрном почти не видно. */
-ToolButton.ffmpeg-mute {
-    color: rgba(255, 255, 255, 0.72);
-}
-
-ToolButton.ffmpeg-mute:hover {
-    background-color: rgba(255, 255, 255, 0.12);
-    color: #FFFFFF;
-}
-
-.ffmpeg-player {
-    background-color: transparent;
-    padding: 8px 12px 10px 12px;
-}
-
 /* ── Аудио ──────────────────────────────────────────────────────────────── */
 
 .media-viewer-audio {

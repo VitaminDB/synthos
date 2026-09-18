@@ -1,6 +1,7 @@
-//! Плеер просмотрщика (`components::video_player`): кадр во всю сцену,
-//! панель у нижнего края поверх кадра, перемотка во всю ширину, ⏯ по центру;
-//! пауза пробелом, кликом по кадру и большой ⏵.
+//! Плеер приложения (`components::video_player`): кадр во всю сцену,
+//! панель у нижнего края поверх кадра, перемотка во всю ширину, ⏯ по центру,
+//! ±1 с по краям транспорта; пауза пробелом, кликом по кадру и большой ⏵;
+//! дорожка ползунка по центру его кружка.
 //!
 //! Зачем тест: прежний просмотрщик ставил плеер syngui холстом 1080×620 в
 //! сцену 1248×680 — кадр жался к левому краю, справа и снизу оставались
@@ -18,10 +19,11 @@ use std::sync::Arc;
 use syngui::core::sync::Mutex;
 use syngui::core::{Point, Rect};
 use syngui::input::Key;
+use syngui::render::DrawCommand;
 use syngui::testing::{click_at, press_key, TestHarness};
 use syngui::video::VideoPlayer;
 
-use synthos::components::video_player::video_player;
+use synthos::components::video_player::VideoPlayerView;
 
 const W: f32 = 1200.0;
 const H: f32 = 680.0;
@@ -65,7 +67,7 @@ fn player_fills_stage_and_controls_work() {
         VideoPlayer::open(fixture.to_str().unwrap()).expect("фикстура открывается"),
     ));
 
-    let mut h = TestHarness::new(Box::new(video_player(player.clone(), None)));
+    let mut h = TestHarness::new(Box::new(VideoPlayerView::file(player.clone()).build()));
     let engine = h.apply_mss(synthos::styles::styles());
     settle(&mut h, &engine);
 
@@ -105,7 +107,8 @@ fn player_fills_stage_and_controls_work() {
     );
     assert!(seek.origin.y >= controls.origin.y && bottom(seek) <= bottom(controls));
 
-    // ⏯ строго по центру, время слева, громкость справа, всё — в панели.
+    // ⏯ строго по центру, время слева, всё — в панели. Звука у фикстуры нет —
+    // нет и кнопки звука с громкостью.
     let play = one(&h, "vp-play");
     assert!(
         (center(play).x - W / 2.0).abs() < 2.0,
@@ -114,17 +117,70 @@ fn player_fills_stage_and_controls_work() {
     assert!(play.origin.y > bottom(seek), "⏯ под ползунком");
     let time = one(&h, "vp-time");
     assert!(time.origin.x < 40.0, "время слева: {time:?}");
-    let volume = one(&h, "vp-volume");
-    assert!(right(volume) > W - 60.0, "громкость справа: {volume:?}");
-    for (name, r) in [("⏯", play), ("время", time), ("громкость", volume)] {
+    for (name, r) in [("⏯", play), ("время", time)] {
         assert!(
             bottom(r) <= H + 0.5 && r.origin.y >= controls.origin.y,
             "{name} {r:?} вне панели"
         );
     }
+    assert!(
+        h.find_by_class("vp-volume").is_empty(),
+        "без звука нет громкости"
+    );
 
-    // Без владельца «во весь экран» кнопки нет: 3 кнопки транспорта/звука.
-    assert_eq!(h.find_by_class("vp-btn").len(), 3, "⟲10, 10⟳ и звук");
+    // Транспорт слева направо: −1, ⟲10, ⏯, 10⟳, +1 — шаги по секунде по краям.
+    let mut btns: Vec<Rect> = h
+        .find_by_class("vp-btn")
+        .into_iter()
+        .map(|id| h.element_bounds(id))
+        .collect();
+    btns.sort_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+    assert_eq!(btns.len(), 4, "−1, ⟲10, 10⟳, +1: {btns:?}");
+    assert!(right(btns[1]) <= play.origin.x && right(play) <= btns[2].origin.x);
+    let steps: Vec<Rect> = h
+        .find_by_class("vp-step")
+        .into_iter()
+        .map(|id| h.element_bounds(id))
+        .collect();
+    assert_eq!(steps.len(), 2, "подписи −1 и +1");
+    for step in &steps {
+        assert!(
+            btns.iter()
+                .any(|b| (b.origin.x - step.origin.x).abs() < 0.5),
+            "подпись {step:?} под кнопкой"
+        );
+    }
+    assert!(
+        steps
+            .iter()
+            .any(|s| (s.origin.x - btns[0].origin.x).abs() < 0.5)
+            && steps
+                .iter()
+                .any(|s| (s.origin.x - btns[3].origin.x).abs() < 0.5),
+        "±1 — крайние кнопки"
+    );
+
+    // Дорожка ползунка по центру его кружка (раньше в syngui она стояла на
+    // `y + 10` при любой высоте и уезжала на 3 px вниз).
+    let list = h.paint();
+    let seek_mid = seek.origin.y + seek.size.height / 2.0;
+    let track = list
+        .iter_all_commands()
+        .filter_map(|c| match c {
+            DrawCommand::Rect { rect, .. } => Some(*rect),
+            _ => None,
+        })
+        .find(|r| {
+            (r.size.width - (seek.size.width - 16.0)).abs() < 0.5
+                && r.size.height < 6.0
+                && r.origin.y >= seek.origin.y
+                && r.origin.y <= bottom(seek)
+        })
+        .expect("дорожка перемотки в display list");
+    assert!(
+        (track.origin.y + track.size.height / 2.0 - seek_mid).abs() < 0.3,
+        "дорожка {track:?} не по центру ползунка {seek:?}"
+    );
 
     // Играет — большой ⏵ нет. Пробел — пауза и большой ⏵ по центру кадра.
     assert!(!paused(&player), "фикстура стартует сразу");
@@ -156,9 +212,25 @@ fn player_fills_stage_and_controls_work() {
     settle(&mut h, &engine);
     assert!(!paused(&player), "⏯ запускает");
 
-    // Пустое место панели (между временем и ⏯) — не кадр: паузы нет.
+    // Пустое место панели (между временем и транспортом) — не кадр: паузы нет.
     let controls = one(&h, "vp-controls");
     h.send_events(&click_at(Point::new(W * 0.3, bottom(controls) - 20.0)));
     settle(&mut h, &engine);
     assert!(!paused(&player), "клик по фону панели не ставит паузу");
+
+    // ±1 с: на паузе +1 ставит на секунду вперёд, −1 — обратно.
+    h.send_events(&press_key(Key::Space));
+    settle(&mut h, &engine);
+    assert!(paused(&player));
+    let plus = btns[3];
+    h.send_events(&click_at(center(plus)));
+    settle(&mut h, &engine);
+    let pos = |p: &Arc<Mutex<VideoPlayer>>| p.lock().map(|p| p.position_sec()).unwrap();
+    assert!((pos(&player) - 1.0).abs() < 0.15, "+1 с: {}", pos(&player));
+    let minus = btns[0];
+    h.send_events(&click_at(center(minus)));
+    settle(&mut h, &engine);
+    // Вторая перемотка подряд придержана троттлингом — её доводит тикер.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(pos(&player) < 0.15, "−1 с: {}", pos(&player));
 }

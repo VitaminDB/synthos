@@ -1,19 +1,21 @@
+//! Кадры со звуком в ноде (сохранение H3): общий плеер приложения
+//! (`components::video_player`, компактный) и под ним стерео-волна в такт
+//! позиции плеера, строка «кадр N/M · fps».
+
 use std::sync::Arc;
 
 use syngui::audio::AudioBuffer;
 use syngui::prelude::*;
-use syngui::widgets::visual::{FramesView, ImageFit};
-use syngui::widgets::{Column, Row};
+use syngui::widgets::Column;
+
+use crate::components::video_player::{FramesSource, MediaSource, VideoPlayerView};
 
 use super::stereo_waveform::StereoWaveform;
-use super::timecode::fmt_mmss;
-use super::transport::{node_transport_buttons, TransportState};
 
 pub struct AvScrubber {
     frames: Option<Arc<Vec<Arc<syngui::video::VideoFrame>>>>,
     audio: Option<Arc<AudioBuffer>>,
     fps: f32,
-    preview_class: &'static str,
     wave_class: &'static str,
     wave_height: f32,
 }
@@ -30,7 +32,6 @@ impl AvScrubber {
             frames: None,
             audio: None,
             fps: 24.0,
-            preview_class: "h3-preview-canvas",
             wave_class: "h3-stereo-wave",
             wave_height: 56.0,
         }
@@ -44,11 +45,6 @@ impl AvScrubber {
 
     pub fn audio(mut self, a: impl Into<Option<Arc<AudioBuffer>>>) -> Self {
         self.audio = a.into();
-        self
-    }
-
-    pub fn preview_class(mut self, c: &'static str) -> Self {
-        self.preview_class = c;
         self
     }
 
@@ -68,31 +64,30 @@ impl AvScrubber {
         };
         let total_frames = frames.len().max(1);
         let fps = self.fps;
-        let duration = total_frames as f64 / fps as f64;
-
-        let playing = use_signal(false);
+        let source = FramesSource::shared(&frames, fps, self.audio.clone());
+        let duration = source.duration().max(f64::EPSILON);
+        // Секунды плеера: по ним идут волна и номер кадра.
         let position = use_signal(0.0_f32);
-        let transport = use_signal(TransportState::Idle);
 
         let preview: Box<dyn Widget> = Box::new(
-            FramesView::new(frames, fps)
-                .fit(ImageFit::Contain)
-                .playing_signal(playing)
-                .position_signal(position)
-                .loop_playback(true)
-                .class(self.preview_class),
+            DecoratedBox::new().class("vp-node-preview").child(
+                VideoPlayerView::new(source)
+                    .compact(true)
+                    .position_signal(position)
+                    .build(),
+            ),
         );
 
         let audio = self.audio.clone();
         let wave_class = self.wave_class;
         let wave_height = self.wave_height;
         let wave: Box<dyn Widget> = Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
-            let p = position.get();
+            let progress = (position.get() as f64 / duration).clamp(0.0, 1.0) as f32;
             match &audio {
                 Some(a) => vec![Box::new(
                     StereoWaveform::new()
                         .pcm(a.clone())
-                        .progress(p)
+                        .progress(progress)
                         .height(wave_height)
                         .into_canvas()
                         .class(wave_class),
@@ -101,15 +96,12 @@ impl AvScrubber {
             }
         }));
 
-        let clock: Box<dyn Widget> = Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
-            let p = position.get().clamp(0.0, 1.0);
-            let cur = p as f64 * duration;
-            let frame_idx = ((p * total_frames as f32) as usize).min(total_frames - 1);
+        let info: Box<dyn Widget> = Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            let t = position.get() as f64;
+            let frame_idx = ((t * fps as f64) as usize).min(total_frames - 1);
             vec![Box::new(
                 Text::new(format!(
-                    "{} / {}  ·  {} {}/{}  ·  {:.0} fps",
-                    fmt_mmss(cur),
-                    fmt_mmss(duration),
+                    "{} {}/{}  ·  {:.0} fps",
                     tr!("nodes.unit.frame"),
                     frame_idx + 1,
                     total_frames,
@@ -119,22 +111,7 @@ impl AvScrubber {
             )]
         }));
 
-        let buttons = node_transport_buttons(
-            transport,
-            move || {
-                let now = !playing.get_untracked();
-                playing.set(now);
-                transport.set(if now { TransportState::Playing } else { TransportState::Paused });
-            },
-            move || {
-                playing.set(false);
-                position.set(0.0);
-                transport.set(TransportState::Idle);
-            },
-        );
-
-        let bar: Box<dyn Widget> = Box::new(Row::new().gap(8.0).children(vec![buttons, clock]));
-        Box::new(Column::new().gap(4.0).children(vec![preview, wave, bar]))
+        Box::new(Column::new().gap(4.0).children(vec![preview, wave, info]))
     }
 }
 

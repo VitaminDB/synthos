@@ -5,10 +5,10 @@ use syngui::async_runtime::run_on_main_thread;
 use syngui::audio::AudioBuffer;
 use syngui::layout::CrossAxisAlignment;
 use syngui::prelude::*;
-use syngui::widgets::visual::FramesView;
 use syngui::widgets::Column;
 use synaptix_video_minimax_h3 as h3;
 
+use crate::components::video_player::frames_preview;
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{
@@ -140,11 +140,7 @@ pub fn vae_body(node: &NodeInstance) -> Box<dyn Widget> {
     let preview = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let _ = preview_version.get();
         match frames.lock().ok().and_then(|g| g.clone()) {
-            Some(fr) => vec![Box::new(
-                FramesView::new(fr.frames.clone(), fr.fps as f32)
-                    .fit(syngui::widgets::ImageFit::Contain)
-                    .class("h3-preview-canvas"),
-            )],
+            Some(fr) => vec![frames_preview(&fr.frames, fr.fps as f32, None)],
             None => vec![],
         }
     });

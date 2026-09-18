@@ -23,8 +23,9 @@ use syngui::mgui;
 use syngui::prelude::*;
 use syngui::video::{HwAccel, VideoPlayer};
 use syngui::widgets::containers::GestureDetector;
-use syngui::widgets::visual::{video_player_view, StaticWaveform};
+use syngui::widgets::visual::StaticWaveform;
 
+use crate::components::video_player::{FullscreenCtl, VideoPlayerView};
 use crate::context::AppCtx;
 use crate::icons::{MI_DOWNLOAD, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW};
 use crate::syn_chat::attach::{self, blobs};
@@ -45,9 +46,16 @@ pub fn media_card<F>(a: &MsgAttachment, on_open: F) -> Box<dyn Widget>
 where
     F: Fn() + Send + Sync + 'static,
 {
-    let on_open = Arc::new(on_open);
+    let mut on_open: Arc<dyn Fn() + Send + Sync> = Arc::new(on_open);
     let stage: Box<dyn Widget> = match a.kind {
-        AttachmentKind::Video => video_stage(a),
+        AttachmentKind::Video => {
+            // Плеер карточки и «во весь экран» (кнопка на кадре, двойной клик,
+            // ⛶ в строке действий) — одна точка: карточка встаёт на паузу, а
+            // просмотрщик продолжает ролик с того же места.
+            let player: VideoSlot = Arc::new(Mutex::new(None));
+            on_open = open_from_card(a, player.clone(), on_open);
+            video_stage(a, player, on_open.clone())
+        }
         AttachmentKind::Audio => audio_stage(a),
         _ => image_stage(a, {
             let on_open = on_open.clone();
@@ -104,16 +112,42 @@ fn actions_row(a: &MsgAttachment, on_open: Arc<dyn Fn() + Send + Sync>) -> Box<d
     )
 }
 
-/// Видео: постер с кнопкой ⏵, по нажатию — настоящий плеер на том же месте.
-/// Ленивость намеренная: декодер на каждое видео в ленте съел бы память и
-/// GPU, а большинство роликов пользователь не переоткрывает.
-fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
+/// Плеер карточки: создаётся по первому ⏵ и живёт вне реактивного дерева.
+type VideoSlot = Arc<Mutex<Option<Arc<Mutex<VideoPlayer>>>>>;
+
+/// «Во весь экран» из карточки: её плеер — на паузу, позиция — в
+/// просмотрщик, затем штатное открытие просмотрщика.
+fn open_from_card(
+    a: &MsgAttachment,
+    player: VideoSlot,
+    on_open: Arc<dyn Fn() + Send + Sync>,
+) -> Arc<dyn Fn() + Send + Sync> {
+    let sha = a.sha256.clone();
+    Arc::new(move || {
+        let current = player.lock().ok().and_then(|g| g.clone());
+        if let Some(p) = current {
+            if let Ok(mut p) = p.lock() {
+                p.pause();
+                super::media_viewer::start_video_at(&sha, p.position_sec());
+            }
+        }
+        on_open();
+    })
+}
+
+/// Видео: постер с кнопкой ⏵, по нажатию — плеер (`components::video_player`,
+/// компактный) на том же месте. Ленивость намеренная: декодер на каждое видео
+/// в ленте съел бы память и GPU, а большинство роликов пользователь не
+/// переоткрывает.
+fn video_stage(
+    a: &MsgAttachment,
+    player: VideoSlot,
+    on_open: Arc<dyn Fn() + Send + Sync>,
+) -> Box<dyn Widget> {
     let started = use_signal(false);
     let path = blobs::source_path(a).display().to_string();
     let poster = blobs::preview_path(a).map(|p| p.display().to_string());
     let duration = (a.duration_ms > 0).then(|| attach::format_duration(a.duration_ms));
-    // Плеер создаём один раз и держим вне реактивного дерева.
-    let player: Arc<Mutex<Option<Arc<Mutex<VideoPlayer>>>>> = Arc::new(Mutex::new(None));
 
     Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
         if !started.get() {
@@ -173,12 +207,19 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
             }
         }
         let p = guard.as_ref().expect("плеер создан").clone();
-        // Не `chat-media-stage`: её фиксированная высота под постер обрезала
-        // бы полосу управления, идущую под кадром.
+        let open = on_open.clone();
+        let fullscreen = FullscreenCtl {
+            active: false,
+            toggle: Arc::new(move || open()),
+        };
+        // Кадр на месте постера (та же высота), панель — поверх него.
         vec![Box::new(
-            DecoratedBox::new()
-                .class("chat-media-video")
-                .child(video_player_view(p)),
+            DecoratedBox::new().class("chat-media-video").child(
+                VideoPlayerView::file(p)
+                    .compact(true)
+                    .fullscreen(fullscreen)
+                    .build(),
+            ),
         )]
     }))
 }

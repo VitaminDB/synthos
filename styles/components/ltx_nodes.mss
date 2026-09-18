@@ -24,22 +24,6 @@
     width: 380px;
 }
 
-/* Превью кадров в VAE Decode: тёмный канвас со скруглением, мягкая тень,
- * hover-подсветка рамки (подсказка «кликни — play/pause»). */
-.ltx-preview-canvas {
-    width: 360px;
-    height: 202px;
-    background-color: #0A0C12;
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: rgba(76, 174, 235, 0.25);
-    transition: border-color 180ms ease-out;
-}
-
-.ltx-preview-canvas:hover {
-    border-color: rgba(76, 174, 235, 0.75);
-}
-
 /* Прогресс денойза/декода: тонкая бирюзовая полоса на тёмном треке —
  * в стилистике остальных input-виджетов ноды (см. .node-input-slider). */
 .ltx-progress {

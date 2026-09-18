@@ -55,14 +55,15 @@ fn entry(name: &str, done: u64, total: u64, status: DlStatus, speed: f64) -> (St
     )
 }
 
+/// 12 файлов в `FL2VA/audio_vae`, 2 в `vae` и README в корне.
 fn files() -> Vec<HfSibling> {
-    (0..12)
-        .map(|i| HfSibling {
-            rfilename: format!("FL2VA/audio_vae/shard-{i:02}.safetensors"),
-            size: Some(100 * MB),
-            lfs: None,
-        })
-        .collect()
+    let file = |name: String| HfSibling { rfilename: name, size: Some(100 * MB), lfs: None };
+    let mut v: Vec<HfSibling> =
+        (0..12).map(|i| file(format!("FL2VA/audio_vae/shard-{i:02}.safetensors"))).collect();
+    v.push(file("vae/config.json".into()));
+    v.push(file("README.md".into()));
+    v.push(file("vae/model.safetensors".into()));
+    v
 }
 
 /// Контекст с репозиторием из 12 файлов: один скачан, один качается (на 25 %),
@@ -117,6 +118,13 @@ fn dock_summarises_all_downloads_and_expands_into_queue_and_settings() {
     assert!((b.origin.y + b.size.height - 800.0).abs() < 0.5, "панель прижата к низу: {b:?}");
     assert!(b.size.height < 70.0, "свёрнутая панель — одна строка: {}", b.size.height);
     assert!(h.find_by_class("hf-dock-row").is_empty(), "очередь свёрнута");
+    // Сводка настроек — в одну строку (раньше подпись переносилась).
+    let chip_text = h.element_bounds(h.find_by_class("hf-dock-settings-chip-text")[0]);
+    assert!(chip_text.size.height < 20.0, "подпись чипа перенеслась: {chip_text:?}");
+    // Пилюля обнимает подпись: иконка 14 + зазор 6 + поля 12+12 (в харнессе
+    // подпись — сам ключ перевода, поэтому сверяем с её же шириной).
+    let chip = h.element_bounds(h.find_by_class("hf-dock-settings-chip")[0]);
+    assert!((chip.size.width - (chip_text.size.width + 44.0)).abs() < 1.0, "{chip:?} / {chip_text:?}");
 
     // 125 из 300 МБ → заливка ≈ 41,7 % полосы.
     let rail = h.element_bounds(h.find_by_class("hf-dock-rail")[0]).size.width;
@@ -198,17 +206,35 @@ fn files_panel_switches_between_list_and_icon_grid() {
         );
     }
 
-    // ── Список: строка на файл ────────────────────────────────────────
-    assert_eq!(h.find_by_class("hf-file-row").len(), 12);
+    // ── Список: строка на файл, файлы сгруппированы по каталогам ──────
+    assert_eq!(h.find_by_class("hf-file-row").len(), 15);
     assert!(h.find_by_class("hf-file-tile").is_empty());
+    let groups = detail_panel::group_by_dir(&files());
+    let dirs: Vec<&str> = groups.iter().map(|(d, _)| d.as_str()).collect();
+    assert_eq!(dirs, ["", "FL2VA/audio_vae", "vae"], "корень первым, каталоги по алфавиту");
+    assert_eq!(groups[2].1.len(), 2, "файлы каталога собраны вместе, хоть в API шли вразбивку");
+    let headers = h.find_by_class("hf-folder-header");
+    assert_eq!(headers.len(), 3, "заголовок на каталог");
+    for &hd in &headers {
+        assert!(right_edge(&h, hd) <= W + 0.5, "заголовок каталога в пределах панели");
+    }
 
     // ── Значки: плитки одной ширины, в несколько колонок и рядов ──────
     ctx.files_view_mode.set(FilesViewMode::Icons);
     settle(&mut h, &engine, W, 900.0);
     assert!(h.find_by_class("hf-file-row").is_empty());
+    assert_eq!(h.find_by_class("hf-folder-header").len(), 3, "каталоги и в значках");
     let tiles = h.find_by_class("hf-file-tile");
-    assert_eq!(tiles.len(), 12);
-    let bounds: Vec<_> = tiles.iter().map(|&t| h.element_bounds(t)).collect();
+    assert_eq!(tiles.len(), 15);
+    // Плитки первого каталога с файлами-шардами — под его заголовком.
+    let headers = h.find_by_class("hf-folder-header");
+    let shard_header = h.element_bounds(headers[1]);
+    let bounds: Vec<_> = tiles
+        .iter()
+        .map(|&t| h.element_bounds(t))
+        .filter(|b| b.origin.y > shard_header.origin.y && b.origin.y < h.element_bounds(headers[2]).origin.y)
+        .collect();
+    assert_eq!(bounds.len(), 12, "12 плиток между заголовками FL2VA/audio_vae и vae");
     let first_row = bounds.iter().filter(|b| (b.origin.y - bounds[0].origin.y).abs() < 0.5).count();
     assert_eq!(first_row, 3, "при ширине {W} в ряд встаёт три плитки по 148 px");
     for b in &bounds {
@@ -218,9 +244,19 @@ fn files_panel_switches_between_list_and_icon_grid() {
     // Шире панель — больше колонок: число следует за разделителем.
     settle(&mut h, &engine, 900.0, 900.0);
     let tiles = h.find_by_class("hf-file-tile");
-    let y0 = h.element_bounds(tiles[0]).origin.y;
+    let y0 = h.element_bounds(tiles[1]).origin.y;
     let first_row = tiles.iter().filter(|&&t| (h.element_bounds(t).origin.y - y0).abs() < 0.5).count();
     assert_eq!(first_row, 5);
+
+    // ── Свёрнутый каталог прячет свои файлы, заголовок остаётся ───────
+    ctx.collapsed_dirs.update(|s| {
+        s.insert(format!("{REPO}/FL2VA/audio_vae"));
+    });
+    settle(&mut h, &engine, 900.0, 900.0);
+    assert_eq!(h.find_by_class("hf-file-tile").len(), 3);
+    assert_eq!(h.find_by_class("hf-folder-header").len(), 3);
+    ctx.collapsed_dirs.update(|s| s.clear());
+    settle(&mut h, &engine, 900.0, 900.0);
 
     // Прогресс качающегося файла виден и на плитке.
     assert_eq!(h.find_by_class("hf-progress-bar").len(), 1);

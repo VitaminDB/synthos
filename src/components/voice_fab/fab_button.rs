@@ -1,38 +1,103 @@
-//! Круглая FAB-кнопка в правом нижнем углу.
+//! Круглая FAB-кнопка: по умолчанию в правом нижнем углу, зажав мышь, её
+//! можно перетащить куда угодно.
 //!
-//! Реализована через `Portal::BottomEnd { 24, 24 }` с `is_open=always_true`,
-//! `modal=false`, `backdrop=false` — Portal только позиционирует виджет в
-//! viewport-координатах, не давая родительскому layout'у влиять на её
-//! положение. Сама кнопка — `ToolButton(MI_MIC)` с MSS-классом `.fab-voice`.
+//! Живёт отдельным слоем верхнего `Stack` оболочки: `Column` на всё окно,
+//! прижимающий ребёнка к правому-нижнему углу, а инлайн-`padding` — отступы
+//! кнопки от этого угла (`VoiceFabCtx.fab_margin`). Отступы от угла, а не
+//! координаты: при смене размера окна и maximize кнопка остаётся у своего
+//! края. `Column` прозрачен для hit-test — слой не крадёт клики у страницы.
+//! Раньше кнопку ставил `Portal::BottomEnd`; у Portal якорь фиксирован, и она
+//! перекрывала то, что страница кладёт в тот же угол (кнопку «Пауза» панели
+//! загрузок HuggingFace).
 //!
-//! Реактивный класс переключается между:
+//! Перенос ведёт [`DragHandle`]: нажатие без движения — щелчок (открыть окно
+//! распознавания), с движением — кнопка едет за курсором. Позиция пишется в
+//! конфиг по отпусканию (`fab_margin_saved`), а не на каждое смещение.
+//!
+//! Реактивный класс самой кнопки переключается между:
 //! - `.fab-voice-corner` — idle (с keyframe-пульсацией shadow);
 //! - `.fab-voice-corner opening` — окно распознавания открыто (scale-out + fade
 //!   в пользу центральной FAB-кнопки в `.voice-overlay-card`);
 //! - `.fab-voice-corner recording` — запись идёт (когда панель закрыта, такого
 //!   состояния практически не бывает — мы открываем панель сразу).
 
+use syngui::core::{Point, Rect};
+use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::signal::use_signal;
-use syngui::widget::styled::StyledWidget;
-use syngui::widgets::overlay::portal::{Portal, PortalAnchor};
+use syngui::widget::styled::{StyledWidget, WidgetExt};
 
+use crate::components::drag_handle::{DragHandle, DragPhase};
 use crate::context::AppCtx;
 use crate::icons::MI_MIC;
 
-pub fn view() -> impl Widget {
-    // FAB всегда виден — отдельный сигнал, который никто извне не меняет.
-    let always_open = use_signal(true);
+/// Отступы по умолчанию: (справа, снизу).
+pub const FAB_DEFAULT_MARGIN: (f32, f32) = (16.0, 16.0);
+/// Ближе к краю окна кнопку не подвести.
+const FAB_EDGE: f32 = 4.0;
 
-    Portal::new()
-        .is_open(always_open)
-        .anchor(PortalAnchor::BottomEnd {
-            margin_bottom: 16.0,
-            margin_right: 16.0,
-        })
-        .modal(false)
-        .backdrop(false)
-        .child(reactive_fab())
+/// Новые отступы от правого-нижнего угла: `start` — отступы на момент нажатия,
+/// `bounds` — границы кнопки тогда же, `delta` — смещение курсора. Кнопка не
+/// выходит за окно: влево/вверх она может уйти не дальше своего расстояния до
+/// левого/верхнего края, вправо/вниз — до `FAB_EDGE`.
+pub fn dragged_margin(start: (f32, f32), bounds: Rect, delta: Point) -> (f32, f32) {
+    let axis = |start: f32, origin: f32, delta: f32| {
+        let max = (start + origin - FAB_EDGE).max(FAB_EDGE);
+        (start - delta).clamp(FAB_EDGE, max)
+    };
+    (axis(start.0, bounds.origin.x, delta.x), axis(start.1, bounds.origin.y, delta.y))
+}
+
+pub fn view() -> impl Widget {
+    let voice = use_context::<AppCtx>().voice;
+    layer(voice.fab_margin, voice.fab_margin_saved, open_panel_and_record, || {
+        Box::new(Stack::new().clip(false).child(reactive_fab()))
+    })
+}
+
+/// Слой с перетаскиваемой кнопкой. Отдельно от `AppCtx` — чтобы собрать в
+/// тесте: `margin` меняется вживую, `saved` — по отпусканию.
+pub fn layer(
+    margin: RwSignal<(f32, f32)>,
+    saved: RwSignal<(f32, f32)>,
+    on_click: impl Fn() + Send + Sync + Clone + 'static,
+    button: impl Fn() -> Box<dyn Widget> + Send + Sync + 'static,
+) -> impl Widget {
+    // Отступы на момент нажатия. Сигнал, а не поле замыкания: слой
+    // пересобирается на каждое смещение, и замыкание каждый раз новое.
+    let drag_origin = use_signal(None::<(f32, f32)>);
+    // `Stack` — лишь носитель реактивного замыкания; как и `Column`, прозрачен
+    // для hit-test.
+    Stack::new().clip(false).child(move || {
+        let (right, bottom) = margin.get();
+        let handle = DragHandle::new(Stack::new().clip(false).children(vec![button()]))
+            .on_click(on_click.clone())
+            .on_drag(move |phase| match phase {
+                DragPhase::Move { bounds, delta } => {
+                    let start = drag_origin.get_untracked().unwrap_or_else(|| {
+                        let now = margin.get_untracked();
+                        drag_origin.set(Some(now));
+                        now
+                    });
+                    margin.set(dragged_margin(start, bounds, delta));
+                }
+                DragPhase::End => {
+                    drag_origin.set(None);
+                    saved.set(margin.get_untracked());
+                }
+            });
+        Column::new()
+            .main_axis_alignment(MainAxisAlignment::End)
+            .cross_axis_alignment(CrossAxisAlignment::End)
+            .child(handle)
+            // Сначала `style`, потом `class`: у `Column` есть свой `class()`, и
+            // в обратном порядке класс остался бы внутри `Column`, а обёртка
+            // `StyledWidget` при первом же обновлении сбросила бы его пустым
+            // списком — слой схлопывался до кнопки в левом верхнем углу.
+            .style("padding-right", StyleValue::px(right))
+            .style("padding-bottom", StyleValue::px(bottom))
+            .class("fab-voice-layer")
+    })
 }
 
 /// Реактивный wrapper: переключает MSS-класс по состоянию voice.panel_open

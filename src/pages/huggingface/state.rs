@@ -308,6 +308,9 @@ pub struct HuggingFaceCtx {
     /// Список или плитки в панели файлов. Синхронизирован с
     /// `AppConfig.hf_files_view`.
     pub files_view_mode: RwSignal<FilesViewMode>,
+    /// Свёрнутые каталоги панели файлов, ключ `{repo_id}/{dir}`. На сессию:
+    /// у другого репозитория другие каталоги, хранить на диске нечего.
+    pub collapsed_dirs: RwSignal<HashSet<String>>,
     /// Нижняя панель загрузок развёрнута (очередь + настройки) или свёрнута до
     /// одной строки со сводкой. Синхронизирован с `AppConfig.hf_dock_expanded`.
     pub dock_expanded: RwSignal<bool>,
@@ -383,6 +386,7 @@ impl HuggingFaceCtx {
             convert_active: use_signal(None),
             convert_progress: use_signal(0.0),
             selected_files: use_signal(HashSet::new()),
+            collapsed_dirs: use_signal(HashSet::new()),
             files_view_mode: use_signal(FilesViewMode::from_config(&cfg.hf_files_view)),
             dock_expanded: use_signal(cfg.hf_dock_expanded),
         }

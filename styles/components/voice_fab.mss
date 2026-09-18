@@ -71,3 +71,11 @@
 .fab-voice-center:hover {
     transform: scale(1.05);
 }
+
+/* Слой угловой FAB-кнопки: на всё окно, сам ничего не рисует и клики
+ * пропускает; отступы кнопки от правого-нижнего угла — инлайн-padding
+ * (`voice_fab::fab_button`). */
+.fab-voice-layer {
+    width: 100%;
+    height: 100%;
+}

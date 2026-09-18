@@ -17,8 +17,10 @@
 
 use syngui::mgui;
 use syngui::mss::StyleValue;
+use syngui::input::CursorIcon;
 use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
+use syngui::widgets::GestureDetector;
 use syngui::widgets::containers::IntoWidget;
 use syngui::widgets::input::{SpinBox, Toggle};
 
@@ -179,18 +181,27 @@ fn settings_chip() -> impl Widget {
             segments = ctx.segments_per_file.get(),
             speed = speed
         );
-        vec![Box::new(
-            Tooltip::new(
-                Button::new(label)
-                    .leading_icon(MI_TUNE)
-                    .on_click(|| {
-                        let ctx = use_context::<HuggingFaceCtx>();
-                        ctx.dock_expanded.set(!ctx.dock_expanded.get_untracked());
-                    })
-                    .class("hf-dock-chip"),
-                tr!("hf.dock.chip.tooltip"),
-            ),
-        )]
+        // Не `Button`: тот считает ширину подписи обычным начертанием, рисует
+        // заданным в MSS — длинная подпись с `font-weight: 500` не помещалась
+        // в собственную кнопку и переносилась. `Text::max_lines(1)` не
+        // переносится никогда.
+        let chip = DecoratedBox::new().class("hf-dock-settings-chip").child(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(Icon::new(MI_TUNE).class("hf-dock-settings-chip-icon"))
+                .child(Text::new(label).max_lines(1).class("hf-dock-settings-chip-text")),
+        );
+        vec![Box::new(Tooltip::new(
+            GestureDetector::new()
+                .cursor(CursorIcon::Pointer)
+                .on_click(|| {
+                    let ctx = use_context::<HuggingFaceCtx>();
+                    ctx.dock_expanded.set(!ctx.dock_expanded.get_untracked());
+                })
+                .child(chip),
+            tr!("hf.dock.chip.tooltip"),
+        ))]
     })
 }
 

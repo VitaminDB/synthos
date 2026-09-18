@@ -5,15 +5,18 @@
 
 use syngui::mgui;
 use syngui::mss::{MssColor, StyleValue};
+use syngui::input::CursorIcon;
 use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
+use syngui::widgets::GestureDetector;
 use syngui::widgets::input::Checkbox;
 use syngui::widgets::visual::MarkdownView;
 
 use crate::context::AppCtx;
 use crate::icons::{
     MI_AUTO_AWESOME, MI_CHECK, MI_CLOSE, MI_CLOUD_DOWNLOAD, MI_CODE, MI_DATA_OBJECT,
-    MI_DESCRIPTION, MI_DOWNLOAD, MI_GRID_VIEW, MI_HOURGLASS_TOP, MI_IMAGE,
+    MI_CHEVRON_RIGHT, MI_DESCRIPTION, MI_DOWNLOAD, MI_EXPAND_MORE, MI_FOLDER, MI_FOLDER_OPEN,
+    MI_GRID_VIEW, MI_HOURGLASS_TOP, MI_IMAGE,
     MI_INSERT_DRIVE_FILE, MI_MEMORY, MI_MOVIE, MI_PAUSE, MI_PLAY_ARROW, MI_REPORT, MI_STOP,
     MI_VERIFIED_USER, MI_VIEW_LIST,
 };
@@ -226,33 +229,53 @@ fn files_tab(repo_id: String) -> impl Widget {
             )];
         }
         let toolbar = files_toolbar(rid.clone(), d.siblings.clone());
-        let rows = d.siblings.iter().map(|sibling| {
-            let key = format!("{}/{}", rid, sibling.rfilename);
-            (sibling.clone(), downloads.get(&key).cloned())
-        });
-        let scroll: Box<dyn Widget> = match ctx.files_view_mode.get() {
-            FilesViewMode::List => {
-                let mut col = Column::new()
-                    .gap(8.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch);
-                for (sibling, dl) in rows {
-                    col = col.child(file_row(rid.clone(), sibling, dl));
-                }
-                Box::new(files_scroll(col))
+        // Файлы сгруппированы по каталогам: у большого репозитория (FL2VA/…,
+        // transformer/…, vae/…) плоский список из сотен строк нечитаем, а в
+        // значках имя без каталога неоднозначно (`config.json` в каждой папке).
+        let mode = ctx.files_view_mode.get();
+        let collapsed = ctx.collapsed_dirs.get();
+        let groups = group_by_dir(&d.siblings);
+        let flat = groups.len() == 1 && groups[0].0.is_empty();
+        let mut col = Column::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch);
+        for (dir, files) in groups {
+            let fold_key = format!("{rid}/{dir}");
+            let folded = collapsed.contains(&fold_key);
+            if !flat {
+                col = col.child(folder_header(rid.clone(), dir.clone(), &files, &downloads, folded));
             }
-            // Плитки фиксированной ширины с переносом: число колонок следует
-            // за шириной панели, которую пользователь двигает разделителем.
-            FilesViewMode::Icons => Box::new(files_scroll(
-                Flex::new()
-                    .direction(FlexDirection::Row)
-                    .wrap()
-                    .gap(8.0)
-                    .cross_axis_alignment(CrossAxisAlignment::Start)
-                    .children(rows.map(|(sibling, dl)| {
-                        Box::new(file_tile(rid.clone(), sibling, dl)) as Box<dyn Widget>
-                    })),
-            )),
-        };
+            if folded {
+                continue;
+            }
+            let rows = files.into_iter().map(|sibling| {
+                let key = format!("{}/{}", rid, sibling.rfilename);
+                let dl = downloads.get(&key).cloned();
+                (sibling, dl)
+            });
+            match mode {
+                FilesViewMode::List => {
+                    for (sibling, dl) in rows {
+                        col = col.child(file_row(rid.clone(), sibling, dl));
+                    }
+                }
+                // Плитки фиксированной ширины с переносом: число колонок
+                // следует за шириной панели, которую двигают разделителем.
+                FilesViewMode::Icons => {
+                    col = col.child(
+                        Flex::new()
+                            .direction(FlexDirection::Row)
+                            .wrap()
+                            .gap(8.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Start)
+                            .children(rows.map(|(sibling, dl)| {
+                                Box::new(file_tile(rid.clone(), sibling, dl)) as Box<dyn Widget>
+                            })),
+                    );
+                }
+            }
+        }
+        let scroll: Box<dyn Widget> = Box::new(files_scroll(col));
         let body = mgui! {
             Column::new()
                 .gap(0.0)
@@ -263,6 +286,115 @@ fn files_tab(repo_id: String) -> impl Widget {
         };
         vec![Box::new(body)]
     })
+}
+
+/// Каталог файла внутри репозитория (`""` — корень) и его имя без каталога.
+fn split_dir(rfilename: &str) -> (&str, &str) {
+    rfilename.rsplit_once('/').unwrap_or(("", rfilename))
+}
+
+/// Файлы по каталогам: корень первым, дальше каталоги по алфавиту; порядок
+/// файлов внутри каталога — как отдал API.
+pub fn group_by_dir(siblings: &[HfSibling]) -> Vec<(String, Vec<HfSibling>)> {
+    let mut groups: std::collections::BTreeMap<String, Vec<HfSibling>> = Default::default();
+    for s in siblings {
+        groups.entry(split_dir(&s.rfilename).0.to_string()).or_default().push(s.clone());
+    }
+    groups.into_iter().collect()
+}
+
+/// Заголовок каталога: сворачивание, выбор всех файлов каталога, сводка
+/// «N файлов · размер · скачано K» и «скачать каталог».
+fn folder_header(
+    repo_id: String,
+    dir: String,
+    files: &[HfSibling],
+    downloads: &std::collections::HashMap<String, DownloadState>,
+    folded: bool,
+) -> impl Widget {
+    let keys: Vec<String> = files.iter().map(|s| format!("{}/{}", repo_id, s.rfilename)).collect();
+    let size: u64 = files.iter().filter_map(|s| s.size).sum();
+    let done = keys
+        .iter()
+        .filter(|k| downloads.get(*k).is_some_and(|d| matches!(d.status, DlStatus::Done)))
+        .count();
+    let title = if dir.is_empty() { tr!("hf.detail.folder.root") } else { format!("{dir}/") };
+    let summary = tr!(
+        "hf.detail.folder.summary",
+        n = files.len(),
+        size = if size > 0 { human_bytes(size) } else { "—".to_string() },
+        done = done
+    );
+    let fold_key = format!("{repo_id}/{dir}");
+    let toggle = move || {
+        let ctx = use_context::<HuggingFaceCtx>();
+        ctx.collapsed_dirs.update(|set| {
+            if !set.remove(&fold_key) {
+                set.insert(fold_key.clone());
+            }
+        });
+    };
+
+    let checkbox = {
+        let keys = keys.clone();
+        Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            let ctx = use_context::<HuggingFaceCtx>();
+            let sel = ctx.selected_files.get();
+            let all = !keys.is_empty() && keys.iter().all(|k| sel.contains(k));
+            let keys_c = keys.clone();
+            vec![Box::new(
+                Checkbox::checked(all)
+                    .on_change(move |v| {
+                        use_context::<HuggingFaceCtx>().selected_files.update(|s| {
+                            for k in &keys_c {
+                                if v {
+                                    s.insert(k.clone());
+                                } else {
+                                    s.remove(k);
+                                }
+                            }
+                        });
+                    })
+                    .class("hf-file-checkbox"),
+            )]
+        })
+    };
+
+    let files_for_dl = files.to_vec();
+    let download_btn = ToolButton::new(MI_DOWNLOAD)
+        .tooltip(tr!("hf.detail.folder.download"))
+        .on_click(move || {
+            let ctx = use_context::<HuggingFaceCtx>();
+            let app = use_context::<AppCtx>();
+            download::download_files(ctx, app.notifications.clone(), repo_id.clone(), files_for_dl.clone());
+        })
+        .class("hf-icon-btn");
+
+    DecoratedBox::new().class("hf-folder-header").child(
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(
+                ToolButton::new(if folded { MI_CHEVRON_RIGHT } else { MI_EXPAND_MORE })
+                    .on_click(toggle.clone())
+                    .class("hf-icon-btn"),
+            )
+            .child(checkbox)
+            .child(Icon::new(if folded { MI_FOLDER } else { MI_FOLDER_OPEN }).class("hf-folder-icon"))
+            .child(
+                // Щелчок по названию сворачивает каталог, как и стрелка.
+                DecoratedBox::new().class("grow").child(
+                    GestureDetector::new().cursor(CursorIcon::Pointer).on_click(toggle).child(
+                        Row::new()
+                            .gap(10.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Center)
+                            .child(Text::new(title).max_lines(1).class("hf-folder-title"))
+                            .child(Text::new(summary).max_lines(1).class("hf-folder-summary")),
+                    ),
+                ),
+            )
+            .child(download_btn),
+    )
 }
 
 fn files_scroll<M>(content: impl syngui::widgets::containers::IntoWidget<M>) -> impl Widget {
@@ -448,15 +580,12 @@ fn file_icon(filename: &str) -> &'static str {
     }
 }
 
-/// Плитка файла в режиме «значки»: иконка типа, имя (без каталога — он строкой
-/// ниже), размер, прогресс и действия иконками. Состояния и действия те же,
+/// Плитка файла в режиме «значки»: иконка типа, имя (без каталога — он в
+/// заголовке группы), размер, прогресс и действия иконками. Состояния и действия те же,
 /// что у строки списка.
 fn file_tile(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -> impl Widget {
     let filename = sibling.rfilename.clone();
-    let (dir, base) = match filename.rsplit_once('/') {
-        Some((dir, base)) => (format!("{dir}/"), base.to_string()),
-        None => (String::new(), filename.clone()),
-    };
+    let base = split_dir(&filename).1.to_string();
     let size_text = sibling.size.map(human_bytes).unwrap_or_else(|| "—".to_string());
     let key = format!("{}/{}", repo_id, filename);
     let status = state.as_ref().map(|s| s.status.clone());
@@ -485,8 +614,7 @@ fn file_tile(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) 
         status,
     );
 
-    // Без общего Tooltip на плитке: внутри свои подсказки у кнопок действий,
-    // а каталог файла показан строкой под именем.
+    // Без общего Tooltip на плитке: внутри свои подсказки у кнопок действий.
     DecoratedBox::new().class(class).child(mgui! {
         Column::new()
             .gap(4.0)
@@ -501,7 +629,6 @@ fn file_tile(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) 
                     ],
                 Center::new().child(Icon::new(file_icon(&filename)).class("hf-file-tile-icon")),
                 Text::new(base).max_lines(2).class("hf-file-tile-name"),
-                Text::new(dir).max_lines(1).class("hf-file-tile-dir"),
                 Text::new(caption).max_lines(1).class("hf-file-tile-size"),
                 progress_bar(state.as_ref()),
                 Center::new().child(actions),
@@ -649,7 +776,7 @@ fn file_row(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -
                     .gap(12.0)
                     .cross_axis_alignment(CrossAxisAlignment::Center) => [
                         checkbox,
-                        Text::new(filename).class("hf-file-name"),
+                        Text::new(split_dir(&filename).1.to_string()).class("hf-file-name"),
                         DecoratedBox::new().class("hf-file-spacer grow"),
                         speed_widget,
                         Text::new(size_text).class("hf-file-size"),

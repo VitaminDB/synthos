@@ -818,6 +818,22 @@ pub fn download_selected(
     ctx.selected_files.update(|s| s.clear());
 }
 
+/// «Скачать каталог»: все переданные файлы, без фильтра форматов (выбор
+/// явный) и не трогая галочки пользователя. Реализовано через
+/// [`download_selected`] с восстановлением выбора.
+pub fn download_files(
+    ctx: HuggingFaceCtx,
+    notif: NotificationCtx,
+    repo_id: String,
+    files: Vec<HfSibling>,
+) {
+    let keep = ctx.selected_files.get_untracked();
+    let keys: HashSet<String> =
+        files.iter().map(|s| format!("{}/{}", repo_id, s.rfilename)).collect();
+    download_selected(ctx, notif, repo_id, files, keys);
+    ctx.selected_files.set(keep);
+}
+
 /// Восстановление загрузок с прошлого запуска. Вызывается единожды из
 /// `lib.rs::run_desktop` после `HuggingFaceCtx::new + provide_context`.
 /// - `Done`-записи кладутся в `downloads` (UI показывает чек сразу).

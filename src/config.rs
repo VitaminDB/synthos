@@ -634,6 +634,10 @@ pub struct AppConfig {
     pub hf_skip_unwanted_formats: bool,
     #[serde(default = "default_hf_gguf_support")]
     pub hf_gguf_support: bool,
+    /// Куда пользователь перетащил голосовую FAB-кнопку: отступы от
+    /// правого-нижнего угла окна `(справа, снизу)`. `None` — место по умолчанию.
+    #[serde(default)]
+    pub voice_fab_margin: Option<(f32, f32)>,
     /// Вид панели файлов на странице HuggingFace: `list` или `icons`.
     #[serde(default = "default_hf_files_view")]
     pub hf_files_view: String,
@@ -1230,6 +1234,7 @@ impl Default for AppConfig {
             hf_speed_limit_mbps: default_hf_speed_limit_mbps(),
             hf_skip_unwanted_formats: default_hf_skip_unwanted_formats(),
             hf_gguf_support: default_hf_gguf_support(),
+            voice_fab_margin: None,
             hf_files_view: default_hf_files_view(),
             hf_dock_expanded: false,
             hf_token: String::new(),

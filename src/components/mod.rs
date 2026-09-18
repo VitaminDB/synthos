@@ -1,4 +1,5 @@
 pub mod collapsible_card;
+pub mod drag_handle;
 pub mod event_hook;
 pub mod graph_close_dialog;
 pub mod nav_rail;

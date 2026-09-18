@@ -414,6 +414,10 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let selected_audio_model = use_signal(saved.selected_audio_model.clone());
     let audio = agent::audio::AudioCtx::new();
     let voice = VoiceFabCtx::new();
+    if let Some(margin) = saved.voice_fab_margin {
+        voice.fab_margin.set(margin);
+        voice.fab_margin_saved.set(margin);
+    }
     let metrics = Arc::new(MetricsState::new());
     let tools = ToolsCtx::new(saved.tools_active.clone(), saved.tools_auto.clone());
 
@@ -569,6 +573,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let g = ctx.general;
     let tools_active = ctx.tools.active;
     let tools_auto = ctx.tools.auto;
+    let voice_fab_margin = ctx.voice.fab_margin_saved;
     let skills_active = ctx.skills_active;
     let audio_models = ctx.audio_models;
     let selected_audio_model = ctx.selected_audio_model;
@@ -724,6 +729,9 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_speed_limit_mbps: hf.speed_limit_mbps.get(),
             hf_skip_unwanted_formats: hf.skip_unwanted_formats.get(),
             hf_gguf_support: hf.gguf_support.get(),
+            // Место голосовой FAB-кнопки; умолчание не пишем — `None` = угол.
+            voice_fab_margin: Some(voice_fab_margin.get())
+                .filter(|m| *m != components::voice_fab::fab_button::FAB_DEFAULT_MARGIN),
             hf_files_view: hf.files_view_mode.get().as_config().to_string(),
             hf_dock_expanded: hf.dock_expanded.get(),
 

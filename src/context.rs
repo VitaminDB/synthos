@@ -160,6 +160,12 @@ pub struct VoiceFabCtx {
     /// Поколение поля «Отредактированный текст» — аналогично `raw_gen`,
     /// бампается при приходе ответа LLM или при сбросе сессии.
     pub refined_gen: RwSignal<u64>,
+    /// Отступы угловой FAB-кнопки от правого-нижнего угла окна `(справа,
+    /// снизу)`. Меняется вживую, пока кнопку тащат.
+    pub fab_margin: RwSignal<(f32, f32)>,
+    /// То же, но обновляется по отпусканию — его читает автосейв конфига
+    /// (`AppConfig.voice_fab_margin`), чтобы не писать файл на каждый пиксель.
+    pub fab_margin_saved: RwSignal<(f32, f32)>,
 }
 
 impl VoiceFabCtx {
@@ -176,6 +182,8 @@ impl VoiceFabCtx {
             refine_error: use_signal(None),
             raw_gen: use_signal(0),
             refined_gen: use_signal(0),
+            fab_margin: use_signal(crate::components::voice_fab::fab_button::FAB_DEFAULT_MARGIN),
+            fab_margin_saved: use_signal(crate::components::voice_fab::fab_button::FAB_DEFAULT_MARGIN),
         }
     }
 }

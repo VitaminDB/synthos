@@ -594,15 +594,33 @@
     line-clamp: 2;
 }
 
-.hf-file-tile-dir {
-    font-size: 10px;
-    color: var(--text-subtle);
-    text-align: center;
-    line-clamp: 1;
-}
-
 .hf-file-tile-size {
     font-size: 11px;
     color: var(--text-muted);
     text-align: center;
+}
+
+/* Заголовок каталога в панели файлов (в обоих видах). */
+.hf-folder-header {
+    padding: 4px 6px;
+    border-radius: 10px;
+    background-color: var(--surface-hover);
+}
+
+.hf-folder-icon {
+    icon-size: 18px;
+    color: var(--primary);
+}
+
+.hf-folder-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-clamp: 1;
+}
+
+.hf-folder-summary {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-clamp: 1;
 }

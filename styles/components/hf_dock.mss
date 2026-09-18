@@ -55,14 +55,36 @@
     line-clamp: 1;
 }
 
-/* Сводка настроек и «Изменить…» — нейтральная пилюля. */
+/* Сводка настроек в строке панели: пилюля из иконки и текста в одну строку. */
+.hf-dock-settings-chip {
+    padding: 6px 12px;
+    background-color: var(--surface-hover);
+    border-radius: var(--radius-pill);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.hf-dock-settings-chip:hover {
+    background-color: var(--surface-selected);
+}
+
+.hf-dock-settings-chip-icon {
+    icon-size: 14px;
+    color: var(--text-muted);
+}
+
+.hf-dock-settings-chip-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-clamp: 1;
+}
+
+/* «Изменить…» у папки загрузок — нейтральная пилюля. */
 .hf-dock-chip {
     padding: 6px 12px;
     background-color: var(--surface-hover);
     color: var(--text-muted);
     border-radius: var(--radius-pill);
     font-size: 12px;
-    font-weight: 500;
     transition: background-color var(--duration-fast) var(--ease-standard),
                 color var(--duration-fast) var(--ease-standard);
 }

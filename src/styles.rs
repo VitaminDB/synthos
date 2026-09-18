@@ -43,6 +43,8 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/media_viewer.mss"),
         "\n",
+        include_str!("../styles/components/video_player.mss"),
+        "\n",
         include_str!("../styles/components/input_panel.mss"),
         "\n",
         include_str!("../styles/components/kb_chip.mss"),

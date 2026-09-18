@@ -17,8 +17,11 @@
 //! ```
 //!
 //! Тело зависит от модальности: картинка — в `PanZoomViewport` (колёсико
-//! масштабирует, перетаскивание двигает), видео — ffmpeg-плеер syngui,
-//! аудио — waveform с play/pause, документ — первые килобайты текста.
+//! масштабирует, перетаскивание двигает), видео — плеер
+//! [`crate::components::video_player`] во всю сцену (умеет разворачиваться
+//! на всё окно), аудио — waveform с play/pause, документ — первые килобайты
+//! текста. Подвал есть только когда в нём что-то есть: масштаб картинки или
+//! счётчик вложений.
 
 use std::sync::Arc;
 
@@ -29,10 +32,10 @@ use syngui::prelude::*;
 use syngui::video::{HwAccel, VideoPlayer};
 use syngui::widgets::containers::PanZoomViewport;
 use syngui::widgets::overlay::PortalAnchor;
-use syngui::widgets::visual::video_player_view;
 use syngui::widgets::visual::StaticWaveform;
 use syngui::StyledWidget;
 
+use crate::components::video_player::{video_player, FullscreenCtl};
 use crate::icons::{
     MI_CHEVRON_LEFT, MI_CHEVRON_RIGHT, MI_CLOSE, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE,
     MI_PLAY_ARROW, MI_ZOOM_IN, MI_ZOOM_OUT,
@@ -55,7 +58,21 @@ struct ViewerSignals {
     pan: RwSignal<Point>,
     /// Декод и воспроизведение — общие с инлайн-карточкой ленты.
     audio: super::media_audio::AudioSignals,
+    full: FullSignals,
 }
+
+/// «Во весь экран» у видео: карточка на всё окно, окно — полноэкранное.
+#[derive(Clone, Copy)]
+struct FullSignals {
+    active: RwSignal<bool>,
+    /// Окно развернули мы (а не F11 до нас) — нам его и возвращать.
+    window_ours: RwSignal<bool>,
+}
+
+/// Открытый плеер текущего видео и sha его вложения. Живёт вне реактивного
+/// дерева: переход во весь экран пересобирает карточку, а ролик должен
+/// играть дальше с того же места, а не открываться заново.
+type VideoSlot = Arc<Mutex<Option<(String, Arc<Mutex<VideoPlayer>>)>>>;
 
 pub fn view() -> impl Widget {
     // Portal требует RwSignal<bool>; держим отдельный и синхронизируем с
@@ -73,12 +90,18 @@ pub fn view() -> impl Widget {
         zoom: use_signal(1.0),
         pan: use_signal(Point::new(0.0, 0.0)),
         audio: super::media_audio::AudioSignals::new(),
+        full: FullSignals {
+            active: use_signal(false),
+            window_ours: use_signal(false),
+        },
     };
-    // Плеер живёт вне реактивного дерева: его нужно останавливать при
+    // Плееры живут вне реактивного дерева: их нужно останавливать при
     // закрытии и смене вложения, а не пересоздавать на каждый rebuild.
     let audio_player: Arc<Mutex<Option<AudioPlayer>>> = Arc::new(Mutex::new(None));
+    let video: VideoSlot = Arc::new(Mutex::new(None));
 
     let player_for_close = audio_player.clone();
+    let video_for_close = video.clone();
     Portal::new()
         .is_open(is_open)
         .modal(true)
@@ -86,21 +109,26 @@ pub fn view() -> impl Widget {
         .anchor(PortalAnchor::Center)
         .on_close(move || {
             super::media_audio::stop(&player_for_close);
+            release_video(&video_for_close);
+            set_full(signals.full, false);
             use_context::<SynChatCtx>().viewer.set(None);
         })
-        .child(card(signals, audio_player))
+        .child(card(signals, audio_player, video))
 }
 
 fn card(
     signals: ViewerSignals,
     audio_player: Arc<Mutex<Option<AudioPlayer>>>,
+    video: VideoSlot,
 ) -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
     move || {
         let ctx = use_context::<SynChatCtx>();
         let Some(state) = ctx.viewer.get() else {
-            // Portal закрыт — содержимое всё равно не видно, но плеер надо
-            // отпустить, иначе аудио продолжит играть в фоне.
+            // Portal закрыт — содержимое всё равно не видно, но плееры надо
+            // отпустить, иначе звук продолжит играть в фоне.
             super::media_audio::stop(&audio_player);
+            release_video(&video);
+            set_full(signals.full, false);
             return DecoratedBox::new().class("media-viewer-empty");
         };
         let Some(item) = state.current().cloned() else {
@@ -109,26 +137,61 @@ fn card(
 
         let total = state.items.len();
         let index = state.index;
+        let is_video = matches!(item.kind, AttachmentKind::Video) && !is_zoomable(&item);
+        if !is_video {
+            release_video(&video);
+        }
 
-        let stage = DecoratedBox::new()
-            .class("media-viewer-stage")
-            .child(Column::new().children(vec![body(&item, signals, audio_player.clone())]));
+        if is_video && signals.full.active.get() {
+            // Во весь экран — только кадр и его панель, без шапки и листания.
+            return DecoratedBox::new()
+                .class("media-viewer media-viewer-full")
+                .child(video_stage(&item, signals.full, &video, true));
+        }
+
+        let stage: Box<dyn Widget> = if is_video {
+            Box::new(
+                DecoratedBox::new()
+                    .class("media-viewer-video-stage")
+                    .child(video_stage(&item, signals.full, &video, false)),
+            )
+        } else {
+            Box::new(
+                DecoratedBox::new()
+                    .class("media-viewer-stage")
+                    .child(Column::new().children(vec![body(
+                        &item,
+                        signals,
+                        audio_player.clone(),
+                    )])),
+            )
+        };
+        // Одиночному видео распорки вместо стрелок не нужны: кадр — от края
+        // до края карточки.
+        let row_items = if is_video && total < 2 {
+            vec![stage]
+        } else {
+            vec![nav_button(-1, total), stage, nav_button(1, total)]
+        };
         let stage_row = Row::new()
             .gap(0.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                nav_button(-1, total),
-                Box::new(stage) as Box<dyn Widget>,
-                nav_button(1, total),
-            ]);
+            .children(row_items);
 
-        DecoratedBox::new().class("media-viewer").child(mgui! {
-            Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                header(&item),
-                DecoratedBox::new().class("media-viewer-body") => [ stage_row ],
-                footer(&item, signals, index, total),
-            ]
-        })
+        let mut rows: Vec<Box<dyn Widget>> = vec![
+            Box::new(header(&item)),
+            Box::new(DecoratedBox::new().class("media-viewer-body").child(stage_row)),
+        ];
+        // Пустой подвал у видео и аудио оставлял под сценой голую полосу.
+        if is_zoomable(&item) || total > 1 {
+            rows.push(Box::new(footer(&item, signals, index, total)));
+        }
+        DecoratedBox::new().class("media-viewer").child(
+            Column::new()
+                .gap(0.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .children(rows),
+        )
     }
 }
 
@@ -258,7 +321,6 @@ fn body(
 ) -> Box<dyn Widget> {
     match a.kind {
         _ if is_zoomable(a) => Box::new(image_stage(a, signals)),
-        AttachmentKind::Video => video_stage(a),
         AttachmentKind::Audio => audio_stage(a, signals, audio_player),
         AttachmentKind::Document => Box::new(document_stage(a)),
         _ => Box::new(unsupported_stage(a)),
@@ -286,16 +348,84 @@ fn image_stage(a: &MsgAttachment, signals: ViewerSignals) -> impl Widget {
         .class("media-viewer-panzoom")
 }
 
-fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
-    let path = blobs::source_path(a);
-    match VideoPlayer::open_with_hwaccel(&path.display().to_string(), HwAccel::platform_default()) {
-        Ok(player) => Box::new(
-            DecoratedBox::new()
-                .class("media-viewer-video")
-                .child(video_player_view(Arc::new(Mutex::new(player)))),
-        ),
+fn video_stage(
+    a: &MsgAttachment,
+    full: FullSignals,
+    slot: &VideoSlot,
+    active: bool,
+) -> Box<dyn Widget> {
+    match open_video(a, slot) {
+        Ok(player) => {
+            let fullscreen = FullscreenCtl {
+                active,
+                toggle: Arc::new(move || set_full(full, !full.active.get_untracked())),
+            };
+            Box::new(video_player(player, Some(fullscreen)))
+        }
         Err(e) => Box::new(error_stage(tr!("chat.media_viewer.video_open_error", error = e))),
     }
+}
+
+/// Плеер вложения: уже открытый, если это то же видео (карточку
+/// пересобрали), иначе новый — прежний закрывается.
+fn open_video(
+    a: &MsgAttachment,
+    slot: &VideoSlot,
+) -> std::result::Result<Arc<Mutex<VideoPlayer>>, String> {
+    if let Ok(guard) = slot.lock() {
+        if let Some((sha, p)) = guard.as_ref() {
+            if *sha == a.sha256 {
+                return Ok(p.clone());
+            }
+        }
+    }
+    release_video(slot);
+    let path = blobs::source_path(a);
+    let player =
+        VideoPlayer::open_with_hwaccel(&path.display().to_string(), HwAccel::platform_default())
+            .map_err(|e| e.to_string())?;
+    let player = Arc::new(Mutex::new(player));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some((a.sha256.clone(), player.clone()));
+    }
+    Ok(player)
+}
+
+/// Закрыть видео просмотрщика: звук — сразу, декодер — в фоне (его потоки
+/// останавливаются с `join`, кадр UI ждать этого не должен).
+fn release_video(slot: &VideoSlot) {
+    let old = slot.lock().ok().and_then(|mut s| s.take());
+    if let Some((_, player)) = old {
+        if let Ok(mut p) = player.lock() {
+            p.pause();
+        }
+        std::thread::spawn(move || drop(player));
+    }
+}
+
+/// Карточка на всё окно и окно в полноэкранный режим. Выход возвращает окно
+/// как было: если его развернули F11 ещё до нас, оно таким и останется.
+fn set_full(full: FullSignals, on: bool) {
+    if full.active.get_untracked() == on {
+        return;
+    }
+    full.active.set(on);
+    let window_full = window_is_fullscreen();
+    if on {
+        if !window_full {
+            syngui::signal::toggle_fullscreen();
+            full.window_ours.set(true);
+        }
+    } else if full.window_ours.get_untracked() {
+        full.window_ours.set(false);
+        if window_full {
+            syngui::signal::toggle_fullscreen();
+        }
+    }
+}
+
+fn window_is_fullscreen() -> bool {
+    syngui::signal::primary_window().is_some_and(|w| w.winit_window().fullscreen().is_some())
 }
 
 fn audio_stage(

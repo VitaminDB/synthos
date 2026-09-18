@@ -245,6 +245,14 @@ pub const MI_FULLSCREEN: &str          = "\u{E5D0}";
 /// «close_fullscreen» — вернуть оторванный чат на страницу.
 pub const MI_CLOSE_FULLSCREEN: &str    = "\u{F1CF}";
 
+// --- Видеоплеер просмотрщика (`components::video_player`)
+pub const MI_FULLSCREEN_EXIT: &str     = "\u{E5D1}";
+pub const MI_REPLAY: &str              = "\u{E042}";
+pub const MI_REPLAY_10: &str           = "\u{E059}";
+pub const MI_FORWARD_10: &str          = "\u{E056}";
+pub const MI_VOLUME_OFF: &str          = "\u{E04F}";
+pub const MI_VOLUME_DOWN: &str         = "\u{E04D}";
+
 // --- Оболочка: плитки рейла, общая шапка, архив
 /// «vertical_split» / «view_sidebar» — тогглы левой и правой панели в шапке.
 pub const MI_VERTICAL_SPLIT: &str      = "\u{E949}";

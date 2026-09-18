@@ -102,23 +102,33 @@ ToolButton.media-viewer-close:hover {
     height: 680px;
 }
 
-.media-viewer-video {
+/* Видео: сцена без фиксированной высоты — плеер (`components::video_player`,
+ * стили в video_player.mss) занимает всё тело между шапкой и низом карточки;
+ * подвала у видео нет. */
+.media-viewer-video-stage {
     background-color: #000000;
     border-width: 0;
     padding: 0 0 0 0;
+    flex-grow: 1;
+    overflow: hidden;
 }
 
-/* Классы плеера syngui (`video_player_view`). Плеер стоит и в ленте чата
- * (`media_inline`), поэтому размер холста — только под просмотрщиком: голый
- * `.ffmpeg-canvas` на 620 px в высоту раздувал карточку 420×236, `Contain`
- * центрировал кадр по этой высоте, и видео уезжало в нижний угол. */
+/* «Во весь экран»: карточка на всё окно, только кадр и панель плеера. */
+.media-viewer.media-viewer-full {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    background-color: #000000;
+    border-radius: 0;
+    border-width: 0;
+    box-shadow: none;
+}
+
+/* Классы плеера syngui (`video_player_view`) — теперь только в ленте чата
+ * (`media_inline`); размер холста там задаёт `.chat-media-video`. */
 .ffmpeg-canvas {
     background-color: #000000;
-}
-
-.media-viewer-video .ffmpeg-canvas {
-    width: 1080px;
-    height: 620px;
 }
 
 ToolButton.ffmpeg-play {

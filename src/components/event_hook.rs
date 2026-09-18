@@ -22,6 +22,8 @@ pub enum KeyReply {
 }
 
 type KeyHandler = Arc<dyn Fn(Key, Modifiers) -> KeyReply + Send + Sync>;
+type KeyFilter = Arc<dyn Fn(Key) -> bool + Send + Sync>;
+type MoveHandler = Arc<dyn Fn(bool) + Send + Sync>;
 
 /// Прозрачная обёртка: перехват клавиш и наблюдение за собственной геометрией.
 ///
@@ -34,6 +36,8 @@ type KeyHandler = Arc<dyn Fn(Key, Modifiers) -> KeyReply + Send + Sync>;
 pub struct EventHook {
     on_key_down: Option<KeyHandler>,
     on_key_up: Option<KeyHandler>,
+    capture_keys: Option<KeyFilter>,
+    on_mouse_move: Option<MoveHandler>,
     bounds_out: Option<Arc<Mutex<Rect>>>,
     child: Option<Box<dyn Widget>>,
 }
@@ -43,6 +47,8 @@ impl EventHook {
         Self {
             on_key_down: None,
             on_key_up: None,
+            capture_keys: None,
+            on_mouse_move: None,
             bounds_out: None,
             child: None,
         }
@@ -61,6 +67,21 @@ impl EventHook {
         handler: impl Fn(Key, Modifiers) -> KeyReply + Send + Sync + 'static,
     ) -> Self {
         self.on_key_up = Some(Arc::new(handler));
+        self
+    }
+
+    /// Клавиши, которые обёртка забирает раньше своих детей: без этого
+    /// сфокусированный ребёнок (слайдер, кнопка) съел бы их первым — стрелки
+    /// у `Slider`, пробел у `ToolButton`.
+    pub fn capture_keys(mut self, filter: impl Fn(Key) -> bool + Send + Sync + 'static) -> Self {
+        self.capture_keys = Some(Arc::new(filter));
+        self
+    }
+
+    /// Движение мыши: `true` — курсор над обёрткой, `false` — ушёл с неё.
+    /// Событие не поглощается — дети получают его как обычно.
+    pub fn on_mouse_move(mut self, handler: impl Fn(bool) + Send + Sync + 'static) -> Self {
+        self.on_mouse_move = Some(Arc::new(handler));
         self
     }
 
@@ -87,6 +108,8 @@ impl Widget for EventHook {
             id: ElementId::new(),
             on_key_down: self.on_key_down.clone(),
             on_key_up: self.on_key_up.clone(),
+            capture_keys: self.capture_keys.clone(),
+            on_mouse_move: self.on_mouse_move.clone(),
             bounds_out: self.bounds_out.clone(),
             has_child: self.child.is_some(),
             bounds: Rect::zero(),
@@ -129,6 +152,8 @@ struct EventHookElement {
     id: ElementId,
     on_key_down: Option<KeyHandler>,
     on_key_up: Option<KeyHandler>,
+    capture_keys: Option<KeyFilter>,
+    on_mouse_move: Option<MoveHandler>,
     bounds_out: Option<Arc<Mutex<Rect>>>,
     has_child: bool,
     bounds: Rect,
@@ -152,6 +177,8 @@ impl Element for EventHookElement {
         if let Some(hook) = widget.as_any().downcast_ref::<EventHook>() {
             self.on_key_down = hook.on_key_down.clone();
             self.on_key_up = hook.on_key_up.clone();
+            self.capture_keys = hook.capture_keys.clone();
+            self.on_mouse_move = hook.on_mouse_move.clone();
             self.bounds_out = hook.bounds_out.clone();
             self.has_child = hook.child.is_some();
             self.publish_bounds();
@@ -180,6 +207,12 @@ impl Element for EventHookElement {
     fn build_display_list(&self, _list: &mut DisplayList, _clip: Rect) {}
 
     fn handle_event(&mut self, event: &Event, ctx: &mut EventContext) -> EventResult {
+        if let Event::MouseMove(pos) = event {
+            if let Some(handler) = &self.on_mouse_move {
+                handler(self.bounds.contains(*pos));
+            }
+            return EventResult::Ignored;
+        }
         let (key, handler) = match event {
             Event::KeyDown(key) => (*key, self.on_key_down.as_ref()),
             Event::KeyUp(key) => (*key, self.on_key_up.as_ref()),
@@ -195,6 +228,13 @@ impl Element for EventHookElement {
                 ctx.scroll_into_view(self.bounds);
                 EventResult::Handled
             }
+        }
+    }
+
+    fn intercepts_event(&self, event: &Event) -> bool {
+        match (event, &self.capture_keys) {
+            (Event::KeyDown(key) | Event::KeyUp(key), Some(filter)) => filter(*key),
+            _ => false,
         }
     }
 

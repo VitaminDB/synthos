@@ -8,6 +8,7 @@ pub mod chat_item;
 pub mod date_divider;
 pub mod right_panel;
 pub mod titlebar;
+pub mod video_player;
 pub mod tool_confirm;
 pub mod voice_fab;
 pub mod notification;

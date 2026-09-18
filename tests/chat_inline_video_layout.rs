@@ -5,6 +5,8 @@
 //! просмотрщика — 1080×620. В карточке 420×236 холст вырастал до 620 px в
 //! высоту, `Contain` центрировал кадр по этой высоте, и видео уезжало в
 //! нижний угол сцены, а полоса ⏵/перемотки уходила под обрезку целиком.
+//! (У просмотрщика теперь свой плеер, `components::video_player`, — его
+//! раскладку проверяет `tests/video_player_layout.rs`.)
 //!
 //! Видео — `tests/fixtures/silent_160x120.mp4` (`testsrc` 160×120, 1 с, без
 //! звуковой дорожки: плеер стартует сразу, и тест не должен пищать в колонки).
@@ -12,11 +14,7 @@
 
 #![cfg(feature = "testing")]
 
-use std::sync::Arc;
-
-use syngui::core::sync::Mutex;
 use syngui::core::Point;
-use syngui::prelude::*;
 use syngui::testing::{click_at, TestHarness};
 
 use synthos::pages::syn_chat::media_inline;
@@ -113,25 +111,6 @@ fn playing_video_stays_inside_card() {
     assert!(
         canvas.size.width >= card.size.width - 4.0,
         "холст {canvas:?} во всю ширину карточки {card:?}"
-    );
-
-    // Просмотрщик на весь экран — тот же плеер, но холст свой, 1080×620:
-    // сужение селектора до `.media-viewer-video` его не должно задеть.
-    let player = syngui::video::VideoPlayer::open(blob.to_str().unwrap()).expect("open");
-    let mut h = TestHarness::new(Box::new(
-        DecoratedBox::new()
-            .class("media-viewer-video")
-            .child(syngui::widgets::visual::video_player_view(Arc::new(Mutex::new(player)))),
-    ));
-    let engine = h.apply_mss(synthos::styles::styles());
-    h.rebuild();
-    h.apply_styles(&engine);
-    h.layout_loose(1400.0, 900.0);
-    let canvas = one(&h, "ffmpeg-canvas");
-    assert_eq!(
-        (canvas.size.width, canvas.size.height),
-        (1080.0, 620.0),
-        "холст просмотрщика"
     );
 
     let _ = std::fs::remove_dir_all(&home);

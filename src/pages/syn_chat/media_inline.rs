@@ -173,9 +173,11 @@ fn video_stage(a: &MsgAttachment) -> Box<dyn Widget> {
             }
         }
         let p = guard.as_ref().expect("плеер создан").clone();
+        // Не `chat-media-stage`: её фиксированная высота под постер обрезала
+        // бы полосу управления, идущую под кадром.
         vec![Box::new(
             DecoratedBox::new()
-                .class("chat-media-stage")
+                .class("chat-media-video")
                 .child(video_player_view(p)),
         )]
     }))

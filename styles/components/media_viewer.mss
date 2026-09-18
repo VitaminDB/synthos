@@ -108,9 +108,15 @@ ToolButton.media-viewer-close:hover {
     padding: 0 0 0 0;
 }
 
-/* Классы плеера syngui (`video_player_view`). */
+/* Классы плеера syngui (`video_player_view`). Плеер стоит и в ленте чата
+ * (`media_inline`), поэтому размер холста — только под просмотрщиком: голый
+ * `.ffmpeg-canvas` на 620 px в высоту раздувал карточку 420×236, `Contain`
+ * центрировал кадр по этой высоте, и видео уезжало в нижний угол. */
 .ffmpeg-canvas {
     background-color: #000000;
+}
+
+.media-viewer-video .ffmpeg-canvas {
     width: 1080px;
     height: 620px;
 }
@@ -131,6 +137,17 @@ ToolButton.ffmpeg-play:hover {
 .ffmpeg-time {
     color: rgba(255, 255, 255, 0.72);
     font-size: 12px;
+}
+
+/* Под плеером всегда чёрный фон, а ресет ToolButton красит иконку в
+ * `--text-muted` — в светлой теме серое на чёрном почти не видно. */
+ToolButton.ffmpeg-mute {
+    color: rgba(255, 255, 255, 0.72);
+}
+
+ToolButton.ffmpeg-mute:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #FFFFFF;
 }
 
 .ffmpeg-player {

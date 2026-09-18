@@ -253,6 +253,26 @@ Checkbox.attachments-share-path {
     cursor: pointer;
 }
 
+/* Играющее видео: кадр на месте постера (та же высота 236), полоса
+ * ⏵/перемотки под ним — сцена растёт вниз, а не обрезает полосу, как
+ * фиксированная `.chat-media-stage`. Внутри — `video_player_view` syngui. */
+.chat-media-video {
+    background-color: #000000;
+}
+
+.chat-media-video .ffmpeg-player {
+    padding: 0 0 0 0;
+}
+
+.chat-media-video .ffmpeg-canvas {
+    width: 100%;
+    height: 236px;
+}
+
+.chat-media-video .ffmpeg-controls {
+    padding: 6px 10px 8px 10px;
+}
+
 .chat-media-poster {
     width: 420px;
     height: 236px;

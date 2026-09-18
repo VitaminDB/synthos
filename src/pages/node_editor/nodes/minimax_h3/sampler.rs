@@ -242,7 +242,12 @@ fn worker(
         None => None,
     };
 
-    let anchor = shared::activation_anchor(handle, 13 << 29);
+    // Якорь держит место под активации, пока DiT занимает карту. На малой
+    // карте (8 ГБ) он не выделится — тогда тот же запас оставляет сама
+    // загрузка, и блоки, которым не хватило места, стримятся с хоста.
+    const ACTIVATION_RESERVE: usize = 13 << 29;
+    let anchor = shared::activation_anchor(handle, ACTIVATION_RESERVE);
+    h3::runtime::set_load_reserve_bytes(if anchor.is_some() { 0 } else { ACTIVATION_RESERVE });
     let t_load = std::time::Instant::now();
     let shared_dit = shared::load_dit(handle)?;
     info!(

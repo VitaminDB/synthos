@@ -3,7 +3,8 @@
 //! Left: app name + version (`Synthos v<CARGO_PKG_VERSION>`), пилюля стадии
 //! («beta») и номер сборки — `pkgrel` из `packaging/PKGBUILD`, который
 //! пробрасывает `build.rs`. По нему сразу видно, какая сборка запущена.
-//! Right: чипы Donate и GitHub вплотную к кнопкам окна (те же ссылки есть в
+//! Right: прогресс загрузок HuggingFace (пока они есть), затем чипы Donate и
+//! GitHub вплотную к кнопкам окна (те же ссылки есть в
 //! «Настройки → О программе»), затем window controls — either the built-in
 //! Windows-style trio or, when «системные кнопки окна» is on, the buttons of
 //! the desktop's decoration theme (on KDE with an Aurorae theme they are drawn
@@ -15,13 +16,16 @@
 use syngui::appearance::decorations::{read_system_decorations, SystemDecorations, TitleAlignment};
 use syngui::open_url;
 use syngui::prelude::*;
+use syngui::widget::styled::WidgetExt;
 use syngui::widgets::overlay::{SystemWindowControls, WindowControl, WindowDragRegion};
 use syngui::widgets::visual::{Image, ImageFit};
 use syngui::widgets::GestureDetector;
 use syngui::window::WindowState;
 
 use crate::context::AppCtx;
-use crate::icons::{MI_CLOSE, MI_CROP_SQUARE, MI_FAVORITE, MI_REMOVE};
+use crate::icons::{MI_CLOSE, MI_CLOUD_DOWNLOAD, MI_CROP_SQUARE, MI_FAVORITE, MI_PAUSE, MI_REMOVE};
+use crate::pages::huggingface::progress::{self, Totals};
+use crate::pages::huggingface::HuggingFaceCtx;
 
 /// Куда ведёт чип Donate — та же ссылка, что в README и `.github/FUNDING.yml`.
 pub const DONATE_URL: &str = "https://paypal.me/vitamindbnfkz";
@@ -91,11 +95,13 @@ pub fn middle(centered: bool, title_inset: f32) -> Vec<Box<dyn Widget>> {
     }
 }
 
-/// Чипы Donate и GitHub: открывают ссылку в системном браузере.
+/// Чипы Donate и GitHub: открывают ссылку в системном браузере. Перед ними —
+/// прогресс загрузок с HuggingFace, пока есть что качать.
 pub fn links() -> impl Widget {
     Row::new()
         .gap(2.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
+        .child(downloads_chip())
         .child(link_chip(
             ChipIcon::Glyph(MI_FAVORITE),
             "donate",
@@ -110,6 +116,57 @@ pub fn links() -> impl Widget {
             tr!("titlebar.chip.github.tooltip"),
             || open_link(GITHUB_URL),
         ))
+}
+
+/// Сводный прогресс загрузок в шапке окна: виден с любой страницы, щелчок
+/// ведёт на страницу HuggingFace. Пока незавершённых загрузок нет — пусто.
+///
+/// Свой `Reactive`: `downloads` меняется несколько раз в секунду, и читать его
+/// в замыкании самого титлбара значило бы пересобирать всю шапку на каждый тик.
+fn downloads_chip() -> impl Widget {
+    Reactive::new(|| -> Vec<Box<dyn Widget>> {
+        let empty = || vec![Box::new(DecoratedBox::new().class("titlebar-dl-empty")) as Box<dyn Widget>];
+        // В тестах шапки контекста страницы нет.
+        let Some(hf) = syngui::context_provider::try_use_context::<HuggingFaceCtx>() else {
+            return empty();
+        };
+        let totals = progress::totals(&hf.downloads.get());
+        if !totals.has_unfinished() {
+            return empty();
+        }
+        vec![Box::new(downloads_chip_body(&totals, hf.global_paused.get()))]
+    })
+}
+
+/// Сама пилюля — отдельно от контекста, чтобы собрать её в тесте.
+pub fn downloads_chip_body(t: &Totals, paused: bool) -> impl Widget {
+    let idle = paused || !t.in_flight();
+    let mut label = t.percent_text();
+    if !idle && t.speed_bps > 1.0 {
+        label.push_str(" · ");
+        label.push_str(&progress::human_speed(t.speed_bps));
+    }
+    let tooltip = crate::pages::huggingface::dock::stats_line(t);
+    let state = if idle { " titlebar-dl--idle" } else { "" };
+    let fill = DecoratedBox::new()
+        .class("titlebar-dl-fill")
+        .style("width", syngui::mss::StyleValue::percent(t.ratio().unwrap_or(0.0) * 100.0));
+    let chip = DecoratedBox::new().class(format!("titlebar-chip titlebar-dl{state}")).child(
+        Center::new().child(
+            Row::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .child(Icon::new(if idle { MI_PAUSE } else { MI_CLOUD_DOWNLOAD }).class("titlebar-dl-icon"))
+                .child(DecoratedBox::new().class("titlebar-dl-rail").child(fill))
+                .child(Text::new(label).max_lines(1).class("titlebar-dl-text")),
+        ),
+    );
+    Tooltip::new(
+        GestureDetector::new()
+            .on_click(|| crate::rail::navigate("huggingface"))
+            .child(Padding::symmetric(0.0, 6.0).child(chip)),
+        tooltip,
+    )
 }
 
 pub fn open_link(url: &str) {

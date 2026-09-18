@@ -125,6 +125,52 @@
     color-tint: var(--text-muted);
 }
 
+/* Прогресс загрузок HuggingFace перед чипами-ссылками: иконка, полоска,
+ * «23% · 30 МБ/с». Подложка постоянная — это статус, а не ссылка. */
+.titlebar-dl-empty {
+    width: 0;
+    height: 0;
+}
+
+.titlebar-chip.titlebar-dl {
+    background-color: var(--primary-soft);
+    margin-right: 6px;
+}
+
+.titlebar-chip.titlebar-dl:hover {
+    background-color: var(--surface-selected);
+}
+
+.titlebar-dl-icon {
+    icon-size: 12px;
+    color: var(--primary);
+}
+
+.titlebar-dl-rail {
+    width: 72px;
+    height: 4px;
+    border-radius: 2px;
+    background-color: rgba(148, 163, 184, 0.35);
+    overflow: hidden;
+}
+
+.titlebar-dl-fill {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--primary);
+    transition: width var(--duration-fast) var(--ease-standard);
+}
+
+.titlebar-dl-text {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: monospace;
+    color: var(--text);
+}
+
+.titlebar-dl--idle .titlebar-dl-icon { color: var(--warning); }
+.titlebar-dl--idle .titlebar-dl-fill { background-color: var(--warning); }
+
 .titlebar-chip--hover .titlebar-chip-text   { color: var(--text); }
 .titlebar-chip--hover .titlebar-chip-logo   { color-tint: var(--text); }
 .titlebar-chip-donate.titlebar-chip--hover .titlebar-chip-text { color: #E5487A; }

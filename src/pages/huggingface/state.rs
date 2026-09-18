@@ -47,6 +47,29 @@ impl SortMode {
     }
 }
 
+/// Вид списка файлов репозитория в правой панели.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilesViewMode {
+    /// Строки на всю ширину: имя, размер, статус, действия, прогресс.
+    List,
+    /// Плитки с иконкой типа файла — как «значки» в файловом менеджере.
+    Icons,
+}
+
+impl FilesViewMode {
+    /// Значение для `AppConfig.hf_files_view`.
+    pub fn as_config(self) -> &'static str {
+        match self {
+            FilesViewMode::List => "list",
+            FilesViewMode::Icons => "icons",
+        }
+    }
+
+    pub fn from_config(s: &str) -> Self {
+        if s == "icons" { FilesViewMode::Icons } else { FilesViewMode::List }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListLoadState {
     Idle,
@@ -282,6 +305,12 @@ pub struct HuggingFaceCtx {
     /// модели (`actions::select_model`). Кнопка «Скачать выбранные» enqueue'ит
     /// только эти файлы (без фильтра форматов — выбор ручной).
     pub selected_files: RwSignal<HashSet<String>>,
+    /// Список или плитки в панели файлов. Синхронизирован с
+    /// `AppConfig.hf_files_view`.
+    pub files_view_mode: RwSignal<FilesViewMode>,
+    /// Нижняя панель загрузок развёрнута (очередь + настройки) или свёрнута до
+    /// одной строки со сводкой. Синхронизирован с `AppConfig.hf_dock_expanded`.
+    pub dock_expanded: RwSignal<bool>,
 }
 
 /// Токен на старте: поле конфига имеет приоритет; если пусто — стандартный
@@ -354,6 +383,8 @@ impl HuggingFaceCtx {
             convert_active: use_signal(None),
             convert_progress: use_signal(0.0),
             selected_files: use_signal(HashSet::new()),
+            files_view_mode: use_signal(FilesViewMode::from_config(&cfg.hf_files_view)),
+            dock_expanded: use_signal(cfg.hf_dock_expanded),
         }
     }
 }

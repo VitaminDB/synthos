@@ -577,6 +577,36 @@ pub fn resume_pending(ctx: HuggingFaceCtx, notif: NotificationCtx) {
     }
 }
 
+/// Проставить размер из API тем записям репозитория, у которых он ещё не
+/// известен (`total == 0`): файл в очереди узнаёт свой размер только на старте,
+/// а сводному прогрессу ([`super::progress`]) он нужен сразу — иначе «Скачать
+/// всё» показывало бы 100 % от первых трёх файлов. `api.rs` на старте всё равно
+/// перезапишет `total` значением с сервера.
+pub fn seed_totals(ctx: HuggingFaceCtx, repo_id: &str, siblings: &[HfSibling]) {
+    let snapshot = ctx.downloads.get_untracked();
+    let updates: Vec<(String, u64)> = siblings
+        .iter()
+        .filter_map(|s| {
+            let size = s.size.filter(|n| *n > 0)?;
+            let key = format!("{}/{}", repo_id, s.rfilename);
+            let d = snapshot.get(&key)?;
+            (d.total == 0).then_some((key, size))
+        })
+        .collect();
+    if updates.is_empty() {
+        return;
+    }
+    ctx.downloads.update(|m| {
+        for (key, size) in updates {
+            if let Some(d) = m.get_mut(&key) {
+                if d.total == 0 {
+                    d.total = size;
+                }
+            }
+        }
+    });
+}
+
 /// Просканировать кэш на диске и проставить `DlStatus::Done` для тех файлов
 /// репозитория, которые уже скачаны полностью. Вызывается после загрузки
 /// `model_details`. Не трогает уже Active/Pending — переход через `match`
@@ -586,6 +616,8 @@ pub fn scan_existing_files(
     repo_id: &str,
     siblings: &[HfSibling],
 ) {
+    // Записи, восстановленные с прошлого запуска, могли остаться без размера.
+    seed_totals(ctx, repo_id, siblings);
     let dir_raw = ctx.cache_dir.get_untracked();
     let dir = config::resolve_hf_cache_dir(&dir_raw);
     let repo_dir = dir.join(repo_id);
@@ -698,7 +730,7 @@ pub fn download_all_for_repo(
     }
 
     let downloads = ctx.downloads.get_untracked();
-    for s in siblings {
+    for s in &siblings {
         if skip && super::filter::is_excluded(&s.rfilename, gguf_ok) {
             continue;
         }
@@ -723,8 +755,9 @@ pub fn download_all_for_repo(
                 Some(strip_sha256_prefix(raw).to_string())
             }
         });
-        enqueue_download(ctx, notif.clone(), repo_id.clone(), s.rfilename, expected);
+        enqueue_download(ctx, notif.clone(), repo_id.clone(), s.rfilename.clone(), expected);
     }
+    seed_totals(ctx, &repo_id, &siblings);
 }
 
 /// «Скачать выбранные»: enqueue'ит только siblings, чьи ключи
@@ -754,7 +787,7 @@ pub fn download_selected(
     }
 
     let downloads = ctx.downloads.get_untracked();
-    for s in siblings {
+    for s in &siblings {
         let key = format!("{}/{}", repo_id, s.rfilename);
         if !selected.contains(&key) {
             continue;
@@ -779,8 +812,9 @@ pub fn download_selected(
                 Some(strip_sha256_prefix(raw).to_string())
             }
         });
-        enqueue_download(ctx, notif.clone(), repo_id.clone(), s.rfilename, expected);
+        enqueue_download(ctx, notif.clone(), repo_id.clone(), s.rfilename.clone(), expected);
     }
+    seed_totals(ctx, &repo_id, &siblings);
     ctx.selected_files.update(|s| s.clear());
 }
 

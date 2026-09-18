@@ -86,7 +86,10 @@ fn accept_default() {
     download::resume_pending(ctx, app.notifications.clone());
 }
 
-fn pick_folder() {
+/// Системный диалог выбора каталога загрузок. Зовётся и из нижней панели
+/// загрузок («Папка загрузок → Изменить»): отложенных файлов там нет, и
+/// `resume_pending` ничего не запускает.
+pub(super) fn pick_folder() {
     let ctx = use_context::<HuggingFaceCtx>();
     let app = use_context::<AppCtx>();
     let notifications = app.notifications.clone();

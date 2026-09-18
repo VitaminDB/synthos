@@ -307,3 +307,6 @@ pub const MI_REDO: &str                = "\u{E15A}"; // кривая со стр
 pub const MI_UNDO: &str                = "\u{E166}";
 pub const MI_SWAP_CALLS: &str          = "\u{E15D}"; // двусторонняя кривая
 pub const MI_INSERT_EMOTICON: &str     = "\u{E24E}"; // смайлик — панель эмодзи в чате
+pub const MI_VIEW_LIST: &str           = "\u{E8EF}";
+pub const MI_GRID_VIEW: &str           = "\u{E9B0}";
+pub const MI_IMAGE: &str               = "\u{E3F4}";

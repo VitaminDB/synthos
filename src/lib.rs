@@ -724,6 +724,8 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_speed_limit_mbps: hf.speed_limit_mbps.get(),
             hf_skip_unwanted_formats: hf.skip_unwanted_formats.get(),
             hf_gguf_support: hf.gguf_support.get(),
+            hf_files_view: hf.files_view_mode.get().as_config().to_string(),
+            hf_dock_expanded: hf.dock_expanded.get(),
 
             hf_token: hf.token.get(),
             model_profiles: model_profiles.get(),

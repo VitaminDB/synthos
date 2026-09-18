@@ -139,6 +139,7 @@ pub fn styles() -> &'static str {
         include_str!("../styles/components/hf_list.mss"),
         "\n",
         include_str!("../styles/components/hf_detail.mss"),
+        include_str!("../styles/components/hf_dock.mss"),
         "\n",
         include_str!("../styles/components/hf_dialog.mss"),
     )

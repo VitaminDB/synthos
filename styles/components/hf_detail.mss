@@ -498,32 +498,6 @@
     color: var(--on-primary);
 }
 
-/* «Пауза все / Продолжить все» — глобальный контрол, icon-only (компактно,
- * чтобы не переполнять тулбар). Нейтральный surface; на паузе подсвечен
- * primary как сигнал «есть что возобновить». */
-.hf-toolbar-pause-all {
-    padding: 7px 9px;
-    background-color: var(--surface-hover);
-    color: var(--text);
-    border-radius: var(--radius-pill);
-    transition: background-color var(--duration-fast) var(--ease-standard);
-}
-
-.hf-toolbar-pause-all:hover {
-    background-color: var(--border);
-}
-
-.hf-toolbar-pause-all.paused {
-    background-color: var(--primary-soft);
-    color: var(--primary);
-}
-
-/* Иконки-подписи перед спинбоксами лимита/параллелизма в тулбаре. */
-.hf-toolbar-icon {
-    font-size: 16px;
-    color: var(--text-muted);
-}
-
 /* Чекбокс «Выбрать всё» в тулбаре. */
 .hf-toolbar-select-all {
     font-size: 12px;
@@ -535,6 +509,100 @@
     color: var(--text-muted);
 }
 
-.hf-toolbar-spin {
-    width: 72px;
+/* Иконочная кнопка 28×28: переключатель вида, действия на плитке и в очереди
+ * нижней панели. ToolButton без своих правил рисуется светлым вне темы. */
+.hf-icon-btn {
+    width: 28px;
+    height: 28px;
+    icon-size: 16px;
+    border-radius: 8px;
+    border-width: 0;
+    background-color: transparent;
+    color: var(--text-muted);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.hf-icon-btn:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
+.hf-icon-btn:selected {
+    background-color: var(--primary-soft);
+    color: var(--primary);
+}
+
+.hf-icon-btn.primary {
+    background-color: var(--primary-soft);
+    color: var(--primary);
+}
+
+.hf-icon-btn.primary:hover {
+    background-color: var(--primary);
+    color: var(--on-primary);
+}
+
+.hf-icon-btn.danger:hover {
+    background-color: rgba(239, 68, 68, 0.18);
+    color: var(--error);
+}
+
+/* Переключатель «список / значки» — две кнопки в общей рамке. */
+.hf-view-mode {
+    padding: 2px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-shell);
+}
+
+/* Плитка файла в режиме «значки». Ширина фиксирована: Flex переносит плитки
+ * по ширине панели. */
+.hf-file-tile {
+    width: 148px;
+    padding: 8px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    background-color: var(--bg-shell);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+}
+
+.hf-file-tile:hover {
+    border-color: var(--border-strong);
+    background-color: var(--surface-hover);
+}
+
+.hf-file-tile.active { border-color: var(--primary); }
+.hf-file-tile.error  { border-color: var(--error); }
+
+.hf-file-tile-icon {
+    icon-size: 40px;
+    color: var(--text-subtle);
+}
+
+.hf-file-tile.done .hf-file-tile-icon   { color: var(--presence-online); }
+.hf-file-tile.active .hf-file-tile-icon { color: var(--primary); }
+
+.hf-file-tile-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    text-align: center;
+    line-clamp: 2;
+}
+
+.hf-file-tile-dir {
+    font-size: 10px;
+    color: var(--text-subtle);
+    text-align: center;
+    line-clamp: 1;
+}
+
+.hf-file-tile-size {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: center;
 }

@@ -8,6 +8,7 @@
 //!
 //! ```text
 //! Stack [
+//!   Column [ workspace_frame (grow), dock::view() ]   // нижняя панель загрузок
 //!   workspace_frame [
 //!     [▤ Модели] [HuggingFace  🔍 поиск  поле поиска по Hub] [Файлы ▥]
 //!     SplitView (hf_left_split_ratio) [
@@ -29,11 +30,13 @@ pub mod control;
 pub mod convert;
 pub mod detail_panel;
 pub mod dialogs;
+pub mod dock;
 pub mod download;
 pub mod filter;
 pub mod header;
 pub mod list_panel;
 pub mod persist;
+pub mod progress;
 pub mod rate;
 pub mod state;
 pub mod verify;
@@ -81,9 +84,15 @@ pub fn view() -> impl Widget {
         || Box::new(detail_panel::files_view()),
     ));
 
-    let main = DecoratedBox::new()
-        .class("hf-page")
-        .child(workspace_frame::view(spec));
+    // Панель загрузок — под каркасом и на всю ширину: сводку видно при любой
+    // раскладке боковых панелей.
+    let main = DecoratedBox::new().class("hf-page").child(
+        Column::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .child(DecoratedBox::new().class("grow").child(workspace_frame::view(spec)))
+            .child(dock::view()),
+    );
 
     mgui! {
         Stack::new() => [

@@ -7,18 +7,22 @@ use syngui::mgui;
 use syngui::mss::{MssColor, StyleValue};
 use syngui::prelude::*;
 use syngui::widget::styled::WidgetExt;
-use syngui::widgets::input::{Checkbox, SpinBox, Toggle};
+use syngui::widgets::input::Checkbox;
 use syngui::widgets::visual::MarkdownView;
 
 use crate::context::AppCtx;
 use crate::icons::{
-    MI_CHECK, MI_CLOSE, MI_CLOUD_DOWNLOAD, MI_DOWNLOAD, MI_HOURGLASS_TOP, MI_PAUSE, MI_PLAY_ARROW,
-    MI_REPORT, MI_AUTO_AWESOME, MI_SPEED, MI_STOP, MI_TUNE, MI_VERIFIED_USER,
+    MI_AUTO_AWESOME, MI_CHECK, MI_CLOSE, MI_CLOUD_DOWNLOAD, MI_CODE, MI_DATA_OBJECT,
+    MI_DESCRIPTION, MI_DOWNLOAD, MI_GRID_VIEW, MI_HOURGLASS_TOP, MI_IMAGE,
+    MI_INSERT_DRIVE_FILE, MI_MEMORY, MI_MOVIE, MI_PAUSE, MI_PLAY_ARROW, MI_REPORT, MI_STOP,
+    MI_VERIFIED_USER, MI_VIEW_LIST,
 };
 
 use super::download;
+use super::progress::{human_bytes, human_speed};
 use super::state::{
-    DlStatus, DownloadState, HfModelDetails, HfSibling, HuggingFaceCtx, VerifyStatus,
+    DlStatus, DownloadState, FilesViewMode, HfModelDetails, HfSibling, HuggingFaceCtx,
+    VerifyStatus,
 };
 
 pub fn view() -> impl Widget {
@@ -222,36 +226,57 @@ fn files_tab(repo_id: String) -> impl Widget {
             )];
         }
         let toolbar = files_toolbar(rid.clone(), d.siblings.clone());
-        let mut col = Column::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch);
-        for sibling in d.siblings.iter() {
+        let rows = d.siblings.iter().map(|sibling| {
             let key = format!("{}/{}", rid, sibling.rfilename);
-            let dl = downloads.get(&key).cloned();
-            col = col.child(file_row(rid.clone(), sibling.clone(), dl));
-        }
-        let scroll = ScrollView::new().vertical().class("hf-files-scroll").child(col);
+            (sibling.clone(), downloads.get(&key).cloned())
+        });
+        let scroll: Box<dyn Widget> = match ctx.files_view_mode.get() {
+            FilesViewMode::List => {
+                let mut col = Column::new()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch);
+                for (sibling, dl) in rows {
+                    col = col.child(file_row(rid.clone(), sibling, dl));
+                }
+                Box::new(files_scroll(col))
+            }
+            // Плитки фиксированной ширины с переносом: число колонок следует
+            // за шириной панели, которую пользователь двигает разделителем.
+            FilesViewMode::Icons => Box::new(files_scroll(
+                Flex::new()
+                    .direction(FlexDirection::Row)
+                    .wrap()
+                    .gap(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Start)
+                    .children(rows.map(|(sibling, dl)| {
+                        Box::new(file_tile(rid.clone(), sibling, dl)) as Box<dyn Widget>
+                    })),
+            )),
+        };
         let body = mgui! {
             Column::new()
                 .gap(0.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                     toolbar,
-                    DecoratedBox::new().class("grow").child(scroll),
+                    DecoratedBox::new().class("grow").child(Stack::new().fit(StackFit::Expand).children(vec![scroll])),
                 ]
         };
         vec![Box::new(body)]
     })
 }
 
-/// Тулбар над списком файлов: total-size, прогресс-статус, SpinBox concurrent,
-/// кнопка «Скачать всё». Реактивно реагирует на изменения `downloads`.
+fn files_scroll<M>(content: impl syngui::widgets::containers::IntoWidget<M>) -> impl Widget {
+    ScrollView::new().vertical().class("hf-files-scroll").child(content)
+}
+
+/// Тулбар над списком файлов: выбор, «Скачать выбранные / всё», сводка по
+/// репозиторию и переключатель вида. Пауза, лимиты и фильтр форматов — в
+/// нижней панели загрузок ([`super::dock`]): они общие для всех репозиториев.
+///
+/// `Flex` с переносом: панель узкая и двигается разделителем — в одну строку
+/// элементы не помещались и обрезались по правому краю.
 fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
     let total_bytes: u64 = siblings.iter().filter_map(|s| s.size).sum();
-    let total_text = if total_bytes > 0 {
-        tr!("hf.detail.toolbar.total", size = human_bytes(total_bytes))
-    } else {
-        tr!("hf.detail.toolbar.total", size = "—")
-    };
     let n_files = siblings.len();
 
     let siblings_for_dl = siblings.clone();
@@ -336,163 +361,231 @@ fn files_toolbar(repo_id: String, siblings: Vec<HfSibling>) -> impl Widget {
         })
     };
 
+    // «464 ГБ · скачано 67 из 280» — только по этому репозиторию; скорость,
+    // очередь и остаток времени показывает нижняя панель.
     let rid_for_status = repo_id.clone();
     let status_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let ctx = use_context::<HuggingFaceCtx>();
-        let downloads = ctx.downloads.get();
         let prefix = format!("{}/", rid_for_status);
-        let mut done = 0u32;
-        let mut active = 0u32;
-        let mut pending = 0u32;
-        let mut error = 0u32;
-        let mut paused = 0u32;
-        let mut total_speed = 0.0_f64;
-        for (k, d) in downloads.iter() {
-            if !k.starts_with(&prefix) {
-                continue;
-            }
-            match &d.status {
-                DlStatus::Done => done += 1,
-                DlStatus::Active => {
-                    active += 1;
-                    total_speed += d.speed_bps;
-                }
-                DlStatus::Pending => pending += 1,
-                DlStatus::Error(_) => error += 1,
-                // Paused и Stopped считаем вместе — оба «на паузе, есть .part».
-                DlStatus::Paused | DlStatus::Stopped => paused += 1,
-            }
-        }
-        let speed_tail = if active > 0 && total_speed > 1.0 {
-            format!(" • {}", human_speed(total_speed))
-        } else {
-            String::new()
-        };
-        let mut msg = tr!(
-            "hf.detail.status.summary",
-            done = done, total = n_files, active = active, pending = pending
-        );
-        if paused > 0 {
-            msg.push_str(&tr!("hf.detail.status.paused_suffix", n = paused));
-        }
-        if error > 0 {
-            msg.push_str(&tr!("hf.detail.status.error_suffix", n = error));
-        }
-        msg.push_str(&speed_tail);
+        let done = ctx
+            .downloads
+            .get()
+            .iter()
+            .filter(|(k, d)| k.starts_with(&prefix) && matches!(d.status, DlStatus::Done))
+            .count();
+        let size = if total_bytes > 0 { human_bytes(total_bytes) } else { "—".to_string() };
         vec![Box::new(
-            Text::new(msg).class("hf-toolbar-stat-text"),
+            Text::new(tr!("hf.detail.toolbar.summary", size = size, done = done, total = n_files))
+                .max_lines(1)
+                .class("hf-toolbar-stat-text"),
         )]
     });
 
-    // Тумблер фильтра форматов: «Скачать всё» пропускает onnx/openvino/fp32/bin.
-    // Reactive, чтобы переключение из другого места (Settings) отражалось здесь.
-    let skip_toggle = Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let on = ctx.skip_unwanted_formats.get();
-        let toggle = Toggle::with_state(on).on_change(move |v| {
-            let ctx = use_context::<HuggingFaceCtx>();
-            ctx.skip_unwanted_formats.set(v);
-        });
-        let row = mgui! {
-            Row::new()
-                .gap(6.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Text::new(tr!("hf.detail.skip_formats_toggle")).class("hf-toolbar-stat-text"),
-                    toggle,
-                ]
-        };
-        vec![Box::new(row)]
-    });
-
-    let spin_widget = Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let current = ctx.concurrent_limit.get();
-        let spin = SpinBox::new()
-            .value(current as f64)
-            .range(1.0, 8.0)
-            .step(1.0)
-            .decimal_places(0)
-            .width(72.0)
-            .on_change(move |v| {
-                let ctx = use_context::<HuggingFaceCtx>();
-                let v = v.round().clamp(1.0, 8.0) as u32;
-                if ctx.concurrent_limit.get_untracked() != v {
-                    ctx.concurrent_limit.set(v);
-                    // Если лимит увеличили — попробовать слить очередь.
-                    let app = use_context::<AppCtx>();
-                    download::try_drain_queue(ctx, app.notifications.clone());
-                }
-            })
-            .class("hf-toolbar-spin");
-        vec![Box::new(spin)]
-    });
-
-    let speed_limit_widget = Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let current = ctx.speed_limit_mbps.get();
-        let spin = SpinBox::new()
-            .value(current as f64)
-            .range(0.0, 2000.0)
-            .step(1.0)
-            .decimal_places(0)
-            .width(88.0)
-            .on_change(move |v| {
-                let ctx = use_context::<HuggingFaceCtx>();
-                let v = v.round().clamp(0.0, 2000.0) as u32;
-                if ctx.speed_limit_mbps.get_untracked() != v {
-                    ctx.speed_limit_mbps.set(v);
-                }
-            })
-            .class("hf-toolbar-spin");
-        vec![Box::new(spin)]
-    });
-
-    let global_pause_btn = Reactive::new(|| -> Vec<Box<dyn Widget>> {
-        let ctx = use_context::<HuggingFaceCtx>();
-        let paused = ctx.global_paused.get();
-        let btn: Box<dyn Widget> = if paused {
-            Box::new(
-                Button::new("")
-                    .leading_icon(MI_PLAY_ARROW)
-                    .on_click(move || {
-                        let ctx = use_context::<HuggingFaceCtx>();
-                        let app = use_context::<AppCtx>();
-                        download::resume_all(ctx, app.notifications.clone());
-                    })
-                    .class("hf-toolbar-pause-all paused"),
-            )
-        } else {
-            Box::new(
-                Button::new("")
-                    .leading_icon(MI_PAUSE)
-                    .on_click(move || {
-                        let ctx = use_context::<HuggingFaceCtx>();
-                        download::pause_all(ctx);
-                    })
-                    .class("hf-toolbar-pause-all"),
-            )
-        };
-        vec![btn]
-    });
-
-    DecoratedBox::new().class("hf-files-toolbar").child(mgui! {
+    DecoratedBox::new().class("hf-files-toolbar").child(
         Row::new()
             .gap(10.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                select_all_checkbox,
-                download_selected_btn,
-                download_all_btn,
-                global_pause_btn,
-                Text::new(total_text).class("hf-toolbar-stat-text"),
-                status_text,
-                skip_toggle,
-                DecoratedBox::new().class("grow"),
-                Icon::new(MI_SPEED).class("hf-toolbar-icon"),
-                speed_limit_widget,
-                Icon::new(MI_TUNE).class("hf-toolbar-icon"),
-                spin_widget,
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(
+                DecoratedBox::new().class("grow").child(
+                    Flex::new()
+                        .direction(FlexDirection::Row)
+                        .wrap()
+                        .gap(10.0)
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .child(select_all_checkbox)
+                        .child(download_selected_btn)
+                        .child(download_all_btn)
+                        .child(status_text),
+                ),
+            )
+            .child(view_mode_switch()),
+    )
+}
+
+/// Переключатель «список / значки» у правого края тулбара.
+fn view_mode_switch() -> impl Widget {
+    Reactive::new(|| -> Vec<Box<dyn Widget>> {
+        let ctx = use_context::<HuggingFaceCtx>();
+        let mode = ctx.files_view_mode.get();
+        let button = |icon: &'static str, tip: String, target: FilesViewMode| {
+            ToolButton::new(icon)
+                .tooltip(tip)
+                .active(mode == target)
+                .on_click(move || use_context::<HuggingFaceCtx>().files_view_mode.set(target))
+                .class("hf-icon-btn hf-view-mode-btn")
+        };
+        vec![Box::new(
+            DecoratedBox::new().class("hf-view-mode").child(
+                Row::new()
+                    .gap(2.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .child(button(MI_VIEW_LIST, tr!("hf.detail.view.list"), FilesViewMode::List))
+                    .child(button(MI_GRID_VIEW, tr!("hf.detail.view.icons"), FilesViewMode::Icons)),
+            ),
+        )]
+    })
+}
+
+fn expected_sha256(sibling: &HfSibling) -> Option<String> {
+    sibling.lfs.as_ref().and_then(|l| {
+        let raw = l.sha256.trim();
+        (!raw.is_empty()).then(|| super::download::strip_sha256_prefix(raw).to_string())
+    })
+}
+
+/// Иконка типа файла для плитки — по расширению.
+fn file_icon(filename: &str) -> &'static str {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "safetensors" | "gguf" | "bin" | "pt" | "pth" | "ckpt" | "onnx" | "h5" | "msgpack"
+        | "syn" | "npz" => MI_MEMORY,
+        "json" | "yaml" | "yml" | "toml" | "jsonl" | "xml" => MI_DATA_OBJECT,
+        "py" | "sh" | "js" | "ts" | "rs" | "cpp" | "c" | "ipynb" | "jinja" => MI_CODE,
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "bmp" => MI_IMAGE,
+        "mp4" | "mov" | "mkv" | "webm" | "wav" | "mp3" | "flac" | "ogg" => MI_MOVIE,
+        "md" | "txt" | "pdf" | "license" | "rst" => MI_DESCRIPTION,
+        _ => MI_INSERT_DRIVE_FILE,
+    }
+}
+
+/// Плитка файла в режиме «значки»: иконка типа, имя (без каталога — он строкой
+/// ниже), размер, прогресс и действия иконками. Состояния и действия те же,
+/// что у строки списка.
+fn file_tile(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -> impl Widget {
+    let filename = sibling.rfilename.clone();
+    let (dir, base) = match filename.rsplit_once('/') {
+        Some((dir, base)) => (format!("{dir}/"), base.to_string()),
+        None => (String::new(), filename.clone()),
+    };
+    let size_text = sibling.size.map(human_bytes).unwrap_or_else(|| "—".to_string());
+    let key = format!("{}/{}", repo_id, filename);
+    let status = state.as_ref().map(|s| s.status.clone());
+    let class = match &status {
+        Some(DlStatus::Done) => "hf-file-tile done",
+        Some(DlStatus::Active) => "hf-file-tile active",
+        Some(DlStatus::Error(_)) => "hf-file-tile error",
+        _ => "hf-file-tile",
+    };
+    let caption = match state.as_ref() {
+        Some(s) if matches!(s.status, DlStatus::Active) && s.total > 0 => {
+            let pct = (s.bytes_done as f64 / s.total as f64 * 100.0).floor() as u32;
+            if s.speed_bps > 1.0 {
+                format!("{pct}% · {}", human_speed(s.speed_bps))
+            } else {
+                format!("{pct}%")
+            }
+        }
+        _ => size_text,
+    };
+    let actions = icon_actions(
+        repo_id.clone(),
+        filename.clone(),
+        expected_sha256(&sibling),
+        sibling.size,
+        status,
+    );
+
+    // Без общего Tooltip на плитке: внутри свои подсказки у кнопок действий,
+    // а каталог файла показан строкой под именем.
+    DecoratedBox::new().class(class).child(mgui! {
+        Column::new()
+            .gap(4.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                Row::new()
+                    .gap(4.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center) => [
+                        file_checkbox(key),
+                        DecoratedBox::new().class("grow"),
+                        verify_badge(state.as_ref()),
+                        status_indicator(state.as_ref()),
+                    ],
+                Center::new().child(Icon::new(file_icon(&filename)).class("hf-file-tile-icon")),
+                Text::new(base).max_lines(2).class("hf-file-tile-name"),
+                Text::new(dir).max_lines(1).class("hf-file-tile-dir"),
+                Text::new(caption).max_lines(1).class("hf-file-tile-size"),
+                progress_bar(state.as_ref()),
+                Center::new().child(actions),
             ]
     })
+}
+
+/// Действия над файлом иконками (с подсказкой) — для плиток и для очереди в
+/// нижней панели, где подписи кнопок не помещаются. Набор по статусу тот же,
+/// что у [`action_cluster`]. `size` — размер из API: с ним файл сразу входит в
+/// сводный прогресс, не дожидаясь своей очереди.
+pub(super) fn icon_actions(
+    repo_id: String,
+    filename: String,
+    expected: Option<String>,
+    size: Option<u64>,
+    status: Option<DlStatus>,
+) -> Row {
+    let key = format!("{}/{}", repo_id, filename);
+    let start = {
+        let (rid, fname, exp) = (repo_id.clone(), filename.clone(), expected.clone());
+        move |tip: String| {
+            ToolButton::new(MI_DOWNLOAD)
+                .tooltip(tip)
+                .on_click(move || start_one(rid.clone(), fname.clone(), exp.clone(), size))
+                .class("hf-icon-btn primary")
+        }
+    };
+    let pause = {
+        let key = key.clone();
+        ToolButton::new(MI_PAUSE)
+            .tooltip(tr!("hf.file.pause"))
+            .on_click(move || download::pause_download(use_context::<HuggingFaceCtx>(), key.clone()))
+            .class("hf-icon-btn")
+    };
+    let stop = {
+        let key = key.clone();
+        ToolButton::new(MI_STOP)
+            .tooltip(tr!("hf.file.stop"))
+            .on_click(move || download::stop_download(use_context::<HuggingFaceCtx>(), key.clone()))
+            .class("hf-icon-btn")
+    };
+    let cancel = {
+        let key = key.clone();
+        ToolButton::new(MI_CLOSE)
+            .tooltip(tr!("app.cancel"))
+            .on_click(move || download::cancel_download(use_context::<HuggingFaceCtx>(), key.clone()))
+            .class("hf-icon-btn danger")
+    };
+    let resume = {
+        let key = key.clone();
+        move |icon: &'static str, tip: String| {
+            ToolButton::new(icon)
+                .tooltip(tip)
+                .on_click(move || {
+                    let ctx = use_context::<HuggingFaceCtx>();
+                    let app = use_context::<AppCtx>();
+                    download::resume_download(ctx, app.notifications.clone(), key.clone());
+                })
+                .class("hf-icon-btn primary")
+        }
+    };
+    let base = Row::new()
+        .gap(4.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .class("hf-file-actions");
+    match status {
+        None => base.child(start(tr!("hf.file.download"))),
+        Some(DlStatus::Done) => base,
+        Some(DlStatus::Error(_)) => base.child(start(tr!("hf.file.retry"))).child(cancel),
+        Some(DlStatus::Pending) => base.child(pause).child(cancel),
+        Some(DlStatus::Active) => base.child(pause).child(stop).child(cancel),
+        Some(DlStatus::Paused) => base.child(resume(MI_PLAY_ARROW, tr!("hf.file.resume"))).child(cancel),
+        Some(DlStatus::Stopped) => base.child(resume(MI_DOWNLOAD, tr!("hf.file.download"))).child(cancel),
+    }
+}
+
+/// «Скачать» для одного файла + размер из API в сводный прогресс.
+fn start_one(repo_id: String, filename: String, expected: Option<String>, size: Option<u64>) {
+    let ctx = use_context::<HuggingFaceCtx>();
+    let app = use_context::<AppCtx>();
+    download::start_download(ctx, app.notifications.clone(), repo_id.clone(), filename.clone(), expected);
+    let sibling = HfSibling { rfilename: filename, size, lfs: None };
+    download::seed_totals(ctx, &repo_id, std::slice::from_ref(&sibling));
 }
 
 fn file_row(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -> impl Widget {
@@ -502,17 +595,8 @@ fn file_row(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -
         .map(human_bytes)
         .unwrap_or_else(|| "—".to_string());
 
-    // expected_sha256 — нужен и для авто-verify после Done, и как hint в
-    // verify_file для ручной кнопки. Pre-extract здесь чтобы не дёргать
-    // sibling.lfs из замыкания.
-    let expected_sha256 = sibling.lfs.as_ref().and_then(|l| {
-        let raw = l.sha256.trim();
-        if raw.is_empty() {
-            None
-        } else {
-            Some(super::download::strip_sha256_prefix(raw).to_string())
-        }
-    });
+    // Нужен и для авто-verify после Done, и как hint ручной кнопке «SHA256».
+    let expected_sha256 = expected_sha256(&sibling);
 
     let dl_status_widget = status_indicator(state.as_ref());
     let progress_widget = progress_bar(state.as_ref());
@@ -552,6 +636,7 @@ fn file_row(repo_id: String, sibling: HfSibling, state: Option<DownloadState>) -
         repo_id.clone(),
         filename.clone(),
         expected_sha256.clone(),
+        sibling.size,
         state.as_ref().map(|s| s.status.clone()),
     );
     let checkbox = file_checkbox(key.clone());
@@ -585,6 +670,7 @@ fn action_cluster(
     repo_id: String,
     filename: String,
     expected_sha256: Option<String>,
+    size: Option<u64>,
     status: Option<DlStatus>,
 ) -> impl Widget {
     let key = format!("{}/{}", repo_id, filename);
@@ -594,7 +680,7 @@ fn action_cluster(
         .class("hf-file-actions");
     match status {
         // Не качали / пусто → одна кнопка «Скачать».
-        None => base.child(start_btn(repo_id, filename, expected_sha256)),
+        None => base.child(start_btn(repo_id, filename, expected_sha256, size)),
         // Завершено → конвертация GGUF → .syn, если формат подходит.
         Some(DlStatus::Done) => {
             let ctx = use_context::<HuggingFaceCtx>();
@@ -609,7 +695,7 @@ fn action_cluster(
         }
         // Ошибка → повторить (то же start_download) + отмена (убирает запись).
         Some(DlStatus::Error(_)) => base
-            .child(start_btn(repo_id, filename, expected_sha256))
+            .child(start_btn(repo_id, filename, expected_sha256, size))
             .child(cancel_btn(key)),
         // В очереди → пауза (снимет из очереди) + отмена.
         Some(DlStatus::Pending) => base
@@ -675,20 +761,10 @@ fn file_checkbox(key: String) -> impl Widget {
     })
 }
 
-fn start_btn(repo_id: String, filename: String, expected: Option<String>) -> Button {
+fn start_btn(repo_id: String, filename: String, expected: Option<String>, size: Option<u64>) -> Button {
     Button::new(tr!("hf.file.download"))
         .leading_icon(MI_DOWNLOAD)
-        .on_click(move || {
-            let ctx = use_context::<HuggingFaceCtx>();
-            let app = use_context::<AppCtx>();
-            download::start_download(
-                ctx,
-                app.notifications.clone(),
-                repo_id.clone(),
-                filename.clone(),
-                expected.clone(),
-            );
-        })
+        .on_click(move || start_one(repo_id.clone(), filename.clone(), expected.clone(), size))
         .class("hf-file-dl-btn")
 }
 
@@ -803,25 +879,10 @@ fn speed_indicator(state: Option<&DownloadState>) -> impl Widget {
     })
 }
 
-fn human_speed(bps: f64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    if bps >= GB {
-        format!("{:.2} {}", bps / GB, tr!("hf.unit.gb_per_s"))
-    } else if bps >= MB {
-        format!("{:.1} {}", bps / MB, tr!("hf.unit.mb_per_s"))
-    } else if bps >= KB {
-        format!("{:.0} {}", bps / KB, tr!("hf.unit.kb_per_s"))
-    } else {
-        format!("{:.0} {}", bps, tr!("hf.unit.b_per_s"))
-    }
-}
-
 /// Иконка статуса справа: пусто / pending / done / error.
 /// Для Active + retry_count > 0 показываем «попытка N/3» рядом с пустым
 /// слотом, давая пользователю понять, что мы не повисли — идёт backoff.
-fn status_indicator(state: Option<&DownloadState>) -> impl Widget {
+pub(super) fn status_indicator(state: Option<&DownloadState>) -> impl Widget {
     let snapshot = state.map(|s| (s.status.clone(), s.retry_count));
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let inner: Box<dyn Widget> = match &snapshot {
@@ -866,7 +927,7 @@ fn status_indicator(state: Option<&DownloadState>) -> impl Widget {
 /// - Active + сегментов нет → один rail с заполнением `bytes_done/total`.
 /// - Active + N сегментов → Row из N равных rail'ов, каждый заполняется
 ///   отдельно (визуально видно параллельную работу).
-fn progress_bar(state: Option<&DownloadState>) -> impl Widget {
+pub(super) fn progress_bar(state: Option<&DownloadState>) -> impl Widget {
     let snapshot = state.cloned();
     Reactive::new(move || -> Vec<Box<dyn Widget>> {
         let Some(s) = &snapshot else {
@@ -934,21 +995,6 @@ fn progress_bar(state: Option<&DownloadState>) -> impl Widget {
     })
 }
 
-fn human_bytes(n: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let f = n as f64;
-    if f >= GB {
-        format!("{:.2} {}", f / GB, tr!("hf.unit.gb"))
-    } else if f >= MB {
-        format!("{:.1} {}", f / MB, tr!("hf.unit.mb"))
-    } else if f >= KB {
-        format!("{:.1} {}", f / KB, tr!("hf.unit.kb"))
-    } else {
-        format!("{} {}", n, tr!("hf.unit.b"))
-    }
-}
 // silence unused import (HfModelDetails reachable via `Reactive` closure types)
 #[allow(dead_code)]
 fn _ref_details(_: HfModelDetails) {}

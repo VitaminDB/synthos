@@ -352,6 +352,12 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = resize_idx.get();
             let _ = error.get();
         }
+        NodeRuntime::H3References { items, image_size_idx, error, loaded_name, .. } => {
+            let _ = items.get();
+            let _ = image_size_idx.get();
+            let _ = error.get();
+            let _ = loaded_name.get();
+        }
         NodeRuntime::H3Sampler { steps, cfg_scale, seed, error, .. } => {
             let _ = steps.get();
             let _ = cfg_scale.get();

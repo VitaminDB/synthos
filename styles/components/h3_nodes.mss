@@ -9,6 +9,7 @@
 .h3-text-encoder-node,
 .h3-empty-latent-node,
 .h3-keyframe-node,
+.h3-references-node,
 .h3-sampler-node,
 .h3-vae-decode-node,
 .h3-audio-decode-node,
@@ -76,4 +77,26 @@
 .h3-progress {
     height: 6px;
     border-radius: 3px;
+}
+
+/* H3 References: строка списка — иконка типа, метка <Picture/Video/Audio N>
+ * над именем файла, справа кнопки (звук, вверх/вниз, убрать). */
+.h3-ref-row {
+    padding: 3px 4px 3px 4px;
+    background: #1a1422;
+    border-radius: 6px;
+}
+
+.h3-ref-kind-icon {
+    font-size: 18px;
+    color: #9a8fb0;
+}
+
+.h3-ref-text {
+    flex-grow: 1;
+}
+
+.h3-ref-name {
+    font-size: 11px;
+    color: #d8d0e6;
 }

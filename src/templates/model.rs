@@ -258,6 +258,8 @@ pub enum NodeStateData {
     H3Checkpoint(H3CheckpointStateData),
     H3Sampler(H3SamplerStateData),
     H3EmptyLatentAv(H3EmptyLatentAvStateData),
+    H3Keyframe(H3KeyframeStateData),
+    H3References(H3ReferencesStateData),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -523,6 +525,43 @@ pub struct H3CheckpointStateData {
     /// Держать DiT в VRAM после прогона. Старые шаблоны → false.
     #[serde(default)]
     pub resident: bool,
+}
+
+/// State ноды H3 Keyframe: картинка и якорь (0 — первый кадр, 1 — последний).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct H3KeyframeStateData {
+    #[serde(default)]
+    pub image_path: Option<String>,
+    #[serde(default)]
+    pub frame_slot_idx: usize,
+    #[serde(default)]
+    pub resize_idx: usize,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Один референс ноды H3 References. Тип (картинка/видео/аудио) — по
+/// расширению файла.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct H3ReferenceItemData {
+    pub path: String,
+    /// Для видео: брать ли его звуковую дорожку как `<Audio j>`.
+    #[serde(default = "default_true")]
+    pub use_audio: bool,
+}
+
+/// State ноды H3 References: референсы Ref2VA по порядку — порядок задаёт
+/// номера `<Picture i>` / `<Video k>` / `<Audio j>`, на которые ссылается
+/// промпт.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct H3ReferencesStateData {
+    #[serde(default)]
+    pub items: Vec<H3ReferenceItemData>,
+    /// 0 — match (до площади кадра), 1 — max (2048 по короткой стороне).
+    #[serde(default)]
+    pub image_size_idx: usize,
 }
 
 fn default_h3_lora_strength() -> f32 {

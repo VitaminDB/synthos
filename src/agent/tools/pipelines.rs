@@ -36,7 +36,9 @@ use crate::context::AppCtx;
 use crate::pages::node_editor::registry::{self, NodeCategory};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::tabs::EditorWorkspace;
-use crate::pages::node_editor::types::{Connection, NodeKind, PortKind, PortsSpec, PortSide};
+use crate::pages::node_editor::types::{
+    Connection, NodeKind, NodeRuntime, PortKind, PortsSpec, PortSide,
+};
 use crate::syn_chat::attach::blobs;
 use crate::syn_chat::SynChatCtx;
 use crate::templates::{self, convert, model::NodeStateData, ConnData, NodeData, Template, TemplateKind};
@@ -426,6 +428,13 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("memory_mode_idx", minimax_h3::MEMORY_MODE_OPTIONS),
         ],
         NodeKind::H3EmptyLatentAv => vec![("aspect_idx", minimax_h3::latent::ASPECT_OPTIONS)],
+        NodeKind::H3Keyframe => vec![
+            ("frame_slot_idx", crate::pages::node_editor::controls::FRAME_SLOTS),
+            ("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES),
+        ],
+        NodeKind::H3References => {
+            vec![("image_size_idx", minimax_h3::references::IMAGE_SIZE_OPTIONS)]
+        }
         _ => Vec::new(),
     }
 }
@@ -655,7 +664,66 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
             out.push('\n');
         }
     }
+    out.push_str(&h3_reference_labels(&ctx));
+    out.push_str(h3_prompt_guide(&ctx));
     Ok(out)
+}
+
+const H3_PROMPT_BASE: &str = include_str!("h3_prompt_base.md");
+const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
+
+/// Формат промпта MiniMax-H3 — при открытии шаблона, один раз. Закрытый
+/// H3-Context-IR у MiniMax переписывает запрос пользователя в эту структуру;
+/// локально эту роль играет агент, и без структуры модель заметно теряет в
+/// следовании референсам.
+fn h3_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
+    let nodes = ctx.nodes.get_untracked();
+    let has = |k: NodeKind| nodes.iter().any(|n| n.kind == k && n.enabled.get_untracked());
+    if !has(NodeKind::H3TextEncoder) {
+        ""
+    } else if has(NodeKind::H3References) {
+        H3_PROMPT_REF
+    } else {
+        H3_PROMPT_BASE
+    }
+}
+
+/// Метки, под которыми модель увидит референсы ноды H3 References. Нумерация
+/// зависит от порядка и от того, есть ли у видео дорожка, — агенту она нужна
+/// до прогона, чтобы написать промпт.
+fn h3_reference_labels(ctx: &NodeEditorCtx) -> String {
+    use crate::pages::node_editor::nodes::minimax_h3::references::labels_of;
+    let mut out = String::new();
+    for n in ctx.nodes.get_untracked().iter().filter(|n| n.kind == NodeKind::H3References) {
+        let Ok(rt) = n.runtime.lock() else { continue };
+        let NodeRuntime::H3References { items, error, .. } = &*rt else { continue };
+        let entries = items.get_untracked();
+        if entries.is_empty() {
+            out.push_str(&format!(
+                "H3 References (node {}): empty — set_state data.items = \
+                 [{{\"path\": \"attachment:<name>\", \"use_audio\": true}}, …] in the order \
+                 the model should read them (≤9 images, ≤3 videos of 2–15 s, ≤3 audio, ≤12 total; \
+                 audio never alone). use_audio=false drops a video's own soundtrack.\n",
+                n.id.0
+            ));
+        } else {
+            out.push_str(&format!(
+                "H3 References (node {}) — refer to them in the prompt by these tags:\n",
+                n.id.0
+            ));
+            for (e, label) in entries.iter().zip(labels_of(&entries)) {
+                let name = e.path.file_name().map(|s| s.to_string_lossy().to_string());
+                out.push_str(&format!(
+                    "  {label} = {}\n",
+                    name.unwrap_or_else(|| e.path.display().to_string())
+                ));
+            }
+        }
+        if let Some(err) = error.get_untracked() {
+            out.push_str(&format!("  ⚠ {err}\n"));
+        }
+    }
+    out
 }
 
 /// Ноды графа с пустыми путями моделей — то же, что проверяет pre-check
@@ -699,7 +767,7 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
 
 fn graph_impl() -> Result<String, String> {
     match agent_ctx()? {
-        Some(ctx) => graph_summary(&ctx),
+        Some(ctx) => Ok(graph_summary(&ctx)? + &h3_reference_labels(&ctx)),
         None => Err("there's no service tab yet — open a template (action=open) or build a graph (action=apply)".into()),
     }
 }
@@ -895,6 +963,7 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
     // символов на каждый apply, из которых агенту нужна лишь строка «что
     // дальше». Полный снимок остаётся за action=graph.
     out.push_str(&graph_brief(&ctx)?);
+    out.push_str(&h3_reference_labels(&ctx));
     out.push_str(
         "Next step: action=run (free_vram=true if system status shows not \
          enough VRAM). To check the full state — action=graph.\n",
@@ -1397,13 +1466,27 @@ fn add_connection(ctx: &NodeEditorCtx, c: &ConnData) -> Result<(), String> {
 /// вложения текущего чата. `<ref>` — имя файла (case-insensitive), префикс
 /// sha256 (≥6 hex) или `last` (самое свежее вложение). Используется
 /// `blobs::model_path` — derived-копия в формате, читаемом пайплайнами.
+///
+/// Исключение — список `items` ноды H3 References: туда идёт исходный файл.
+/// Derived-копия аудио — это WAV 16 кГц моно под ASR, а референс голоса или
+/// музыки модель кодирует в 32 кГц стерео; ffmpeg ноды читает любой формат.
 fn resolve_attachment_uris(v: &mut serde_json::Value, notes: &mut Vec<String>) {
+    resolve_attachment_uris_in(v, notes, false)
+}
+
+fn resolve_attachment_uris_in(v: &mut serde_json::Value, notes: &mut Vec<String>, original: bool) {
     match v {
         serde_json::Value::String(s) => {
             if let Some(r) = s.strip_prefix("attachment:") {
                 match find_attachment(r) {
                     Some(a) => {
-                        let path = blobs::model_path(&a).display().to_string();
+                        let path = if original {
+                            blobs::source_path(&a)
+                        } else {
+                            blobs::model_path(&a)
+                        }
+                        .display()
+                        .to_string();
                         notes.push(format!("attachment:{r} → {path}"));
                         *s = path;
                     }
@@ -1413,10 +1496,12 @@ fn resolve_attachment_uris(v: &mut serde_json::Value, notes: &mut Vec<String>) {
                 }
             }
         }
-        serde_json::Value::Array(a) => a.iter_mut().for_each(|x| resolve_attachment_uris(x, notes)),
-        serde_json::Value::Object(o) => {
-            o.values_mut().for_each(|x| resolve_attachment_uris(x, notes))
+        serde_json::Value::Array(a) => {
+            a.iter_mut().for_each(|x| resolve_attachment_uris_in(x, notes, original))
         }
+        serde_json::Value::Object(o) => o.iter_mut().for_each(|(k, x)| {
+            resolve_attachment_uris_in(x, notes, original || k == "items")
+        }),
         _ => {}
     }
 }

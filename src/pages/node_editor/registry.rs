@@ -184,6 +184,7 @@ static H3_CHECKPOINT_EXEC: minimax_h3::checkpoint::CheckpointExec = minimax_h3::
 static H3_TEXT_ENCODER_EXEC: minimax_h3::text_encoder::TextEncoderExec = minimax_h3::text_encoder::TextEncoderExec;
 static H3_EMPTY_LATENT_EXEC: minimax_h3::latent::EmptyLatentExec = minimax_h3::latent::EmptyLatentExec;
 static H3_KEYFRAME_EXEC: minimax_h3::latent::KeyframeExec = minimax_h3::latent::KeyframeExec;
+static H3_REFERENCES_EXEC: minimax_h3::references::ReferencesExec = minimax_h3::references::ReferencesExec;
 static H3_SAMPLER_EXEC: minimax_h3::sampler::SamplerExec = minimax_h3::sampler::SamplerExec;
 static H3_VAE_DECODE_EXEC: minimax_h3::decode::VaeDecodeExec = minimax_h3::decode::VaeDecodeExec;
 static H3_AUDIO_DECODE_EXEC: minimax_h3::decode::AudioDecodeExec = minimax_h3::decode::AudioDecodeExec;
@@ -382,6 +383,7 @@ const H3_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
     PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
     PortSchema { name: "keyframe_last", label: "keyframe 2", kind: PortKind::Data },
+    PortSchema { name: "refs", label: "refs", kind: PortKind::Data },
 ];
 const H3_TEXT_ENCODER_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
@@ -392,6 +394,12 @@ const H3_EMPTY_LATENT_OUTPUTS: &[PortSchema] = &[
 const H3_KEYFRAME_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
 ];
+const H3_REFERENCES_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "av_latent", label: "av latent", kind: PortKind::Data },
+];
+const H3_REFERENCES_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "refs", label: "refs", kind: PortKind::Data },
+];
 const H3_SAMPLER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
@@ -399,6 +407,7 @@ const H3_SAMPLER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "av_latent", label: "av latent", kind: PortKind::Data },
     PortSchema { name: "keyframe", label: "keyframe", kind: PortKind::Data },
     PortSchema { name: "keyframe_last", label: "keyframe 2", kind: PortKind::Data },
+    PortSchema { name: "refs", label: "refs", kind: PortKind::Data },
 ];
 const H3_SAMPLER_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
@@ -1177,6 +1186,23 @@ const H3_KEYFRAME: NodeKindMeta = NodeKindMeta {
     busy_signal: None,
 };
 
+const H3_REFERENCES: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::H3References,
+    icon: crate::icons::MI_MOVIE,
+    title: "H3 References",
+    category: NodeCategory::Neuro,
+    subcategory: Some(H3_SUBCATEGORY),
+    inputs: PortsSpec::Static(H3_REFERENCES_INPUTS),
+    outputs: PortsSpec::Static(H3_REFERENCES_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(minimax_h3::references::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &H3_REFERENCES_EXEC,
+    on_run: Some(minimax_h3::references::on_run),
+    busy_signal: Some(minimax_h3::references::busy_signal),
+};
+
 const H3_SAMPLER: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::H3Sampler,
     icon: MI_AUTO_AWESOME,
@@ -1567,6 +1593,7 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     H3_TEXT_ENCODER,
     H3_EMPTY_LATENT,
     H3_KEYFRAME,
+    H3_REFERENCES,
     H3_SAMPLER,
     H3_VAE_DECODE,
     H3_AUDIO_DECODE,
@@ -1997,6 +2024,15 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             resize_idx: use_signal(0_usize),
             image: Arc::new(Mutex::new(None)),
             error: use_signal(None),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::H3References => NodeRuntime::H3References {
+            items: use_signal(Vec::new()),
+            image_size_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
         },
         NodeKind::H3Sampler => NodeRuntime::H3Sampler {

@@ -197,6 +197,7 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             NodeKind::H3TextEncoder => classes.push("h3-text-encoder-node".to_string()),
             NodeKind::H3EmptyLatentAv => classes.push("h3-empty-latent-node".to_string()),
             NodeKind::H3Keyframe => classes.push("h3-keyframe-node".to_string()),
+            NodeKind::H3References => classes.push("h3-references-node".to_string()),
             NodeKind::H3Sampler => classes.push("h3-sampler-node".to_string()),
             NodeKind::H3VaeDecode => classes.push("h3-vae-decode-node".to_string()),
             NodeKind::H3AudioDecode => classes.push("h3-audio-decode-node".to_string()),

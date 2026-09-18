@@ -252,16 +252,24 @@ pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::N
             NodeRuntime::H3Keyframe {
                 path,
                 frame_slot_idx,
+                resize_idx,
                 image,
                 error,
                 output_version,
                 ..
-            } => Some((*path, *frame_slot_idx, image.clone(), *error, *output_version)),
+            } => Some((
+                *path,
+                *frame_slot_idx,
+                *resize_idx,
+                image.clone(),
+                *error,
+                *output_version,
+            )),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((path, slot, image, error, output_version)) = snapshot else {
+    let Some((path, slot, resize, image, error, output_version)) = snapshot else {
         return;
     };
     let Some(p) = path.get_untracked() else {
@@ -272,7 +280,8 @@ pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::N
         Ok(img) => {
             let frame_index = if slot.get_untracked() == 1 { usize::MAX } else { 0 };
             if let Ok(mut g) = image.lock() {
-                *g = Some(Arc::new(H3Keyframe { image: img, frame_index }));
+                let center_crop = resize.get_untracked() == 1;
+                *g = Some(Arc::new(H3Keyframe { image: img, frame_index, center_crop }));
             }
             error.set(None);
             output_version.update(|v| *v = v.wrapping_add(1));
@@ -281,9 +290,54 @@ pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::N
     }
 }
 
+/// Ключевой кадр `[3, H, W]` на холст генерации. Без этого VAE кодировал
+/// кадр в его родном размере, и cond-строк выходило не столько, сколько
+/// зарезервировала раскладка. Эталон растягивает первый кадр и
+/// покрывает-обрезает второй; здесь режим выбирает нода.
+pub fn fit_keyframe(
+    image: &synaptix_core::tensor::Tensor,
+    width: usize,
+    height: usize,
+    center_crop: bool,
+) -> std::result::Result<synaptix_core::tensor::Tensor, String> {
+    use synaptix_io::image::augment::resize_bilinear;
+    let d = image.dims().to_vec();
+    let (h, w) = (d[1], d[2]);
+    if (h, w) == (height, width) {
+        return Ok(image.clone());
+    }
+    if !center_crop {
+        return resize_bilinear(image, height, width).map_err(|e| e.to_string());
+    }
+    let scale = (width as f64 / w as f64).max(height as f64 / h as f64);
+    let rw = ((w as f64 * scale).round() as usize).max(width);
+    let rh = ((h as f64 * scale).round() as usize).max(height);
+    let resized = resize_bilinear(image, rh, rw).map_err(|e| e.to_string())?;
+    resized
+        .narrow(1, (rh - height) / 2, height)
+        .and_then(|t| t.narrow(2, (rw - width) / 2, width))
+        .and_then(|t| t.contiguous())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyframe_lands_on_canvas_in_both_modes() {
+        synaptix_kernels_cpu::ensure_registered();
+        let img = synaptix_core::tensor::Tensor::zeros(
+            vec![3, 100, 300],
+            synaptix_core::dtype::DType::F32,
+            synaptix_core::device::Device::Cpu,
+        )
+        .unwrap();
+        for crop in [false, true] {
+            let out = fit_keyframe(&img, 64, 96, crop).unwrap();
+            assert_eq!(out.dims(), &[3, 96, 64], "center_crop={crop}");
+        }
+    }
 
     #[test]
     fn aspect_16_9_from_default_width() {

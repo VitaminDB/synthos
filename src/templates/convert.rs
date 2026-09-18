@@ -21,7 +21,8 @@ use super::model::{
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, H3CheckpointStateData,
-    H3EmptyLatentAvStateData, H3SamplerStateData, LlmStateData,
+    H3EmptyLatentAvStateData, H3KeyframeStateData, H3ReferenceItemData, H3ReferencesStateData,
+    H3SamplerStateData, LlmStateData,
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
     LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
     LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
@@ -242,8 +243,27 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 aspect_idx: aspect_idx.get_untracked(),
             }))
         }
+        NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, .. } => {
+            Some(NodeStateData::H3Keyframe(H3KeyframeStateData {
+                image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                frame_slot_idx: frame_slot_idx.get_untracked(),
+                resize_idx: resize_idx.get_untracked(),
+            }))
+        }
+        NodeRuntime::H3References { items, image_size_idx, .. } => {
+            Some(NodeStateData::H3References(H3ReferencesStateData {
+                items: items
+                    .get_untracked()
+                    .iter()
+                    .map(|e| H3ReferenceItemData {
+                        path: e.path.to_string_lossy().to_string(),
+                        use_audio: e.use_audio,
+                    })
+                    .collect(),
+                image_size_idx: image_size_idx.get_untracked(),
+            }))
+        }
         NodeRuntime::H3TextEncoder { .. }
-        | NodeRuntime::H3Keyframe { .. }
         | NodeRuntime::H3VaeDecode { .. }
         | NodeRuntime::H3AudioDecode { .. }
         | NodeRuntime::H3VideoSave { .. } => None,
@@ -1184,6 +1204,34 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             aspect_idx.set(data.aspect_idx);
         }
         (
+            NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, .. },
+            NodeStateData::H3Keyframe(data),
+        ) => {
+            path.set(data.image_path.as_ref().map(PathBuf::from));
+            frame_slot_idx.set(data.frame_slot_idx.min(1));
+            resize_idx.set(data.resize_idx.min(1));
+        }
+        (
+            NodeRuntime::H3References { items, image_size_idx, error, .. },
+            NodeStateData::H3References(data),
+        ) => {
+            // Файл с незнакомым расширением не теряем молча: строка пропадёт
+            // из списка, а сдвиг меток без объяснения хуже явной ошибки.
+            let mut entries = Vec::with_capacity(data.items.len());
+            let mut unknown = Vec::new();
+            for it in &data.items {
+                match crate::pages::node_editor::types::H3RefEntry::probe(&it.path, it.use_audio) {
+                    Some(e) => entries.push(e),
+                    None => unknown.push(it.path.clone()),
+                }
+            }
+            items.set(entries);
+            image_size_idx.set(data.image_size_idx.min(1));
+            error.set((!unknown.is_empty()).then(|| {
+                tr!("node.minimax_h3_references.unknown_type", path = unknown.join(", "))
+            }));
+        }
+        (
             NodeRuntime::SynCheckpoint {
                 model_path,
                 device_idx,
@@ -2014,6 +2062,82 @@ mod tests {
             }
             other => panic!("Expected H3EmptyLatentAv runtime, got {other:?}"),
         }
+    }
+
+    /// Состояние H3 Keyframe раньше не сериализовалось вовсе: шаблон терял
+    /// слот «последний кадр», а агент не мог подставить картинку.
+    #[test]
+    fn roundtrip_h3_keyframe_state() {
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::H3Keyframe,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::H3Keyframe(H3KeyframeStateData {
+                image_path: Some("/tmp/last.png".into()),
+                frame_slot_idx: 1,
+                resize_idx: 1,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![nd.clone()]));
+        let node = first_node(&ctx);
+        assert_eq!(runtime_to_state(&node.runtime.lock().unwrap()), nd.state);
+    }
+
+    /// Порядок и флаг дорожки переживают круг; тип берётся по расширению, а
+    /// файл с незнакомым расширением не теряется молча — нода показывает ошибку.
+    #[test]
+    fn roundtrip_h3_references_state() {
+        use crate::pages::node_editor::nodes::minimax_h3::references::labels_of;
+        let item = |path: &str, use_audio: bool| H3ReferenceItemData { path: path.into(), use_audio };
+        let state = H3ReferencesStateData {
+            items: vec![
+                item("/nonexistent/dance.mp4", false),
+                item("/nonexistent/hero.png", true),
+                item("/nonexistent/voice.wav", true),
+            ],
+            image_size_idx: 1,
+        };
+        let nd = NodeData {
+            id: 1,
+            kind: NodeKind::H3References,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::H3References(state.clone())),
+        };
+        let ctx = roundtrip(&make_template(vec![nd]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        assert_eq!(runtime_to_state(&rt), Some(NodeStateData::H3References(state)));
+        let NodeRuntime::H3References { items, error, .. } = &*rt else {
+            panic!("Expected H3References runtime, got {rt:?}");
+        };
+        assert_eq!(labels_of(&items.get_untracked()), ["<Video 1>", "<Picture 1>", "<Audio 1>"]);
+        assert!(error.get_untracked().is_none());
+        drop(rt);
+
+        let bad = NodeData {
+            id: 1,
+            kind: NodeKind::H3References,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(NodeStateData::H3References(H3ReferencesStateData {
+                items: vec![item("/nonexistent/notes.txt", true)],
+                image_size_idx: 0,
+            })),
+        };
+        let ctx = roundtrip(&make_template(vec![bad]));
+        let node = first_node(&ctx);
+        let rt = node.runtime.lock().unwrap();
+        let NodeRuntime::H3References { items, error, .. } = &*rt else { panic!() };
+        assert!(items.get_untracked().is_empty());
+        assert!(error.get_untracked().is_some());
     }
 
     #[test]

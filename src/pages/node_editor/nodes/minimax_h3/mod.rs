@@ -1,6 +1,7 @@
 pub mod checkpoint;
 pub mod decode;
 pub mod latent;
+pub mod references;
 pub mod sampler;
 pub mod save;
 pub mod shared;
@@ -15,7 +16,8 @@ use syngui::prelude::*;
 
 use super::super::state::NodeEditorCtx;
 use super::super::types::{
-    H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3VideoLatent, NodeId, PortValue,
+    H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3Refs, H3VideoLatent, NodeId,
+    PortValue,
 };
 
 pub const VARIANT_OPTIONS: &[&str] = &["FL2VA", "Ref2VA"];
@@ -145,6 +147,14 @@ pub fn current_input_keyframe(
     port: &'static str,
 ) -> Option<Arc<H3Keyframe>> {
     current_input(ctx, node_id, port)?.as_h3_keyframe()
+}
+
+pub fn current_input_refs(
+    ctx: &NodeEditorCtx,
+    node_id: NodeId,
+    port: &'static str,
+) -> Option<Arc<H3Refs>> {
+    current_input(ctx, node_id, port)?.as_h3_refs()
 }
 
 pub fn current_input_frames(

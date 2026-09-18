@@ -420,6 +420,7 @@ pub enum NodeKind {
     H3EmptyLatentAv,
     /// MiniMax-H3: изображение → ключевой кадр (первый/последний).
     H3Keyframe,
+    H3References,
     /// MiniMax-H3: совместный денойзинг видео и звука.
     H3Sampler,
     /// MiniMax-H3: видео-латент → RGB-кадры (ViT-декодер VAE).
@@ -480,6 +481,7 @@ impl NodeKind {
         NodeKind::H3TextEncoder,
         NodeKind::H3EmptyLatentAv,
         NodeKind::H3Keyframe,
+        NodeKind::H3References,
         NodeKind::H3Sampler,
         NodeKind::H3VaeDecode,
         NodeKind::H3AudioDecode,
@@ -633,6 +635,8 @@ pub enum H3Blob {
     Keyframe(Arc<H3Keyframe>),
     /// Декодированные кадры для превью и сохранения.
     Frames(Arc<LtxFrames>),
+    /// Референсы Ref2VA: декодированные и нормализованные медиа по порядку.
+    Refs(Arc<H3Refs>),
 }
 
 /// Конфиг H3-чекпойнта: модель (`.syn`-бандл либо HF-каталог) + энкодер +
@@ -690,6 +694,35 @@ pub struct H3VideoLatent {
 pub struct H3Keyframe {
     pub image: synaptix_core::tensor::Tensor,
     pub frame_index: usize,
+    /// Как класть кадр на холст генерации: `false` — растянуть, `true` —
+    /// покрыть и обрезать по центру. Применяет сэмплер: размер знает он.
+    pub center_crop: bool,
+}
+
+/// Строка списка ноды H3 References. `has_audio` — есть ли в файле
+/// аудиопоток (узнаётся пробой при добавлении): от него зависит нумерация
+/// `<Audio j>`, а она нужна уже при написании промпта, до прогона.
+#[derive(Debug, Clone, PartialEq)]
+pub struct H3RefEntry {
+    pub path: PathBuf,
+    pub kind: synaptix_video_minimax_h3::refs::RefKind,
+    pub use_audio: bool,
+    pub has_audio: bool,
+}
+
+/// Декодированные референсы под конкретную геометрию: энкодеру нужны кадры
+/// на 2 fps, сэмплеру — латенты тех же самых медиа, поэтому декодируем один
+/// раз и отдаём обоим. `frame_count` — под какую длину обрезаны видео и звук.
+pub struct H3Refs {
+    pub media: Vec<synaptix_video_minimax_h3::refs::RefMedia>,
+    pub labels: Vec<String>,
+    pub frame_count: usize,
+}
+
+impl std::fmt::Debug for H3Refs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "H3Refs{{{} шт., {} кадров}}", self.media.len(), self.frame_count)
+    }
 }
 
 /// Типизированный payload одной из стадий LTX-2.3. Тензоры —
@@ -1162,6 +1195,17 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::H3(H3Blob::Keyframe(k)) => Some(k.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь референсы H3.
+    pub fn as_h3_refs(&self) -> Option<Arc<H3Refs>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::H3(H3Blob::Refs(r)) => Some(r.clone()),
                 _ => None,
             },
             _ => None,
@@ -2126,6 +2170,17 @@ pub enum NodeRuntime {
         error: RwSignal<Option<String>>,
         output_version: RwSignal<u32>,
     },
+    H3References {
+        /// Порядок значим: он задаёт номера меток и RoPE-часы раскладки.
+        items: RwSignal<Vec<H3RefEntry>>,
+        /// Индекс в `minimax_h3::references::IMAGE_SIZE_OPTIONS`.
+        image_size_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<H3Refs>>>>,
+        output_version: RwSignal<u32>,
+    },
     H3Sampler {
         steps: RwSignal<u32>,
         cfg_scale: RwSignal<f32>,
@@ -2206,6 +2261,7 @@ impl NodeRuntime {
             | R::LtxA2V { error, .. }
             | R::H3TextEncoder { error, .. }
             | R::H3Keyframe { error, .. }
+            | R::H3References { error, .. }
             | R::H3Sampler { error, .. }
             | R::H3VaeDecode { error, .. }
             | R::H3AudioDecode { error, .. }
@@ -2527,6 +2583,9 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::H3Keyframe { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
                 write!(f, "NodeRuntime::H3Keyframe{{path={p}}}")
+            }
+            NodeRuntime::H3References { items, .. } => {
+                write!(f, "NodeRuntime::H3References{{{} шт.}}", items.get_untracked().len())
             }
             NodeRuntime::H3Sampler { running, steps, .. } => {
                 write!(

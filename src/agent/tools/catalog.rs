@@ -211,7 +211,12 @@ pub(super) fn build_all() -> Vec<Tool> {
                 prompt (Edit), variation (Retake); speech: TTS and voice clone \
                 (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \
                 (GigaAM), mixing/effects/recording; video: LTX text/image→video, \
-                lip-dub, audio→video, MiniMax-H3. \
+                lip-dub, audio→video; MiniMax-H3 video with native audio — \
+                text→video, first/last frame (H3 Keyframe.image_path), and \
+                reference→video (template builtin-h3-ref2va: H3 References.items = \
+                ordered [{path, use_audio}] — images, videos, audio the user \
+                attached; open/apply answer with the <Picture/Video/Audio N> tags \
+                and the prompt format — follow it). \
                 Typical workflow: 1) action=list — templates (built-in and \
                 custom) and chat attachments; 2) action=open with \
                 template=<id> — load a template; 3) action=nodes with \

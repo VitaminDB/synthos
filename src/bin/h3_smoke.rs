@@ -111,7 +111,9 @@ fn run() -> std::result::Result<(), String> {
         return Err(format!(
             "использование: {} <model.syn|model_dir> <out.mp4> [width height duration_sec steps] \
              (env: H3_ENCODER=<encoder.syn|dir>, H3_LORA=<turbo.safetensors>, \
-             H3_PROMPT=..., H3_IMAGE=<first_frame>)",
+             H3_PROMPT=..., H3_IMAGE=<first_frame>, \
+             H3_REFS=<a.mp4:b.png:c.wav> — референсы Ref2VA по порядку, \
+             H3_REF_IMAGE_SIZE=match|max)",
             args[0]
         ));
     }
@@ -134,6 +136,9 @@ fn run() -> std::result::Result<(), String> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(if lora.is_some() { 6 } else { 20 });
     let image = std::env::var("H3_IMAGE").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
+    let refs: Vec<PathBuf> = std::env::var("H3_REFS")
+        .map(|v| v.split(':').filter(|s| !s.is_empty()).map(PathBuf::from).collect())
+        .unwrap_or_default();
 
     minimax_h3::shared::ensure_kernels_registered();
     if std::env::var("H3_PROF").is_ok_and(|v| v != "0") {
@@ -171,6 +176,7 @@ fn run() -> std::result::Result<(), String> {
     let n_aud = ctx.add_node(NodeKind::H3AudioDecode, zero);
     let n_save = ctx.add_node(NodeKind::H3VideoSave, zero);
     let n_kf = image.as_ref().map(|_| ctx.add_node(NodeKind::H3Keyframe, zero));
+    let n_refs = (!refs.is_empty()).then(|| ctx.add_node(NodeKind::H3References, zero));
     let negative = std::env::var("H3_NEGATIVE").ok();
     let n_neg = negative.as_ref().map(|_| {
         (ctx.add_node(NodeKind::TextView, zero), ctx.add_node(NodeKind::H3TextEncoder, zero))
@@ -194,6 +200,11 @@ fn run() -> std::result::Result<(), String> {
     if let Some(kf) = n_kf {
         connect(&ctx, kf, "keyframe", n_enc, "keyframe");
         connect(&ctx, kf, "keyframe", n_smp, "keyframe");
+    }
+    if let Some(r) = n_refs {
+        connect(&ctx, n_lat, "av_latent", r, "av_latent");
+        connect(&ctx, r, "refs", n_enc, "refs");
+        connect(&ctx, r, "refs", n_smp, "refs");
     }
 
     match &*node(&ctx, n_ckpt).runtime.lock().unwrap() {
@@ -259,6 +270,34 @@ fn run() -> std::result::Result<(), String> {
         refresh(&ctx);
         minimax_h3::latent::keyframe_on_run(&node(&ctx, kf), &ctx);
         drain();
+    }
+
+    if let Some(r) = n_refs {
+        use synthos::pages::node_editor::types::H3RefEntry;
+        let mut entries = Vec::with_capacity(refs.len());
+        for p in &refs {
+            entries.push(
+                H3RefEntry::probe(p, true)
+                    .ok_or_else(|| format!("{}: не картинка, не видео и не аудио", p.display()))?,
+            );
+        }
+        for (e, label) in entries.iter().zip(minimax_h3::references::labels_of(&entries)) {
+            eprintln!("[h3-smoke] {label} = {}", e.path.display());
+        }
+        let n = node(&ctx, r);
+        let (running, error) = match &*n.runtime.lock().unwrap() {
+            NodeRuntime::H3References { items, image_size_idx, running, error, .. } => {
+                items.set(entries);
+                if std::env::var("H3_REF_IMAGE_SIZE").is_ok_and(|v| v == "max") {
+                    image_size_idx.set(1);
+                }
+                (*running, *error)
+            }
+            _ => return Err("H3References runtime".into()),
+        };
+        refresh(&ctx);
+        minimax_h3::references::on_run(&n, &ctx);
+        wait_done("references", running, error, None)?;
     }
 
     refresh(&ctx);

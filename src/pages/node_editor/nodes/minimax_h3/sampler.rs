@@ -12,14 +12,14 @@ use tracing::{debug, info};
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{
-    DataBlob, H3Blob, H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3VideoLatent,
-    NodeInstance, NodeRuntime, PortValue,
+    DataBlob, H3Blob, H3Conditioning, H3Geometry, H3Keyframe, H3ModelHandle, H3Refs,
+    H3VideoLatent, NodeInstance, NodeRuntime, PortValue,
 };
 use super::super::acestep::{field_row, make_int_slider_row, make_seed_slider, make_slider_row, status_row};
 use super::super::{log_worker_done, log_worker_start, WORKER_LOG};
 use super::{
     cancel_button, current_input_av_latent, current_input_conditioning, current_input_keyframe,
-    current_input_model, progress_row, shared,
+    current_input_model, current_input_refs, progress_row, shared,
 };
 
 pub struct SamplerExec;
@@ -31,6 +31,8 @@ impl NodeExecutor for SamplerExec {
         let _ = ctx.read_input("negative");
         let _ = ctx.read_input("av_latent");
         let _ = ctx.read_input("keyframe");
+        let _ = ctx.read_input("keyframe_last");
+        let _ = ctx.read_input("refs");
         let track = ctx.track;
         let (v, a) = match ctx.runtime().lock() {
             Ok(g) => match &*g {
@@ -142,6 +144,23 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         .iter()
         .filter_map(|p| current_input_keyframe(ctx, node.id, p))
         .collect();
+    let refs = current_input_refs(ctx, node.id, "refs");
+    if let Some(r) = &refs {
+        if !keyframes.is_empty() {
+            error.set(Some(tr!("node.minimax_h3.common.refs_or_keyframes")));
+            return;
+        }
+        // Видео и звук референсов обрезаны под длину, с которой их
+        // декодировали; другая длина здесь — рассинхрон с кондиционированием.
+        if r.frame_count != geometry.frame_count {
+            error.set(Some(tr!(
+                "node.minimax_h3_sampler.refs_length_mismatch",
+                refs = r.frame_count,
+                latent = geometry.frame_count
+            )));
+            return;
+        }
+    }
 
     let n_steps = steps.get_untracked().max(1) as usize;
     let cfg = cfg_scale.get_untracked();
@@ -159,7 +178,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 "h3-sampler",
                 &format!(
                     "{}x{}, {} кадров, латент {}x{}x{}, {n_steps} шагов, CFG {cfg}, seed {s}, \
-                     негатив {}, keyframes {}",
+                     негатив {}, keyframes {}, референсов {}",
                     geometry.width,
                     geometry.height,
                     geometry.frame_count,
@@ -168,6 +187,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                     geometry.latent_w,
                     if negative.is_some() { "есть" } else { "нет" },
                     keyframes.len(),
+                    refs.as_ref().map(|r| r.media.len()).unwrap_or(0),
                 ),
             );
             let res = worker(
@@ -176,6 +196,7 @@ fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 negative.as_deref(),
                 geometry,
                 &keyframes,
+                refs.as_deref(),
                 n_steps,
                 cfg,
                 s,
@@ -207,12 +228,20 @@ fn worker(
     negative: Option<&H3Conditioning>,
     geometry: H3Geometry,
     keyframes: &[Arc<H3Keyframe>],
+    refs: Option<&H3Refs>,
     steps: usize,
     cfg_scale: f32,
     seed: u64,
     progress_pct: RwSignal<f32>,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> std::result::Result<(H3VideoLatent, synaptix_core::tensor::Tensor), String> {
+    // Референсы кодируются до загрузки DiT: VAE на кадре 2048 px или на
+    // 15-секундном видео нужна свободная карта.
+    let ref_latents = match refs {
+        Some(r) => Some(encode_refs(handle, r, seed).map_err(|e| format!("VAE: {e}"))?),
+        None => None,
+    };
+
     let anchor = shared::activation_anchor(handle, 13 << 29);
     let t_load = std::time::Instant::now();
     let shared_dit = shared::load_dit(handle)?;
@@ -224,6 +253,12 @@ fn worker(
     );
     let dit = &shared_dit.dit;
     let ckpt = &shared_dit.ckpt;
+    // H3_FORCE_REFS=1 — отладочный прогон пути референсов на весах FL2VA:
+    // картинка бессмысленная, зато раскладка/VAE/денойз проверяются без Ref2VA.
+    let force = std::env::var("H3_FORCE_REFS").is_ok_and(|v| v == "1");
+    if ref_latents.is_some() && !ckpt.config.supports_references() && !force {
+        return Err(tr!("node.minimax_h3_sampler.need_ref2va"));
+    }
 
     let g = h3::pipeline::Geometry::new(geometry.width, geometry.height, geometry.frame_count);
     let sched = h3::H3Scheduler::new(
@@ -258,6 +293,10 @@ fn worker(
             },
         })
         .collect();
+    if let Some(latents) = ref_latents {
+        req.refs = latents.blocks;
+        req.cond_rows = latents.cond_rows;
+    }
 
     let t_prep = std::time::Instant::now();
     let prep = h3::pipeline::prepare(dit, &req, &sched).map_err(|e| e.to_string())?;
@@ -282,9 +321,14 @@ fn worker(
             .map_err(|e| e.to_string())?;
         let mut latents = Vec::with_capacity(keyframes.len());
         for kf in keyframes {
-            let d = kf.image.dims().to_vec();
-            let x = kf
-                .image
+            let fitted = super::latent::fit_keyframe(
+                &kf.image,
+                geometry.width,
+                geometry.height,
+                kf.center_crop,
+            )?;
+            let d = fitted.dims().to_vec();
+            let x = fitted
                 .to_device(shared_dit.device)
                 .and_then(|t| t.reshape(vec![1, d[0], 1, d[1], d[2]]))
                 .and_then(|t| t.mul_scalar(2.0))
@@ -360,6 +404,57 @@ fn worker(
         H3VideoLatent { tensor: out.video_latent, geometry },
         out.audio_latent,
     ))
+}
+
+/// Латенты референсов: видео-VAE (энкодер) и, если есть звук, полный
+/// audio-VAE. Оба живут только на время кодирования.
+fn encode_refs(
+    handle: &H3ModelHandle,
+    refs: &H3Refs,
+    seed: u64,
+) -> std::result::Result<h3::refs::RefLatents, String> {
+    shared::ensure_kernels_registered();
+    let t = std::time::Instant::now();
+    let device = super::device_of(handle.device_idx);
+    let compute = super::compute_of(handle.compute_idx);
+    let source = shared::source_of(handle)?;
+    let err = |e: h3::H3Error| e.to_string();
+
+    let vae_cfg = h3::config::VaeConfig::from_source(&source).map_err(err)?;
+    let vw = h3::loader::ComponentLoader::open_component(&source, h3::H3Component::VideoVae, device)
+        .map_err(err)?;
+    let vae = h3::vae::VaeEncoder::load(&vw, vae_cfg, device, compute).map_err(err)?;
+
+    let has_audio = refs.media.iter().any(|m| match m {
+        h3::refs::RefMedia::Audio(_) => true,
+        h3::refs::RefMedia::Video(v) => v.audio.is_some(),
+        h3::refs::RefMedia::Image(_) => false,
+    });
+    let audio_vae = if has_audio {
+        let cfg = h3::config::AudioVaeConfig::from_source(&source).map_err(err)?;
+        let aw =
+            h3::loader::ComponentLoader::open_component(&source, h3::H3Component::AudioVae, device)
+                .map_err(err)?;
+        Some(h3::audio_vae::AudioVae::load_full(&aw, cfg, device, compute).map_err(err)?)
+    } else {
+        None
+    };
+
+    let patch = h3::H3Config::from_source(&source).map_err(err)?.patch_size;
+    let latents =
+        h3::refs::encode_latents(&refs.media, &vae, audio_vae.as_ref(), patch, device, seed)
+            .map_err(err)?;
+    drop(vae);
+    drop(audio_vae);
+    shared::trim_pool(handle);
+    info!(
+        target: WORKER_LOG,
+        node = "h3-sampler",
+        count = refs.media.len(),
+        elapsed_ms = t.elapsed().as_millis() as u64,
+        "референсы закодированы VAE"
+    );
+    Ok(latents)
 }
 
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {

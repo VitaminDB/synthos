@@ -8,7 +8,8 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    FieldValueData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData, NodeStateData,
+    FieldValueData, H3KeyframeStateData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
+    NodeStateData,
     PointData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
 };
 use crate::pages::node_editor::types::NodeKind;
@@ -40,6 +41,7 @@ pub fn all() -> Vec<Template> {
         h3_turbo_template(),
         h3_first_frame_template(),
         h3_first_last_template(),
+        h3_ref2va_template(),
         ltx_text_to_video_template(),
         ltx_image_to_video_template(),
         ltx_retake_template(),
@@ -329,6 +331,50 @@ fn ltx_image_to_video_template() -> Template {
             ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
             ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
         ],
+        viewport: None,
+    }
+}
+
+fn h3_ref2va_template() -> Template {
+    let mut nodes = h3_base_nodes(
+        "subject_definitions:\n<Subject 1> is the person in <Picture 1>.\n\nsummary:\n\
+         <Subject 1> walks through a sunlit park toward the camera.\n\nretention_analysis:\n\
+         <Subject 1> (appears in [Shot 1]): fully_preserved - identity, hair and clothing are \
+         kept.\n\ndetailed_description:\n[Shot 1] <Subject 1> walks along a park path toward \
+         the camera, smiling, leaves moving in a light breeze.\n\noverall_soundscape:\n\
+         Footsteps on gravel, birdsong, distant voices.\n\nnon_diegetic_music:\nNone.",
+    );
+    nodes.push(node_plain(10, NodeKind::H3References, 60.0, 900.0));
+    let mut connections = h3_base_connections();
+    connections.push(ConnData {
+        from_node: 4,
+        from_port: "av_latent".into(),
+        to_node: 10,
+        to_port: "av_latent".into(),
+    });
+    for to in [3u64, 5u64] {
+        connections.push(ConnData {
+            from_node: 10,
+            from_port: "refs".into(),
+            to_node: to,
+            to_port: "refs".into(),
+        });
+    }
+    Template {
+        id: "builtin-h3-ref2va".into(),
+        builtin: true,
+        name: "H3: References to Video".into(),
+        description:
+            "Видео по референсам (чекпойнт Ref2VA): до 9 картинок, 3 видео и 3 аудио, всего до \
+             12, в ноде H3 References. Порядок списка задаёт метки <Picture i> / <Video k> / \
+             <Audio j> — нода показывает их у каждой строки, на них и ссылается промпт. \
+             Промпт — шесть секций (subject_definitions, summary, retention_analysis, \
+             detailed_description, overall_soundscape, non_diegetic_music). В Checkpoint нужен \
+             бандл Ref2VA: FL2VA референсов не понимает."
+                .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
         viewport: None,
     }
 }
@@ -967,7 +1013,17 @@ fn h3_first_last_template() -> Template {
          evolving ambient soundscape",
     );
     nodes.push(node_plain(10, NodeKind::H3Keyframe, 60.0, 900.0));
-    nodes.push(node_plain(11, NodeKind::H3Keyframe, 60.0, 1120.0));
+    nodes.push(node_with_state(
+        11,
+        NodeKind::H3Keyframe,
+        60.0,
+        1120.0,
+        NodeStateData::H3Keyframe(H3KeyframeStateData {
+            image_path: None,
+            frame_slot_idx: 1,
+            resize_idx: 1,
+        }),
+    ));
     let mut connections = h3_base_connections();
     for (from, port) in [(10u64, "keyframe"), (11u64, "keyframe_last")] {
         connections.push(ConnData {
@@ -988,8 +1044,8 @@ fn h3_first_last_template() -> Template {
         builtin: true,
         name: "H3: First+Last Frame".into(),
         description:
-            "Переход между двумя кадрами. У второй Keyframe-ноды выберите слот «последний \
-             кадр» — модель поддерживает якоря только на первом и последнем кадрах, середина \
+            "Переход между двумя кадрами: у второй Keyframe-ноды уже выбран слот «последний \
+             кадр». Модель поддерживает якоря только на первом и последнем кадрах, середина \
              отвергается на этапе сборки layout."
                 .into(),
         kind: TemplateKind::Full,

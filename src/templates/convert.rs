@@ -21,7 +21,8 @@ use super::model::{
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
-    Flux2SamplerStateData, FluxCheckpointStateData,
+    Flux2SamplerStateData, FluxCheckpointStateData, QwenImageCheckpointStateData, QwenImageSamplerStateData,
+    SdxlCheckpointStateData, SdxlSamplerStateData,
     FluxEmptyLatentStateData, FluxSamplerStateData, FluxTextEncoderStateData, FluxVaeEncodeStateData,
     GainStateData, H3CheckpointStateData, ImageLoadStateData, ImageSaveStateData,
     H3EmptyLatentAvStateData, H3KeyframeStateData, H3ReferenceItemData, H3ReferencesStateData,
@@ -324,6 +325,45 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             }))
         }
         NodeRuntime::Flux2TextEncoder { .. } | NodeRuntime::Flux2Reference { .. } | NodeRuntime::Flux2VaeDecode { .. } => None,
+        NodeRuntime::QwenImageCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
+            Some(NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData {
+                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                device_idx: device_idx.get_untracked(),
+                quant_idx: quant_idx.get_untracked(),
+                memory_mode_idx: memory_mode_idx.get_untracked(),
+                resident: resident.get_untracked(),
+            }))
+        }
+        NodeRuntime::QwenImageSampler { steps, cfg, seed, .. } => {
+            Some(NodeStateData::QwenImageSampler(QwenImageSamplerStateData {
+                steps: steps.get_untracked(),
+                cfg: cfg.get_untracked(),
+                seed: seed.get_untracked(),
+            }))
+        }
+        NodeRuntime::QwenImageTextEncoder { .. }
+        | NodeRuntime::QwenImageReference { .. }
+        | NodeRuntime::QwenImageVaeDecode { .. } => None,
+        NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. } => {
+            Some(NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData {
+                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                device_idx: device_idx.get_untracked(),
+                quant_idx: quant_idx.get_untracked(),
+                resident: resident.get_untracked(),
+            }))
+        }
+        NodeRuntime::SdxlVaeEncode { resize_idx, .. } => {
+            Some(NodeStateData::SdxlVaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
+        }
+        NodeRuntime::SdxlSampler { steps, guidance, seed, denoise, .. } => {
+            Some(NodeStateData::SdxlSampler(SdxlSamplerStateData {
+                steps: steps.get_untracked(),
+                guidance: guidance.get_untracked(),
+                seed: seed.get_untracked(),
+                denoise: denoise.get_untracked(),
+            }))
+        }
+        NodeRuntime::SdxlTextEncoder { .. } | NodeRuntime::SdxlVaeDecode { .. } => None,
         NodeRuntime::ImageLoad { path, .. } => Some(NodeStateData::ImageLoad(ImageLoadStateData {
             image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
         })),
@@ -1321,6 +1361,41 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             seed.set(data.seed);
             denoise.set(data.denoise.clamp(0.0, 1.0));
         }
+        (
+            NodeRuntime::QwenImageCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
+            NodeStateData::QwenImageCheckpoint(data),
+        ) => {
+            use crate::pages::node_editor::nodes::qwen_image;
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx.min(qwen_image::DEVICE_OPTIONS.len() - 1));
+            quant_idx.set(data.quant_idx.min(qwen_image::QUANT_OPTIONS.len() - 1));
+            memory_mode_idx.set(data.memory_mode_idx.min(qwen_image::MEMORY_MODE_OPTIONS.len() - 1));
+            resident.set(data.resident);
+        }
+        (NodeRuntime::QwenImageSampler { steps, cfg, seed, .. }, NodeStateData::QwenImageSampler(data)) => {
+            steps.set(data.steps.min(100));
+            cfg.set(data.cfg.max(1.0));
+            seed.set(data.seed);
+        }
+        (
+            NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. },
+            NodeStateData::SdxlCheckpoint(data),
+        ) => {
+            use crate::pages::node_editor::nodes::sdxl;
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx.min(sdxl::DEVICE_OPTIONS.len() - 1));
+            quant_idx.set(data.quant_idx.min(sdxl::QUANT_OPTIONS.len() - 1));
+            resident.set(data.resident);
+        }
+        (NodeRuntime::SdxlVaeEncode { resize_idx, .. }, NodeStateData::SdxlVaeEncode(data)) => {
+            resize_idx.set(data.resize_idx.min(1));
+        }
+        (NodeRuntime::SdxlSampler { steps, guidance, seed, denoise, .. }, NodeStateData::SdxlSampler(data)) => {
+            steps.set(data.steps.clamp(1, 100));
+            guidance.set(data.guidance);
+            seed.set(data.seed);
+            denoise.set(data.denoise.clamp(0.0, 1.0));
+        }
         (NodeRuntime::ImageLoad { path, .. }, NodeStateData::ImageLoad(data)) => {
             path.set(data.image_path.as_ref().map(PathBuf::from));
         }
@@ -2171,6 +2246,58 @@ mod tests {
                 NodeStateData::Flux2Sampler(Flux2SamplerStateData { steps: 28, guidance: 3.0, seed: 9, denoise: 0.55 }),
             ),
             mk(3, NodeKind::Flux2VaeEncode, NodeStateData::Flux2VaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
+        ];
+        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
+        let ctx = roundtrip(&make_template(nodes));
+        let got: Vec<Option<NodeStateData>> =
+            ctx.nodes.get_untracked().iter().map(|n| runtime_to_state(&n.runtime.lock().unwrap())).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn roundtrip_qwen_image_and_sdxl_states() {
+        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
+            id,
+            kind,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(state),
+        };
+        let nodes = vec![
+            mk(
+                1,
+                NodeKind::QwenImageCheckpoint,
+                NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData {
+                    model_path: Some("/models/qwen-image-edit-2511.syn".into()),
+                    device_idx: 0,
+                    quant_idx: 1,
+                    memory_mode_idx: 2,
+                    resident: true,
+                }),
+            ),
+            mk(
+                2,
+                NodeKind::QwenImageSampler,
+                NodeStateData::QwenImageSampler(QwenImageSamplerStateData { steps: 20, cfg: 2.5, seed: 7 }),
+            ),
+            mk(
+                3,
+                NodeKind::SdxlCheckpoint,
+                NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData {
+                    model_path: Some("/models/sdxl-base-1.0.syn".into()),
+                    device_idx: 0,
+                    quant_idx: 2,
+                    resident: true,
+                }),
+            ),
+            mk(4, NodeKind::SdxlVaeEncode, NodeStateData::SdxlVaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
+            mk(
+                5,
+                NodeKind::SdxlSampler,
+                NodeStateData::SdxlSampler(SdxlSamplerStateData { steps: 25, guidance: 7.0, seed: 3, denoise: 0.4 }),
+            ),
         ];
         let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
         let ctx = roundtrip(&make_template(nodes));

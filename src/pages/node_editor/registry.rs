@@ -23,6 +23,7 @@ use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, flux2, image, llm, ltx,
+    qwen_image, sdxl,
     markdown_view,
     minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
     voxcpm2,
@@ -229,6 +230,17 @@ static FLUX2_REFERENCE_EXEC: flux2::reference::ReferenceExec = flux2::reference:
 static FLUX2_VAE_ENCODE_EXEC: flux2::vae::VaeEncodeExec = flux2::vae::VaeEncodeExec;
 static FLUX2_SAMPLER_EXEC: flux2::sampler::SamplerExec = flux2::sampler::SamplerExec;
 static FLUX2_VAE_DECODE_EXEC: flux2::vae::VaeDecodeExec = flux2::vae::VaeDecodeExec;
+static QWEN_IMAGE_CHECKPOINT_EXEC: qwen_image::checkpoint::CheckpointExec = qwen_image::checkpoint::CheckpointExec;
+static QWEN_IMAGE_TEXT_ENCODER_EXEC: qwen_image::text_encoder::TextEncoderExec =
+    qwen_image::text_encoder::TextEncoderExec;
+static QWEN_IMAGE_REFERENCE_EXEC: qwen_image::reference::ReferenceExec = qwen_image::reference::ReferenceExec;
+static QWEN_IMAGE_SAMPLER_EXEC: qwen_image::sampler::SamplerExec = qwen_image::sampler::SamplerExec;
+static QWEN_IMAGE_VAE_DECODE_EXEC: qwen_image::vae::VaeDecodeExec = qwen_image::vae::VaeDecodeExec;
+static SDXL_CHECKPOINT_EXEC: sdxl::checkpoint::CheckpointExec = sdxl::checkpoint::CheckpointExec;
+static SDXL_TEXT_ENCODER_EXEC: sdxl::text_encoder::TextEncoderExec = sdxl::text_encoder::TextEncoderExec;
+static SDXL_VAE_ENCODE_EXEC: sdxl::vae::VaeEncodeExec = sdxl::vae::VaeEncodeExec;
+static SDXL_SAMPLER_EXEC: sdxl::sampler::SamplerExec = sdxl::sampler::SamplerExec;
+static SDXL_VAE_DECODE_EXEC: sdxl::vae::VaeDecodeExec = sdxl::vae::VaeDecodeExec;
 static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
 static IMAGE_SAVE_EXEC: image::ImageSaveExec = image::ImageSaveExec;
 
@@ -1560,6 +1572,211 @@ const FLUX2_VAE_DECODE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(flux2::vae::busy_signal),
 };
 
+// ── Qwen-Image ────────────────────────────────────────────────────────────
+
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.qwen_image`.
+const QWEN_IMAGE_SUBCATEGORY: &str = "qwen_image";
+
+/// Промпт, негатив (необязательно, по умолчанию `" "`) и картинки правки.
+const QWEN_IMAGE_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
+    PortSchema { name: "negative", label: "negative", kind: PortKind::Text },
+    PortSchema { name: "references", label: "references", kind: PortKind::Data },
+];
+/// `latent` — FLUX Empty Latent (размер, необязательно); без него — размер
+/// с картинки правки.
+const QWEN_IMAGE_SAMPLER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+    PortSchema { name: "references", label: "references", kind: PortKind::Data },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+
+const QWEN_IMAGE_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImageCheckpoint,
+    icon: MI_INVENTORY_2,
+    title: "Qwen-Image Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const QWEN_IMAGE_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImageTextEncoder,
+    icon: MI_TRANSLATE,
+    title: "Qwen-Image Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE_SUBCATEGORY),
+    inputs: PortsSpec::Static(QWEN_IMAGE_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(qwen_image::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE_TEXT_ENCODER_EXEC,
+    on_run: Some(qwen_image::text_encoder::on_run),
+    busy_signal: Some(qwen_image::text_encoder::busy_signal),
+};
+
+const QWEN_IMAGE_REFERENCE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImageReference,
+    icon: MI_LAYERS,
+    title: "Qwen-Image Reference",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX2_REFERENCE_INPUTS),
+    outputs: PortsSpec::Static(FLUX2_REFERENCES_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image::reference::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE_REFERENCE_EXEC,
+    on_run: Some(qwen_image::reference::on_run),
+    busy_signal: Some(qwen_image::reference::busy_signal),
+};
+
+const QWEN_IMAGE_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImageSampler,
+    icon: MI_AUTO_AWESOME,
+    title: "Qwen-Image Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE_SUBCATEGORY),
+    inputs: PortsSpec::Static(QWEN_IMAGE_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE_SAMPLER_EXEC,
+    on_run: Some(qwen_image::sampler::on_run),
+    busy_signal: Some(qwen_image::sampler::busy_signal),
+};
+
+const QWEN_IMAGE_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImageVaeDecode,
+    icon: MI_PALETTE,
+    title: "Qwen-Image VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image::vae::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE_VAE_DECODE_EXEC,
+    on_run: Some(qwen_image::vae::on_run),
+    busy_signal: Some(qwen_image::vae::busy_signal),
+};
+
+// ── SDXL ──────────────────────────────────────────────────────────────────
+
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.sdxl`.
+const SDXL_SUBCATEGORY: &str = "sdxl";
+
+/// Промпт и негатив (необязательно; пустой — нули, как у пайплайна).
+const SDXL_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
+    PortSchema { name: "negative", label: "negative", kind: PortKind::Text },
+];
+
+const SDXL_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SdxlCheckpoint,
+    icon: MI_INVENTORY_2,
+    title: "SDXL Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(SDXL_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(sdxl::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SDXL_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const SDXL_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SdxlTextEncoder,
+    icon: MI_TRANSLATE,
+    title: "SDXL Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(SDXL_SUBCATEGORY),
+    inputs: PortsSpec::Static(SDXL_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(sdxl::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SDXL_TEXT_ENCODER_EXEC,
+    on_run: Some(sdxl::text_encoder::on_run),
+    busy_signal: Some(sdxl::text_encoder::busy_signal),
+};
+
+const SDXL_VAE_ENCODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SdxlVaeEncode,
+    icon: MI_IMAGE_ICON,
+    title: "SDXL VAE Encode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(SDXL_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_ENCODE_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(sdxl::vae::encode_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SDXL_VAE_ENCODE_EXEC,
+    on_run: Some(sdxl::vae::encode_on_run),
+    busy_signal: Some(sdxl::vae::encode_busy_signal),
+};
+
+const SDXL_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SdxlSampler,
+    icon: MI_AUTO_AWESOME,
+    title: "SDXL Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(SDXL_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(sdxl::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SDXL_SAMPLER_EXEC,
+    on_run: Some(sdxl::sampler::on_run),
+    busy_signal: Some(sdxl::sampler::busy_signal),
+};
+
+const SDXL_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::SdxlVaeDecode,
+    icon: MI_PALETTE,
+    title: "SDXL VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(SDXL_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(sdxl::vae::decode_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &SDXL_VAE_DECODE_EXEC,
+    on_run: Some(sdxl::vae::on_run),
+    busy_signal: Some(sdxl::vae::decode_busy_signal),
+};
+
 const IMAGE_LOAD: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::ImageLoad,
     icon: MI_IMAGE_ICON,
@@ -1933,6 +2150,16 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     FLUX2_VAE_ENCODE,
     FLUX2_SAMPLER,
     FLUX2_VAE_DECODE,
+    QWEN_IMAGE_CHECKPOINT,
+    QWEN_IMAGE_TEXT_ENCODER,
+    QWEN_IMAGE_REFERENCE,
+    QWEN_IMAGE_SAMPLER,
+    QWEN_IMAGE_VAE_DECODE,
+    SDXL_CHECKPOINT,
+    SDXL_TEXT_ENCODER,
+    SDXL_VAE_ENCODE,
+    SDXL_SAMPLER,
+    SDXL_VAE_DECODE,
     IMAGE_LOAD,
     IMAGE_SAVE,
 ];
@@ -2494,6 +2721,86 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::Flux2VaeDecode => NodeRuntime::Flux2VaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImageCheckpoint => NodeRuntime::QwenImageCheckpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            quant_idx: use_signal(qwen_image::DEFAULT_QUANT_IDX),
+            memory_mode_idx: use_signal(0_usize),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::QwenImageTextEncoder => NodeRuntime::QwenImageTextEncoder {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImageReference => NodeRuntime::QwenImageReference {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImageSampler => NodeRuntime::QwenImageSampler {
+            steps: use_signal(qwen_image::sampler::DEFAULT_STEPS),
+            cfg: use_signal(qwen_image::sampler::DEFAULT_CFG),
+            seed: use_signal(0_u64),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImageVaeDecode => NodeRuntime::QwenImageVaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::SdxlCheckpoint => NodeRuntime::SdxlCheckpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            quant_idx: use_signal(sdxl::DEFAULT_QUANT_IDX),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::SdxlTextEncoder => NodeRuntime::SdxlTextEncoder {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::SdxlVaeEncode => NodeRuntime::SdxlVaeEncode {
+            resize_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::SdxlSampler => NodeRuntime::SdxlSampler {
+            steps: use_signal(sdxl::sampler::DEFAULT_STEPS),
+            guidance: use_signal(sdxl::sampler::DEFAULT_GUIDANCE),
+            seed: use_signal(0_u64),
+            denoise: use_signal(sdxl::sampler::DEFAULT_DENOISE),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::SdxlVaeDecode => NodeRuntime::SdxlVaeDecode {
             running: use_signal(false),
             error: use_signal(None),
             out: Arc::new(Mutex::new(None)),

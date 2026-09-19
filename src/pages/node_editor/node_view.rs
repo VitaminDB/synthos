@@ -213,7 +213,17 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             | NodeKind::Flux2Reference
             | NodeKind::Flux2VaeEncode
             | NodeKind::Flux2Sampler
-            | NodeKind::Flux2VaeDecode => classes.push("flux-node".to_string()),
+            | NodeKind::Flux2VaeDecode
+            | NodeKind::QwenImageCheckpoint
+            | NodeKind::QwenImageTextEncoder
+            | NodeKind::QwenImageReference
+            | NodeKind::QwenImageSampler
+            | NodeKind::QwenImageVaeDecode
+            | NodeKind::SdxlCheckpoint
+            | NodeKind::SdxlTextEncoder
+            | NodeKind::SdxlVaeEncode
+            | NodeKind::SdxlSampler
+            | NodeKind::SdxlVaeDecode => classes.push("flux-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
             NodeKind::LtxCheckpoint => classes.push("ltx-checkpoint-node".to_string()),
             NodeKind::LtxTextEncoder => classes.push("ltx-text-encoder-node".to_string()),

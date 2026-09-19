@@ -60,7 +60,11 @@ impl TemplateCategory {
         let id = t.id.as_str();
         if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
             TemplateCategory::Video
-        } else if id.starts_with("builtin-flux-") || id.starts_with("builtin-flux2-") {
+        } else if id.starts_with("builtin-flux-")
+            || id.starts_with("builtin-flux2-")
+            || id.starts_with("builtin-qwen-image-")
+            || id.starts_with("builtin-sdxl-")
+        {
             TemplateCategory::Image
         } else if id.starts_with("builtin-acestep-") {
             TemplateCategory::Music

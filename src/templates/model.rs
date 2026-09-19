@@ -269,6 +269,12 @@ pub enum NodeStateData {
     /// Настройки те же, что у FLUX VAE Encode.
     Flux2VaeEncode(FluxVaeEncodeStateData),
     Flux2Sampler(Flux2SamplerStateData),
+    QwenImageCheckpoint(QwenImageCheckpointStateData),
+    QwenImageSampler(QwenImageSamplerStateData),
+    SdxlCheckpoint(SdxlCheckpointStateData),
+    /// Настройки те же, что у FLUX VAE Encode.
+    SdxlVaeEncode(FluxVaeEncodeStateData),
+    SdxlSampler(SdxlSamplerStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
 }
@@ -427,6 +433,106 @@ impl Default for Flux2SamplerStateData {
 
 pub fn default_flux2_guidance() -> f32 {
     crate::pages::node_editor::nodes::flux2::sampler::DEFAULT_GUIDANCE
+}
+
+/// State Qwen-Image Checkpoint: бандл/каталог и железо. `quant_idx` —
+/// `nodes::qwen_image::QUANT_OPTIONS` (по умолчанию mxfp8).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QwenImageCheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default = "default_qwen_image_quant_idx")]
+    pub quant_idx: usize,
+    #[serde(default)]
+    pub memory_mode_idx: usize,
+    #[serde(default)]
+    pub resident: bool,
+}
+
+impl Default for QwenImageCheckpointStateData {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            device_idx: 0,
+            quant_idx: default_qwen_image_quant_idx(),
+            memory_mode_idx: 0,
+            resident: false,
+        }
+    }
+}
+
+fn default_qwen_image_quant_idx() -> usize {
+    crate::pages::node_editor::nodes::qwen_image::DEFAULT_QUANT_IDX
+}
+
+/// State Qwen-Image Sampler. `steps` 0 — по модели (Edit 50, 2509/2511 40);
+/// `cfg` — масштаб true CFG (≤ 1 — без CFG).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QwenImageSamplerStateData {
+    #[serde(default)]
+    pub steps: u32,
+    #[serde(default = "default_qwen_image_cfg")]
+    pub cfg: f32,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+impl Default for QwenImageSamplerStateData {
+    fn default() -> Self {
+        Self { steps: 0, cfg: default_qwen_image_cfg(), seed: 0 }
+    }
+}
+
+fn default_qwen_image_cfg() -> f32 {
+    crate::pages::node_editor::nodes::qwen_image::sampler::DEFAULT_CFG
+}
+
+/// State SDXL Checkpoint. `quant_idx` — `nodes::sdxl::QUANT_OPTIONS`
+/// (по умолчанию плотный F16).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SdxlCheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default)]
+    pub quant_idx: usize,
+    #[serde(default)]
+    pub resident: bool,
+}
+
+/// State SDXL Sampler; `denoise` работает, только когда на входе латент
+/// картинки (SDXL VAE Encode).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SdxlSamplerStateData {
+    #[serde(default = "default_sdxl_steps")]
+    pub steps: u32,
+    #[serde(default = "default_sdxl_guidance")]
+    pub guidance: f32,
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default = "default_sdxl_denoise")]
+    pub denoise: f32,
+}
+
+impl Default for SdxlSamplerStateData {
+    fn default() -> Self {
+        Self { steps: default_sdxl_steps(), guidance: default_sdxl_guidance(), seed: 0, denoise: default_sdxl_denoise() }
+    }
+}
+
+fn default_sdxl_steps() -> u32 {
+    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_STEPS
+}
+
+fn default_sdxl_guidance() -> f32 {
+    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_GUIDANCE
+}
+
+fn default_sdxl_denoise() -> f32 {
+    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_DENOISE
 }
 
 /// State ноды Image: путь к картинке.

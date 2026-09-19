@@ -213,7 +213,10 @@ pub(super) fn build_all() -> Vec<Tool> {
                 (GigaAM), mixing/effects/recording; images: FLUX.1 text→image and \
                 image→image (builtin-flux-*; prompt format comes with open), FLUX.2 \
                 dev/klein text→image and editing by reference pictures \
-                (builtin-flux2-*: Image → FLUX.2 Reference → Sampler.references), a FLUX \
+                (builtin-flux2-*: Image → FLUX.2 Reference → Sampler.references), \
+                instruction-based editing with Qwen-Image-Edit / 2511 (builtin-qwen-image-*: \
+                Image → Qwen-Image Reference → Text Encoder.references + Sampler.references), \
+                SDXL text→image and image→image (builtin-sdxl-*), a FLUX \
                 frame straight into video (builtin-ltx-flux-keyframe, \
                 builtin-h3-flux-keyframe: FLUX VAE Decode.image → LTX Image / H3 \
                 Keyframe.image); video: LTX text/image→video, \

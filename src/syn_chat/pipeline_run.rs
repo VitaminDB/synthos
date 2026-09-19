@@ -373,7 +373,7 @@ enum ViewerOutput {
         audio: Option<std::sync::Arc<syngui::audio::AudioBuffer>>,
     },
     Audio(std::sync::Arc<syngui::audio::AudioBuffer>),
-    /// Картинка FLUX / FLUX.2 VAE Decode, которую никто не сохранил.
+    /// Картинка VAE Decode (FLUX, FLUX.2, Qwen-Image, SDXL), которую никто не сохранил.
     Image(std::sync::Arc<crate::pages::node_editor::types::ImageData>),
     /// Плеер, которому дали файл (а не память) — прикладываем как есть.
     File(PathBuf),
@@ -421,7 +421,10 @@ fn planned_viewers(
                     out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::File(p) });
                 }
             }
-            NodeRuntime::FluxVaeDecode { out: image_out, .. } | NodeRuntime::Flux2VaeDecode { out: image_out, .. } => {
+            NodeRuntime::FluxVaeDecode { out: image_out, .. }
+            | NodeRuntime::Flux2VaeDecode { out: image_out, .. }
+            | NodeRuntime::QwenImageVaeDecode { out: image_out, .. }
+            | NodeRuntime::SdxlVaeDecode { out: image_out, .. } => {
                 if skip_image {
                     continue;
                 }

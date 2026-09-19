@@ -9,6 +9,7 @@
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
     FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
+    QwenImageCheckpointStateData, SdxlCheckpointStateData, SdxlSamplerStateData,
     H3KeyframeStateData, H3SamplerStateData, LlmStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
     PointData, SynCheckpointStateData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
@@ -56,6 +57,10 @@ pub fn all() -> Vec<Template> {
         flux2_image_to_image_template(),
         flux2_llm_upsampling_template(),
         flux2_multi_reference_template(),
+        qwen_image_edit_template(),
+        qwen_image_multi_edit_template(),
+        sdxl_text_to_image_template(),
+        sdxl_image_to_image_template(),
         ltx_flux_keyframe_template(),
         h3_flux_keyframe_template(),
     ]
@@ -344,6 +349,186 @@ fn flux2_multi_reference_template() -> Template {
             conn(5, "latent", 6, "latent"),
             conn(6, "image", 7, "image"),
         ],
+        viewport: None,
+    }
+}
+
+// ── Qwen-Image ────────────────────────────────────────────────────────────
+
+/// Правка Qwen-Image: Checkpoint(1), промпт(2) → Text Encoder(3) → Sampler(5)
+/// → VAE Decode(6) → Image Save(7); Image(8) → Reference(9) — и в энкодер,
+/// и в сэмплер. Размер — с картинки (~1 Мп).
+fn qwen_image_edit_nodes(prompt: &str) -> Vec<NodeData> {
+    vec![
+        node_with_state(
+            1,
+            NodeKind::QwenImageCheckpoint,
+            60.0,
+            60.0,
+            NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData::default()),
+        ),
+        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
+        node_plain(3, NodeKind::QwenImageTextEncoder, 960.0, 420.0),
+        node_plain(5, NodeKind::QwenImageSampler, 1400.0, 420.0),
+        node_plain(6, NodeKind::QwenImageVaeDecode, 1840.0, 420.0),
+        node_plain(7, NodeKind::ImageSave, 2280.0, 420.0),
+        node_plain(8, NodeKind::ImageLoad, 60.0, 780.0),
+        node_plain(9, NodeKind::QwenImageReference, 520.0, 720.0),
+    ]
+}
+
+fn qwen_image_edit_connections(last_ref: u64) -> Vec<ConnData> {
+    vec![
+        conn(1, "model", 3, "model"),
+        conn(1, "model", 5, "model"),
+        conn(1, "model", 6, "model"),
+        conn(1, "model", 9, "model"),
+        conn(2, "out", 3, "prompt"),
+        conn(8, "image", 9, "image"),
+        conn(last_ref, "references", 3, "references"),
+        conn(last_ref, "references", 5, "references"),
+        conn(3, "conditioning", 5, "conditioning"),
+        conn(5, "latent", 6, "latent"),
+        conn(6, "image", 7, "image"),
+    ]
+}
+
+fn qwen_image_edit_template() -> Template {
+    Template {
+        id: "builtin-qwen-image-edit".into(),
+        builtin: true,
+        name: "Qwen-Image: Edit Image".into(),
+        description: "Картинка → Reference (в энкодер Qwen2.5-VL и в сэмплер) + инструкция правки → \
+             Sampler (true CFG 4, шаги по модели) → PNG ~1 Мп в пропорциях исходника. В \
+             Checkpoint — qwen-image-edit-2511.syn или qwen-image-edit.syn."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: qwen_image_edit_nodes(
+            "Replace the sky with a dramatic orange sunset; keep the buildings, people and lighting on them unchanged",
+        ),
+        connections: qwen_image_edit_connections(9),
+        viewport: None,
+    }
+}
+
+/// Две картинки цепочкой (2509/2511): Image(8) → Reference(9) → Reference(11)
+/// ← Image(10); в промпте — «Picture 1», «Picture 2».
+fn qwen_image_multi_edit_template() -> Template {
+    let mut nodes = qwen_image_edit_nodes(
+        "The woman from Picture 1 is sitting at the café table from Picture 2, holding a cup of coffee, natural daylight",
+    );
+    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1040.0));
+    nodes.push(node_plain(11, NodeKind::QwenImageReference, 520.0, 980.0));
+    let mut connections = qwen_image_edit_connections(11);
+    connections.extend([
+        conn(1, "model", 11, "model"),
+        conn(9, "references", 11, "references"),
+        conn(10, "image", 11, "image"),
+    ]);
+    Template {
+        id: "builtin-qwen-image-multi-edit".into(),
+        builtin: true,
+        name: "Qwen-Image: Multi-Image Edit".into(),
+        description: "Две картинки → Reference → Reference (цепочкой) → энкодер и Sampler: человек, \
+             предмет или стиль с одной картинки в сцене другой. Только Qwen-Image-Edit-2509/2511; \
+             в промпте — «Picture 1», «Picture 2» по порядку цепочки."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+// ── SDXL ──────────────────────────────────────────────────────────────────
+
+/// SDXL txt2img: Checkpoint(1), промпт(2) и негатив(8) → Text Encoder(3),
+/// FLUX Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7).
+fn sdxl_base_nodes(prompt: &str) -> Vec<NodeData> {
+    vec![
+        node_with_state(
+            1,
+            NodeKind::SdxlCheckpoint,
+            60.0,
+            60.0,
+            NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData::default()),
+        ),
+        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
+        node_with_state(
+            8,
+            NodeKind::TextView,
+            60.0,
+            780.0,
+            flux_prompt_state("blurry, low quality, deformed, watermark, text"),
+        ),
+        node_plain(3, NodeKind::SdxlTextEncoder, 520.0, 420.0),
+        node_with_state(
+            4,
+            NodeKind::FluxEmptyLatent,
+            520.0,
+            640.0,
+            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
+        ),
+        node_plain(5, NodeKind::SdxlSampler, 960.0, 420.0),
+        node_plain(6, NodeKind::SdxlVaeDecode, 1400.0, 420.0),
+        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
+    ]
+}
+
+fn sdxl_base_connections() -> Vec<ConnData> {
+    vec![
+        conn(1, "model", 3, "model"),
+        conn(1, "model", 5, "model"),
+        conn(1, "model", 6, "model"),
+        conn(2, "out", 3, "prompt"),
+        conn(8, "out", 3, "negative"),
+        conn(3, "conditioning", 5, "conditioning"),
+        conn(4, "latent", 5, "latent"),
+        conn(5, "latent", 6, "latent"),
+        conn(6, "image", 7, "image"),
+    ]
+}
+
+fn sdxl_text_to_image_template() -> Template {
+    Template {
+        id: "builtin-sdxl-text-to-image".into(),
+        builtin: true,
+        name: "SDXL: Text to Image".into(),
+        description: "Промпт и негатив → CLIP-L + bigG → Sampler (30 шагов, CFG 5) → VAE Decode → \
+             PNG 1024². В Checkpoint — sdxl-base-1.0.syn."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: sdxl_base_nodes(
+            "a lighthouse on a rocky cliff at golden hour, crashing waves, dramatic clouds, highly detailed photograph",
+        ),
+        connections: sdxl_base_connections(),
+        viewport: None,
+    }
+}
+
+fn sdxl_image_to_image_template() -> Template {
+    // Размер латента задаёт картинка (VAE Encode), Empty Latent не нужен.
+    let mut nodes: Vec<NodeData> = sdxl_base_nodes("the same scene as an oil painting, thick brush strokes, vivid colors")
+        .into_iter()
+        .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
+        .collect();
+    nodes.push(node_plain(9, NodeKind::ImageLoad, 60.0, 1040.0));
+    nodes.push(node_plain(10, NodeKind::SdxlVaeEncode, 520.0, 720.0));
+    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::SdxlSampler) {
+        n.state = Some(NodeStateData::SdxlSampler(SdxlSamplerStateData { denoise: 0.6, ..Default::default() }));
+    }
+    let mut connections: Vec<ConnData> = sdxl_base_connections().into_iter().filter(|c| c.from_node != 4).collect();
+    connections.extend([conn(1, "model", 10, "model"), conn(9, "image", 10, "image"), conn(10, "latent", 5, "latent")]);
+    Template {
+        id: "builtin-sdxl-image-to-image".into(),
+        builtin: true,
+        name: "SDXL: Image to Image".into(),
+        description: "Картинка → SDXL VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG (до 1 Мп, \
+             стороны кратны 64). Чем меньше denoise, тем ближе к исходнику."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
         viewport: None,
     }
 }

@@ -461,6 +461,30 @@ pub enum NodeKind {
     /// FLUX.2: латент → картинка.
     Flux2VaeDecode,
 
+    // ── Qwen-Image (Нейро → Qwen-Image) ──
+    /// Qwen-Image: `.syn`-бандл/каталог (Edit / Edit-2509 / Edit-2511) + квант, память.
+    QwenImageCheckpoint,
+    /// Qwen-Image: промпт (+ картинки) → скрытые состояния Qwen2.5-VL.
+    QwenImageTextEncoder,
+    /// Qwen-Image: картинка для правки (цепочкой) → латент VAE + исходник для энкодера.
+    QwenImageReference,
+    /// Qwen-Image: денойз с true CFG.
+    QwenImageSampler,
+    /// Qwen-Image: латент → картинка.
+    QwenImageVaeDecode,
+
+    // ── SDXL (Нейро → SDXL) ──
+    /// SDXL: `.syn`-бандл/каталог + квант UNet.
+    SdxlCheckpoint,
+    /// SDXL: промпт и негатив → CLIP-L + bigG.
+    SdxlTextEncoder,
+    /// SDXL: картинка → латент для img2img.
+    SdxlVaeEncode,
+    /// SDXL: денойз (txt2img или img2img) с CFG.
+    SdxlSampler,
+    /// SDXL: латент → картинка.
+    SdxlVaeDecode,
+
     // ── Картинки ──
     /// Картинка из файла → порт `image`.
     ImageLoad,
@@ -535,6 +559,16 @@ impl NodeKind {
         NodeKind::Flux2VaeEncode,
         NodeKind::Flux2Sampler,
         NodeKind::Flux2VaeDecode,
+        NodeKind::QwenImageCheckpoint,
+        NodeKind::QwenImageTextEncoder,
+        NodeKind::QwenImageReference,
+        NodeKind::QwenImageSampler,
+        NodeKind::QwenImageVaeDecode,
+        NodeKind::SdxlCheckpoint,
+        NodeKind::SdxlTextEncoder,
+        NodeKind::SdxlVaeEncode,
+        NodeKind::SdxlSampler,
+        NodeKind::SdxlVaeDecode,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
     ];
@@ -673,6 +707,10 @@ pub enum DataBlob {
     Flux(FluxBlob),
     /// Хэндлы и тензоры пайплайна FLUX.2 (латент — общий `FluxBlob::Latent`).
     Flux2(Flux2Blob),
+    /// Хэндлы и тензоры пайплайна Qwen-Image.
+    QwenImage(QwenImageBlob),
+    /// Хэндлы и тензоры пайплайна SDXL.
+    Sdxl(SdxlBlob),
 }
 
 /// Картинка на проводе: RGB `[3, H, W]` F32 в [0, 1] на CPU плюс готовое
@@ -770,6 +808,44 @@ pub enum Flux2Blob {
     Conditioning(Arc<synaptix_image_flux2::Flux2Conditioning>),
     /// Референсные картинки для правки.
     References(Arc<synaptix_image_flux2::Flux2References>),
+}
+
+/// Типизированный payload стадий Qwen-Image. Хэндл чекпойнта — тот же POD,
+/// что у FLUX (путь, устройство, квант, память). Латент свой: 16 каналов, как
+/// у FLUX.1, но другой VAE — ноды FLUX его не примут.
+#[derive(Debug)]
+pub enum QwenImageBlob {
+    Model(Arc<FluxModelHandle>),
+    /// Скрытые состояния Qwen2.5-VL `[1, S, 3584]` (+ негатив для true CFG).
+    Conditioning(Arc<synaptix_image_qwen::QwenConditioning>),
+    /// Картинки для правки.
+    References(Arc<QwenImageRefs>),
+    /// Латент `[1, 16, H/8, W/8]` из Qwen-Image Sampler.
+    Latent(Arc<FluxLatent>),
+}
+
+/// Картинки для правки Qwen-Image: исходники (их видит VL-энкодер — Text
+/// Encoder берёт их с того же провода) и их латент VAE (его берёт сэмплер).
+pub struct QwenImageRefs {
+    pub images: Vec<Arc<ImageData>>,
+    pub latents: synaptix_image_qwen::QwenReferences,
+}
+
+impl std::fmt::Debug for QwenImageRefs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "QwenImageRefs({} шт.)", self.images.len())
+    }
+}
+
+/// Типизированный payload стадий SDXL. Хэндл — POD FLUX (память не
+/// используется: UNet всегда целиком на карте).
+#[derive(Debug)]
+pub enum SdxlBlob {
+    Model(Arc<FluxModelHandle>),
+    /// CLIP-L ‖ bigG `[2, 77, 2048]` и pooled `[2, 1280]` (негатив, промпт).
+    Conditioning(Arc<synaptix_image_sdxl::SdxlConditioning>),
+    /// Латент `[1, 4, H/8, W/8]` (масштабированный): VAE Encode или Sampler.
+    Latent(Arc<FluxLatent>),
 }
 
 /// Конфиг FLUX-чекпойнта. Дешёвый POD — веса грузят потребители через
@@ -1179,6 +1255,17 @@ impl std::fmt::Debug for PortValue {
                 }
                 DataBlob::Flux2(Flux2Blob::Conditioning(c)) => write!(f, "Data(Flux2::{c:?})"),
                 DataBlob::Flux2(Flux2Blob::References(r)) => write!(f, "Data(Flux2::{r:?})"),
+                DataBlob::QwenImage(QwenImageBlob::Model(h)) => {
+                    write!(f, "Data(QwenImage::Model({:?}))", h.model_path.file_name().unwrap_or_default())
+                }
+                DataBlob::QwenImage(QwenImageBlob::Conditioning(c)) => write!(f, "Data(QwenImage::{c:?})"),
+                DataBlob::QwenImage(QwenImageBlob::References(r)) => write!(f, "Data(QwenImage::{r:?})"),
+                DataBlob::QwenImage(QwenImageBlob::Latent(l)) => write!(f, "Data(QwenImage::{l:?})"),
+                DataBlob::Sdxl(SdxlBlob::Model(h)) => {
+                    write!(f, "Data(Sdxl::Model({:?}))", h.model_path.file_name().unwrap_or_default())
+                }
+                DataBlob::Sdxl(SdxlBlob::Conditioning(c)) => write!(f, "Data(Sdxl::{c:?})"),
+                DataBlob::Sdxl(SdxlBlob::Latent(l)) => write!(f, "Data(Sdxl::{l:?})"),
                 DataBlob::SynModel(h) => {
                     write!(
                         f,
@@ -1475,6 +1562,76 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::Flux2(Flux2Blob::References(r)) => Some(r.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_qwen_image_model(&self) -> Option<Arc<FluxModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::QwenImage(QwenImageBlob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_qwen_image_conditioning(&self) -> Option<Arc<synaptix_image_qwen::QwenConditioning>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::QwenImage(QwenImageBlob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_qwen_image_references(&self) -> Option<Arc<QwenImageRefs>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::QwenImage(QwenImageBlob::References(r)) => Some(r.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_qwen_image_latent(&self) -> Option<Arc<FluxLatent>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::QwenImage(QwenImageBlob::Latent(l)) => Some(l.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_sdxl_model(&self) -> Option<Arc<FluxModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Sdxl(SdxlBlob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_sdxl_conditioning(&self) -> Option<Arc<synaptix_image_sdxl::SdxlConditioning>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Sdxl(SdxlBlob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_sdxl_latent(&self) -> Option<Arc<FluxLatent>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Sdxl(SdxlBlob::Latent(l)) => Some(l.clone()),
                 _ => None,
             },
             _ => None,
@@ -2604,6 +2761,95 @@ pub enum NodeRuntime {
         out: Arc<Mutex<Option<Arc<ImageData>>>>,
         output_version: RwSignal<u32>,
     },
+    QwenImageCheckpoint {
+        model_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        /// Индекс в `nodes::qwen_image::QUANT_OPTIONS`.
+        quant_idx: RwSignal<usize>,
+        /// Индекс в `nodes::qwen_image::MEMORY_MODE_OPTIONS`.
+        memory_mode_idx: RwSignal<usize>,
+        resident: RwSignal<bool>,
+        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
+    },
+    QwenImageTextEncoder {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<synaptix_image_qwen::QwenConditioning>>>>,
+        output_version: RwSignal<u32>,
+    },
+    QwenImageReference {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<QwenImageRefs>>>>,
+        output_version: RwSignal<u32>,
+    },
+    QwenImageSampler {
+        /// 0 — по модели (Edit 50, 2509/2511 40).
+        steps: RwSignal<u32>,
+        /// Масштаб true CFG; ≤ 1 — без CFG (вдвое быстрее).
+        cfg: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        /// Итог прогона: шаги, время, блоков на карте.
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    QwenImageVaeDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<ImageData>>>>,
+        output_version: RwSignal<u32>,
+    },
+    SdxlCheckpoint {
+        model_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        /// Индекс в `nodes::sdxl::QUANT_OPTIONS`.
+        quant_idx: RwSignal<usize>,
+        resident: RwSignal<bool>,
+        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
+    },
+    SdxlTextEncoder {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<synaptix_image_sdxl::SdxlConditioning>>>>,
+        output_version: RwSignal<u32>,
+    },
+    SdxlVaeEncode {
+        /// Как вписать картинку в размер со входа `size`: 0 — растянуть,
+        /// 1 — покрыть и обрезать по центру.
+        resize_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    SdxlSampler {
+        steps: RwSignal<u32>,
+        guidance: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        /// Сила img2img (латент с картинкой на входе).
+        denoise: RwSignal<f32>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    SdxlVaeDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<ImageData>>>>,
+        output_version: RwSignal<u32>,
+    },
     ImageLoad {
         path: RwSignal<Option<PathBuf>>,
         error: RwSignal<Option<String>>,
@@ -2665,6 +2911,14 @@ impl NodeRuntime {
             | R::Flux2VaeEncode { error, .. }
             | R::Flux2Sampler { error, .. }
             | R::Flux2VaeDecode { error, .. }
+            | R::QwenImageTextEncoder { error, .. }
+            | R::QwenImageReference { error, .. }
+            | R::QwenImageSampler { error, .. }
+            | R::QwenImageVaeDecode { error, .. }
+            | R::SdxlTextEncoder { error, .. }
+            | R::SdxlVaeEncode { error, .. }
+            | R::SdxlSampler { error, .. }
+            | R::SdxlVaeDecode { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             _ => None,
@@ -2709,6 +2963,8 @@ impl NodeRuntime {
             R::H3Checkpoint { model_path, .. }
             | R::FluxCheckpoint { model_path, .. }
             | R::Flux2Checkpoint { model_path, .. }
+            | R::QwenImageCheckpoint { model_path, .. }
+            | R::SdxlCheckpoint { model_path, .. }
             | R::SynCheckpoint { model_path, .. }
             | R::Llm { model_path, .. }
             | R::AsrGigaam { model_path, .. }
@@ -2744,7 +3000,9 @@ impl NodeRuntime {
             | R::LtxA2V { progress_pct, .. }
             | R::H3Sampler { progress_pct, .. }
             | R::FluxSampler { progress_pct, .. }
-            | R::Flux2Sampler { progress_pct, .. } => Some(*progress_pct),
+            | R::Flux2Sampler { progress_pct, .. }
+            | R::QwenImageSampler { progress_pct, .. }
+            | R::SdxlSampler { progress_pct, .. } => Some(*progress_pct),
             _ => None,
         }
     }
@@ -2766,7 +3024,9 @@ impl NodeRuntime {
             | R::AceStepVaeEncode { cancel, .. }
             | R::H3Sampler { cancel, .. }
             | R::FluxSampler { cancel, .. }
-            | R::Flux2Sampler { cancel, .. } => Some(cancel.clone()),
+            | R::Flux2Sampler { cancel, .. }
+            | R::QwenImageSampler { cancel, .. }
+            | R::SdxlSampler { cancel, .. } => Some(cancel.clone()),
             _ => None,
         }
     }
@@ -3041,6 +3301,48 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::Flux2VaeDecode { running, .. } => {
                 write!(f, "NodeRuntime::Flux2VaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::QwenImageCheckpoint { model_path, .. } => {
+                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::QwenImageCheckpoint{{path={p}}}")
+            }
+            NodeRuntime::QwenImageTextEncoder { running, .. } => {
+                write!(f, "NodeRuntime::QwenImageTextEncoder{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::QwenImageReference { running, .. } => {
+                write!(f, "NodeRuntime::QwenImageReference{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::QwenImageSampler { running, steps, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::QwenImageSampler{{running={}, steps={}}}",
+                    running.get_untracked(),
+                    steps.get_untracked()
+                )
+            }
+            NodeRuntime::QwenImageVaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::QwenImageVaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::SdxlCheckpoint { model_path, .. } => {
+                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::SdxlCheckpoint{{path={p}}}")
+            }
+            NodeRuntime::SdxlTextEncoder { running, .. } => {
+                write!(f, "NodeRuntime::SdxlTextEncoder{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::SdxlVaeEncode { running, .. } => {
+                write!(f, "NodeRuntime::SdxlVaeEncode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::SdxlSampler { running, steps, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::SdxlSampler{{running={}, steps={}}}",
+                    running.get_untracked(),
+                    steps.get_untracked()
+                )
+            }
+            NodeRuntime::SdxlVaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::SdxlVaeDecode{{running={}}}", running.get_untracked())
             }
             NodeRuntime::ImageLoad { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();

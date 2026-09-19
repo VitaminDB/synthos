@@ -7032,6 +7032,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-image-qwen"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-diffusion",
+ "synaptix-io",
+ "synaptix-kernels-cuda",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-image-sdxl"
+version = "0.1.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-config",
+ "synaptix-core",
+ "synaptix-diffusion",
+ "synaptix-io",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-infer"
 version = "0.1.1"
 dependencies = [
@@ -7567,6 +7602,8 @@ dependencies = [
  "synaptix-gguf",
  "synaptix-image-flux",
  "synaptix-image-flux2",
+ "synaptix-image-qwen",
+ "synaptix-image-sdxl",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",

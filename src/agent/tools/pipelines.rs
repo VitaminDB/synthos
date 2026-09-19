@@ -379,8 +379,8 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice,
-        sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2,
+        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice, qwen_image,
+        sdxl, sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
@@ -479,6 +479,13 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("quant_idx", flux2::QUANT_OPTIONS),
             ("memory_mode_idx", flux2::MEMORY_MODE_OPTIONS),
         ],
+        NodeKind::QwenImageCheckpoint => vec![
+            ("device_idx", qwen_image::DEVICE_OPTIONS),
+            ("quant_idx", qwen_image::QUANT_OPTIONS),
+            ("memory_mode_idx", qwen_image::MEMORY_MODE_OPTIONS),
+        ],
+        NodeKind::SdxlCheckpoint => vec![("device_idx", sdxl::DEVICE_OPTIONS), ("quant_idx", sdxl::QUANT_OPTIONS)],
+        NodeKind::SdxlVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
         _ => Vec::new(),
     }
 }
@@ -714,10 +721,15 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     Ok(out)
 }
 
-/// Формат промпта FLUX — при открытии шаблона с FLUX / FLUX.2 Text Encoder.
+/// Формат промпта картинок — при открытии шаблона с Text Encoder FLUX,
+/// FLUX.2, Qwen-Image или SDXL.
 fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
     let has = |kind: NodeKind| ctx.nodes.get_untracked().iter().any(|n| n.kind == kind && n.enabled.get_untracked());
-    if has(NodeKind::Flux2TextEncoder) {
+    if has(NodeKind::QwenImageTextEncoder) {
+        QWEN_IMAGE_PROMPT
+    } else if has(NodeKind::SdxlTextEncoder) {
+        SDXL_PROMPT
+    } else if has(NodeKind::Flux2TextEncoder) {
         FLUX2_PROMPT
     } else if has(NodeKind::FluxTextEncoder) {
         FLUX_PROMPT
@@ -729,6 +741,8 @@ fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
 const H3_PROMPT_BASE: &str = include_str!("h3_prompt_base.md");
 const FLUX_PROMPT: &str = include_str!("flux_prompt.md");
 const FLUX2_PROMPT: &str = include_str!("flux2_prompt.md");
+const QWEN_IMAGE_PROMPT: &str = include_str!("qwen_image_prompt.md");
+const SDXL_PROMPT: &str = include_str!("sdxl_prompt.md");
 const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
 
 /// Формат промпта MiniMax-H3 — при открытии шаблона, один раз. Закрытый
@@ -1690,8 +1704,9 @@ mod tests {
         // 4500 → 5600 с шаблонами FLUX (+4 строки по ~160 символов): раздел
         // был на пределе, а резать описания всех шаблонов хуже для выбора.
         // 5600 → 5800 с «FLUX.2: Image to Image» (5660 символов), 5800 → 6000
-        // с «FLUX.2: LLM Upsampling».
-        assert!(len < 6000, "раздел шаблонов раздулся до {len} символов");
+        // с «FLUX.2: LLM Upsampling», 6000 → 6600 с Qwen-Image Edit / Multi-Image
+        // Edit и SDXL Text / Image to Image (6438 символов).
+        assert!(len < 6600, "раздел шаблонов раздулся до {len} символов");
     }
 
     /// Фильтр — набор токенов: перечисление нод возвращает их все.

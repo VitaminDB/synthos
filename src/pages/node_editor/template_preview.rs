@@ -113,6 +113,17 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::Flux2VaeEncode
         | NodeKind::Flux2Sampler
         | NodeKind::Flux2VaeDecode => Color::new(0.93, 0.44, 0.30, 1.0),
+        // Qwen-Image — фиолетовый (цвет бренда Qwen), SDXL — янтарный.
+        NodeKind::QwenImageCheckpoint
+        | NodeKind::QwenImageTextEncoder
+        | NodeKind::QwenImageReference
+        | NodeKind::QwenImageSampler
+        | NodeKind::QwenImageVaeDecode => Color::new(0.58, 0.42, 0.93, 1.0),
+        NodeKind::SdxlCheckpoint
+        | NodeKind::SdxlTextEncoder
+        | NodeKind::SdxlVaeEncode
+        | NodeKind::SdxlSampler
+        | NodeKind::SdxlVaeDecode => Color::new(0.95, 0.66, 0.20, 1.0),
         NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red

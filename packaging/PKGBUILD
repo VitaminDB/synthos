@@ -1,7 +1,7 @@
 # Maintainer: Alexeyev Vitaly
 pkgname=synthos
 pkgver=0.2.0
-pkgrel=262
+pkgrel=263
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода"
 license=("MIT" "Apache-2.0")
 arch=("x86_64")

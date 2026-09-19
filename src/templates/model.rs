@@ -260,6 +260,132 @@ pub enum NodeStateData {
     H3EmptyLatentAv(H3EmptyLatentAvStateData),
     H3Keyframe(H3KeyframeStateData),
     H3References(H3ReferencesStateData),
+    FluxCheckpoint(FluxCheckpointStateData),
+    FluxTextEncoder(FluxTextEncoderStateData),
+    FluxEmptyLatent(FluxEmptyLatentStateData),
+    FluxVaeEncode(FluxVaeEncodeStateData),
+    FluxSampler(FluxSamplerStateData),
+    ImageLoad(ImageLoadStateData),
+    ImageSave(ImageSaveStateData),
+}
+
+/// State FLUX Checkpoint: бандл/каталог и железо. `quant_idx` —
+/// `nodes::flux::QUANT_OPTIONS` (по умолчанию mxfp8).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FluxCheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default = "default_flux_quant_idx")]
+    pub quant_idx: usize,
+    #[serde(default)]
+    pub memory_mode_idx: usize,
+    #[serde(default)]
+    pub resident: bool,
+}
+
+impl Default for FluxCheckpointStateData {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            device_idx: 0,
+            quant_idx: default_flux_quant_idx(),
+            memory_mode_idx: 0,
+            resident: false,
+        }
+    }
+}
+
+fn default_flux_quant_idx() -> usize {
+    crate::pages::node_editor::nodes::flux::DEFAULT_QUANT_IDX
+}
+
+/// State FLUX Text Encoder: длина T5 (0 — по модели).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FluxTextEncoderStateData {
+    #[serde(default)]
+    pub seq_len_idx: usize,
+}
+
+/// State FLUX Empty Latent: размер картинки и пропорция (0 — свободно).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FluxEmptyLatentStateData {
+    #[serde(default = "default_flux_side")]
+    pub width: u32,
+    #[serde(default = "default_flux_side")]
+    pub height: u32,
+    #[serde(default)]
+    pub aspect_idx: usize,
+}
+
+impl Default for FluxEmptyLatentStateData {
+    fn default() -> Self {
+        Self { width: default_flux_side(), height: default_flux_side(), aspect_idx: 0 }
+    }
+}
+
+fn default_flux_side() -> u32 {
+    crate::pages::node_editor::nodes::flux::latent::DEFAULT_SIDE
+}
+
+/// State FLUX VAE Encode: вписывание в размер со входа `size`
+/// (0 — растянуть, 1 — обрезать по центру).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FluxVaeEncodeStateData {
+    #[serde(default)]
+    pub resize_idx: usize,
+}
+
+/// State FLUX Sampler. Дефолты — FLUX.1-dev: 28 шагов, guidance 3.5;
+/// `denoise` < 1 работает, только когда на входе латент картинки.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FluxSamplerStateData {
+    #[serde(default = "default_flux_steps")]
+    pub steps: u32,
+    #[serde(default = "default_flux_guidance")]
+    pub guidance: f32,
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default = "default_flux_denoise")]
+    pub denoise: f32,
+}
+
+impl Default for FluxSamplerStateData {
+    fn default() -> Self {
+        Self {
+            steps: default_flux_steps(),
+            guidance: default_flux_guidance(),
+            seed: 0,
+            denoise: default_flux_denoise(),
+        }
+    }
+}
+
+pub fn default_flux_steps() -> u32 {
+    crate::pages::node_editor::nodes::flux::sampler::DEFAULT_STEPS
+}
+
+pub fn default_flux_guidance() -> f32 {
+    crate::pages::node_editor::nodes::flux::sampler::DEFAULT_GUIDANCE
+}
+
+fn default_flux_denoise() -> f32 {
+    1.0
+}
+
+/// State ноды Image: путь к картинке.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImageLoadStateData {
+    #[serde(default)]
+    pub image_path: Option<String>,
+}
+
+/// State ноды Image Save: куда писать (формат — по расширению).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ImageSaveStateData {
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

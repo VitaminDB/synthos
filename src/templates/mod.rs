@@ -35,6 +35,8 @@ pub fn list_all() -> Vec<Template> {
 pub enum TemplateCategory {
     /// LTX-2.3 — генерация видео (`builtin-ltx-*`).
     Video,
+    /// FLUX.1 — картинки (`builtin-flux-*`).
+    Image,
     /// ACE-Step — генерация музыки (`builtin-acestep-*`).
     Music,
     /// DSP / запись / микс (`builtin-audio-*`, `-voice-*`, `-save-*`, `-mix-*`).
@@ -45,8 +47,9 @@ pub enum TemplateCategory {
 
 impl TemplateCategory {
     /// Все категории в порядке отображения в боковой панели окна.
-    pub const ORDER: [TemplateCategory; 4] = [
+    pub const ORDER: [TemplateCategory; 5] = [
         TemplateCategory::Video,
+        TemplateCategory::Image,
         TemplateCategory::Music,
         TemplateCategory::Audio,
         TemplateCategory::Basic,
@@ -57,6 +60,8 @@ impl TemplateCategory {
         let id = t.id.as_str();
         if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
             TemplateCategory::Video
+        } else if id.starts_with("builtin-flux-") {
+            TemplateCategory::Image
         } else if id.starts_with("builtin-acestep-") {
             TemplateCategory::Music
         } else if id.starts_with("builtin-audio-")
@@ -74,6 +79,7 @@ impl TemplateCategory {
     pub fn key(self) -> &'static str {
         match self {
             TemplateCategory::Video => "video",
+            TemplateCategory::Image => "image",
             TemplateCategory::Music => "music",
             TemplateCategory::Audio => "audio",
             TemplateCategory::Basic => "basic",
@@ -84,6 +90,7 @@ impl TemplateCategory {
     pub fn icon(self) -> &'static str {
         match self {
             TemplateCategory::Video => crate::icons::MI_MOVIE,
+            TemplateCategory::Image => crate::icons::MI_IMAGE_ICON,
             TemplateCategory::Music => crate::icons::MI_LIBRARY_MUSIC,
             TemplateCategory::Audio => crate::icons::MI_GRAPHIC_EQ,
             TemplateCategory::Basic => crate::icons::MI_APPS,

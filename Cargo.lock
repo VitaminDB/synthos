@@ -6954,6 +6954,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-diffusion"
+version = "0.1.1"
+dependencies = [
+ "synaptix-core",
+ "synaptix-infer",
+ "synaptix-nn",
+ "synaptix-ops",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-embedding-bge-m3"
 version = "0.1.1"
 dependencies = [
@@ -6982,6 +6993,25 @@ dependencies = [
  "synaptix-bundle",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "synaptix-image-flux"
+version = "0.1.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-config",
+ "synaptix-core",
+ "synaptix-diffusion",
+ "synaptix-io",
+ "synaptix-kernels-cuda",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -7518,6 +7548,7 @@ dependencies = [
  "synaptix-core",
  "synaptix-depth-anything",
  "synaptix-gguf",
+ "synaptix-image-flux",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",

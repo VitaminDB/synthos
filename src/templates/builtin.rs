@@ -8,7 +8,8 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    FieldValueData, H3KeyframeStateData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
+    FieldValueData, FluxEmptyLatentStateData, FluxSamplerStateData, H3KeyframeStateData,
+    H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
     PointData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
 };
@@ -48,7 +49,229 @@ pub fn all() -> Vec<Template> {
         ltx_ic_lora_template(),
         ltx_lipdub_template(),
         ltx_a2v_template(),
+        flux_text_to_image_template(),
+        flux_image_to_image_template(),
+        ltx_flux_keyframe_template(),
+        h3_flux_keyframe_template(),
     ]
+}
+
+// ── FLUX.1 ────────────────────────────────────────────────────────────────
+
+fn flux_prompt_state(text: &str) -> NodeStateData {
+    NodeStateData::TextView(TextViewStateData { output_text: text.into(), width: 300.0, height: 140.0 })
+}
+
+/// Цепочка FLUX txt2img: Checkpoint(1) → Text Encoder(3) ← промпт(2),
+/// Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7).
+fn flux_base_nodes(prompt: &str, width: u32, height: u32, aspect_idx: usize) -> Vec<NodeData> {
+    vec![
+        node_plain(1, NodeKind::FluxCheckpoint, 60.0, 60.0),
+        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
+        node_plain(3, NodeKind::FluxTextEncoder, 520.0, 420.0),
+        node_with_state(
+            4,
+            NodeKind::FluxEmptyLatent,
+            520.0,
+            640.0,
+            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx }),
+        ),
+        node_plain(5, NodeKind::FluxSampler, 960.0, 420.0),
+        node_plain(6, NodeKind::FluxVaeDecode, 1400.0, 420.0),
+        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
+    ]
+}
+
+fn flux_base_connections() -> Vec<ConnData> {
+    let c = |from_node: u64, from_port: &str, to_node: u64, to_port: &str| ConnData {
+        from_node,
+        from_port: from_port.into(),
+        to_node,
+        to_port: to_port.into(),
+    };
+    vec![
+        c(1, "model", 3, "model"),
+        c(1, "model", 5, "model"),
+        c(1, "model", 6, "model"),
+        c(2, "out", 3, "prompt"),
+        c(3, "conditioning", 5, "conditioning"),
+        c(4, "latent", 5, "latent"),
+        c(5, "latent", 6, "latent"),
+        c(6, "image", 7, "image"),
+    ]
+}
+
+fn flux_text_to_image_template() -> Template {
+    Template {
+        id: "builtin-flux-text-to-image".into(),
+        builtin: true,
+        name: "FLUX: Text to Image".into(),
+        description: "Промпт → CLIP-L + T5-XXL → Sampler (28 шагов, guidance 3.5) → VAE Decode → \
+             PNG. В Checkpoint укажите бандл flux.1-dev.syn (или каталог diffusers); размер \
+             картинки — в Empty Latent."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: flux_base_nodes(
+            "a red fox sitting in a snowy birch forest at golden hour, soft backlight, \
+             shallow depth of field, photograph",
+            1024,
+            1024,
+            0,
+        ),
+        connections: flux_base_connections(),
+        viewport: None,
+    }
+}
+
+fn flux_image_to_image_template() -> Template {
+    // Размер латента задаёт картинка (VAE Encode), Empty Latent не нужен.
+    let mut nodes: Vec<NodeData> = flux_base_nodes(
+        "the same scene as a watercolor painting, soft washes of color, paper texture",
+        1024,
+        1024,
+        0,
+    )
+    .into_iter()
+    .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
+    .collect();
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
+    nodes.push(node_plain(9, NodeKind::FluxVaeEncode, 520.0, 720.0));
+    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::FluxSampler) {
+        n.state = Some(NodeStateData::FluxSampler(FluxSamplerStateData { denoise: 0.6, ..Default::default() }));
+    }
+    let mut connections: Vec<ConnData> =
+        flux_base_connections().into_iter().filter(|c| c.from_node != 4).collect();
+    connections.extend([
+        ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
+        ConnData { from_node: 8, from_port: "image".into(), to_node: 9, to_port: "image".into() },
+        ConnData { from_node: 9, from_port: "latent".into(), to_node: 5, to_port: "latent".into() },
+    ]);
+    Template {
+        id: "builtin-flux-image-to-image".into(),
+        builtin: true,
+        name: "FLUX: Image to Image".into(),
+        description: "Картинка → VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG. Чем \
+             меньше denoise, тем ближе к исходнику; 1.0 — рисовать заново в размере картинки."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+/// Узлы и связи шаблона со сдвигом id и позиции — чтобы вставить готовый
+/// граф рядом с цепочкой FLUX, не переписывая его.
+fn shifted(t: Template, id_add: u64, dy: f32) -> (Vec<NodeData>, Vec<ConnData>) {
+    let nodes = t
+        .nodes
+        .into_iter()
+        .map(|mut n| {
+            n.id += id_add;
+            n.pos.y += dy;
+            n
+        })
+        .collect();
+    let conns = t
+        .connections
+        .into_iter()
+        .map(|mut c| {
+            c.from_node += id_add;
+            c.to_node += id_add;
+            c
+        })
+        .collect();
+    (nodes, conns)
+}
+
+fn set_prompt(nodes: &mut [NodeData], id: u64, text: &str) {
+    if let Some(n) = nodes.iter_mut().find(|n| n.id == id) {
+        if let Some(NodeStateData::TextView(tv)) = n.state.as_mut() {
+            tv.output_text = text.into();
+        }
+    }
+}
+
+fn ltx_flux_keyframe_template() -> Template {
+    let mut nodes = flux_base_nodes(
+        "a lone lighthouse on a rocky coast at dusk, waves crashing, dramatic clouds, \
+         cinematic wide shot, photograph",
+        1344,
+        768,
+        1,
+    );
+    let mut connections = flux_base_connections();
+    let (ltx_nodes, ltx_conns) = shifted(ltx_image_to_video_template(), 100, 1100.0);
+    nodes.extend(ltx_nodes);
+    connections.extend(ltx_conns);
+    set_prompt(
+        &mut nodes,
+        102,
+        "waves roll in and crash against the rocks, the lighthouse beam sweeps across the \
+         sky, clouds drift, slow push-in, sound of surf and wind",
+    );
+    // Кадр FLUX идёт в LTX Image проводом (файл в ноде не нужен).
+    connections.push(ConnData {
+        from_node: 6,
+        from_port: "image".into(),
+        to_node: 113,
+        to_port: "image".into(),
+    });
+    Template {
+        id: "builtin-ltx-flux-keyframe".into(),
+        builtin: true,
+        name: "LTX: FLUX Frame to Video".into(),
+        description: "FLUX рисует первый кадр по промпту (16:9, 1344×768) → LTX Image → \
+             LTX-2.3 image-to-video со звуком. Два промпта: верхний — что на кадре, нижний — \
+             что происходит в видео. В FLUX Checkpoint укажите flux.1-dev.syn, в LTX \
+             Checkpoint — чекпойнт, Gemma и upscaler."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+fn h3_flux_keyframe_template() -> Template {
+    let mut nodes = flux_base_nodes(
+        "portrait of a street musician playing violin under a streetlamp at night, light \
+         rain, warm bokeh, cinematic photograph",
+        1344,
+        768,
+        1,
+    );
+    let mut connections = flux_base_connections();
+    let (h3_nodes, h3_conns) = shifted(h3_first_frame_template(), 100, 1100.0);
+    nodes.extend(h3_nodes);
+    connections.extend(h3_conns);
+    set_prompt(
+        &mut nodes,
+        102,
+        "the musician keeps playing, bow moving across the strings, raindrops glinting in \
+         the lamplight, slow dolly-in; violin melody, soft rain on the pavement",
+    );
+    // Первый кадр H3 — картинка FLUX (Keyframe берёт её с провода).
+    connections.push(ConnData {
+        from_node: 6,
+        from_port: "image".into(),
+        to_node: 110,
+        to_port: "image".into(),
+    });
+    Template {
+        id: "builtin-h3-flux-keyframe".into(),
+        builtin: true,
+        name: "H3: FLUX Frame to Video".into(),
+        description: "FLUX рисует первый кадр (16:9, 1344×768) → H3 Keyframe → MiniMax-H3 \
+             видео со звуком от этого кадра. Верхний промпт — кадр, нижний — действие и звук \
+             в формате H3. В FLUX Checkpoint укажите flux.1-dev.syn, в H3 Checkpoint — бандл \
+             MiniMax-H3."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
 }
 
 fn ltx_a2v_template() -> Template {
@@ -1517,6 +1740,40 @@ mod tests {
                 t.connections.len(),
                 "{label}: ctx connection count after load_into_ctx"
             );
+        }
+    }
+
+    /// Шаблоны FLUX: txt2img/img2img в разделе «Картинки», сцепки с видео —
+    /// в «Видео»; кадр FLUX идёт в LTX Image / H3 Keyframe проводом, id нод
+    /// после сдвига не пересекаются.
+    #[test]
+    fn flux_templates_wired_correctly() {
+        use crate::templates::TemplateCategory;
+        let all = all();
+        let get = |id: &str| all.iter().find(|t| t.id == id).unwrap_or_else(|| panic!("нет {id}"));
+        for id in ["builtin-flux-text-to-image", "builtin-flux-image-to-image"] {
+            assert_eq!(TemplateCategory::for_template(get(id)), TemplateCategory::Image, "{id}");
+        }
+        for (id, target) in [("builtin-ltx-flux-keyframe", NodeKind::LtxImage), ("builtin-h3-flux-keyframe", NodeKind::H3Keyframe)] {
+            let t = get(id);
+            assert_eq!(TemplateCategory::for_template(t), TemplateCategory::Video, "{id}");
+            let mut ids: Vec<u64> = t.nodes.iter().map(|n| n.id).collect();
+            ids.sort();
+            ids.dedup();
+            assert_eq!(ids.len(), t.nodes.len(), "{id}: id нод пересекаются");
+            assert!(
+                t.connections.iter().any(|c| t.kind_of(c.from_node) == Some(NodeKind::FluxVaeDecode)
+                    && c.from_port == "image"
+                    && t.kind_of(c.to_node) == Some(target)
+                    && c.to_port == "image"),
+                "{id}: нет провода FLUX VAE Decode → {target:?}"
+            );
+        }
+        let i2i = get("builtin-flux-image-to-image");
+        let sampler = i2i.nodes.iter().find(|n| n.kind == NodeKind::FluxSampler).unwrap();
+        match &sampler.state {
+            Some(NodeStateData::FluxSampler(s)) => assert!((s.denoise - 0.6).abs() < 1e-6),
+            other => panic!("img2img: у Sampler нет denoise: {other:?}"),
         }
     }
 

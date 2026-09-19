@@ -227,15 +227,28 @@ pub struct KeyframeExec;
 impl NodeExecutor for KeyframeExec {
     fn evaluate(&self, ctx: &mut EvalContext<'_>) {
         let track = ctx.track;
+        // Картинка с провода (кадр FLUX, нода Image) важнее файла.
+        let input = ctx.read_input("image").as_image();
         let pv = match ctx.runtime().lock() {
             Ok(g) => match &*g {
-                NodeRuntime::H3Keyframe { image, output_version, .. } => {
+                NodeRuntime::H3Keyframe { image, output_version, frame_slot_idx, resize_idx, .. } => {
                     if track {
                         let _ = output_version.get();
                     }
-                    match image.lock().ok().and_then(|g| g.clone()) {
-                        Some(kf) => PortValue::Data(Arc::new(DataBlob::H3(H3Blob::Keyframe(kf)))),
-                        None => PortValue::Empty,
+                    if let Some(img) = input {
+                        let slot = if track { frame_slot_idx.get() } else { frame_slot_idx.get_untracked() };
+                        let resize = if track { resize_idx.get() } else { resize_idx.get_untracked() };
+                        let kf = H3Keyframe {
+                            image: img.tensor.clone(),
+                            frame_index: if slot == 1 { usize::MAX } else { 0 },
+                            center_crop: resize == 1,
+                        };
+                        PortValue::Data(Arc::new(DataBlob::H3(H3Blob::Keyframe(Arc::new(kf)))))
+                    } else {
+                        match image.lock().ok().and_then(|g| g.clone()) {
+                            Some(kf) => PortValue::Data(Arc::new(DataBlob::H3(H3Blob::Keyframe(kf)))),
+                            None => PortValue::Empty,
+                        }
                     }
                 }
                 _ => PortValue::Empty,
@@ -246,7 +259,16 @@ impl NodeExecutor for KeyframeExec {
     }
 }
 
-pub fn keyframe_on_run(node: &NodeInstance, _ctx: &super::super::super::state::NodeEditorCtx) {
+pub fn keyframe_on_run(node: &NodeInstance, ctx: &super::super::super::state::NodeEditorCtx) {
+    // Кадр пришёл проводом — файл не нужен, evaluate уже отдаёт его.
+    if super::super::image::current_input_image(ctx, node.id, "image").is_some() {
+        if let Ok(g) = node.runtime.lock() {
+            if let NodeRuntime::H3Keyframe { error, .. } = &*g {
+                error.set(None);
+            }
+        }
+        return;
+    }
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::H3Keyframe {

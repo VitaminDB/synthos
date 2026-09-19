@@ -375,6 +375,46 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = error.get();
             let _ = saved.get();
         }
+        NodeRuntime::FluxCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
+            let _ = model_path.get();
+            let _ = device_idx.get();
+            let _ = quant_idx.get();
+            let _ = memory_mode_idx.get();
+            let _ = resident.get();
+        }
+        NodeRuntime::FluxTextEncoder { seq_len_idx, error, loaded_name, .. } => {
+            let _ = seq_len_idx.get();
+            let _ = error.get();
+            let _ = loaded_name.get();
+        }
+        NodeRuntime::FluxEmptyLatent { width, height, aspect_idx } => {
+            let _ = width.get();
+            let _ = height.get();
+            let _ = aspect_idx.get();
+        }
+        NodeRuntime::FluxVaeEncode { resize_idx, error, .. } => {
+            let _ = resize_idx.get();
+            let _ = error.get();
+        }
+        NodeRuntime::FluxSampler { steps, guidance, seed, denoise, error, .. } => {
+            let _ = steps.get();
+            let _ = guidance.get();
+            let _ = seed.get();
+            let _ = denoise.get();
+            let _ = error.get();
+        }
+        NodeRuntime::FluxVaeDecode { error, .. } => {
+            let _ = error.get();
+        }
+        NodeRuntime::ImageLoad { path, error, .. } => {
+            let _ = path.get();
+            let _ = error.get();
+        }
+        NodeRuntime::ImageSave { path, error, saved, .. } => {
+            let _ = path.get();
+            let _ = error.get();
+            let _ = saved.get();
+        }
         NodeRuntime::AudioFile {
             loaded_path,
             load_error,

@@ -99,6 +99,14 @@ fn node_color(kind: NodeKind) -> Color {
         NodeKind::H3VaeDecode => Color::new(0.28, 0.76, 0.62, 1.0),
         NodeKind::H3AudioDecode => Color::new(0.34, 0.72, 0.86, 1.0),
         NodeKind::H3VideoSave => Color::new(0.18, 0.70, 0.52, 1.0),
+        // FLUX — тёплая оранжевая гамма, картинки — в тон проводу `image`.
+        NodeKind::FluxCheckpoint
+        | NodeKind::FluxTextEncoder
+        | NodeKind::FluxEmptyLatent
+        | NodeKind::FluxVaeEncode
+        | NodeKind::FluxSampler
+        | NodeKind::FluxVaeDecode => Color::new(0.96, 0.52, 0.22, 1.0),
+        NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald

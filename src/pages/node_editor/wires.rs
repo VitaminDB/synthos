@@ -25,6 +25,7 @@ pub fn wire_color(kind: PortKind, active: bool) -> Color {
             PortKind::Control => Color::from_hex("#A855F7"),
             PortKind::Text => Color::from_hex("#EAB308"),
             PortKind::Video => Color::from_hex("#EC4899"),
+            PortKind::Image => Color::from_hex("#F97316"),
         }
     }
 }

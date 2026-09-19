@@ -14,7 +14,7 @@ use crate::icons::{
     MI_ADD, MI_APPS, MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTORENEW, MI_AUTO_AWESOME, MI_BLUR_ON,
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
     MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
-    MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
+    MI_MERGE_TYPE, MI_MIC, MI_MOVIE, MI_PALETTE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
     MI_CROP_SQUARE, MI_TRANSLATE, MI_TUNE,
 };
@@ -22,7 +22,8 @@ use crate::icons::{
 use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
-    audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, llm, ltx, markdown_view,
+    audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, image, llm, ltx,
+    markdown_view,
     minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
     voxcpm2,
 };
@@ -55,6 +56,8 @@ pub type NodeBusyHook = fn(&NodeInstance) -> Option<RwSignal<bool>>;
 pub enum NodeCategory {
     Audio,
     Video,
+    /// Картинки: загрузка файла → порт `image`.
+    Image,
     DspEffects,
     Neuro,
     Math,
@@ -66,6 +69,7 @@ impl NodeCategory {
     pub const ORDER: &'static [NodeCategory] = &[
         NodeCategory::Audio,
         NodeCategory::Video,
+        NodeCategory::Image,
         NodeCategory::DspEffects,
         NodeCategory::Neuro,
         NodeCategory::Math,
@@ -78,6 +82,7 @@ impl NodeCategory {
         match self {
             NodeCategory::Audio => "audio",
             NodeCategory::Video => "video",
+            NodeCategory::Image => "image",
             NodeCategory::DspEffects => "dsp_effects",
             NodeCategory::Neuro => "neuro",
             NodeCategory::Math => "math",
@@ -94,6 +99,7 @@ impl NodeCategory {
         match self {
             NodeCategory::Audio => "Audio",
             NodeCategory::Video => "Video",
+            NodeCategory::Image => "Images",
             NodeCategory::DspEffects => "DSP effects",
             NodeCategory::Neuro => "Neuro",
             NodeCategory::Math => "Math",
@@ -106,6 +112,7 @@ impl NodeCategory {
         match self {
             NodeCategory::Audio => MI_LIBRARY_MUSIC,
             NodeCategory::Video => MI_MOVIE,
+            NodeCategory::Image => MI_IMAGE_ICON,
             NodeCategory::DspEffects => MI_GRAPHIC_EQ,
             NodeCategory::Neuro => MI_PSYCHOLOGY,
             NodeCategory::Math => MI_AUTO_AWESOME,
@@ -210,6 +217,14 @@ static LTX_LIPDUB_EXEC: ltx::lipdub::LipdubExec = ltx::lipdub::LipdubExec;
 static LTX_A2V_EXEC: ltx::a2v::A2vExec = ltx::a2v::A2vExec;
 static SYN_CHECKPOINT_EXEC: syn_checkpoint::SynCheckpointExec =
     syn_checkpoint::SynCheckpointExec;
+static FLUX_CHECKPOINT_EXEC: flux::checkpoint::CheckpointExec = flux::checkpoint::CheckpointExec;
+static FLUX_TEXT_ENCODER_EXEC: flux::text_encoder::TextEncoderExec = flux::text_encoder::TextEncoderExec;
+static FLUX_EMPTY_LATENT_EXEC: flux::latent::EmptyLatentExec = flux::latent::EmptyLatentExec;
+static FLUX_VAE_ENCODE_EXEC: flux::vae::VaeEncodeExec = flux::vae::VaeEncodeExec;
+static FLUX_SAMPLER_EXEC: flux::sampler::SamplerExec = flux::sampler::SamplerExec;
+static FLUX_VAE_DECODE_EXEC: flux::vae::VaeDecodeExec = flux::vae::VaeDecodeExec;
+static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
+static IMAGE_SAVE_EXEC: image::ImageSaveExec = image::ImageSaveExec;
 
 const NUMBER_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "out", label: "out", kind: PortKind::Data },
@@ -433,6 +448,44 @@ const H3_VIDEO_SAVE_INPUTS: &[PortSchema] = &[
 ];
 const H3_VIDEO_SAVE_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "path", label: "path", kind: PortKind::Text },
+];
+/// Необязательный вход картинки у LTX Image / H3 Keyframe: провод важнее файла.
+const IMAGE_IN: &[PortSchema] = &[
+    PortSchema { name: "image", label: "image", kind: PortKind::Image },
+];
+const IMAGE_OUT: &[PortSchema] = &[
+    PortSchema { name: "image", label: "image", kind: PortKind::Image },
+];
+const IMAGE_SAVE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "path", label: "path", kind: PortKind::Text },
+];
+
+const FLUX_MODEL_OUT: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+];
+const FLUX_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
+];
+const FLUX_TEXT_ENCODER_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+];
+const FLUX_LATENT_OUT: &[PortSchema] = &[
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+const FLUX_VAE_ENCODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "image", label: "image", kind: PortKind::Image },
+    PortSchema { name: "size", label: "size", kind: PortKind::Data },
+];
+const FLUX_SAMPLER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+const FLUX_VAE_DECODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
 ];
 
 const LTX_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
@@ -1175,7 +1228,7 @@ const H3_KEYFRAME: NodeKindMeta = NodeKindMeta {
     title: "H3 Keyframe",
     category: NodeCategory::Neuro,
     subcategory: Some(H3_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
+    inputs: PortsSpec::Static(IMAGE_IN),
     outputs: PortsSpec::Static(H3_KEYFRAME_OUTPUTS),
     fields: NO_FIELDS,
     body: Some(minimax_h3::latent::keyframe_body),
@@ -1269,6 +1322,146 @@ const H3_VIDEO_SAVE: NodeKindMeta = NodeKindMeta {
     executor: &H3_VIDEO_SAVE_EXEC,
     on_run: Some(minimax_h3::save::on_run),
     busy_signal: Some(minimax_h3::save::busy_signal),
+};
+
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.flux`.
+const FLUX_SUBCATEGORY: &str = "flux";
+
+const FLUX_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxCheckpoint,
+    icon: MI_INVENTORY_2,
+    title: "FLUX Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const FLUX_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxTextEncoder,
+    icon: MI_TRANSLATE,
+    title: "FLUX Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(flux::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_TEXT_ENCODER_EXEC,
+    on_run: Some(flux::text_encoder::on_run),
+    busy_signal: Some(flux::text_encoder::busy_signal),
+};
+
+const FLUX_EMPTY_LATENT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxEmptyLatent,
+    icon: MI_ASPECT_RATIO,
+    title: "FLUX Empty Latent",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux::latent::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_EMPTY_LATENT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const FLUX_VAE_ENCODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxVaeEncode,
+    icon: MI_IMAGE_ICON,
+    title: "FLUX VAE Encode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_ENCODE_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux::vae::encode_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_VAE_ENCODE_EXEC,
+    on_run: Some(flux::vae::encode_on_run),
+    busy_signal: Some(flux::vae::encode_busy_signal),
+};
+
+const FLUX_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxSampler,
+    icon: MI_AUTO_AWESOME,
+    title: "FLUX Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_SAMPLER_EXEC,
+    on_run: Some(flux::sampler::on_run),
+    busy_signal: Some(flux::sampler::busy_signal),
+};
+
+const FLUX_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::FluxVaeDecode,
+    icon: MI_PALETTE,
+    title: "FLUX VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux::vae::decode_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX_VAE_DECODE_EXEC,
+    on_run: Some(flux::vae::decode_on_run),
+    busy_signal: Some(flux::vae::decode_busy_signal),
+};
+
+const IMAGE_LOAD: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::ImageLoad,
+    icon: MI_IMAGE_ICON,
+    title: "Image",
+    category: NodeCategory::Image,
+    subcategory: None,
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(image::load_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &IMAGE_LOAD_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const IMAGE_SAVE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::ImageSave,
+    icon: MI_SAVE,
+    title: "Image Save",
+    category: NodeCategory::Output,
+    subcategory: None,
+    inputs: PortsSpec::Static(IMAGE_IN),
+    outputs: PortsSpec::Static(IMAGE_SAVE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(image::save_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &IMAGE_SAVE_EXEC,
+    on_run: Some(image::save_on_run),
+    busy_signal: Some(image::save_busy_signal),
 };
 
 const LTX_CHECKPOINT: NodeKindMeta = NodeKindMeta {
@@ -1430,7 +1623,7 @@ const LTX_IMAGE: NodeKindMeta = NodeKindMeta {
     title: "LTX Image",
     category: NodeCategory::Neuro,
     subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
+    inputs: PortsSpec::Static(IMAGE_IN),
     outputs: PortsSpec::Static(LTX_IMAGE_OUTPUTS),
     fields: NO_FIELDS,
     body: Some(ltx::image::body),
@@ -1598,6 +1791,14 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     H3_VAE_DECODE,
     H3_AUDIO_DECODE,
     H3_VIDEO_SAVE,
+    FLUX_CHECKPOINT,
+    FLUX_TEXT_ENCODER,
+    FLUX_EMPTY_LATENT,
+    FLUX_VAE_ENCODE,
+    FLUX_SAMPLER,
+    FLUX_VAE_DECODE,
+    IMAGE_LOAD,
+    IMAGE_SAVE,
 ];
 
 // ── Equalizer helper'ы ───────────────────────────────────────────────────
@@ -2061,6 +2262,65 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::H3VideoSave => NodeRuntime::H3VideoSave {
+            path: use_signal(None),
+            running: use_signal(false),
+            error: use_signal(None),
+            saved: use_signal(None),
+            preview: Arc::new(Mutex::new(None)),
+            preview_version: use_signal(0_u32),
+        },
+        NodeKind::FluxCheckpoint => NodeRuntime::FluxCheckpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            quant_idx: use_signal(flux::DEFAULT_QUANT_IDX),
+            memory_mode_idx: use_signal(0_usize),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::FluxTextEncoder => NodeRuntime::FluxTextEncoder {
+            seq_len_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::FluxEmptyLatent => NodeRuntime::FluxEmptyLatent {
+            width: use_signal(flux::latent::DEFAULT_SIDE),
+            height: use_signal(flux::latent::DEFAULT_SIDE),
+            aspect_idx: use_signal(0_usize),
+        },
+        NodeKind::FluxVaeEncode => NodeRuntime::FluxVaeEncode {
+            resize_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::FluxSampler => NodeRuntime::FluxSampler {
+            steps: use_signal(flux::sampler::DEFAULT_STEPS),
+            guidance: use_signal(flux::sampler::DEFAULT_GUIDANCE),
+            seed: use_signal(0_u64),
+            denoise: use_signal(1.0_f32),
+            running: use_signal(false),
+            error: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::FluxVaeDecode => NodeRuntime::FluxVaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::ImageLoad => NodeRuntime::ImageLoad {
+            path: use_signal(None),
+            error: use_signal(None),
+            cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::ImageSave => NodeRuntime::ImageSave {
             path: use_signal(None),
             running: use_signal(false),
             error: use_signal(None),

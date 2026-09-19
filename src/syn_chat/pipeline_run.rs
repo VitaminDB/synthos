@@ -296,6 +296,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             match &*rt {
                 NodeRuntime::LtxVideoSave { path, .. } => (SavePathSig::Str(*path), "mp4"),
                 NodeRuntime::H3VideoSave { path, .. } => (SavePathSig::OptPath(*path), "mp4"),
+                NodeRuntime::ImageSave { path, .. } => (SavePathSig::OptPath(*path), "png"),
                 NodeRuntime::SaveToFile { path, .. } => (SavePathSig::Str(*path), "wav"),
                 _ => continue,
             }
@@ -372,6 +373,8 @@ enum ViewerOutput {
         audio: Option<std::sync::Arc<syngui::audio::AudioBuffer>>,
     },
     Audio(std::sync::Arc<syngui::audio::AudioBuffer>),
+    /// Картинка FLUX VAE Decode, которую никто не сохранил.
+    Image(std::sync::Arc<crate::pages::node_editor::types::ImageData>),
     /// Плеер, которому дали файл (а не память) — прикладываем как есть.
     File(PathBuf),
 }
@@ -385,7 +388,11 @@ struct PlannedViewer {
 /// Снять с нод-просмотрщиков то, что они показывают (main thread: сигналы).
 /// `skip_video`/`skip_audio` — что уже пришло от save-нод: дублировать один
 /// и тот же результат двумя вложениями незачем.
-fn planned_viewers(skip_video: bool, skip_audio: bool) -> (Option<String>, Vec<PlannedViewer>) {
+fn planned_viewers(
+    skip_video: bool,
+    skip_audio: bool,
+    skip_image: bool,
+) -> (Option<String>, Vec<PlannedViewer>) {
     let chat_id = use_context::<SynChatCtx>().active_chat_id.get_untracked();
     let Ok(ctx) = agent_tab_ctx() else {
         return (chat_id, Vec::new());
@@ -412,6 +419,14 @@ fn planned_viewers(skip_video: bool, skip_audio: bool) -> (Option<String>, Vec<P
                     });
                 } else if let Some(p) = current_path.get_untracked() {
                     out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::File(p) });
+                }
+            }
+            NodeRuntime::FluxVaeDecode { out: image_out, .. } => {
+                if skip_image {
+                    continue;
+                }
+                if let Some(img) = image_out.lock().ok().and_then(|g| g.clone()) {
+                    out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::Image(img) });
                 }
             }
             NodeRuntime::AudioPlayer { pcm_view, .. } => {
@@ -441,9 +456,10 @@ pub async fn collect_viewer_outputs(
 ) -> (Vec<MsgAttachment>, Vec<String>) {
     let skip_video = have.iter().any(|a| a.kind == crate::agent::state::AttachmentKind::Video);
     let skip_audio = have.iter().any(|a| a.kind == crate::agent::state::AttachmentKind::Audio);
+    let skip_image = have.iter().any(|a| a.kind == crate::agent::state::AttachmentKind::Image);
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
-        let _ = tx.send(planned_viewers(skip_video, skip_audio));
+        let _ = tx.send(planned_viewers(skip_video, skip_audio, skip_image));
     });
     let Ok((chat_id, planned)) = rx.await else {
         return (Vec::new(), Vec::new());
@@ -488,6 +504,16 @@ pub async fn collect_viewer_outputs(
                     Ok(()) => out,
                     Err(e) => {
                         lines.push(tr!("chat.pipeline.viewer.wav_write_failed", title = p.title, node_id = p.node_id, error = e));
+                        continue;
+                    }
+                }
+            }
+            ViewerOutput::Image(img) => {
+                let out = dir.join(format!("node{}_preview.png", p.node_id));
+                match crate::pages::node_editor::nodes::image::write_image(img, &out) {
+                    Ok(()) => out,
+                    Err(e) => {
+                        lines.push(tr!("chat.pipeline.viewer.encode_failed", title = p.title, node_id = p.node_id, error = e));
                         continue;
                     }
                 }

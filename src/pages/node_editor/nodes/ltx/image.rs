@@ -1,5 +1,6 @@
 //! `LtxImage` — загрузка изображения для image→video conditioning.
-//! `→ image_cond: Data(ImageCond)`. Грузит картинку (`synaptix_io::image`) в
+//! `image (опц.) → image_cond: Data(ImageCond)`: подключённый вход `image`
+//! (кадр FLUX, нода Image) важнее выбранного файла. Грузит картинку (`synaptix_io::image`) в
 //! `[3,H,W]` [0,1], отдаёт её + силу; resize до stage-сетки, VAE-encode и
 //! формирование conditioning-токенов делает Sampler (он знает разрешение).
 //!
@@ -24,6 +25,8 @@ pub struct ImageExec;
 impl NodeExecutor for ImageExec {
     fn evaluate(&self, ctx: &mut EvalContext<'_>) {
         let track = ctx.track;
+        // Картинка с провода (FLUX VAE Decode, Image) важнее файла.
+        let input = ctx.read_input("image").as_image();
         let pv = match ctx.runtime().lock() {
             Ok(g) => match &*g {
                 NodeRuntime::LtxImage {
@@ -36,8 +39,18 @@ impl NodeExecutor for ImageExec {
                     let path = if track { image_path.get() } else { image_path.get_untracked() };
                     let s = if track { strength.get() } else { strength.get_untracked() };
                     let fi = if track { frame_idx.get() } else { frame_idx.get_untracked() } as usize;
-                    match path {
-                        Some(path) => match load_cached(&path, cache) {
+                    match (input, path) {
+                        (Some(img), _) => {
+                            if error.get_untracked().is_some() {
+                                error.set(None);
+                            }
+                            PortValue::Data(Arc::new(DataBlob::Ltx(LtxBlob::ImageCond {
+                                image: img.tensor.clone(),
+                                strength: s,
+                                frame_idx: fi,
+                            })))
+                        }
+                        (None, Some(path)) => match load_cached(&path, cache) {
                             Ok(img) => {
                                 error.set(None);
                                 PortValue::Data(Arc::new(DataBlob::Ltx(LtxBlob::ImageCond {
@@ -51,7 +64,7 @@ impl NodeExecutor for ImageExec {
                                 PortValue::Empty
                             }
                         },
-                        None => PortValue::Empty,
+                        (None, None) => PortValue::Empty,
                     }
                 }
                 _ => PortValue::Empty,

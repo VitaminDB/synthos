@@ -117,6 +117,8 @@ rfd = { version = "0.15", default-features = false, features = [
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
 synaptix-video-ltx23 = { path = "../synaptix/crates/synaptix-models/video/ltx23" }
 synaptix-video-minimax-h3 = { path = "../synaptix/crates/synaptix-models/video/minimax_h3" }
+# FLUX.1 (dev/schnell) — txt2img/img2img для нод node_editor/nodes/flux.
+synaptix-image-flux = { path = "../synaptix/crates/synaptix-models/image/flux" }
 synaptix-llm-gemma3 = { path = "../synaptix/crates/synaptix-models/llm/gemma3" }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
 synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }

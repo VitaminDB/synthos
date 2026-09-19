@@ -36,6 +36,9 @@ pub enum PortKind {
     Control,
     Text,
     Video,
+    /// Одна картинка (`DataBlob::Image`): выход FLUX VAE Decode / Image,
+    /// вход LTX Image / H3 Keyframe / FLUX VAE Encode / Image Save.
+    Image,
 }
 
 /// Сторона ноды, к которой относится порт.
@@ -429,6 +432,26 @@ pub enum NodeKind {
     H3AudioDecode,
     /// MiniMax-H3: кадры + звук → mp4 через ffmpeg.
     H3VideoSave,
+
+    // ── FLUX.1 (Нейро → FLUX) ──
+    /// FLUX: `.syn`-бандл/каталог + квант, память. Лёгкий хэндл.
+    FluxCheckpoint,
+    /// FLUX: промпт → CLIP pooled + T5.
+    FluxTextEncoder,
+    /// FLUX: размер картинки (пустой латент).
+    FluxEmptyLatent,
+    /// FLUX: картинка → латент для img2img.
+    FluxVaeEncode,
+    /// FLUX: денойз (txt2img или img2img).
+    FluxSampler,
+    /// FLUX: латент → картинка.
+    FluxVaeDecode,
+
+    // ── Картинки ──
+    /// Картинка из файла → порт `image`.
+    ImageLoad,
+    /// Картинка → PNG/JPEG на диск.
+    ImageSave,
 }
 
 impl NodeKind {
@@ -486,6 +509,14 @@ impl NodeKind {
         NodeKind::H3VaeDecode,
         NodeKind::H3AudioDecode,
         NodeKind::H3VideoSave,
+        NodeKind::FluxCheckpoint,
+        NodeKind::FluxTextEncoder,
+        NodeKind::FluxEmptyLatent,
+        NodeKind::FluxVaeEncode,
+        NodeKind::FluxSampler,
+        NodeKind::FluxVaeDecode,
+        NodeKind::ImageLoad,
+        NodeKind::ImageSave,
     ];
 }
 
@@ -616,6 +647,125 @@ pub enum DataBlob {
     H3(H3Blob),
     /// Хэндл универсальной «Syn Checkpoint»-ноды (LLM/TTS/ASR-модели).
     SynModel(Arc<SynModelHandle>),
+    /// Одна картинка — общий тип для FLUX, LTX Image, H3 Keyframe, Image Save.
+    Image(Arc<ImageData>),
+    /// Хэндлы и тензоры пайплайна FLUX.1 (synaptix).
+    Flux(FluxBlob),
+}
+
+/// Картинка на проводе: RGB `[3, H, W]` F32 в [0, 1] на CPU плюс готовое
+/// RGBA8 для превью, чтобы каждая нода не конвертировала тензор заново.
+pub struct ImageData {
+    pub tensor: synaptix_core::tensor::Tensor,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<Vec<u8>>,
+    /// Ключ текстуры превью — уникален на каждую картинку, иначе syngui
+    /// показал бы закэшированную прежнюю.
+    pub key: String,
+    /// Файл, из которого картинку загрузили (у сгенерированной — `None`).
+    pub source: Option<PathBuf>,
+}
+
+impl ImageData {
+    /// Из тензора `[3, H, W]` (или `[1, 3, H, W]`) в [0, 1].
+    pub fn from_tensor(
+        tensor: synaptix_core::tensor::Tensor,
+        source: Option<PathBuf>,
+    ) -> std::result::Result<Self, String> {
+        use synaptix_core::{device::Device, dtype::DType};
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let t = tensor
+            .to_device(Device::Cpu)
+            .and_then(|t| t.to_dtype(DType::F32))
+            .and_then(|t| t.contiguous())
+            .map_err(|e| e.to_string())?;
+        let d = t.dims().to_vec();
+        let (c, h, w) = match d.as_slice() {
+            [c, h, w] => (*c, *h, *w),
+            [1, c, h, w] => (*c, *h, *w),
+            _ => return Err(format!("ожидалась картинка [3, H, W], пришло {d:?}")),
+        };
+        if c != 3 {
+            return Err(format!("ожидалось 3 канала, пришло {c}"));
+        }
+        let t = t.reshape(vec![3, h, w]).map_err(|e| e.to_string())?;
+        let v = t
+            .reshape(vec![3 * h * w])
+            .and_then(|f| f.to_vec1::<f32>())
+            .map_err(|e| e.to_string())?;
+        let plane = h * w;
+        let mut rgba = Vec::with_capacity(plane * 4);
+        let q = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+        for i in 0..plane {
+            rgba.push(q(v[i]));
+            rgba.push(q(v[plane + i]));
+            rgba.push(q(v[2 * plane + i]));
+            rgba.push(255);
+        }
+        Ok(Self {
+            tensor: t,
+            width: w as u32,
+            height: h as u32,
+            rgba: Arc::new(rgba),
+            key: format!("node-image-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+            source,
+        })
+    }
+
+    /// Загрузить файл (png/jpeg/webp/bmp) в RGB [0, 1].
+    pub fn load(path: &std::path::Path) -> std::result::Result<Self, String> {
+        let t = synaptix_io::image::load_image(path, synaptix_core::device::Device::Cpu)
+            .map_err(|e| e.to_string())?;
+        Self::from_tensor(t, Some(path.to_path_buf()))
+    }
+}
+
+impl std::fmt::Debug for ImageData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Image({}x{})", self.width, self.height)
+    }
+}
+
+/// Типизированный payload одной из стадий FLUX.1.
+#[derive(Debug)]
+pub enum FluxBlob {
+    Model(Arc<FluxModelHandle>),
+    /// CLIP pooled `[1, 768]` + T5 `[1, L, 4096]`.
+    Conditioning(Arc<synaptix_image_flux::FluxConditioning>),
+    /// Латент: пустой (только размер) или картинки для img2img/декода.
+    Latent(Arc<FluxLatent>),
+}
+
+/// Конфиг FLUX-чекпойнта. Дешёвый POD — веса грузят потребители через
+/// `nodes::flux::shared`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FluxModelHandle {
+    /// `.syn`-бандл или каталог diffusers.
+    pub model_path: PathBuf,
+    pub device_idx: usize,
+    pub quant_idx: usize,
+    pub memory_mode_idx: usize,
+    /// Держать трансформер в VRAM между прогонами.
+    pub resident: bool,
+}
+
+/// Латент FLUX. `tensor == None` — пустой латент от Empty Latent: сэмплер
+/// начинает с шума. С тензором — `[1, 16, H/8, W/8]` нормированный латент
+/// картинки (VAE Encode) или результат денойза (Sampler).
+pub struct FluxLatent {
+    pub width: usize,
+    pub height: usize,
+    pub tensor: Option<synaptix_core::tensor::Tensor>,
+}
+
+impl std::fmt::Debug for FluxLatent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.tensor {
+            Some(t) => write!(f, "FluxLatent({}x{}, {:?})", self.width, self.height, t.dims()),
+            None => write!(f, "FluxLatent({}x{}, пустой)", self.width, self.height),
+        }
+    }
 }
 
 /// Типизированный payload одной из стадий MiniMax-H3.
@@ -982,6 +1132,12 @@ impl std::fmt::Debug for PortValue {
                 DataBlob::Ltx(LtxBlob::AudioInput(p)) => {
                     write!(f, "Data(Ltx::AudioInput({:?}))", p.file_name().unwrap_or_default())
                 }
+                DataBlob::Image(img) => write!(f, "Data({img:?})"),
+                DataBlob::Flux(FluxBlob::Model(h)) => {
+                    write!(f, "Data(Flux::Model({:?}))", h.model_path.file_name().unwrap_or_default())
+                }
+                DataBlob::Flux(FluxBlob::Conditioning(c)) => write!(f, "Data(Flux::{c:?})"),
+                DataBlob::Flux(FluxBlob::Latent(l)) => write!(f, "Data(Flux::{l:?})"),
                 DataBlob::SynModel(h) => {
                     write!(
                         f,
@@ -1217,6 +1373,47 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::H3(H3Blob::Frames(f)) => Some(f.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь картинку (выход FLUX VAE Decode / Image).
+    pub fn as_image(&self) -> Option<Arc<ImageData>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Image(i) => Some(i.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux_model(&self) -> Option<Arc<FluxModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux(FluxBlob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux_conditioning(&self) -> Option<Arc<synaptix_image_flux::FluxConditioning>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux(FluxBlob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux_latent(&self) -> Option<Arc<FluxLatent>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux(FluxBlob::Latent(l)) => Some(l.clone()),
                 _ => None,
             },
             _ => None,
@@ -2228,6 +2425,73 @@ pub enum NodeRuntime {
         a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
         output_version: RwSignal<u32>,
     },
+    FluxCheckpoint {
+        model_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        /// Индекс в `nodes::flux::QUANT_OPTIONS`.
+        quant_idx: RwSignal<usize>,
+        /// Индекс в `nodes::flux::MEMORY_MODE_OPTIONS`.
+        memory_mode_idx: RwSignal<usize>,
+        resident: RwSignal<bool>,
+        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
+    },
+    FluxTextEncoder {
+        /// Индекс в `nodes::flux::SEQ_LEN_OPTIONS` (0 — по модели).
+        seq_len_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<synaptix_image_flux::FluxConditioning>>>>,
+        output_version: RwSignal<u32>,
+    },
+    FluxEmptyLatent {
+        width: RwSignal<u32>,
+        height: RwSignal<u32>,
+        /// Индекс в `nodes::flux::latent::ASPECT_OPTIONS`, 0 — свободно.
+        aspect_idx: RwSignal<usize>,
+    },
+    FluxVaeEncode {
+        /// Как вписать картинку в размер латента со входа `size`:
+        /// 0 — растянуть, 1 — покрыть и обрезать по центру.
+        resize_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    FluxSampler {
+        steps: RwSignal<u32>,
+        guidance: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        /// Доля шума для img2img (латент с картинкой на входе).
+        denoise: RwSignal<f32>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    FluxVaeDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<ImageData>>>>,
+        output_version: RwSignal<u32>,
+    },
+    ImageLoad {
+        path: RwSignal<Option<PathBuf>>,
+        error: RwSignal<Option<String>>,
+        /// Загруженная картинка — пока путь тот же, отдаётся тот же `Arc`.
+        cache: Arc<Mutex<Option<Arc<ImageData>>>>,
+    },
+    ImageSave {
+        path: RwSignal<Option<PathBuf>>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        saved: RwSignal<Option<String>>,
+        preview: Arc<Mutex<Option<Arc<ImageData>>>>,
+        preview_version: RwSignal<u32>,
+    },
 }
 
 impl NodeRuntime {
@@ -2265,7 +2529,13 @@ impl NodeRuntime {
             | R::H3Sampler { error, .. }
             | R::H3VaeDecode { error, .. }
             | R::H3AudioDecode { error, .. }
-            | R::H3VideoSave { error, .. } => Some(*error),
+            | R::H3VideoSave { error, .. }
+            | R::FluxTextEncoder { error, .. }
+            | R::FluxVaeEncode { error, .. }
+            | R::FluxSampler { error, .. }
+            | R::FluxVaeDecode { error, .. }
+            | R::ImageLoad { error, .. }
+            | R::ImageSave { error, .. } => Some(*error),
             _ => None,
         }
     }
@@ -2306,6 +2576,7 @@ impl NodeRuntime {
                 v
             }
             R::H3Checkpoint { model_path, .. }
+            | R::FluxCheckpoint { model_path, .. }
             | R::SynCheckpoint { model_path, .. }
             | R::Llm { model_path, .. }
             | R::AsrGigaam { model_path, .. }
@@ -2339,7 +2610,8 @@ impl NodeRuntime {
             | R::LtxIcLora { progress_pct, .. }
             | R::LtxLipdub { progress_pct, .. }
             | R::LtxA2V { progress_pct, .. }
-            | R::H3Sampler { progress_pct, .. } => Some(*progress_pct),
+            | R::H3Sampler { progress_pct, .. }
+            | R::FluxSampler { progress_pct, .. } => Some(*progress_pct),
             _ => None,
         }
     }
@@ -2359,7 +2631,8 @@ impl NodeRuntime {
             | R::LtxLipdub { cancel, .. }
             | R::LtxA2V { cancel, .. }
             | R::AceStepVaeEncode { cancel, .. }
-            | R::H3Sampler { cancel, .. } => Some(cancel.clone()),
+            | R::H3Sampler { cancel, .. }
+            | R::FluxSampler { cancel, .. } => Some(cancel.clone()),
             _ => None,
         }
     }
@@ -2586,6 +2859,38 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::H3References { items, .. } => {
                 write!(f, "NodeRuntime::H3References{{{} шт.}}", items.get_untracked().len())
+            }
+            NodeRuntime::FluxCheckpoint { model_path, .. } => {
+                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::FluxCheckpoint{{path={p}}}")
+            }
+            NodeRuntime::FluxTextEncoder { running, .. } => {
+                write!(f, "NodeRuntime::FluxTextEncoder{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::FluxEmptyLatent { width, height, .. } => {
+                write!(f, "NodeRuntime::FluxEmptyLatent{{{}x{}}}", width.get_untracked(), height.get_untracked())
+            }
+            NodeRuntime::FluxVaeEncode { running, .. } => {
+                write!(f, "NodeRuntime::FluxVaeEncode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::FluxSampler { running, steps, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::FluxSampler{{running={}, steps={}}}",
+                    running.get_untracked(),
+                    steps.get_untracked()
+                )
+            }
+            NodeRuntime::FluxVaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::FluxVaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::ImageLoad { path, .. } => {
+                let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::ImageLoad{{path={p}}}")
+            }
+            NodeRuntime::ImageSave { path, .. } => {
+                let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::ImageSave{{path={p}}}")
             }
             NodeRuntime::H3Sampler { running, steps, .. } => {
                 write!(

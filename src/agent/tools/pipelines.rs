@@ -256,14 +256,20 @@ fn models_inventory(dir: &std::path::Path) -> Vec<String> {
             if p.is_dir() {
                 if p.join("config.json").exists() {
                     out.push(format!("{} · HF model directory", p.display()));
+                } else if let Some(class) = pipeline_class(&p) {
+                    // Пайплайн diffusers (FLUX, SDXL…): подкаталоги — его
+                    // компоненты, а не отдельные модели; не спускаемся.
+                    out.push(format!("{} · HF pipeline directory ({class})", p.display()));
                 } else {
                     scan(&p, depth + 1, out);
                 }
             } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                if matches!(ext.to_lowercase().as_str(), "syn" | "safetensors" | "gguf") {
+                let ext = ext.to_lowercase();
+                if matches!(ext.as_str(), "syn" | "safetensors" | "gguf") {
                     let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                    let kind = if ext == "syn" { bundle_kind(&p) } else { String::new() };
                     out.push(format!(
-                        "{} · {}",
+                        "{} · {}{kind}",
                         p.display(),
                         crate::models::human_bytes(size)
                     ));
@@ -281,6 +287,28 @@ fn models_inventory(dir: &std::path::Path) -> Vec<String> {
         lines.push(format!("… and {extra} more files"));
     }
     lines
+}
+
+/// `_class_name` из `model_index.json` каталога diffusers.
+fn pipeline_class(dir: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(dir.join("model_index.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    Some(v.get("_class_name")?.as_str()?.to_string())
+}
+
+/// ` · arch flux.1, image` из метаданных бандла — по имени файла агент не
+/// всегда поймёт, что за модель внутри. Открытие — mmap и central
+/// directory, веса не читаются.
+fn bundle_kind(path: &std::path::Path) -> String {
+    let Ok(b) = synaptix_bundle::Bundle::open(path) else {
+        return String::new();
+    };
+    let m = b.meta();
+    match (m.arch.is_empty(), m.purpose.is_empty()) {
+        (false, false) => format!(" · arch {}, {}", m.arch, m.purpose),
+        (false, true) => format!(" · arch {}", m.arch),
+        _ => String::new(),
+    }
 }
 
 fn attachment_kind_label(k: AttachmentKind) -> &'static str {
@@ -321,6 +349,7 @@ fn port_kind_label(k: PortKind) -> &'static str {
         PortKind::Control => "control",
         PortKind::Text => "text",
         PortKind::Video => "video",
+        PortKind::Image => "image",
     }
 }
 
@@ -350,8 +379,8 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, asr_gigaam, ffmpeg_player, llm, ltx, minimax_h3, omnivoice, sortformer_diarizer,
-        syn_checkpoint, vibevoice, voxcpm2,
+        acestep, asr_gigaam, ffmpeg_player, flux, llm, ltx, minimax_h3, omnivoice,
+        sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
@@ -435,6 +464,14 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
         NodeKind::H3References => {
             vec![("image_size_idx", minimax_h3::references::IMAGE_SIZE_OPTIONS)]
         }
+        NodeKind::FluxCheckpoint => vec![
+            ("device_idx", flux::DEVICE_OPTIONS),
+            ("quant_idx", flux::QUANT_OPTIONS),
+            ("memory_mode_idx", flux::MEMORY_MODE_OPTIONS),
+        ],
+        NodeKind::FluxTextEncoder => vec![("seq_len_idx", flux::SEQ_LEN_OPTIONS)],
+        NodeKind::FluxEmptyLatent => vec![("aspect_idx", flux::latent::ASPECT_OPTIONS)],
+        NodeKind::FluxVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
         _ => Vec::new(),
     }
 }
@@ -666,10 +703,22 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     }
     out.push_str(&h3_reference_labels(&ctx));
     out.push_str(h3_prompt_guide(&ctx));
+    out.push_str(flux_prompt_guide(&ctx));
     Ok(out)
 }
 
+/// Формат промпта FLUX — при открытии шаблона с FLUX Text Encoder.
+fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
+    let has = ctx
+        .nodes
+        .get_untracked()
+        .iter()
+        .any(|n| n.kind == NodeKind::FluxTextEncoder && n.enabled.get_untracked());
+    if has { FLUX_PROMPT } else { "" }
+}
+
 const H3_PROMPT_BASE: &str = include_str!("h3_prompt_base.md");
+const FLUX_PROMPT: &str = include_str!("flux_prompt.md");
 const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
 
 /// Формат промпта MiniMax-H3 — при открытии шаблона, один раз. Закрытый
@@ -1628,7 +1677,9 @@ mod tests {
                 .count()
             })
             .sum();
-        assert!(len < 4500, "раздел шаблонов раздулся до {len} символов");
+        // 4500 → 5600 с шаблонами FLUX (+4 строки по ~160 символов): раздел
+        // был на пределе, а резать описания всех шаблонов хуже для выбора.
+        assert!(len < 5600, "раздел шаблонов раздулся до {len} символов");
     }
 
     /// Фильтр — набор токенов: перечисление нод возвращает их все.

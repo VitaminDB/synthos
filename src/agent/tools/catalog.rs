@@ -210,7 +210,11 @@ pub(super) fn build_all() -> Vec<Tool> {
                 region (Repaint), extend a track (Extend), morph toward a new \
                 prompt (Edit), variation (Retake); speech: TTS and voice clone \
                 (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \
-                (GigaAM), mixing/effects/recording; video: LTX text/image→video, \
+                (GigaAM), mixing/effects/recording; images: FLUX.1 text→image and \
+                image→image (builtin-flux-*; prompt format comes with open), a FLUX \
+                frame straight into video (builtin-ltx-flux-keyframe, \
+                builtin-h3-flux-keyframe: FLUX VAE Decode.image → LTX Image / H3 \
+                Keyframe.image); video: LTX text/image→video, \
                 lip-dub, audio→video; MiniMax-H3 video with native audio — \
                 text→video, first/last frame (H3 Keyframe.image_path), and \
                 reference→video (template builtin-h3-ref2va: H3 References.items = \

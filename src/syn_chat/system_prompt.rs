@@ -203,11 +203,12 @@ fn autotools_rules(pool: &[String]) -> String {
 }
 
 const PIPELINES_RULES: &str =
-    "\nPipelines (`pipelines`) — video/music/speech generation \
+    "\nPipelines (`pipelines`) — image/video/music/speech generation \
      in the node editor:\n\
-     - Any audio/music/voice/video task (extract vocals or other \
-     stems from a song, cover, extend or edit a track, music from \
-     text, TTS, voice clone, transcription, video) — do it with \
+     - Any image/audio/music/voice/video task (draw or edit a \
+     picture, extract vocals or other stems from a song, cover, \
+     extend or edit a track, music from text, TTS, voice clone, \
+     transcription, video) — do it with \
      pipelines right away: start with list and pick the template. \
      Don't search the disk or the web for external tools \
      (demucs, spleeter, ffmpeg, pip) unless the user asks for them.\n\
@@ -219,14 +220,14 @@ const PIPELINES_RULES: &str =
      separated), not field names — fields are visible in the \
      state example. A filter miss returns a list of node \
      kinds: take names from there rather than guessing.\n\
-     - Before a heavy run (LTX, MiniMax-H3), check `system \
+     - Before a heavy run (LTX, MiniMax-H3, FLUX), check `system \
      status`: if the pipeline's models don't fit alongside \
      you — run with free_vram=true (you'll be unloaded for the \
      duration of the run and restored; this doesn't harm the \
      history).\n\
      - run blocks the turn until it finishes and can take tens \
      of minutes — that's normal, the user sees a live status. \
-     Results (video/audio) are attached to the message \
+     Results (images/video/audio) are attached to the message \
      automatically.\n\
      - Don't make up model paths: the directory inventory \
      (main dir and HF cache) is in pipelines list — the \

@@ -20,7 +20,9 @@ use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData,
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
-    FfmpegPlayerStateData, FieldValueData, FilterStateData, GainStateData, H3CheckpointStateData,
+    FfmpegPlayerStateData, FieldValueData, FilterStateData, FluxCheckpointStateData,
+    FluxEmptyLatentStateData, FluxSamplerStateData, FluxTextEncoderStateData, FluxVaeEncodeStateData,
+    GainStateData, H3CheckpointStateData, ImageLoadStateData, ImageSaveStateData,
     H3EmptyLatentAvStateData, H3KeyframeStateData, H3ReferenceItemData, H3ReferencesStateData,
     H3SamplerStateData, LlmStateData,
     LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
@@ -267,6 +269,45 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
         | NodeRuntime::H3VaeDecode { .. }
         | NodeRuntime::H3AudioDecode { .. }
         | NodeRuntime::H3VideoSave { .. } => None,
+        NodeRuntime::FluxCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
+            Some(NodeStateData::FluxCheckpoint(FluxCheckpointStateData {
+                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                device_idx: device_idx.get_untracked(),
+                quant_idx: quant_idx.get_untracked(),
+                memory_mode_idx: memory_mode_idx.get_untracked(),
+                resident: resident.get_untracked(),
+            }))
+        }
+        NodeRuntime::FluxTextEncoder { seq_len_idx, .. } => {
+            Some(NodeStateData::FluxTextEncoder(FluxTextEncoderStateData {
+                seq_len_idx: seq_len_idx.get_untracked(),
+            }))
+        }
+        NodeRuntime::FluxEmptyLatent { width, height, aspect_idx } => {
+            Some(NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData {
+                width: width.get_untracked(),
+                height: height.get_untracked(),
+                aspect_idx: aspect_idx.get_untracked(),
+            }))
+        }
+        NodeRuntime::FluxVaeEncode { resize_idx, .. } => {
+            Some(NodeStateData::FluxVaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
+        }
+        NodeRuntime::FluxSampler { steps, guidance, seed, denoise, .. } => {
+            Some(NodeStateData::FluxSampler(FluxSamplerStateData {
+                steps: steps.get_untracked(),
+                guidance: guidance.get_untracked(),
+                seed: seed.get_untracked(),
+                denoise: denoise.get_untracked(),
+            }))
+        }
+        NodeRuntime::FluxVaeDecode { .. } => None,
+        NodeRuntime::ImageLoad { path, .. } => Some(NodeStateData::ImageLoad(ImageLoadStateData {
+            image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+        })),
+        NodeRuntime::ImageSave { path, .. } => Some(NodeStateData::ImageSave(ImageSaveStateData {
+            path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+        })),
         NodeRuntime::AudioFile { loaded_path, .. } => {
             Some(NodeStateData::AudioFile(AudioFileStateData {
                 loaded_path: loaded_path
@@ -1204,6 +1245,47 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             aspect_idx.set(data.aspect_idx);
         }
         (
+            NodeRuntime::FluxCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
+            NodeStateData::FluxCheckpoint(data),
+        ) => {
+            use crate::pages::node_editor::nodes::flux;
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx.min(flux::DEVICE_OPTIONS.len() - 1));
+            quant_idx.set(data.quant_idx.min(flux::QUANT_OPTIONS.len() - 1));
+            memory_mode_idx.set(data.memory_mode_idx.min(flux::MEMORY_MODE_OPTIONS.len() - 1));
+            resident.set(data.resident);
+        }
+        (NodeRuntime::FluxTextEncoder { seq_len_idx, .. }, NodeStateData::FluxTextEncoder(data)) => {
+            seq_len_idx.set(data.seq_len_idx.min(crate::pages::node_editor::nodes::flux::SEQ_LEN_OPTIONS.len() - 1));
+        }
+        (
+            NodeRuntime::FluxEmptyLatent { width, height, aspect_idx },
+            NodeStateData::FluxEmptyLatent(data),
+        ) => {
+            use crate::pages::node_editor::nodes::flux::latent::{ASPECT_OPTIONS, DIM_MAX, DIM_MIN};
+            width.set(data.width.clamp(DIM_MIN, DIM_MAX));
+            height.set(data.height.clamp(DIM_MIN, DIM_MAX));
+            aspect_idx.set(data.aspect_idx.min(ASPECT_OPTIONS.len() - 1));
+        }
+        (NodeRuntime::FluxVaeEncode { resize_idx, .. }, NodeStateData::FluxVaeEncode(data)) => {
+            resize_idx.set(data.resize_idx.min(1));
+        }
+        (
+            NodeRuntime::FluxSampler { steps, guidance, seed, denoise, .. },
+            NodeStateData::FluxSampler(data),
+        ) => {
+            steps.set(data.steps.max(1));
+            guidance.set(data.guidance);
+            seed.set(data.seed);
+            denoise.set(data.denoise.clamp(0.0, 1.0));
+        }
+        (NodeRuntime::ImageLoad { path, .. }, NodeStateData::ImageLoad(data)) => {
+            path.set(data.image_path.as_ref().map(PathBuf::from));
+        }
+        (NodeRuntime::ImageSave { path, .. }, NodeStateData::ImageSave(data)) => {
+            path.set(data.path.as_ref().map(PathBuf::from));
+        }
+        (
             NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, .. },
             NodeStateData::H3Keyframe(data),
         ) => {
@@ -1967,6 +2049,55 @@ mod tests {
             }
             other => panic!("Expected Llm runtime, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn roundtrip_flux_and_image_states() {
+        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
+            id,
+            kind,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(state),
+        };
+        let nodes = vec![
+            mk(
+                1,
+                NodeKind::FluxCheckpoint,
+                NodeStateData::FluxCheckpoint(FluxCheckpointStateData {
+                    model_path: Some("/models/flux.1-dev.syn".into()),
+                    device_idx: 0,
+                    quant_idx: 0,
+                    memory_mode_idx: 2,
+                    resident: true,
+                }),
+            ),
+            mk(2, NodeKind::FluxTextEncoder, NodeStateData::FluxTextEncoder(FluxTextEncoderStateData { seq_len_idx: 1 })),
+            mk(
+                3,
+                NodeKind::FluxEmptyLatent,
+                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1344, height: 752, aspect_idx: 1 }),
+            ),
+            mk(4, NodeKind::FluxVaeEncode, NodeStateData::FluxVaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
+            mk(
+                5,
+                NodeKind::FluxSampler,
+                NodeStateData::FluxSampler(FluxSamplerStateData { steps: 20, guidance: 4.5, seed: 77, denoise: 0.6 }),
+            ),
+            mk(6, NodeKind::ImageLoad, NodeStateData::ImageLoad(ImageLoadStateData { image_path: Some("/tmp/in.png".into()) })),
+            mk(7, NodeKind::ImageSave, NodeStateData::ImageSave(ImageSaveStateData { path: Some("/tmp/out.png".into()) })),
+        ];
+        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
+        let ctx = roundtrip(&make_template(nodes));
+        let got: Vec<Option<NodeStateData>> = ctx
+            .nodes
+            .get_untracked()
+            .iter()
+            .map(|n| runtime_to_state(&n.runtime.lock().unwrap()))
+            .collect();
+        assert_eq!(got, want);
     }
 
     #[test]

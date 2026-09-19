@@ -202,6 +202,13 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             NodeKind::H3VaeDecode => classes.push("h3-vae-decode-node".to_string()),
             NodeKind::H3AudioDecode => classes.push("h3-audio-decode-node".to_string()),
             NodeKind::H3VideoSave => classes.push("h3-video-save-node".to_string()),
+            NodeKind::FluxCheckpoint
+            | NodeKind::FluxTextEncoder
+            | NodeKind::FluxEmptyLatent
+            | NodeKind::FluxVaeEncode
+            | NodeKind::FluxSampler
+            | NodeKind::FluxVaeDecode => classes.push("flux-node".to_string()),
+            NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
             NodeKind::LtxCheckpoint => classes.push("ltx-checkpoint-node".to_string()),
             NodeKind::LtxTextEncoder => classes.push("ltx-text-encoder-node".to_string()),
             NodeKind::LtxNagPrompt => classes.push("ltx-nag-node".to_string()),

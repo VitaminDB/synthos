@@ -66,6 +66,8 @@ pub mod audio_reverb;
 pub mod audio_save;
 pub mod decode;
 pub mod ffmpeg_player;
+pub mod flux;
+pub mod image;
 pub mod llm;
 pub mod ltx;
 pub mod markdown_view;

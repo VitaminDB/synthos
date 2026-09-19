@@ -7015,6 +7015,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-image-flux2"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-diffusion",
+ "synaptix-io",
+ "synaptix-kernels-cuda",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-infer"
 version = "0.1.1"
 dependencies = [
@@ -7549,6 +7566,7 @@ dependencies = [
  "synaptix-depth-anything",
  "synaptix-gguf",
  "synaptix-image-flux",
+ "synaptix-image-flux2",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",

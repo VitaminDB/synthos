@@ -379,7 +379,7 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, asr_gigaam, ffmpeg_player, flux, llm, ltx, minimax_h3, omnivoice,
+        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice,
         sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2,
     };
     match kind {
@@ -472,6 +472,11 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
         NodeKind::FluxTextEncoder => vec![("seq_len_idx", flux::SEQ_LEN_OPTIONS)],
         NodeKind::FluxEmptyLatent => vec![("aspect_idx", flux::latent::ASPECT_OPTIONS)],
         NodeKind::FluxVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
+        NodeKind::Flux2Checkpoint => vec![
+            ("device_idx", flux2::DEVICE_OPTIONS),
+            ("quant_idx", flux2::QUANT_OPTIONS),
+            ("memory_mode_idx", flux2::MEMORY_MODE_OPTIONS),
+        ],
         _ => Vec::new(),
     }
 }
@@ -707,18 +712,21 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     Ok(out)
 }
 
-/// Формат промпта FLUX — при открытии шаблона с FLUX Text Encoder.
+/// Формат промпта FLUX — при открытии шаблона с FLUX / FLUX.2 Text Encoder.
 fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
-    let has = ctx
-        .nodes
-        .get_untracked()
-        .iter()
-        .any(|n| n.kind == NodeKind::FluxTextEncoder && n.enabled.get_untracked());
-    if has { FLUX_PROMPT } else { "" }
+    let has = |kind: NodeKind| ctx.nodes.get_untracked().iter().any(|n| n.kind == kind && n.enabled.get_untracked());
+    if has(NodeKind::Flux2TextEncoder) {
+        FLUX2_PROMPT
+    } else if has(NodeKind::FluxTextEncoder) {
+        FLUX_PROMPT
+    } else {
+        ""
+    }
 }
 
 const H3_PROMPT_BASE: &str = include_str!("h3_prompt_base.md");
 const FLUX_PROMPT: &str = include_str!("flux_prompt.md");
+const FLUX2_PROMPT: &str = include_str!("flux2_prompt.md");
 const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
 
 /// Формат промпта MiniMax-H3 — при открытии шаблона, один раз. Закрытый

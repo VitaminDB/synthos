@@ -97,3 +97,16 @@ directory (FluxPipeline)» и архитектуру `.syn` (`arch flux.1, image
 cargo run --release --bin flux_smoke -- ~/Storage/syn_models/flux.1-dev.syn out.png 768 768 20
 # FLUX_IMAGE=src.png FLUX_DENOISE=0.6 — img2img; FLUX_REPEAT=2 FLUX_RESIDENT=1 — кэш промпта и DiT
 ```
+
+## Малая карта (2026-09-19, synaptix dcc8c11)
+
+FLUX.1 теперь работает при 7 ГБ VRAM: T5-XXL кладёт на карту столько блоков,
+сколько влезает с запасом, остальные читает из бандла прямо в forward
+(`T5Encoder::load_budgeted`); квантованный DiT больше не всегда резидентен —
+в режиме памяти `auto`/`block_offload` не влезшие блоки уезжают пиннованной
+копией на хост (`FluxTransformer::load_budgeted`), в forward следующий блок
+едет на loader-стриме во время счёта текущего (`stream_each`, и для плотного
+частичного оффлоада); перед VAE и энкодерами пулы отдаются драйверу. Замер
+`tests/low_vram.rs` (балласт оставляет 7 ГБ), 1024² 20 шагов: NVFP4 — 13,2 с,
+MXFP8 — 16,4 с, BF16 — 27,9 с, минимум свободной VRAM по фазам ≥ 0,67 ГБ.
+См. также `docs/flux2_2026.md`.

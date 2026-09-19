@@ -265,6 +265,8 @@ pub enum NodeStateData {
     FluxEmptyLatent(FluxEmptyLatentStateData),
     FluxVaeEncode(FluxVaeEncodeStateData),
     FluxSampler(FluxSamplerStateData),
+    Flux2Checkpoint(Flux2CheckpointStateData),
+    Flux2Sampler(Flux2SamplerStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
 }
@@ -372,6 +374,55 @@ pub fn default_flux_guidance() -> f32 {
 
 fn default_flux_denoise() -> f32 {
     1.0
+}
+
+/// State FLUX.2 Checkpoint: бандл/каталог и железо. `quant_idx` —
+/// `nodes::flux2::QUANT_OPTIONS` (по умолчанию mxfp8).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Flux2CheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default = "default_flux2_quant_idx")]
+    pub quant_idx: usize,
+    #[serde(default)]
+    pub memory_mode_idx: usize,
+    #[serde(default)]
+    pub resident: bool,
+}
+
+impl Default for Flux2CheckpointStateData {
+    fn default() -> Self {
+        Self { model_path: None, device_idx: 0, quant_idx: default_flux2_quant_idx(), memory_mode_idx: 0, resident: false }
+    }
+}
+
+fn default_flux2_quant_idx() -> usize {
+    crate::pages::node_editor::nodes::flux2::DEFAULT_QUANT_IDX
+}
+
+/// State FLUX.2 Sampler. `steps` 0 — по модели (dev 50, klein 4); guidance
+/// у dev — эмбеддинг, у klein base — CFG, дистиллированный klein его не
+/// использует.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Flux2SamplerStateData {
+    #[serde(default)]
+    pub steps: u32,
+    #[serde(default = "default_flux2_guidance")]
+    pub guidance: f32,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+impl Default for Flux2SamplerStateData {
+    fn default() -> Self {
+        Self { steps: 0, guidance: default_flux2_guidance(), seed: 0 }
+    }
+}
+
+pub fn default_flux2_guidance() -> f32 {
+    crate::pages::node_editor::nodes::flux2::sampler::DEFAULT_GUIDANCE
 }
 
 /// State ноды Image: путь к картинке.

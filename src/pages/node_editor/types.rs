@@ -447,6 +447,18 @@ pub enum NodeKind {
     /// FLUX: латент → картинка.
     FluxVaeDecode,
 
+    // ── FLUX.2 (Нейро → FLUX.2) ──
+    /// FLUX.2: `.syn`-бандл/каталог (dev / klein) + квант, память.
+    Flux2Checkpoint,
+    /// FLUX.2: промпт → скрытые состояния LLM (Mistral-24B / Qwen3).
+    Flux2TextEncoder,
+    /// FLUX.2: картинка → токены референса для правки (цепочкой).
+    Flux2Reference,
+    /// FLUX.2: денойз (+ референсы).
+    Flux2Sampler,
+    /// FLUX.2: латент → картинка.
+    Flux2VaeDecode,
+
     // ── Картинки ──
     /// Картинка из файла → порт `image`.
     ImageLoad,
@@ -515,6 +527,11 @@ impl NodeKind {
         NodeKind::FluxVaeEncode,
         NodeKind::FluxSampler,
         NodeKind::FluxVaeDecode,
+        NodeKind::Flux2Checkpoint,
+        NodeKind::Flux2TextEncoder,
+        NodeKind::Flux2Reference,
+        NodeKind::Flux2Sampler,
+        NodeKind::Flux2VaeDecode,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
     ];
@@ -651,6 +668,8 @@ pub enum DataBlob {
     Image(Arc<ImageData>),
     /// Хэндлы и тензоры пайплайна FLUX.1 (synaptix).
     Flux(FluxBlob),
+    /// Хэндлы и тензоры пайплайна FLUX.2 (латент — общий `FluxBlob::Latent`).
+    Flux2(Flux2Blob),
 }
 
 /// Картинка на проводе: RGB `[3, H, W]` F32 в [0, 1] на CPU плюс готовое
@@ -737,6 +756,19 @@ pub enum FluxBlob {
     Latent(Arc<FluxLatent>),
 }
 
+/// Типизированный payload стадий FLUX.2. Хэндл чекпойнта — тот же POD, что у
+/// FLUX.1 (путь, устройство, квант, память), но другой вариант блоба, чтобы
+/// ноды семейств не путали модели на проводе.
+#[derive(Debug)]
+pub enum Flux2Blob {
+    Model(Arc<FluxModelHandle>),
+    /// Склейка скрытых состояний LLM `[1, 512, 3·hidden]` (+ пустой промпт
+    /// для CFG у klein base).
+    Conditioning(Arc<synaptix_image_flux2::Flux2Conditioning>),
+    /// Референсные картинки для правки.
+    References(Arc<synaptix_image_flux2::Flux2References>),
+}
+
 /// Конфиг FLUX-чекпойнта. Дешёвый POD — веса грузят потребители через
 /// `nodes::flux::shared`.
 #[derive(Clone, Debug, PartialEq)]
@@ -751,8 +783,9 @@ pub struct FluxModelHandle {
 }
 
 /// Латент FLUX. `tensor == None` — пустой латент от Empty Latent: сэмплер
-/// начинает с шума. С тензором — `[1, 16, H/8, W/8]` нормированный латент
-/// картинки (VAE Encode) или результат денойза (Sampler).
+/// начинает с шума (общий для FLUX.1 и FLUX.2 — это только размер). С
+/// тензором — `[1, 16, H/8, W/8]` у FLUX.1 (VAE Encode / Sampler) или
+/// `[1, 128, H/16, W/16]` у FLUX.2 Sampler.
 pub struct FluxLatent {
     pub width: usize,
     pub height: usize,
@@ -1138,6 +1171,11 @@ impl std::fmt::Debug for PortValue {
                 }
                 DataBlob::Flux(FluxBlob::Conditioning(c)) => write!(f, "Data(Flux::{c:?})"),
                 DataBlob::Flux(FluxBlob::Latent(l)) => write!(f, "Data(Flux::{l:?})"),
+                DataBlob::Flux2(Flux2Blob::Model(h)) => {
+                    write!(f, "Data(Flux2::Model({:?}))", h.model_path.file_name().unwrap_or_default())
+                }
+                DataBlob::Flux2(Flux2Blob::Conditioning(c)) => write!(f, "Data(Flux2::{c:?})"),
+                DataBlob::Flux2(Flux2Blob::References(r)) => write!(f, "Data(Flux2::{r:?})"),
                 DataBlob::SynModel(h) => {
                     write!(
                         f,
@@ -1404,6 +1442,36 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::Flux(FluxBlob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux2_model(&self) -> Option<Arc<FluxModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux2(Flux2Blob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux2_conditioning(&self) -> Option<Arc<synaptix_image_flux2::Flux2Conditioning>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux2(Flux2Blob::Conditioning(c)) => Some(c.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_flux2_references(&self) -> Option<Arc<synaptix_image_flux2::Flux2References>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Flux2(Flux2Blob::References(r)) => Some(r.clone()),
                 _ => None,
             },
             _ => None,
@@ -2478,6 +2546,50 @@ pub enum NodeRuntime {
         out: Arc<Mutex<Option<Arc<ImageData>>>>,
         output_version: RwSignal<u32>,
     },
+    Flux2Checkpoint {
+        model_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        /// Индекс в `nodes::flux2::QUANT_OPTIONS`.
+        quant_idx: RwSignal<usize>,
+        /// Индекс в `nodes::flux2::MEMORY_MODE_OPTIONS`.
+        memory_mode_idx: RwSignal<usize>,
+        resident: RwSignal<bool>,
+        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
+    },
+    Flux2TextEncoder {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<synaptix_image_flux2::Flux2Conditioning>>>>,
+        output_version: RwSignal<u32>,
+    },
+    Flux2Reference {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<synaptix_image_flux2::Flux2References>>>>,
+        output_version: RwSignal<u32>,
+    },
+    Flux2Sampler {
+        /// 0 — по модели (dev 50, klein 4).
+        steps: RwSignal<u32>,
+        guidance: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        /// Итог прогона: шаги, время, блоков на карте.
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
+    Flux2VaeDecode {
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<ImageData>>>>,
+        output_version: RwSignal<u32>,
+    },
     ImageLoad {
         path: RwSignal<Option<PathBuf>>,
         error: RwSignal<Option<String>>,
@@ -2534,6 +2646,10 @@ impl NodeRuntime {
             | R::FluxVaeEncode { error, .. }
             | R::FluxSampler { error, .. }
             | R::FluxVaeDecode { error, .. }
+            | R::Flux2TextEncoder { error, .. }
+            | R::Flux2Reference { error, .. }
+            | R::Flux2Sampler { error, .. }
+            | R::Flux2VaeDecode { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             _ => None,
@@ -2577,6 +2693,7 @@ impl NodeRuntime {
             }
             R::H3Checkpoint { model_path, .. }
             | R::FluxCheckpoint { model_path, .. }
+            | R::Flux2Checkpoint { model_path, .. }
             | R::SynCheckpoint { model_path, .. }
             | R::Llm { model_path, .. }
             | R::AsrGigaam { model_path, .. }
@@ -2611,7 +2728,8 @@ impl NodeRuntime {
             | R::LtxLipdub { progress_pct, .. }
             | R::LtxA2V { progress_pct, .. }
             | R::H3Sampler { progress_pct, .. }
-            | R::FluxSampler { progress_pct, .. } => Some(*progress_pct),
+            | R::FluxSampler { progress_pct, .. }
+            | R::Flux2Sampler { progress_pct, .. } => Some(*progress_pct),
             _ => None,
         }
     }
@@ -2632,7 +2750,8 @@ impl NodeRuntime {
             | R::LtxA2V { cancel, .. }
             | R::AceStepVaeEncode { cancel, .. }
             | R::H3Sampler { cancel, .. }
-            | R::FluxSampler { cancel, .. } => Some(cancel.clone()),
+            | R::FluxSampler { cancel, .. }
+            | R::Flux2Sampler { cancel, .. } => Some(cancel.clone()),
             _ => None,
         }
     }
@@ -2883,6 +3002,27 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::FluxVaeDecode { running, .. } => {
                 write!(f, "NodeRuntime::FluxVaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::Flux2Checkpoint { model_path, .. } => {
+                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
+                write!(f, "NodeRuntime::Flux2Checkpoint{{path={p}}}")
+            }
+            NodeRuntime::Flux2TextEncoder { running, .. } => {
+                write!(f, "NodeRuntime::Flux2TextEncoder{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::Flux2Reference { running, .. } => {
+                write!(f, "NodeRuntime::Flux2Reference{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::Flux2Sampler { running, steps, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::Flux2Sampler{{running={}, steps={}}}",
+                    running.get_untracked(),
+                    steps.get_untracked()
+                )
+            }
+            NodeRuntime::Flux2VaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::Flux2VaeDecode{{running={}}}", running.get_untracked())
             }
             NodeRuntime::ImageLoad { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();

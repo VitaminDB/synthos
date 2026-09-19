@@ -20,7 +20,8 @@ use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData,
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
-    FfmpegPlayerStateData, FieldValueData, FilterStateData, FluxCheckpointStateData,
+    FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
+    Flux2SamplerStateData, FluxCheckpointStateData,
     FluxEmptyLatentStateData, FluxSamplerStateData, FluxTextEncoderStateData, FluxVaeEncodeStateData,
     GainStateData, H3CheckpointStateData, ImageLoadStateData, ImageSaveStateData,
     H3EmptyLatentAvStateData, H3KeyframeStateData, H3ReferenceItemData, H3ReferencesStateData,
@@ -302,6 +303,23 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             }))
         }
         NodeRuntime::FluxVaeDecode { .. } => None,
+        NodeRuntime::Flux2Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
+            Some(NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData {
+                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                device_idx: device_idx.get_untracked(),
+                quant_idx: quant_idx.get_untracked(),
+                memory_mode_idx: memory_mode_idx.get_untracked(),
+                resident: resident.get_untracked(),
+            }))
+        }
+        NodeRuntime::Flux2Sampler { steps, guidance, seed, .. } => {
+            Some(NodeStateData::Flux2Sampler(Flux2SamplerStateData {
+                steps: steps.get_untracked(),
+                guidance: guidance.get_untracked(),
+                seed: seed.get_untracked(),
+            }))
+        }
+        NodeRuntime::Flux2TextEncoder { .. } | NodeRuntime::Flux2Reference { .. } | NodeRuntime::Flux2VaeDecode { .. } => None,
         NodeRuntime::ImageLoad { path, .. } => Some(NodeStateData::ImageLoad(ImageLoadStateData {
             image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
         })),
@@ -1279,6 +1297,22 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             seed.set(data.seed);
             denoise.set(data.denoise.clamp(0.0, 1.0));
         }
+        (
+            NodeRuntime::Flux2Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
+            NodeStateData::Flux2Checkpoint(data),
+        ) => {
+            use crate::pages::node_editor::nodes::flux2;
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx.min(flux2::DEVICE_OPTIONS.len() - 1));
+            quant_idx.set(data.quant_idx.min(flux2::QUANT_OPTIONS.len() - 1));
+            memory_mode_idx.set(data.memory_mode_idx.min(flux2::MEMORY_MODE_OPTIONS.len() - 1));
+            resident.set(data.resident);
+        }
+        (NodeRuntime::Flux2Sampler { steps, guidance, seed, .. }, NodeStateData::Flux2Sampler(data)) => {
+            steps.set(data.steps.min(100));
+            guidance.set(data.guidance);
+            seed.set(data.seed);
+        }
         (NodeRuntime::ImageLoad { path, .. }, NodeStateData::ImageLoad(data)) => {
             path.set(data.image_path.as_ref().map(PathBuf::from));
         }
@@ -2097,6 +2131,38 @@ mod tests {
             .iter()
             .map(|n| runtime_to_state(&n.runtime.lock().unwrap()))
             .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn roundtrip_flux2_states() {
+        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
+            id,
+            kind,
+            pos: PointData { x: 0.0, y: 0.0 },
+            fields: Default::default(),
+            style: Default::default(),
+            enabled: true,
+            state: Some(state),
+        };
+        let nodes = vec![
+            mk(
+                1,
+                NodeKind::Flux2Checkpoint,
+                NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData {
+                    model_path: Some("/models/flux.2-klein-4b.syn".into()),
+                    device_idx: 0,
+                    quant_idx: 0,
+                    memory_mode_idx: 2,
+                    resident: true,
+                }),
+            ),
+            mk(2, NodeKind::Flux2Sampler, NodeStateData::Flux2Sampler(Flux2SamplerStateData { steps: 28, guidance: 3.0, seed: 9 })),
+        ];
+        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
+        let ctx = roundtrip(&make_template(nodes));
+        let got: Vec<Option<NodeStateData>> =
+            ctx.nodes.get_untracked().iter().map(|n| runtime_to_state(&n.runtime.lock().unwrap())).collect();
         assert_eq!(got, want);
     }
 

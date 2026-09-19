@@ -8,7 +8,7 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    FieldValueData, FluxEmptyLatentStateData, FluxSamplerStateData, H3KeyframeStateData,
+    FieldValueData, Flux2CheckpointStateData, FluxEmptyLatentStateData, FluxSamplerStateData, H3KeyframeStateData,
     H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
     PointData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
@@ -51,9 +51,150 @@ pub fn all() -> Vec<Template> {
         ltx_a2v_template(),
         flux_text_to_image_template(),
         flux_image_to_image_template(),
+        flux2_text_to_image_template(),
+        flux2_edit_template(),
+        flux2_multi_reference_template(),
         ltx_flux_keyframe_template(),
         h3_flux_keyframe_template(),
     ]
+}
+
+// ── FLUX.2 ────────────────────────────────────────────────────────────────
+
+/// Цепочка FLUX.2 txt2img: Checkpoint(1) → Text Encoder(3) ← промпт(2),
+/// Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7). Empty
+/// Latent — общий с FLUX.1 (это только размер).
+fn flux2_base_nodes(prompt: &str, width: u32, height: u32, aspect_idx: usize) -> Vec<NodeData> {
+    vec![
+        node_with_state(
+            1,
+            NodeKind::Flux2Checkpoint,
+            60.0,
+            60.0,
+            NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData::default()),
+        ),
+        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
+        node_plain(3, NodeKind::Flux2TextEncoder, 520.0, 420.0),
+        node_with_state(
+            4,
+            NodeKind::FluxEmptyLatent,
+            520.0,
+            640.0,
+            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx }),
+        ),
+        node_plain(5, NodeKind::Flux2Sampler, 960.0, 420.0),
+        node_plain(6, NodeKind::Flux2VaeDecode, 1400.0, 420.0),
+        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
+    ]
+}
+
+fn flux2_text_to_image_template() -> Template {
+    Template {
+        id: "builtin-flux2-text-to-image".into(),
+        builtin: true,
+        name: "FLUX.2: Text to Image".into(),
+        description: "Промпт → LLM-энкодер (Mistral-24B у dev, Qwen3 у klein) → Sampler (шаги по \
+             модели: dev 50, klein 4) → VAE Decode → PNG. В Checkpoint — flux.2-dev.syn, \
+             flux.2-klein-4b.syn или flux.2-klein-9b.syn; не влезшее в VRAM стримится."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: flux2_base_nodes(
+            "A cozy reading nook by a rainy window at dusk: a ginger cat asleep on a chunky knitted \
+             blanket, a brass floor lamp casting warm light, raindrops on the glass, photograph",
+            1024,
+            1024,
+            0,
+        ),
+        connections: vec![
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(2, "out", 3, "prompt"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(4, "latent", 5, "latent"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
+        viewport: None,
+    }
+}
+
+/// Правка: Image(8) → Reference(9) → Sampler.references; размер — с
+/// референса, Empty Latent не нужен.
+fn flux2_edit_template() -> Template {
+    let mut nodes: Vec<NodeData> =
+        flux2_base_nodes("Make it a snowy winter evening; keep everything else unchanged", 1024, 1024, 0)
+            .into_iter()
+            .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
+            .collect();
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
+    nodes.push(node_plain(9, NodeKind::Flux2Reference, 520.0, 720.0));
+    Template {
+        id: "builtin-flux2-edit".into(),
+        builtin: true,
+        name: "FLUX.2: Edit Image".into(),
+        description: "Картинка → Reference → Sampler вместе с инструкцией правки → PNG в размере \
+             исходника (до 1 Мп). Пишите, что изменить и что оставить как есть."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections: vec![
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(1, "model", 9, "model"),
+            conn(2, "out", 3, "prompt"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(8, "image", 9, "image"),
+            conn(9, "references", 5, "references"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
+        viewport: None,
+    }
+}
+
+/// Два референса цепочкой: Image(8) → Reference(9) → Reference(11) ← Image(10)
+/// → Sampler.references, размер — Empty Latent.
+fn flux2_multi_reference_template() -> Template {
+    let mut nodes = flux2_base_nodes(
+        "The person from image 1 sitting at the café table from image 2, natural daylight, photograph",
+        1024,
+        1024,
+        0,
+    );
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 900.0));
+    nodes.push(node_plain(9, NodeKind::Flux2Reference, 520.0, 860.0));
+    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1160.0));
+    nodes.push(node_plain(11, NodeKind::Flux2Reference, 520.0, 1100.0));
+    Template {
+        id: "builtin-flux2-multi-reference".into(),
+        builtin: true,
+        name: "FLUX.2: Multi-Reference".into(),
+        description: "Две картинки → Reference → Reference (цепочкой) → Sampler: персонаж, предмет \
+             или стиль с одной картинки в сцене другой. В промпте ссылайтесь на «image 1», \
+             «image 2» по порядку цепочки."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections: vec![
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(1, "model", 9, "model"),
+            conn(1, "model", 11, "model"),
+            conn(2, "out", 3, "prompt"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(4, "latent", 5, "latent"),
+            conn(8, "image", 9, "image"),
+            conn(9, "references", 11, "references"),
+            conn(10, "image", 11, "image"),
+            conn(11, "references", 5, "references"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
+        viewport: None,
+    }
 }
 
 // ── FLUX.1 ────────────────────────────────────────────────────────────────

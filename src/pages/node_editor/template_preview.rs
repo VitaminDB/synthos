@@ -106,6 +106,12 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::FluxVaeEncode
         | NodeKind::FluxSampler
         | NodeKind::FluxVaeDecode => Color::new(0.96, 0.52, 0.22, 1.0),
+        // FLUX.2 — та же гамма, чуть холоднее.
+        NodeKind::Flux2Checkpoint
+        | NodeKind::Flux2TextEncoder
+        | NodeKind::Flux2Reference
+        | NodeKind::Flux2Sampler
+        | NodeKind::Flux2VaeDecode => Color::new(0.93, 0.44, 0.30, 1.0),
         NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red

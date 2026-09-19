@@ -123,8 +123,9 @@ fn encode_worker(
     let (w, h) = target.unwrap_or_else(|| auto_size(image.width as usize, image.height as usize));
     let fitted = super::super::minimax_h3::latent::fit_keyframe(&image.tensor, w, h, center_crop)?;
     let model = shared::load_model(handle)?;
-    let latent = model.model.encode_image(&fitted).map_err(|e| e.to_string())?;
-    shared::trim_pool(model.model.device());
+    let dev = model.model.device();
+    let latent = shared::with_vram_retry(dev, || model.model.encode_image(&fitted).map_err(|e| e.to_string()))?;
+    shared::trim_pool(dev);
     Ok(FluxLatent { width: w, height: h, tensor: Some(latent) })
 }
 
@@ -243,8 +244,9 @@ fn decode_worker(handle: &FluxModelHandle, latent: &FluxLatent) -> Result<ImageD
         return Err(tr!("node.flux_vae_decode.connect_latent"));
     };
     let model = shared::load_model(handle)?;
-    let rgb = model.model.decode(t).map_err(|e| e.to_string())?;
-    shared::trim_pool(model.model.device());
+    let dev = model.model.device();
+    let rgb = shared::with_vram_retry(dev, || model.model.decode(t).map_err(|e| e.to_string()))?;
+    shared::trim_pool(dev);
     ImageData::from_tensor(rgb, None)
 }
 

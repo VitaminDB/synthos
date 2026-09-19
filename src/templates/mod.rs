@@ -35,7 +35,7 @@ pub fn list_all() -> Vec<Template> {
 pub enum TemplateCategory {
     /// LTX-2.3 — генерация видео (`builtin-ltx-*`).
     Video,
-    /// FLUX.1 — картинки (`builtin-flux-*`).
+    /// FLUX.1 / FLUX.2 — картинки (`builtin-flux-*`, `builtin-flux2-*`).
     Image,
     /// ACE-Step — генерация музыки (`builtin-acestep-*`).
     Music,
@@ -60,7 +60,7 @@ impl TemplateCategory {
         let id = t.id.as_str();
         if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
             TemplateCategory::Video
-        } else if id.starts_with("builtin-flux-") {
+        } else if id.starts_with("builtin-flux-") || id.starts_with("builtin-flux2-") {
             TemplateCategory::Image
         } else if id.starts_with("builtin-acestep-") {
             TemplateCategory::Music

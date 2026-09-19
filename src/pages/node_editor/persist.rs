@@ -406,6 +406,26 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
         NodeRuntime::FluxVaeDecode { error, .. } => {
             let _ = error.get();
         }
+        NodeRuntime::Flux2Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
+            let _ = model_path.get();
+            let _ = device_idx.get();
+            let _ = quant_idx.get();
+            let _ = memory_mode_idx.get();
+            let _ = resident.get();
+        }
+        NodeRuntime::Flux2TextEncoder { error, loaded_name, .. } | NodeRuntime::Flux2Reference { error, loaded_name, .. } => {
+            let _ = error.get();
+            let _ = loaded_name.get();
+        }
+        NodeRuntime::Flux2Sampler { steps, guidance, seed, error, .. } => {
+            let _ = steps.get();
+            let _ = guidance.get();
+            let _ = seed.get();
+            let _ = error.get();
+        }
+        NodeRuntime::Flux2VaeDecode { error, .. } => {
+            let _ = error.get();
+        }
         NodeRuntime::ImageLoad { path, error, .. } => {
             let _ = path.get();
             let _ = error.get();

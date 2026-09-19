@@ -16,13 +16,13 @@ use crate::icons::{
     MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
     MI_MERGE_TYPE, MI_MIC, MI_MOVIE, MI_PALETTE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
-    MI_CROP_SQUARE, MI_TRANSLATE, MI_TUNE,
+    MI_CROP_SQUARE, MI_LAYERS, MI_TRANSLATE, MI_TUNE,
 };
 
 use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
-    audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, image, llm, ltx,
+    audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, flux2, image, llm, ltx,
     markdown_view,
     minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
     voxcpm2,
@@ -223,6 +223,11 @@ static FLUX_EMPTY_LATENT_EXEC: flux::latent::EmptyLatentExec = flux::latent::Emp
 static FLUX_VAE_ENCODE_EXEC: flux::vae::VaeEncodeExec = flux::vae::VaeEncodeExec;
 static FLUX_SAMPLER_EXEC: flux::sampler::SamplerExec = flux::sampler::SamplerExec;
 static FLUX_VAE_DECODE_EXEC: flux::vae::VaeDecodeExec = flux::vae::VaeDecodeExec;
+static FLUX2_CHECKPOINT_EXEC: flux2::checkpoint::CheckpointExec = flux2::checkpoint::CheckpointExec;
+static FLUX2_TEXT_ENCODER_EXEC: flux2::text_encoder::TextEncoderExec = flux2::text_encoder::TextEncoderExec;
+static FLUX2_REFERENCE_EXEC: flux2::reference::ReferenceExec = flux2::reference::ReferenceExec;
+static FLUX2_SAMPLER_EXEC: flux2::sampler::SamplerExec = flux2::sampler::SamplerExec;
+static FLUX2_VAE_DECODE_EXEC: flux2::vae::VaeDecodeExec = flux2::vae::VaeDecodeExec;
 static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
 static IMAGE_SAVE_EXEC: image::ImageSaveExec = image::ImageSaveExec;
 
@@ -486,6 +491,23 @@ const FLUX_SAMPLER_INPUTS: &[PortSchema] = &[
 const FLUX_VAE_DECODE_INPUTS: &[PortSchema] = &[
     PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+/// Референс: картинка и (необязательно) предыдущие референсы цепочки.
+const FLUX2_REFERENCE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "image", label: "image", kind: PortKind::Image },
+    PortSchema { name: "references", label: "references", kind: PortKind::Data },
+];
+const FLUX2_REFERENCES_OUT: &[PortSchema] = &[
+    PortSchema { name: "references", label: "references", kind: PortKind::Data },
+];
+/// `latent` задаёт размер (FLUX Empty Latent); без него размер берётся с
+/// первого референса. `references` — необязательно, для правки.
+const FLUX2_SAMPLER_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+    PortSchema { name: "references", label: "references", kind: PortKind::Data },
 ];
 
 const LTX_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
@@ -1430,6 +1452,95 @@ const FLUX_VAE_DECODE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(flux::vae::decode_busy_signal),
 };
 
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.flux2`.
+const FLUX2_SUBCATEGORY: &str = "flux2";
+
+const FLUX2_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2Checkpoint,
+    icon: MI_INVENTORY_2,
+    title: "FLUX.2 Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux2::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const FLUX2_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2TextEncoder,
+    icon: MI_TRANSLATE,
+    title: "FLUX.2 Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(flux2::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_TEXT_ENCODER_EXEC,
+    on_run: Some(flux2::text_encoder::on_run),
+    busy_signal: Some(flux2::text_encoder::busy_signal),
+};
+
+const FLUX2_REFERENCE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2Reference,
+    icon: MI_LAYERS,
+    title: "FLUX.2 Reference",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX2_REFERENCE_INPUTS),
+    outputs: PortsSpec::Static(FLUX2_REFERENCES_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux2::reference::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_REFERENCE_EXEC,
+    on_run: Some(flux2::reference::on_run),
+    busy_signal: Some(flux2::reference::busy_signal),
+};
+
+const FLUX2_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2Sampler,
+    icon: MI_AUTO_AWESOME,
+    title: "FLUX.2 Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX2_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux2::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_SAMPLER_EXEC,
+    on_run: Some(flux2::sampler::on_run),
+    busy_signal: Some(flux2::sampler::busy_signal),
+};
+
+const FLUX2_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2VaeDecode,
+    icon: MI_PALETTE,
+    title: "FLUX.2 VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux2::vae::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_VAE_DECODE_EXEC,
+    on_run: Some(flux2::vae::on_run),
+    busy_signal: Some(flux2::vae::busy_signal),
+};
+
 const IMAGE_LOAD: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::ImageLoad,
     icon: MI_IMAGE_ICON,
@@ -1797,6 +1908,11 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     FLUX_VAE_ENCODE,
     FLUX_SAMPLER,
     FLUX_VAE_DECODE,
+    FLUX2_CHECKPOINT,
+    FLUX2_TEXT_ENCODER,
+    FLUX2_REFERENCE,
+    FLUX2_SAMPLER,
+    FLUX2_VAE_DECODE,
     IMAGE_LOAD,
     IMAGE_SAVE,
 ];
@@ -2310,6 +2426,46 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::FluxVaeDecode => NodeRuntime::FluxVaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Flux2Checkpoint => NodeRuntime::Flux2Checkpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            quant_idx: use_signal(flux2::DEFAULT_QUANT_IDX),
+            memory_mode_idx: use_signal(0_usize),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::Flux2TextEncoder => NodeRuntime::Flux2TextEncoder {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Flux2Reference => NodeRuntime::Flux2Reference {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Flux2Sampler => NodeRuntime::Flux2Sampler {
+            steps: use_signal(flux2::sampler::DEFAULT_STEPS),
+            guidance: use_signal(flux2::sampler::DEFAULT_GUIDANCE),
+            seed: use_signal(0_u64),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Flux2VaeDecode => NodeRuntime::Flux2VaeDecode {
             running: use_signal(false),
             error: use_signal(None),
             out: Arc::new(Mutex::new(None)),

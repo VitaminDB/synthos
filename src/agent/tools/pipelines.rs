@@ -471,7 +471,9 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
         ],
         NodeKind::FluxTextEncoder => vec![("seq_len_idx", flux::SEQ_LEN_OPTIONS)],
         NodeKind::FluxEmptyLatent => vec![("aspect_idx", flux::latent::ASPECT_OPTIONS)],
-        NodeKind::FluxVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
+        NodeKind::FluxVaeEncode | NodeKind::Flux2VaeEncode => {
+            vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)]
+        }
         NodeKind::Flux2Checkpoint => vec![
             ("device_idx", flux2::DEVICE_OPTIONS),
             ("quant_idx", flux2::QUANT_OPTIONS),

@@ -11,4 +11,5 @@ Rules:
 - The prompt can be long and structured (up to 512 tokens); FLUX.2 follows detailed layouts and colors (hex codes work).
 - Size: FLUX Empty Latent (sides multiple of 16, ~1 MP sweet spot, up to 4 MP). Without Empty Latent the Sampler takes the size of the first reference.
 - Editing: FLUX.2 Reference nodes feed pictures into the Sampler (`references`). Chain them (Reference.references → next Reference) for several images; in the prompt say "image 1", "image 2" in chain order. Write the edit as an instruction: what to change AND what to keep ("replace the sky with a sunset, keep the people and the car unchanged").
+- Img2img: Image → FLUX.2 VAE Encode → Sampler `latent`, with Sampler `denoise` < 1. The scale is steep on klein: ≤ 0.6 keeps the picture almost as is, ~0.7 restyles it with the same layout, ≥ 0.8 repaints freely. For "change X, keep Y" edits prefer References.
 - Memory: whatever does not fit in VRAM streams from RAM/disk automatically; dev on a small card is slower (seconds per step), klein is fast.

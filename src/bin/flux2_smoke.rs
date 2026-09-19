@@ -1,6 +1,7 @@
 //! Сквозной прогон нод FLUX.2 без GUI: те же `on_run`/`evaluate`, что жмёт
 //! кнопка Run, — Checkpoint → Text Encoder → (FLUX Empty Latent | Image →
-//! Reference [→ Reference]) → Sampler → VAE Decode → Image Save.
+//! Reference [→ Reference] | Image → VAE Encode) → Sampler → VAE Decode →
+//! Image Save.
 //!
 //! ```sh
 //! cargo run --release --bin flux2_smoke -- <flux.2-*.syn|каталог> <out.png> [width height steps]
@@ -10,7 +11,9 @@
 //! FLUX2_EDIT=<картинка> [+ FLUX2_EDIT2=<вторая>] — правка по референсам (без
 //! width/height размер берётся с первого референса), FLUX2_REPEAT=N (повторы:
 //! кэш промпта и резидентный DiT), FLUX2_VRAM_GB=7 — балласт в VRAM, модели
-//! остаётся столько гигабайт (проверка «как на малой карте»).
+//! остаётся столько гигабайт (проверка «как на малой карте»),
+//! FLUX2_INIT=<картинка> [FLUX2_DENOISE=0.6] — img2img через FLUX.2 VAE Encode
+//! (width/height, если заданы, идут в его вход size).
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -118,6 +121,8 @@ fn run() -> Result<(), String> {
     let seed: u64 = env("FLUX2_SEED").and_then(|s| s.parse().ok()).unwrap_or(42);
     let edits: Vec<PathBuf> = [env("FLUX2_EDIT"), env("FLUX2_EDIT2")].into_iter().flatten().map(PathBuf::from).collect();
     let repeat: usize = env("FLUX2_REPEAT").and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
+    let init = env("FLUX2_INIT").map(PathBuf::from);
+    let denoise: f32 = env("FLUX2_DENOISE").and_then(|s| s.parse().ok()).unwrap_or(0.6);
 
     flux::shared::ensure_kernels_registered();
     // Балласт: модели остаётся FLUX2_VRAM_GB.
@@ -169,9 +174,29 @@ fn run() -> Result<(), String> {
     if let Some(last) = refs.last() {
         connect(&ctx, *last, "references", n_smp, "references");
     }
-    if let Some((w, h)) = size.or(if refs.is_empty() { Some((1024, 1024)) } else { None }) {
+    // Img2img: Image → VAE Encode → Sampler.latent; размер (если задан) — во
+    // вход size энкодера.
+    let n_venc = init.as_ref().map(|src| {
+        let n_img = ctx.add_node(NodeKind::ImageLoad, zero);
+        let n_venc = ctx.add_node(NodeKind::Flux2VaeEncode, zero);
+        connect(&ctx, n_ckpt, "model", n_venc, "model");
+        connect(&ctx, n_img, "image", n_venc, "image");
+        connect(&ctx, n_venc, "latent", n_smp, "latent");
+        if let NodeRuntime::ImageLoad { path, .. } = &*node(&ctx, n_img).runtime.lock().unwrap() {
+            path.set(Some(src.clone()));
+        }
+        if let NodeRuntime::Flux2Sampler { denoise: d, .. } = &*node(&ctx, n_smp).runtime.lock().unwrap() {
+            d.set(denoise);
+        }
+        n_venc
+    });
+    let default_size = if refs.is_empty() && n_venc.is_none() { Some((1024, 1024)) } else { None };
+    if let Some((w, h)) = size.or(default_size) {
         let n_lat = ctx.add_node(NodeKind::FluxEmptyLatent, zero);
-        connect(&ctx, n_lat, "latent", n_smp, "latent");
+        match n_venc {
+            Some(v) => connect(&ctx, n_lat, "latent", v, "size"),
+            None => connect(&ctx, n_lat, "latent", n_smp, "latent"),
+        }
         if let NodeRuntime::FluxEmptyLatent { width, height, .. } = &*node(&ctx, n_lat).runtime.lock().unwrap() {
             width.set(w);
             height.set(h);
@@ -210,11 +235,12 @@ fn run() -> Result<(), String> {
     }
 
     eprintln!(
-        "flux2_smoke: {} | {} | шаги {} (0 — по модели) seed {seed} | референсов {}",
+        "flux2_smoke: {} | {} | шаги {} (0 — по модели) seed {seed} | референсов {} | img2img {}",
         model_path.display(),
-        size.map(|(w, h)| format!("{w}×{h}")).unwrap_or_else(|| "размер с референса".into()),
+        size.map(|(w, h)| format!("{w}×{h}")).unwrap_or_else(|| "размер с референса/картинки".into()),
         steps,
-        refs.len()
+        refs.len(),
+        init.as_ref().map(|p| format!("{} denoise {denoise}", p.display())).unwrap_or_else(|| "нет".into())
     );
     for round in 1..=repeat {
         eprintln!("— прогон {round}/{repeat}");
@@ -223,6 +249,9 @@ fn run() -> Result<(), String> {
         for (i, r) in refs.iter().enumerate() {
             run_node(&ctx, *r, &format!("reference-{}", i + 1), flux2::reference::on_run, &mut min_free)?;
             eprintln!("    {}", status(&ctx, *r));
+        }
+        if let Some(v) = n_venc {
+            run_node(&ctx, v, "vae-encode", flux2::vae::encode_on_run, &mut min_free)?;
         }
         let smp = run_node(&ctx, n_smp, "sampler", flux2::sampler::on_run, &mut min_free)?;
         eprintln!("    {}", status(&ctx, n_smp));

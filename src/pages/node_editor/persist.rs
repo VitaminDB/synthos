@@ -417,10 +417,15 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = error.get();
             let _ = loaded_name.get();
         }
-        NodeRuntime::Flux2Sampler { steps, guidance, seed, error, .. } => {
+        NodeRuntime::Flux2VaeEncode { resize_idx, error, .. } => {
+            let _ = resize_idx.get();
+            let _ = error.get();
+        }
+        NodeRuntime::Flux2Sampler { steps, guidance, seed, denoise, error, .. } => {
             let _ = steps.get();
             let _ = guidance.get();
             let _ = seed.get();
+            let _ = denoise.get();
             let _ = error.get();
         }
         NodeRuntime::Flux2VaeDecode { error, .. } => {

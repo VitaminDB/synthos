@@ -312,11 +312,15 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 resident: resident.get_untracked(),
             }))
         }
-        NodeRuntime::Flux2Sampler { steps, guidance, seed, .. } => {
+        NodeRuntime::Flux2VaeEncode { resize_idx, .. } => {
+            Some(NodeStateData::Flux2VaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
+        }
+        NodeRuntime::Flux2Sampler { steps, guidance, seed, denoise, .. } => {
             Some(NodeStateData::Flux2Sampler(Flux2SamplerStateData {
                 steps: steps.get_untracked(),
                 guidance: guidance.get_untracked(),
                 seed: seed.get_untracked(),
+                denoise: denoise.get_untracked(),
             }))
         }
         NodeRuntime::Flux2TextEncoder { .. } | NodeRuntime::Flux2Reference { .. } | NodeRuntime::Flux2VaeDecode { .. } => None,
@@ -1308,10 +1312,14 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             memory_mode_idx.set(data.memory_mode_idx.min(flux2::MEMORY_MODE_OPTIONS.len() - 1));
             resident.set(data.resident);
         }
-        (NodeRuntime::Flux2Sampler { steps, guidance, seed, .. }, NodeStateData::Flux2Sampler(data)) => {
+        (NodeRuntime::Flux2VaeEncode { resize_idx, .. }, NodeStateData::Flux2VaeEncode(data)) => {
+            resize_idx.set(data.resize_idx.min(1));
+        }
+        (NodeRuntime::Flux2Sampler { steps, guidance, seed, denoise, .. }, NodeStateData::Flux2Sampler(data)) => {
             steps.set(data.steps.min(100));
             guidance.set(data.guidance);
             seed.set(data.seed);
+            denoise.set(data.denoise.clamp(0.0, 1.0));
         }
         (NodeRuntime::ImageLoad { path, .. }, NodeStateData::ImageLoad(data)) => {
             path.set(data.image_path.as_ref().map(PathBuf::from));
@@ -2157,7 +2165,12 @@ mod tests {
                     resident: true,
                 }),
             ),
-            mk(2, NodeKind::Flux2Sampler, NodeStateData::Flux2Sampler(Flux2SamplerStateData { steps: 28, guidance: 3.0, seed: 9 })),
+            mk(
+                2,
+                NodeKind::Flux2Sampler,
+                NodeStateData::Flux2Sampler(Flux2SamplerStateData { steps: 28, guidance: 3.0, seed: 9, denoise: 0.55 }),
+            ),
+            mk(3, NodeKind::Flux2VaeEncode, NodeStateData::Flux2VaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
         ];
         let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
         let ctx = roundtrip(&make_template(nodes));

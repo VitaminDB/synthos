@@ -211,6 +211,7 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             | NodeKind::Flux2Checkpoint
             | NodeKind::Flux2TextEncoder
             | NodeKind::Flux2Reference
+            | NodeKind::Flux2VaeEncode
             | NodeKind::Flux2Sampler
             | NodeKind::Flux2VaeDecode => classes.push("flux-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),

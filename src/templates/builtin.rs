@@ -8,8 +8,8 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    FieldValueData, Flux2CheckpointStateData, FluxEmptyLatentStateData, FluxSamplerStateData, H3KeyframeStateData,
-    H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
+    FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
+    H3KeyframeStateData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
     PointData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
 };
@@ -53,6 +53,7 @@ pub fn all() -> Vec<Template> {
         flux_image_to_image_template(),
         flux2_text_to_image_template(),
         flux2_edit_template(),
+        flux2_image_to_image_template(),
         flux2_multi_reference_template(),
         ltx_flux_keyframe_template(),
         h3_flux_keyframe_template(),
@@ -147,6 +148,49 @@ fn flux2_edit_template() -> Template {
             conn(3, "conditioning", 5, "conditioning"),
             conn(8, "image", 9, "image"),
             conn(9, "references", 5, "references"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
+        viewport: None,
+    }
+}
+
+/// Img2img: Image(8) → VAE Encode(9) → Sampler.latent с denoise 0.7; размер —
+/// картинки (до 2 Мп), Empty Latent не нужен.
+fn flux2_image_to_image_template() -> Template {
+    let mut nodes: Vec<NodeData> = flux2_base_nodes(
+        "The same scene as a watercolor painting, soft washes of color, visible paper texture",
+        1024,
+        1024,
+        0,
+    )
+    .into_iter()
+    .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
+    .collect();
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
+    nodes.push(node_plain(9, NodeKind::Flux2VaeEncode, 520.0, 720.0));
+    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::Flux2Sampler) {
+        n.state = Some(NodeStateData::Flux2Sampler(Flux2SamplerStateData { denoise: 0.7, ..Default::default() }));
+    }
+    Template {
+        id: "builtin-flux2-image-to-image".into(),
+        builtin: true,
+        name: "FLUX.2: Image to Image".into(),
+        description: "Картинка → VAE Encode → Sampler с denoise 0.7 → VAE Decode → PNG. Чем меньше \
+             denoise, тем ближе к исходнику по композиции и цветам; для правки по инструкции — \
+             шаблон Edit Image."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections: vec![
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(1, "model", 9, "model"),
+            conn(2, "out", 3, "prompt"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(8, "image", 9, "image"),
+            conn(9, "latent", 5, "latent"),
             conn(5, "latent", 6, "latent"),
             conn(6, "image", 7, "image"),
         ],

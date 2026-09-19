@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
+use synaptix_core::tensor::Tensor;
 use synaptix_image_flux2::{Flux2Conditioning, Flux2Error, Flux2Model, Flux2References, Flux2Variant, SampleParams};
 use syngui::async_runtime::run_on_main_thread;
 use syngui::layout::CrossAxisAlignment;
@@ -59,6 +60,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 steps,
                 guidance,
                 seed,
+                denoise,
                 running,
                 error,
                 loaded_name,
@@ -70,6 +72,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 *steps,
                 *guidance,
                 *seed,
+                *denoise,
                 *running,
                 *error,
                 *loaded_name,
@@ -82,7 +85,8 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         },
         Err(_) => None,
     };
-    let Some((steps, guidance, seed, running, error, loaded_name, progress_pct, cancel, out, output_version)) = snapshot
+    let Some((steps, guidance, seed, denoise, running, error, loaded_name, progress_pct, cancel, out, output_version)) =
+        snapshot
     else {
         return;
     };
@@ -98,22 +102,26 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     };
     let refs = current_input_references(ctx, node.id, "references");
-    // Размер: из латента (FLUX Empty Latent), иначе — первого референса,
-    // как у пайплайна BFL при правке без явного размера.
-    let size = current_input_latent(ctx, node.id, "latent")
+    // Размер: из латента (FLUX Empty Latent или VAE Encode), иначе — первого
+    // референса, как у пайплайна BFL при правке без явного размера.
+    let latent = current_input_latent(ctx, node.id, "latent");
+    let size = latent
+        .as_ref()
         .map(|l| (l.width, l.height))
         .or_else(|| refs.as_ref().and_then(|r| r.sizes.first().copied()));
     let Some((width, height)) = size else {
         error.set(Some(tr!("node.flux2_sampler.connect_latent")));
         return;
     };
+    // Латент с картинкой (FLUX.2 VAE Encode или предыдущий Sampler) — img2img.
+    let init = latent.and_then(|l| l.tensor.clone());
     let p = SampleParams {
         width,
         height,
         steps: steps.get_untracked() as usize,
         guidance: guidance.get_untracked(),
         seed: seed.get_untracked(),
-        denoise: 1.0,
+        denoise: if init.is_some() { denoise.get_untracked().clamp(0.0, 1.0) } else { 1.0 },
     };
 
     running.set(true);
@@ -126,16 +134,17 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         let started = log_worker_start(
             "flux2-sampler",
             &format!(
-                "{}x{}, шаги {} (0 — по модели), guidance {}, seed {}, референсов {}",
+                "{}x{}, шаги {} (0 — по модели), guidance {}, seed {}, референсов {}, img2img {}",
                 p.width,
                 p.height,
                 p.steps,
                 p.guidance,
                 p.seed,
-                refs.as_ref().map(|r| r.len()).unwrap_or(0)
+                refs.as_ref().map(|r| r.len()).unwrap_or(0),
+                if init.is_some() { format!("denoise {}", p.denoise) } else { "нет".into() }
             ),
         );
-        let res = worker(&handle, &cond, refs.as_deref(), p, progress_pct, &cancel);
+        let res = worker(&handle, &cond, refs.as_deref(), init.as_ref(), p, progress_pct, &cancel);
         log_worker_done("flux2-sampler", started, &res.as_ref().map(|(_, s)| s.clone()));
         match res {
             Ok((l, summary)) => {
@@ -165,11 +174,19 @@ fn worker(
     handle: &FluxModelHandle,
     cond: &Flux2Conditioning,
     refs: Option<&Flux2References>,
+    init: Option<&Tensor>,
     mut p: SampleParams,
     progress_pct: RwSignal<f32>,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(FluxLatent, String), String> {
     let model = shared::load_model(handle)?;
+    // Латент FLUX.1 (16 каналов) сюда не подходит — понятная ошибка до
+    // загрузки DiT, а не ошибка формы после неё.
+    if let Some(t) = init {
+        if t.dims().get(1) != Some(&model.model.config().in_channels) {
+            return Err(tr!("node.flux2_sampler.wrong_latent"));
+        }
+    }
     let variant = model.model.variant();
     p.steps = resolve_steps(variant, p.steps);
     let ref_tokens = refs.map(|r| r.num_tokens()).unwrap_or(0);
@@ -197,7 +214,7 @@ fn worker(
         !cancel.load(Ordering::Relaxed)
     };
     let t0 = std::time::Instant::now();
-    let res = model.model.sample(&dit.transformer, cond, refs, None, &p, &mut progress);
+    let res = model.model.sample(&dit.transformer, cond, refs, init, &p, &mut progress);
     let secs = t0.elapsed().as_secs_f64();
     if handle.resident {
         shared::hold(dit);
@@ -233,20 +250,31 @@ pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
-            NodeRuntime::Flux2Sampler { steps, guidance, seed, running, error, loaded_name, progress_pct, cancel, .. } => {
-                Some((*steps, *guidance, *seed, *running, *error, *loaded_name, *progress_pct, cancel.clone()))
-            }
+            NodeRuntime::Flux2Sampler {
+                steps, guidance, seed, denoise, running, error, loaded_name, progress_pct, cancel, ..
+            } => Some((
+                *steps,
+                *guidance,
+                *seed,
+                *denoise,
+                *running,
+                *error,
+                *loaded_name,
+                *progress_pct,
+                cancel.clone(),
+            )),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((steps, guidance, seed, running, error, loaded_name, progress_pct, cancel)) = snapshot else {
+    let Some((steps, guidance, seed, denoise, running, error, loaded_name, progress_pct, cancel)) = snapshot else {
         return Box::new(Column::new());
     };
     Box::new(Column::new().gap(3.0).cross_axis_alignment(CrossAxisAlignment::Stretch).children(vec![
         field_row(&tr!("node.flux2_sampler.steps"), make_int_slider_row(steps, 0, 100, 1)),
         field_row(&tr!("node.flux_sampler.guidance"), make_slider_row(guidance, 1.0, 10.0, 0.5, 1)),
         field_row("Seed", make_seed_slider(seed)),
+        field_row(&tr!("node.flux_sampler.denoise"), make_slider_row(denoise, 0.05, 1.0, 0.05, 2)),
         Box::new(Text::new(tr!("node.flux2_sampler.hint")).class("flux-node-info")),
         field_row(&tr!("nodes.common.progress"), progress_row(running, progress_pct)),
         field_row(&tr!("app.cancel"), cancel_button(running, cancel)),

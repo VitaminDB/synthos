@@ -454,6 +454,8 @@ pub enum NodeKind {
     Flux2TextEncoder,
     /// FLUX.2: картинка → токены референса для правки (цепочкой).
     Flux2Reference,
+    /// FLUX.2: картинка → латент для img2img.
+    Flux2VaeEncode,
     /// FLUX.2: денойз (+ референсы).
     Flux2Sampler,
     /// FLUX.2: латент → картинка.
@@ -530,6 +532,7 @@ impl NodeKind {
         NodeKind::Flux2Checkpoint,
         NodeKind::Flux2TextEncoder,
         NodeKind::Flux2Reference,
+        NodeKind::Flux2VaeEncode,
         NodeKind::Flux2Sampler,
         NodeKind::Flux2VaeDecode,
         NodeKind::ImageLoad,
@@ -2570,11 +2573,22 @@ pub enum NodeRuntime {
         out: Arc<Mutex<Option<Arc<synaptix_image_flux2::Flux2References>>>>,
         output_version: RwSignal<u32>,
     },
+    Flux2VaeEncode {
+        /// Как вписать картинку в размер латента со входа `size`:
+        /// 0 — растянуть, 1 — покрыть и обрезать по центру.
+        resize_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
+        output_version: RwSignal<u32>,
+    },
     Flux2Sampler {
         /// 0 — по модели (dev 50, klein 4).
         steps: RwSignal<u32>,
         guidance: RwSignal<f32>,
         seed: RwSignal<u64>,
+        /// Доля шума для img2img (латент с картинкой на входе).
+        denoise: RwSignal<f32>,
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,
         /// Итог прогона: шаги, время, блоков на карте.
@@ -2648,6 +2662,7 @@ impl NodeRuntime {
             | R::FluxVaeDecode { error, .. }
             | R::Flux2TextEncoder { error, .. }
             | R::Flux2Reference { error, .. }
+            | R::Flux2VaeEncode { error, .. }
             | R::Flux2Sampler { error, .. }
             | R::Flux2VaeDecode { error, .. }
             | R::ImageLoad { error, .. }
@@ -3012,6 +3027,9 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::Flux2Reference { running, .. } => {
                 write!(f, "NodeRuntime::Flux2Reference{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::Flux2VaeEncode { running, .. } => {
+                write!(f, "NodeRuntime::Flux2VaeEncode{{running={}}}", running.get_untracked())
             }
             NodeRuntime::Flux2Sampler { running, steps, .. } => {
                 write!(

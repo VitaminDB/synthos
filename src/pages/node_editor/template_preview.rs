@@ -110,6 +110,7 @@ fn node_color(kind: NodeKind) -> Color {
         NodeKind::Flux2Checkpoint
         | NodeKind::Flux2TextEncoder
         | NodeKind::Flux2Reference
+        | NodeKind::Flux2VaeEncode
         | NodeKind::Flux2Sampler
         | NodeKind::Flux2VaeDecode => Color::new(0.93, 0.44, 0.30, 1.0),
         NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),

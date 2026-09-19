@@ -266,6 +266,8 @@ pub enum NodeStateData {
     FluxVaeEncode(FluxVaeEncodeStateData),
     FluxSampler(FluxSamplerStateData),
     Flux2Checkpoint(Flux2CheckpointStateData),
+    /// Настройки те же, что у FLUX VAE Encode.
+    Flux2VaeEncode(FluxVaeEncodeStateData),
     Flux2Sampler(Flux2SamplerStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
@@ -404,7 +406,7 @@ fn default_flux2_quant_idx() -> usize {
 
 /// State FLUX.2 Sampler. `steps` 0 — по модели (dev 50, klein 4); guidance
 /// у dev — эмбеддинг, у klein base — CFG, дистиллированный klein его не
-/// использует.
+/// использует; `denoise` < 1 работает, только когда на входе латент картинки.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Flux2SamplerStateData {
     #[serde(default)]
@@ -413,11 +415,13 @@ pub struct Flux2SamplerStateData {
     pub guidance: f32,
     #[serde(default)]
     pub seed: u64,
+    #[serde(default = "default_flux_denoise")]
+    pub denoise: f32,
 }
 
 impl Default for Flux2SamplerStateData {
     fn default() -> Self {
-        Self { steps: 0, guidance: default_flux2_guidance(), seed: 0 }
+        Self { steps: 0, guidance: default_flux2_guidance(), seed: 0, denoise: default_flux_denoise() }
     }
 }
 

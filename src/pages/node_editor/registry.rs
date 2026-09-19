@@ -226,6 +226,7 @@ static FLUX_VAE_DECODE_EXEC: flux::vae::VaeDecodeExec = flux::vae::VaeDecodeExec
 static FLUX2_CHECKPOINT_EXEC: flux2::checkpoint::CheckpointExec = flux2::checkpoint::CheckpointExec;
 static FLUX2_TEXT_ENCODER_EXEC: flux2::text_encoder::TextEncoderExec = flux2::text_encoder::TextEncoderExec;
 static FLUX2_REFERENCE_EXEC: flux2::reference::ReferenceExec = flux2::reference::ReferenceExec;
+static FLUX2_VAE_ENCODE_EXEC: flux2::vae::VaeEncodeExec = flux2::vae::VaeEncodeExec;
 static FLUX2_SAMPLER_EXEC: flux2::sampler::SamplerExec = flux2::sampler::SamplerExec;
 static FLUX2_VAE_DECODE_EXEC: flux2::vae::VaeDecodeExec = flux2::vae::VaeDecodeExec;
 static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
@@ -501,8 +502,9 @@ const FLUX2_REFERENCE_INPUTS: &[PortSchema] = &[
 const FLUX2_REFERENCES_OUT: &[PortSchema] = &[
     PortSchema { name: "references", label: "references", kind: PortKind::Data },
 ];
-/// `latent` задаёт размер (FLUX Empty Latent); без него размер берётся с
-/// первого референса. `references` — необязательно, для правки.
+/// `latent` задаёт размер (FLUX Empty Latent) или картинку для img2img
+/// (FLUX.2 VAE Encode); без него размер берётся с первого референса.
+/// `references` — необязательно, для правки.
 const FLUX2_SAMPLER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "conditioning", label: "conditioning", kind: PortKind::Data },
@@ -1507,6 +1509,23 @@ const FLUX2_REFERENCE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(flux2::reference::busy_signal),
 };
 
+const FLUX2_VAE_ENCODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Flux2VaeEncode,
+    icon: MI_IMAGE_ICON,
+    title: "FLUX.2 VAE Encode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(FLUX2_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_ENCODE_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(flux2::vae::encode_body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &FLUX2_VAE_ENCODE_EXEC,
+    on_run: Some(flux2::vae::encode_on_run),
+    busy_signal: Some(flux2::vae::encode_busy_signal),
+};
+
 const FLUX2_SAMPLER: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::Flux2Sampler,
     icon: MI_AUTO_AWESOME,
@@ -1911,6 +1930,7 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     FLUX2_CHECKPOINT,
     FLUX2_TEXT_ENCODER,
     FLUX2_REFERENCE,
+    FLUX2_VAE_ENCODE,
     FLUX2_SAMPLER,
     FLUX2_VAE_DECODE,
     IMAGE_LOAD,
@@ -2453,10 +2473,18 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             out: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
         },
+        NodeKind::Flux2VaeEncode => NodeRuntime::Flux2VaeEncode {
+            resize_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
         NodeKind::Flux2Sampler => NodeRuntime::Flux2Sampler {
             steps: use_signal(flux2::sampler::DEFAULT_STEPS),
             guidance: use_signal(flux2::sampler::DEFAULT_GUIDANCE),
             seed: use_signal(0_u64),
+            denoise: use_signal(1.0_f32),
             running: use_signal(false),
             error: use_signal(None),
             loaded_name: use_signal(None),

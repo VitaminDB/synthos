@@ -9,9 +9,9 @@
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
     FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
-    H3KeyframeStateData, H3SamplerStateData, LtxSamplerStage1StateData, NodeData,
+    H3KeyframeStateData, H3SamplerStateData, LlmStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
-    PointData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
+    PointData, SynCheckpointStateData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
 };
 use crate::pages::node_editor::types::NodeKind;
 
@@ -54,6 +54,7 @@ pub fn all() -> Vec<Template> {
         flux2_text_to_image_template(),
         flux2_edit_template(),
         flux2_image_to_image_template(),
+        flux2_llm_upsampling_template(),
         flux2_multi_reference_template(),
         ltx_flux_keyframe_template(),
         h3_flux_keyframe_template(),
@@ -191,6 +192,112 @@ fn flux2_image_to_image_template() -> Template {
             conn(3, "conditioning", 5, "conditioning"),
             conn(8, "image", 9, "image"),
             conn(9, "latent", 5, "latent"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
+        viewport: None,
+    }
+}
+
+/// Системная инструкция «апсемплинга промпта» из официального пайплайна
+/// FLUX.2 (Black Forest Labs, `flux2/src/flux2/system_messages.py`, её же
+/// берёт diffusers `Flux2Pipeline.upsample_prompt`): там промпт переписывает
+/// сама Mistral из энкодера dev, у нас энкодер урезан и текст не генерирует,
+/// поэтому переписывает любая чат-LLM. Добавлено одно правило: результат —
+/// по-английски (так лучше всего понимают энкодеры FLUX.2), надписи — на
+/// языке оригинала.
+const FLUX2_UPSAMPLING_SYSTEM: &str = "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. \
+Rewrite user prompts to be more descriptive while strictly preserving their core subject and intent.
+
+Guidelines:
+1. Structure: Keep structured inputs structured (enhance within fields). Convert natural language to detailed paragraphs.
+2. Details: Add concrete visual specifics - form, scale, textures, materials, lighting (quality, direction, color), \
+shadows, spatial relationships, and environmental context.
+3. Text in Images: Put ALL text in quotation marks, matching the prompt's language. Always provide explicit quoted \
+text for objects that would contain text in reality (signs, labels, screens, etc.) - without it, the model \
+generates gibberish.
+4. Language: Write the revised prompt in English, whatever the language of the request; only the quoted text that \
+must appear in the image keeps its original language.
+
+Output only the revised prompt and nothing else.";
+
+/// Апсемплинг промпта LLM: короткий промпт(2) → LLM(9) (модель — Syn
+/// Checkpoint(8), без «Держать в памяти»: VRAM нужна FLUX.2) → Text View(10)
+/// с подробным промптом (правится руками) → Text Encoder(3) → Sampler(5) →
+/// VAE Decode(6) → Image Save(7).
+fn flux2_llm_upsampling_template() -> Template {
+    let llm = NodeStateData::Llm(LlmStateData {
+        model_path: None,
+        device_idx: crate::pages::node_editor::nodes::llm::default_device_idx(),
+        quant_idx: crate::pages::node_editor::nodes::llm::default_quant_idx(),
+        compute_idx: crate::pages::node_editor::nodes::llm::default_compute_idx(),
+        system_prompt: FLUX2_UPSAMPLING_SYSTEM.into(),
+        context: 4096,
+        think: false,
+        max_tokens: 512,
+        // Как у пайплайна BFL: 0.15 — переписать, а не сочинить заново.
+        temperature: 0.15,
+        top_k: 0,
+        top_p: 1.0,
+        min_p: 0.0,
+        repetition_penalty: 1.0,
+        seed: 0,
+    });
+    // NVFP4: «Auto» у LLM-ноды — плотный BF16, 27B-модель на 24 ГБ не
+    // влезала и стримилась с хоста. Замер шаблона (qwen3.8-27b + klein-4B):
+    // NVFP4 — 15 с на загрузку и переписывание, FP8 — 95 с (не влезает
+    // целиком); у gemma-4-26b в NVFP4 текст промпта чистый (9 с).
+    let checkpoint = NodeStateData::SynCheckpoint(SynCheckpointStateData {
+        model_path: None,
+        device_idx: 0,
+        storage_idx: 4,
+        compute_idx: 0,
+        resident: false,
+    });
+    let upsampled = NodeStateData::TextView(TextViewStateData { output_text: String::new(), width: 360.0, height: 260.0 });
+    Template {
+        id: "builtin-flux2-llm-upsampling".into(),
+        builtin: true,
+        name: "FLUX.2: LLM Upsampling".into(),
+        description: "Короткий промпт → LLM переписывает его подробно по инструкции Black Forest Labs \
+             (детали, свет, материалы, надписи в кавычках) → Text View (можно поправить) → FLUX.2 → PNG. \
+             В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась FLUX.2."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: vec![
+            node_with_state(
+                1,
+                NodeKind::Flux2Checkpoint,
+                60.0,
+                60.0,
+                NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData::default()),
+            ),
+            node_with_state(2, NodeKind::TextView, 60.0, 420.0, flux_prompt_state("кот читает газету в уличном кафе в Париже")),
+            node_with_state(8, NodeKind::SynCheckpoint, 60.0, 680.0, checkpoint),
+            node_with_state(9, NodeKind::Llm, 480.0, 420.0, llm),
+            node_with_state(10, NodeKind::TextView, 940.0, 420.0, upsampled),
+            node_plain(3, NodeKind::Flux2TextEncoder, 1380.0, 300.0),
+            node_with_state(
+                4,
+                NodeKind::FluxEmptyLatent,
+                1380.0,
+                560.0,
+                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
+            ),
+            node_plain(5, NodeKind::Flux2Sampler, 1820.0, 300.0),
+            node_plain(6, NodeKind::Flux2VaeDecode, 2260.0, 300.0),
+            node_plain(7, NodeKind::ImageSave, 2700.0, 300.0),
+        ],
+        connections: vec![
+            conn(2, "out", 9, "prompt"),
+            conn(8, "model", 9, "model"),
+            conn(9, "answer", 10, "in"),
+            conn(10, "out", 3, "prompt"),
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(4, "latent", 5, "latent"),
             conn(5, "latent", 6, "latent"),
             conn(6, "image", 7, "image"),
         ],
@@ -1954,6 +2061,30 @@ mod tests {
                 "{id}: нет провода FLUX VAE Decode → {target:?}"
             );
         }
+        // Апсемплинг: промпт идёт через LLM и правимый Text View в энкодер,
+        // LLM — с инструкцией BFL и без размышлений, модель не резидентна.
+        let up = get("builtin-flux2-llm-upsampling");
+        assert_eq!(TemplateCategory::for_template(up), TemplateCategory::Image);
+        let wired = |from: NodeKind, fp: &str, to: NodeKind, tp: &str| {
+            up.connections.iter().any(|c| {
+                up.kind_of(c.from_node) == Some(from) && c.from_port == fp && up.kind_of(c.to_node) == Some(to) && c.to_port == tp
+            })
+        };
+        assert!(wired(NodeKind::TextView, "out", NodeKind::Llm, "prompt"));
+        assert!(wired(NodeKind::SynCheckpoint, "model", NodeKind::Llm, "model"));
+        assert!(wired(NodeKind::Llm, "answer", NodeKind::TextView, "in"));
+        assert!(wired(NodeKind::TextView, "out", NodeKind::Flux2TextEncoder, "prompt"));
+        let llm = up.nodes.iter().find(|n| n.kind == NodeKind::Llm).unwrap();
+        match &llm.state {
+            Some(NodeStateData::Llm(s)) => {
+                assert!(s.system_prompt.contains("FLUX.2") && s.system_prompt.contains("Output only the revised prompt"));
+                assert!(!s.think);
+            }
+            other => panic!("апсемплинг: у LLM нет state: {other:?}"),
+        }
+        let ck = up.nodes.iter().find(|n| n.kind == NodeKind::SynCheckpoint).unwrap();
+        assert!(matches!(&ck.state, Some(NodeStateData::SynCheckpoint(s)) if !s.resident));
+
         let i2i = get("builtin-flux-image-to-image");
         let sampler = i2i.nodes.iter().find(|n| n.kind == NodeKind::FluxSampler).unwrap();
         match &sampler.state {

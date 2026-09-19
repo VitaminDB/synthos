@@ -102,8 +102,11 @@ fn precision_from_idx(quant_idx: usize, compute_idx: usize) -> std::result::Resu
 /// Малая карта: `load_llm` кладёт блоки на карту, пока они влезают, и места
 /// на KV, активации и стримящиеся блоки генерации может не остаться (7 ГБ:
 /// `pinned_htod OOM` на первом шаге). Перед генерацией часть блоков уезжает на
-/// хост — как `fit_blocks_for_context` у чата, только без возврата (нода
-/// живёт один прогон).
+/// хост — как `fit_blocks_for_context` у чата. И обратно: если модель при
+/// загрузке целиком ушла в оффлоад (попытка «всё на карту» упала OOM), а
+/// места хватает на часть блоков, они возвращаются — с запасом в два блока,
+/// как у чата. Без этого 27B в FP8 на 24 ГБ стримила все 64 блока, и
+/// переписывание промпта в шаблоне FLUX.2 шло 4 минуты.
 fn fit_residency(model: &Llm, tokens: usize) {
     let (Some((block_bytes, total)), Some(resident)) = (model.block_offload_shape(), model.resident_blocks()) else {
         return; // архитектура со своим оффлоадом (MoE) — не наше дело
@@ -117,6 +120,18 @@ fn fit_residency(model: &Llm, tokens: usize) {
     let free = synaptix_core::device::cuda::mem_info(ord).map(|(f, _)| f).unwrap_or(usize::MAX);
     let need = tokens * model.kv_bytes_per_token() + model.kv_fixed_bytes(tokens) + 2 * block_bytes + (768usize << 20);
     if free >= need {
+        let spare = (free - need) / block_bytes;
+        if resident < total && spare >= 2 {
+            let want = if resident + spare + 1 >= total { total } else { resident + spare };
+            let got = model.set_block_residency(want).unwrap_or(resident);
+            let _ = synaptix_core::memory::cuda_pool::hard_trim_all_pools_device(ord);
+            tracing::info!(
+                target: super::WORKER_LOG,
+                "LLM: блоки вернулись на карту {resident} → {got} из {total} (свободно {} МБ, ходу нужно {} МБ)",
+                free >> 20,
+                need >> 20
+            );
+        }
         return;
     }
     let evict = (need - free).div_ceil(block_bytes);

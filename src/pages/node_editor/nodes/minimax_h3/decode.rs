@@ -116,8 +116,21 @@ fn vae_worker(handle: &H3ModelHandle, latent: &H3VideoLatent) -> std::result::Re
         shared::release_dit_hold();
     }
     shared::trim_pool(handle);
-    let vae = shared::load_vae(handle)?;
-    let rgb = vae.decoder.decode(&latent.tensor).map_err(|e| e.to_string())?;
+    let decode = || -> std::result::Result<synaptix_core::tensor::Tensor, String> {
+        let vae = shared::load_vae(handle)?;
+        vae.decoder.decode(&latent.tensor).map_err(|e| e.to_string())
+    };
+    // На малой карте VAE (36 ViT-блоков, ~4,5 ГБ в BF16) рядом с DiT из
+    // hold-слота не помещается: при OOM DiT отпускается, и декод
+    // повторяется (замер при 7 ГБ VRAM).
+    let rgb = match decode() {
+        Err(e) if e.contains("OUT_OF_MEMORY") || e.contains("OOM") => {
+            shared::release_dit_hold();
+            shared::trim_pool(handle);
+            decode()?
+        }
+        other => other?,
+    };
     let frames = tensor_frames_to_rgba_unit(&rgb, h3::config::FPS, |_, _| {})?;
     shared::trim_pool(handle);
     Ok(frames)

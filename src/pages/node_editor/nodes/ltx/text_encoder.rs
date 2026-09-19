@@ -258,11 +258,15 @@ fn worker(
     let result = (|| -> std::result::Result<(), String> {
         let ckpt = shared::load_ckpt(handle)?;
         let ckpt_gpu = ckpt.view_on(dev);
-        let vtc = VideoTextConditioner::load(&ckpt_gpu, dev, compute)
-            .map_err(|e| tr!("node.ltx.common.video_connector", error = e))?;
-        let v = vtc
-            .forward(&states, &mask)
-            .map_err(|e| tr!("node.ltx.common.video_connector_forward", error = e))?;
+        // Видео-коннектор (~4,8 ГБ весов) отпускается до загрузки аудио — на
+        // малой карте оба сразу не помещаются.
+        let v = {
+            let vtc = VideoTextConditioner::load(&ckpt_gpu, dev, compute)
+                .map_err(|e| tr!("node.ltx.common.video_connector", error = e))?;
+            vtc.forward(&states, &mask)
+                .map_err(|e| tr!("node.ltx.common.video_connector_forward", error = e))?
+        };
+        shared::sync_and_trim(dev);
         set_pct(0.8);
         let a = AudioTextConditioner::load(&ckpt_gpu, dev, compute)
             .map_err(|e| tr!("node.ltx_text_encoder.err.audio_connector", error = e))?
@@ -278,5 +282,8 @@ fn worker(
         Ok(())
     })();
     synaptix_core::device::cuda::set_offload_pinned(false);
+    // Коннекторы и активации отпущены — вернуть память драйверу, иначе на
+    // малой карте следующей стадии (NAG, DiT) её не хватает.
+    shared::sync_and_trim(dev);
     result
 }

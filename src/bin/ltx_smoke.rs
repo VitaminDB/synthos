@@ -262,6 +262,9 @@ fn run() -> Result<(), String> {
                 }
             };
             wait_done($name, running, error, progress)?;
+            if let Ok((free, _)) = synaptix_core::device::cuda::mem_info(0) {
+                eprintln!("  [{}] свободно VRAM после стадии: {:.2} ГБ", $name, free as f64 / 1e9);
+            }
         }};
     }
 

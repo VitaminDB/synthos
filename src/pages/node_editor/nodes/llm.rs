@@ -99,6 +99,38 @@ fn precision_from_idx(quant_idx: usize, compute_idx: usize) -> std::result::Resu
 /// шаблон чата и стоп-токены живут в `synaptix::facade::llm` — здесь только
 /// хранение. Живёт в `NodeRuntime::Llm.pipeline` (Arc<Mutex<Option<…>>>),
 /// пересоздаётся при смене `LlmLoadedCfg`.
+/// Малая карта: `load_llm` кладёт блоки на карту, пока они влезают, и места
+/// на KV, активации и стримящиеся блоки генерации может не остаться (7 ГБ:
+/// `pinned_htod OOM` на первом шаге). Перед генерацией часть блоков уезжает на
+/// хост — как `fit_blocks_for_context` у чата, только без возврата (нода
+/// живёт один прогон).
+fn fit_residency(model: &Llm, tokens: usize) {
+    let (Some((block_bytes, total)), Some(resident)) = (model.block_offload_shape(), model.resident_blocks()) else {
+        return; // архитектура со своим оффлоадом (MoE) — не наше дело
+    };
+    let Device::Cuda(ord) = *model.device() else { return };
+    if block_bytes == 0 || total == 0 {
+        return;
+    }
+    let _ = synaptix_core::device::cuda::synchronize_all(ord);
+    let _ = synaptix_core::memory::cuda_pool::hard_trim_all_pools_device(ord);
+    let free = synaptix_core::device::cuda::mem_info(ord).map(|(f, _)| f).unwrap_or(usize::MAX);
+    let need = tokens * model.kv_bytes_per_token() + model.kv_fixed_bytes(tokens) + 2 * block_bytes + (768usize << 20);
+    if free >= need {
+        return;
+    }
+    let evict = (need - free).div_ceil(block_bytes);
+    let want = resident.saturating_sub(evict);
+    let got = model.set_block_residency(want).unwrap_or(resident);
+    let _ = synaptix_core::memory::cuda_pool::hard_trim_all_pools_device(ord);
+    tracing::info!(
+        target: super::WORKER_LOG,
+        "LLM: блоков на карте {resident} → {got} из {total} (свободно {} МБ, нужно {} МБ на {tokens} токенов)",
+        free >> 20,
+        need >> 20
+    );
+}
+
 pub struct LlmPipeline {
     model: Llm,
     tokenizer: LlmTokenizer,
@@ -527,6 +559,7 @@ fn gen_worker(
                     presence_penalty: 0.0,
                     frequency_penalty: 0.0,
                 };
+                fit_residency(&pl.model, prompt_ids.len() + gen.max_new_tokens as usize);
                 let mut runner = LlmGeneration::new(&pl.model, opts);
                 runner.set_stop_tokens(pl.tokenizer.eos_ids().to_vec());
 
@@ -558,6 +591,7 @@ fn gen_worker(
             if cancel.load(Ordering::Relaxed) {
                 error_sig.set(None);
             } else {
+                tracing::warn!(target: super::WORKER_LOG, "LLM: генерация упала: {e}");
                 error_sig.set(Some(tr!("node.llm.err.generation_failed", error = e)));
             }
         }

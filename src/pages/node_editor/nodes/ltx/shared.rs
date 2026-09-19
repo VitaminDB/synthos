@@ -587,10 +587,14 @@ pub fn video_ref_tokens(
 }
 
 /// Синхронизировать GPU и вернуть пул драйверу (между тяжёлыми стадиями).
+/// Вернуть драйверу свободное во ВСЕХ пулах: активации (энкодер, коннекторы,
+/// денойз) лежат в пуле активаций, который сам ничего не отдаёт, а
+/// `hard_trim_cuda_mempool_device` трогает только default-пул — на карте 7 ГБ
+/// после Text Encoder следующей ноде (NAG) оставалось 0,4 ГБ.
 pub fn sync_and_trim(dev: Device) {
     if let Device::Cuda(o) = dev {
         let _ = synaptix_core::device::cuda::synchronize_all(o);
-        let _ = synaptix_core::memory::cuda_pool::hard_trim_cuda_mempool_device(o);
+        let _ = synaptix_core::memory::cuda_pool::hard_trim_all_pools_device(o);
     }
 }
 

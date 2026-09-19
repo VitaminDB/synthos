@@ -188,6 +188,7 @@ fn worker(
 ) -> std::result::Result<(), String> {
     let dev = device_from_idx(handle.device_idx);
     let compute = compute_from_idx(handle.compute_idx);
+    shared::sync_and_trim(dev);
     synaptix_core::device::cuda::set_offload_pinned(true);
     let result = (|| -> std::result::Result<(), String> {
         let (states, mask) = {
@@ -196,6 +197,8 @@ fn worker(
                 .encode_for_ltx(prompt, GEMMA_CTX, dev)
                 .map_err(|e| format!("Gemma encode nag: {e}"))?
         };
+        // Gemma отпущена — её память из пулов нужна коннектору.
+        shared::sync_and_trim(dev);
         let ckpt = shared::load_ckpt(handle)?;
         let ckpt_gpu = ckpt.view_on(dev);
         let enc = VideoTextConditioner::load(&ckpt_gpu, dev, compute)
@@ -208,5 +211,6 @@ fn worker(
         Ok(())
     })();
     synaptix_core::device::cuda::set_offload_pinned(false);
+    shared::sync_and_trim(dev);
     result
 }

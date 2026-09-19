@@ -6,7 +6,7 @@ FLUX.2 prompt format (FLUX.2 Text Encoder). The text encoder is an LLM (Mistral-
 4. Medium and style — photograph (lens, depth of field), illustration, 3D render …
 
 Rules:
-- No negative prompt. dev: `guidance` (default 4) is prompt adherence, 3–5 is the useful range. klein (flux.2-klein-4b / -9b): step-distilled, 4 steps, guidance is ignored — keep Sampler `steps` at 0 (= model default: dev 50, klein 4).
+- No negative prompt. dev: `guidance` (default 4) is prompt adherence, 3–5 is the useful range. klein (flux.2-klein-4b / -9b): step-distilled, 4 steps, guidance is ignored. klein base (flux.2-klein-base-4b): not distilled — 50 steps with real CFG (guidance 4), slower, more varied. Keep Sampler `steps` at 0 (= model default: dev and klein base 50, klein 4).
 - Text to render goes in double quotes, verbatim: `a poster that says "GRAND OPENING"`.
 - The prompt can be long and structured (up to 512 tokens); FLUX.2 follows detailed layouts and colors (hex codes work).
 - Size: FLUX Empty Latent (sides multiple of 16, ~1 MP sweet spot, up to 4 MP). Without Empty Latent the Sampler takes the size of the first reference.

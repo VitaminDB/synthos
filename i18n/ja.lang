@@ -1968,7 +1968,7 @@ node.flux2_reference.hint = "編集する、または見本にする画像。複
 node.flux2_reference.too_many = "参照は最大 {max} 枚"
 node.flux2_reference.done = "参照 {n} 枚、最後 {w}×{h}"
 node.flux2_sampler.steps = "ステップ（0 = 自動）"
-node.flux2_sampler.hint = "0 — モデル既定値：dev 50、klein 4。Guidance：dev ではプロンプト追従度、klein では無視されます。"
+node.flux2_sampler.hint = "0 — モデル既定値：dev と klein base は 50、klein は 4。Guidance：dev と klein base ではプロンプト追従度、蒸留版 klein では無視されます。"
 node.flux2_sampler.connect_text_encoder = "FLUX.2 Text Encoder を conditioning 入力に接続してください"
 node.flux2_sampler.connect_latent = "FLUX Empty Latent（サイズ）、FLUX.2 VAE Encode、または FLUX.2 Reference を接続してください"
 node.flux2_sampler.wrong_latent = "入力の潜在は FLUX.2 のものではありません（FLUX.1 の潜在は FLUX Sampler へ）"

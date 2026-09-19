@@ -1990,7 +1990,7 @@ node.flux2_reference.hint = "Obraz do edycji lub jako wzór. Kilka — łańcuch
 node.flux2_reference.too_many = "najwyżej {max} referencji"
 node.flux2_reference.done = "ref.: {n}, ostatnia {w}×{h}"
 node.flux2_sampler.steps = "Kroki (0 = auto)"
-node.flux2_sampler.hint = "0 — domyślnie dla modelu: dev 50, klein 4. Guidance: w dev wierność promptowi, klein go nie używa."
+node.flux2_sampler.hint = "0 — domyślnie dla modelu: dev i klein base 50, klein 4. Guidance: w dev i klein base wierność promptowi, destylowany klein go nie używa."
 node.flux2_sampler.connect_text_encoder = "podłącz FLUX.2 Text Encoder do wejścia conditioning"
 node.flux2_sampler.connect_latent = "podłącz FLUX Empty Latent (rozmiar), FLUX.2 VAE Encode lub FLUX.2 Reference"
 node.flux2_sampler.wrong_latent = "latent na wejściu nie pochodzi z FLUX.2 (latenty FLUX.1 idą do FLUX Sampler)"

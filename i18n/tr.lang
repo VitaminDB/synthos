@@ -1981,7 +1981,7 @@ node.flux2_reference.hint = "Düzenlenecek ya da örnek alınacak görsel. Birde
 node.flux2_reference.too_many = "en fazla {max} referans"
 node.flux2_reference.done = "{n} ref., sonuncusu {w}×{h}"
 node.flux2_sampler.steps = "Adımlar (0 = otomatik)"
-node.flux2_sampler.hint = "0 — modele göre: dev 50, klein 4. Guidance: dev'de isteme bağlılık, klein kullanmaz."
+node.flux2_sampler.hint = "0 — modele göre: dev ve klein base 50, klein 4. Guidance: dev ve klein base'de isteme bağlılık, damıtılmış klein kullanmaz."
 node.flux2_sampler.connect_text_encoder = "FLUX.2 Text Encoder'ı conditioning girişine bağlayın"
 node.flux2_sampler.connect_latent = "FLUX Empty Latent (boyut), FLUX.2 VAE Encode ya da bir FLUX.2 Reference bağlayın"
 node.flux2_sampler.wrong_latent = "girişteki latent FLUX.2'den gelmiyor (FLUX.1 latentleri FLUX Sampler'a gider)"

@@ -1975,7 +1975,7 @@ node.flux2_reference.hint = "Un'immagine da modificare o da prendere come modell
 node.flux2_reference.too_many = "al massimo {max} riferimenti"
 node.flux2_reference.done = "{n} rif., ultimo {w}×{h}"
 node.flux2_sampler.steps = "Passi (0 = auto)"
-node.flux2_sampler.hint = "0 — predefinito del modello: dev 50, klein 4. Guidance: in dev aderenza al prompt, klein la ignora."
+node.flux2_sampler.hint = "0 — predefinito del modello: dev e klein base 50, klein 4. Guidance: in dev e klein base aderenza al prompt, il klein distillato la ignora."
 node.flux2_sampler.connect_text_encoder = "collega FLUX.2 Text Encoder all'ingresso conditioning"
 node.flux2_sampler.connect_latent = "collega FLUX Empty Latent (dimensione), FLUX.2 VAE Encode o una FLUX.2 Reference"
 node.flux2_sampler.wrong_latent = "il latente in ingresso non viene da FLUX.2 (i latenti FLUX.1 vanno in FLUX Sampler)"

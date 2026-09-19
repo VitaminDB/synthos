@@ -1966,7 +1966,7 @@ node.flux2_reference.hint = "用于编辑或作为参照的图片。多张时串
 node.flux2_reference.too_many = "参考图最多 {max} 张"
 node.flux2_reference.done = "参考 {n} 张，最后一张 {w}×{h}"
 node.flux2_sampler.steps = "步数（0 = 自动）"
-node.flux2_sampler.hint = "0 — 按模型默认：dev 50，klein 4。Guidance：dev 为提示词遵循度，klein 不使用。"
+node.flux2_sampler.hint = "0 — 按模型默认：dev 和 klein base 为 50，klein 为 4。Guidance：dev 和 klein base 为提示词遵循度，蒸馏版 klein 不使用。"
 node.flux2_sampler.connect_text_encoder = "请将 FLUX.2 Text Encoder 连接到 conditioning 输入"
 node.flux2_sampler.connect_latent = "请连接 FLUX Empty Latent（尺寸）、FLUX.2 VAE Encode 或 FLUX.2 Reference"
 node.flux2_sampler.wrong_latent = "输入的潜变量不是 FLUX.2 的（FLUX.1 潜变量请接 FLUX Sampler）"

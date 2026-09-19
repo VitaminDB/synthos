@@ -2204,7 +2204,7 @@ node.flux2_reference.hint = "A picture to edit or take from. Chain several: refe
 node.flux2_reference.too_many = "at most {max} references"
 node.flux2_reference.done = "{n} ref., last {w}×{h}"
 node.flux2_sampler.steps = "Steps (0 = auto)"
-node.flux2_sampler.hint = "0 — model default: dev 50, klein 4. Guidance: dev — prompt adherence, klein ignores it."
+node.flux2_sampler.hint = "0 — model default: dev and klein base 50, klein 4. Guidance: prompt adherence for dev and klein base; distilled klein ignores it."
 node.flux2_sampler.connect_text_encoder = "connect FLUX.2 Text Encoder to the conditioning input"
 node.flux2_sampler.connect_latent = "connect FLUX Empty Latent (size), FLUX.2 VAE Encode or a FLUX.2 Reference"
 node.flux2_sampler.wrong_latent = "the input latent is not from FLUX.2 (FLUX.1 latents go to FLUX Sampler)"

@@ -1968,7 +1968,7 @@ node.flux2_reference.hint = "편집하거나 참고할 이미지. 여러 장은 
 node.flux2_reference.too_many = "참조는 최대 {max}장"
 node.flux2_reference.done = "참조 {n}장, 마지막 {w}×{h}"
 node.flux2_sampler.steps = "단계(0 = 자동)"
-node.flux2_sampler.hint = "0 — 모델 기본값: dev 50, klein 4. Guidance: dev에서는 프롬프트 충실도, klein은 사용하지 않습니다."
+node.flux2_sampler.hint = "0 — 모델 기본값: dev와 klein base 50, klein 4. Guidance: dev와 klein base에서는 프롬프트 충실도, 증류된 klein은 사용하지 않습니다."
 node.flux2_sampler.connect_text_encoder = "FLUX.2 Text Encoder를 conditioning 입력에 연결하세요"
 node.flux2_sampler.connect_latent = "FLUX Empty Latent(크기), FLUX.2 VAE Encode 또는 FLUX.2 Reference를 연결하세요"
 node.flux2_sampler.wrong_latent = "입력 잠재값이 FLUX.2의 것이 아닙니다(FLUX.1 잠재값은 FLUX Sampler로)"

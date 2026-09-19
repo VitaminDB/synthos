@@ -1,5 +1,6 @@
 //! Плавающее окно редактора системного промпта и модальные диалоги
-//! библиотеки пресетов (создать / переименовать / удалить).
+//! библиотеки пресетов (создать / переименовать / удалить / заменить текст
+//! чата текстом пресета).
 //!
 //! Оба смонтированы в корне страницы чата (`pages::syn_chat::view`), а не в
 //! карточке правой панели: карточка пересобирается на каждое нажатие
@@ -21,9 +22,10 @@ use crate::syn_chat::SynChatCtx;
 
 // ─────────────────────────── окно ───────────────────────────
 
-/// Плавающее окно с многострочным редактором на всю площадь. Заголовок —
-/// имя активного пресета; пересобирается только при смене пресета или его
-/// имени, текст редактора живёт во вложенной реактивной ветке.
+/// Плавающее окно с многострочным редактором промпта открытого чата на всю
+/// площадь. Заголовок — имя пресета, из которого взят текст; пересобирается
+/// только при смене пресета или его имени, текст редактора живёт во
+/// вложенной реактивной ветке.
 pub fn window() -> impl Widget {
     DecoratedBox::new().child(|| {
         let ctx = use_context::<SynChatCtx>();
@@ -113,6 +115,7 @@ pub fn dialog() -> impl Widget {
                 PromptDialog::Create => Box::new(create_card()),
                 PromptDialog::Rename { id, name } => Box::new(rename_card(id, name)),
                 PromptDialog::Delete { id, name } => Box::new(delete_card(id, name)),
+                PromptDialog::Replace { id, name } => Box::new(replace_card(id, name)),
             };
             vec![card]
         }))
@@ -138,7 +141,9 @@ fn name_field(name: RwSignal<String>) -> impl Widget {
 fn create_card() -> impl Widget {
     let ctx = use_context::<SynChatCtx>();
     let name = use_signal(prompt_presets::suggest_name(&ctx));
-    let copy_current = use_signal(false);
+    // Промпт принадлежит чату: без копии чат получил бы пустой текст
+    // нового пресета, поэтому по умолчанию пресет берёт текст чата.
+    let copy_current = use_signal(true);
 
     let confirm = move || {
         let ctx = use_context::<SynChatCtx>();
@@ -156,7 +161,7 @@ fn create_card() -> impl Widget {
                 Text::new(tr!("chat.right.system.dialog.create.title")).class("code-editor-dialog-title"),
                 Text::new(tr!("chat.right.system.dialog.create.hint")).class("code-editor-dialog-hint"),
                 name_field(name),
-                Checkbox::checked(false)
+                Checkbox::checked(true)
                     .label(tr!("chat.right.system.dialog.create.copy_current"))
                     .on_change(move |v| copy_current.set(v)),
                 Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
@@ -227,6 +232,36 @@ fn delete_card(id: String, name: String) -> impl Widget {
                         .class("code-editor-dialog-btn-secondary"),
                     Button::new(tr!("app.delete"))
                         .leading_icon(MI_DELETE)
+                        .on_click(confirm)
+                        .class("code-editor-dialog-btn-primary"),
+                ],
+            ]
+        ]
+    }
+}
+
+/// Выбор другого пресета, когда текст чата изменён: подтвердить, что правка
+/// пропадёт (`prompt_presets::request_select`).
+fn replace_card(id: String, name: String) -> impl Widget {
+    let confirm = move || {
+        let ctx = use_context::<SynChatCtx>();
+        prompt_presets::select(&ctx, &id);
+        ctx.prompt_dialog.set(None);
+    };
+
+    mgui! {
+        DecoratedBox::new().class("code-editor-dialog-card") => [
+            Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                Text::new(tr!("chat.right.system.dialog.replace.title", name = name))
+                    .class("code-editor-dialog-title"),
+                Text::new(tr!("chat.right.system.dialog.replace.hint")).class("code-editor-dialog-hint"),
+                Row::new().gap(10.0).main_axis_alignment(MainAxisAlignment::End) => [
+                    Button::new(tr!("app.cancel"))
+                        .leading_icon(MI_CLOSE)
+                        .on_click(close_dialog)
+                        .class("code-editor-dialog-btn-secondary"),
+                    Button::new(tr!("chat.right.system.dialog.replace.confirm"))
+                        .leading_icon(MI_CHECK)
                         .on_click(confirm)
                         .class("code-editor-dialog-btn-primary"),
                 ],

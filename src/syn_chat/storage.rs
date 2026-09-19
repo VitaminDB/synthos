@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 pub use crate::agent::state::{ChatMeta, ChatMsg};
 pub use crate::agent::storage::{preview_from_messages, truncate_chars, StoredChat};
+use crate::syn_chat::chat_settings::ChatSettings;
 
 #[cfg(test)]
 thread_local! {
@@ -79,6 +80,19 @@ fn migrate_legacy_title(chat: &mut StoredChat) -> bool {
 }
 
 pub fn list_meta() -> Vec<ChatMeta> {
+    scan(None)
+}
+
+/// [`list_meta`] на старте приложения: файлы, записанные до того, как
+/// инструменты, скилы и промпт стали храниться в чате, получают `defaults`
+/// — общие настройки, с которыми эти чаты до сих пор и работали — и
+/// переписываются один раз. Иначе такой чат при первом открытии взял бы
+/// настройки чата, открытого перед ним.
+pub fn list_meta_filling(defaults: &ChatSettings) -> Vec<ChatMeta> {
+    scan(Some(defaults))
+}
+
+fn scan(fill: Option<&ChatSettings>) -> Vec<ChatMeta> {
     // Список читают на старте и перед сборкой мусора CAS: ссылки на
     // вложения должны быть уже на диске.
     flush_all();
@@ -103,7 +117,11 @@ pub fn list_meta() -> Vec<ChatMeta> {
                 Ok(mut chat) => {
                     // Список чатов читается на старте — удобная точка для
                     // одноразового переименования старого дефолта.
-                    let migrated = migrate_legacy_title(&mut chat);
+                    let mut migrated = migrate_legacy_title(&mut chat);
+                    if let (None, Some(defaults)) = (&chat.settings, fill) {
+                        chat.settings = Some(defaults.clone());
+                        migrated = true;
+                    }
                     out.push(chat.to_meta());
                     if migrated {
                         save_async(chat);
@@ -558,5 +576,44 @@ mod tests {
         assert_eq!(list_meta().len(), 1);
         delete("l");
         assert!(load("l").is_none());
+    }
+
+    /// Файлы до 19.09.2026 без настроек получают общие настройки того
+    /// времени один раз; у записанных позже ничего не меняется.
+    #[test]
+    fn startup_scan_fills_missing_settings_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let _files = test_dir(dir.path());
+        let own = ChatSettings {
+            tools_active: vec!["web".into()],
+            system_prompt: "свой".into(),
+            ..ChatSettings::default()
+        };
+        save(&chat("old", &["давно"]));
+        save(&StoredChat {
+            settings: Some(own.clone()),
+            ..chat("new", &["недавно"])
+        });
+        let global = ChatSettings {
+            tools_active: vec!["bash".into(), "notes".into()],
+            tools_auto: vec!["pipelines".into()],
+            skills_active: vec!["tone".into()],
+            system_prompt: "общий".into(),
+            prompt_preset: "p1".into(),
+        };
+
+        assert_eq!(list_meta_filling(&global).len(), 2);
+        assert_eq!(load("old").unwrap().settings.as_ref(), Some(&global));
+        assert_eq!(load("new").unwrap().settings.as_ref(), Some(&own));
+        assert_eq!(bodies(&chat_path("old")), ["давно"], "лента не тронута");
+
+        // Повторный старт с другими общими настройками файлы не трогает.
+        let other = ChatSettings { system_prompt: "другой".into(), ..ChatSettings::default() };
+        list_meta_filling(&other);
+        assert_eq!(load("old").unwrap().settings.as_ref(), Some(&global));
+        // Обычный список (сборка мусора CAS) ничего не заполняет.
+        save(&chat("plain", &[]));
+        list_meta();
+        assert!(load("plain").unwrap().settings.is_none());
     }
 }

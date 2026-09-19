@@ -1,35 +1,36 @@
-//! Библиотека системных промптов Syn-чата: именованные пресеты на диске и
-//! активный пресет, текст которого уходит модели.
+//! Библиотека системных промптов Syn-чата: именованные пресеты на диске —
+//! заготовки для промптов чатов.
+//!
+//! С 19.09.2026 текст промпта принадлежит чату (`chat_settings::ChatSettings`
+//! в его файле): выбор пресета копирует текст в открытый чат ([`select`]),
+//! правка текста меняет только чат, а в пресет он уходит явно
+//! ([`save_to_preset`]). Чат помнит, из какого пресета взят текст
+//! (`SynChatCtx.prompt_active`), — по нему панель показывает, изменён ли
+//! текст относительно пресета.
 //!
 //! Хранится отдельно от `config.json` — в
 //! `~/.config/synthos/syn_system_prompts.json`: промпты бывают на десятки
-//! килобайт, и переписывать ради каждого нажатия клавиши весь конфиг
-//! (сплиты, профили моделей, рейл) незачем. Запись на диск дебаунсится
-//! ([`schedule_save`]); переключение, создание, переименование и удаление
-//! пишут сразу ([`save_now`]).
+//! килобайт, и переписывать их вместе с конфигом (сплиты, профили моделей,
+//! рейл) незачем. Каждая операция библиотеки пишет файл сразу
+//! ([`save_now`]).
 //!
 //! Инвариант: в библиотеке всегда хотя бы один пресет и `active` указывает
 //! на существующий. Его поддерживает [`PresetStore::normalize`] — при
-//! загрузке, после удаления и при любом расхождении. Панель и плавающее окно
-//! редактируют `SynChatCtx.system_prompt`; эффект в
-//! `lib.rs::install_syn_chat_autosave` переливает текст в активный пресет
-//! ([`sync_active_text`]).
+//! загрузке, после удаления и при любом расхождении. `active` — пресет,
+//! выбранный последним; его текст получает промпт, пока не открыт ни один
+//! чат (и получили чаты, записанные до переезда промпта в чат).
 //!
 //! Миграция: если файла библиотеки нет, а в `AppConfig.syn_chat_system_prompt`
 //! (прежнее одиночное поле) есть текст — он становится первым пресетом.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use syngui::async_runtime::spawn;
 use syngui::prelude::*;
 
 use crate::syn_chat::SynChatCtx;
-
-/// Пауза между последним нажатием клавиши и записью библиотеки на диск.
-const SAVE_DEBOUNCE_MS: u64 = 400;
 
 /// Один именованный системный промпт.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,68 +168,73 @@ pub fn save_to(path: &std::path::Path, store: &PresetStore) {
     }
 }
 
-/// Снимок библиотеки из сигналов контекста.
+/// Снимок библиотеки из сигналов контекста. Последним выбранным считается
+/// пресет открытого чата; если текст чата свой — первый (так же рассудил бы
+/// `normalize` при загрузке).
 fn snapshot(ctx: &SynChatCtx) -> PresetStore {
-    PresetStore {
+    let mut store = PresetStore {
         active: Some(ctx.prompt_active.get_untracked()),
         presets: ctx.prompt_presets.get_untracked(),
-    }
+    };
+    store.normalize(&default_name(), "");
+    store
 }
 
-/// Пишет библиотеку на диск немедленно (в фоне, без дебаунса).
+/// Пишет библиотеку на диск (в фоне). Снимок, который обогнала следующая
+/// запись, пропускается — иначе он лёг бы поверх более нового.
 pub fn save_now(ctx: &SynChatCtx) {
-    // Сбрасываем отложенную запись: она бы принесла устаревший снимок.
-    SAVE_GEN.fetch_add(1, Ordering::Relaxed);
+    let gen = SAVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
     let store = snapshot(ctx);
-    spawn(async move { save_to(&store_path(), &store) });
+    spawn(async move {
+        if SAVE_GEN.load(Ordering::Relaxed) == gen {
+            save_to(&store_path(), &store);
+        }
+    });
 }
 
 static SAVE_GEN: AtomicU64 = AtomicU64::new(0);
 
-/// Отложенная запись: каждое нажатие клавиши сдвигает поколение, на диск
-/// уходит только снимок, переживший паузу [`SAVE_DEBOUNCE_MS`].
-pub fn schedule_save(ctx: &SynChatCtx) {
-    let gen = SAVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
-    let store = snapshot(ctx);
-    spawn(async move {
-        tokio::time::sleep(Duration::from_millis(SAVE_DEBOUNCE_MS)).await;
-        if SAVE_GEN.load(Ordering::Relaxed) != gen {
-            return;
-        }
-        save_to(&store_path(), &store);
-    });
-}
-
 // ─────────────────────────── операции из UI ───────────────────────────
 
-/// Переливает текст редактора в активный пресет. Вызывается эффектом на
-/// каждое изменение `SynChatCtx.system_prompt`; при совпадении — ничего не
-/// делает, так что переключение пресета (оно само выставляет текст) не
-/// плодит лишних записей.
-pub fn sync_active_text(ctx: &SynChatCtx, text: &str) {
-    let active = ctx.prompt_active.get_untracked();
-    let mut changed = false;
-    ctx.prompt_presets.update(|list| {
-        if let Some(p) = list.iter_mut().find(|p| p.id == active) {
-            if p.text != text {
-                p.text = text.to_string();
-                p.updated_at = unix_secs();
-                changed = true;
-            }
-        }
-    });
-    if changed {
-        schedule_save(ctx);
+/// Пресет, из которого взят текст открытого чата, если он ещё в библиотеке.
+pub fn origin(ctx: &SynChatCtx) -> Option<PromptPreset> {
+    let id = ctx.prompt_active.get_untracked();
+    ctx.prompt_presets
+        .get_untracked()
+        .into_iter()
+        .find(|p| p.id == id)
+}
+
+/// Текст чата разошёлся с пресетом, из которого взят.
+pub fn is_modified(ctx: &SynChatCtx) -> bool {
+    origin(ctx).is_some_and(|p| ctx.system_prompt.with_untracked(|t| *t != p.text))
+}
+
+/// Выбор пресета в дропдауне. Если текст чата пропал бы — он изменён или
+/// не из библиотеки вовсе, — сначала спрашиваем; иначе копируем сразу.
+pub fn request_select(ctx: &SynChatCtx, id: &str) {
+    let Some(target) = ctx.prompt_presets.get_untracked().into_iter().find(|p| p.id == id) else {
+        return;
+    };
+    let text = ctx.system_prompt.get_untracked();
+    // Терять нечего: текст пуст, совпадает со своим пресетом или с выбранным.
+    let nothing_lost = text.trim().is_empty()
+        || text == target.text
+        || origin(ctx).is_some_and(|p| p.text == text);
+    if nothing_lost {
+        select(ctx, id);
+    } else {
+        ctx.prompt_dialog.set(Some(PromptDialog::Replace {
+            id: target.id,
+            name: target.name,
+        }));
     }
 }
 
-/// Делает пресет активным: его текст встаёт в редактор и уходит модели со
-/// следующего хода. Текст прежнего пресета уже лежит в списке — эффект
-/// синхронизации отрабатывает на каждое нажатие.
+/// Копирует текст пресета в промпт открытого чата: он уходит модели со
+/// следующего хода и сохраняется в файле чата. Повторный выбор того же
+/// пресета возвращает его текст.
 pub fn select(ctx: &SynChatCtx, id: &str) {
-    if ctx.prompt_active.get_untracked() == id {
-        return;
-    }
     let Some(text) = ctx
         .prompt_presets
         .get_untracked()
@@ -243,8 +249,28 @@ pub fn select(ctx: &SynChatCtx, id: &str) {
     save_now(ctx);
 }
 
-/// Создаёт пресет и сразу делает его активным. `copy_current` — начать с
-/// текста активного пресета вместо пустого.
+/// Записывает текст чата в пресет, из которого он взят.
+pub fn save_to_preset(ctx: &SynChatCtx) {
+    let id = ctx.prompt_active.get_untracked();
+    let text = ctx.system_prompt.get_untracked();
+    let mut changed = false;
+    ctx.prompt_presets.update(|list| {
+        if let Some(p) = list.iter_mut().find(|p| p.id == id) {
+            if p.text != text {
+                p.text = text.clone();
+                p.updated_at = unix_secs();
+                changed = true;
+            }
+        }
+    });
+    if changed {
+        save_now(ctx);
+    }
+}
+
+/// Создаёт пресет, и чат берёт промпт из него. `copy_current` — пресет
+/// получает текст чата (чат его не теряет), иначе пресет и промпт чата
+/// начинаются с пустого.
 pub fn create(ctx: &SynChatCtx, name: &str, copy_current: bool) {
     let name = name.trim();
     if name.is_empty() {
@@ -283,33 +309,25 @@ pub fn rename(ctx: &SynChatCtx, id: &str, name: &str) {
     }
 }
 
-/// Удаляет пресет. Если он был активным, активным становится сосед; если
-/// он был последним — библиотека получает новый пустой пресет по умолчанию.
+/// Удаляет пресет из библиотеки. Промпты чатов — их собственные копии и
+/// остаются как были; у открытого чата, взявшего текст из этого пресета,
+/// текст становится своим. Если пресет был последним, библиотека получает
+/// новый пустой пресет по умолчанию.
 pub fn delete(ctx: &SynChatCtx, id: &str) {
     let mut list = ctx.prompt_presets.get_untracked();
     let Some(pos) = list.iter().position(|p| p.id == id) else {
         return;
     };
     list.remove(pos);
-    let mut active = ctx.prompt_active.get_untracked();
-    if active == id {
-        // Сосед снизу, иначе последний; пустой список чинит normalize.
-        active = list
-            .get(pos)
-            .or(list.last())
-            .map(|p| p.id.clone())
-            .unwrap_or_default();
-    }
     let mut store = PresetStore {
-        active: Some(active),
+        active: Some(ctx.prompt_active.get_untracked()),
         presets: list,
     };
     store.normalize(&default_name(), "");
-    let text = store.active_text();
-    let active = store.active.clone().unwrap_or_default();
     ctx.prompt_presets.set(store.presets);
-    ctx.prompt_active.set(active);
-    ctx.system_prompt.set(text);
+    if ctx.prompt_active.get_untracked() == id {
+        ctx.prompt_active.set(String::new());
+    }
     save_now(ctx);
 }
 
@@ -335,6 +353,8 @@ pub enum PromptDialog {
     Create,
     Rename { id: String, name: String },
     Delete { id: String, name: String },
+    /// Заменить изменённый текст чата текстом пресета `id`.
+    Replace { id: String, name: String },
 }
 
 fn unix_secs() -> u64 {

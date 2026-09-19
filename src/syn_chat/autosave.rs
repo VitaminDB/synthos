@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use syngui::prelude::*;
 
+use super::chat_settings::ChatSettings;
 use super::registry;
 use super::state::SynChatCtx;
 use super::storage;
@@ -62,6 +63,7 @@ pub fn install(ctx: &SynChatCtx) {
         let active = c.active_chat_id.get();
         c.messages.with(|_| ());
         let _ = c.params.get();
+        ChatSettings::track(&c);
         if active.is_none() || c.loading.get_untracked() {
             return;
         }
@@ -183,13 +185,14 @@ fn save_now(ctx: &SynChatCtx) -> bool {
         return false;
     };
     let params = ctx.params.get_untracked();
+    let settings = ChatSettings::capture(ctx);
     // Тот же расчёт, что `registry::select_internal` кладёт в
     // `last_saved_fp` при выборе чата — иначе выбор выглядит как правка и
     // двигает чат наверх списка. Отпечаток — по ссылке: ленту клонируем,
     // только когда есть что писать.
     let fp = ctx
         .messages
-        .with_untracked(|m| registry::state_fingerprint(&meta.title, m, &params));
+        .with_untracked(|m| registry::state_fingerprint(&meta.title, m, &params, &settings));
     if ctx.last_saved_fp.get_untracked() == fp {
         return false;
     }
@@ -197,7 +200,7 @@ fn save_now(ctx: &SynChatCtx) -> bool {
     let model_name = registry::current_model_name().or_else(|| meta.model_name.clone());
     registry::refresh_active_preview(&messages, model_name.clone());
     storage::save_async(registry::stored_from_meta(
-        &meta, messages, params, model_name,
+        &meta, messages, params, settings, model_name,
     ));
     ctx.last_saved_fp.set(fp);
     PENDING.with(|p| p.borrow_mut().saves += 1);
@@ -250,6 +253,7 @@ mod tests {
             model_name: None,
             messages: bodies.iter().map(|b| ChatMsg::user(*b)).collect(),
             syn_params: Some(SamplingParams::default()),
+            settings: Some(ChatSettings::default()),
             archived: false,
         }
     }

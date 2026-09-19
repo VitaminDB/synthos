@@ -595,11 +595,13 @@ fn level_label(level: &str) -> String {
 
 // ── Карточка «Системный prompt» ──────────────────────────────────────
 //
-// Библиотека пресетов (`SynChatCtx.prompt_presets`): дропдаун переключает
-// активный, кнопки в шапке — создать / переименовать / удалить и открыть
-// текст в плавающем окне (`prompt_window`). Редактор внизу и окно правят
-// один и тот же `system_prompt`; на диск текст уходит через эффект в
-// `lib.rs::install_syn_chat_autosave`.
+// Промпт открытого чата (`system_prompt`, хранится в файле чата) и
+// библиотека пресетов-заготовок (`SynChatCtx.prompt_presets`): дропдаун
+// копирует текст пресета в чат, кнопки в шапке — создать / переименовать /
+// удалить пресет и открыть текст в плавающем окне (`prompt_window`).
+// Редактор внизу и окно правят один и тот же `system_prompt`; правка
+// меняет только чат, а под дропдауном появляется строка «изменён» с
+// кнопками «сохранить в пресет» и «вернуть текст пресета».
 
 /// Кнопки библиотеки — в шапке карточки, только у раскрытой.
 pub fn system_prompt_card() -> impl Widget {
@@ -617,12 +619,15 @@ pub fn system_prompt_card() -> impl Widget {
                 .iter()
                 .map(|p| DropdownItem::new(p.id.clone(), p.name.clone()))
                 .collect();
+            // Текст не из библиотеки (пресет удалён или не выбирался) —
+            // вместо имени подпись «свой текст».
             let picker = Dropdown::with_items(items)
                 .selected(active)
+                .placeholder(tr!("chat.right.system.custom"))
                 .leading_icon(MI_DESCRIPTION)
                 .on_change(|id| {
                     let ctx = use_context::<SynChatCtx>();
-                    prompt_presets::select(&ctx, id);
+                    prompt_presets::request_select(&ctx, id);
                 })
                 .class("system-prompt-picker");
 
@@ -638,8 +643,42 @@ pub fn system_prompt_card() -> impl Widget {
                 })
                 .class("system-prompt-edit");
 
-            vec![Box::new(picker), Box::new(edit)]
+            let mut rows: Vec<Box<dyn Widget>> = vec![Box::new(picker)];
+            if prompt_presets::is_modified(&ctx) {
+                rows.push(Box::new(modified_row()));
+            }
+            rows.push(Box::new(edit));
+            rows
         })
+}
+
+/// Строка под дропдауном, когда текст чата разошёлся со своим пресетом:
+/// записать правку в пресет или вернуть его текст.
+fn modified_row() -> impl Widget {
+    let save = ToolButton::new(MI_SAVE)
+        .tooltip(tr!("chat.right.system.preset.save"))
+        .on_click(|| prompt_presets::save_to_preset(&use_context::<SynChatCtx>()))
+        .class("system-prompt-modified-action");
+    let revert = ToolButton::new(MI_UNDO)
+        .tooltip(tr!("chat.right.system.preset.revert"))
+        .on_click(|| {
+            let ctx = use_context::<SynChatCtx>();
+            let id = ctx.prompt_active.get_untracked();
+            prompt_presets::select(&ctx, &id);
+        })
+        .class("system-prompt-modified-action");
+    mgui! {
+        Row::new()
+            .gap(4.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .class("system-prompt-modified") => [
+                Text::new(tr!("chat.right.system.modified"))
+                    .max_lines(1)
+                    .class("system-prompt-modified-text"),
+                save,
+                revert,
+            ]
+    }
 }
 
 /// Создать / переименовать / удалить пресет и открыть текст в окне.

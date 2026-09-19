@@ -8,6 +8,7 @@
 pub mod attach;
 pub mod autosave;
 pub mod channel_parser;
+pub mod chat_settings;
 pub mod compact;
 pub mod model_registry;
 pub mod params;

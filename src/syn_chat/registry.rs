@@ -8,6 +8,7 @@ use syngui::prelude::*;
 
 use crate::agent::time::{unix_nanos, unix_secs};
 
+use super::chat_settings::ChatSettings;
 use super::params::SamplingParams;
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};
@@ -31,13 +32,22 @@ pub fn fingerprint(title: &str, messages: &[ChatMsg]) -> u64 {
 /// его изменённым, звал `refresh_active_preview` — и чат прыгал наверх
 /// списка с новым `updated_at`. Одна функция на оба места убирает этот
 /// класс расхождений.
-pub fn state_fingerprint(title: &str, messages: &[ChatMsg], params: &SamplingParams) -> u64 {
+///
+/// Настройки чата (инструменты, скилы, промпт) входят в отпечаток так же,
+/// как params: их правка — повод записать файл.
+pub fn state_fingerprint(
+    title: &str,
+    messages: &[ChatMsg],
+    params: &SamplingParams,
+    settings: &ChatSettings,
+) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     fingerprint(title, messages).hash(&mut h);
     // serde_json для f32/u32 — стабильный hash без NaN-issues.
     if let Ok(bytes) = serde_json::to_vec(params) {
         bytes.hash(&mut h);
     }
+    settings.hash(&mut h);
     h.finish()
 }
 
@@ -45,7 +55,10 @@ pub fn state_fingerprint(title: &str, messages: &[ChatMsg], params: &SamplingPar
 pub fn load_all() {
     let ctx = use_context::<SynChatCtx>();
     ctx.loading.set(true);
-    let metas = storage::list_meta();
+    // Сигналы панелей сейчас — стартовые, из конфига и библиотеки промптов:
+    // ровно те общие настройки, с которыми работали чаты, записанные до
+    // того, как настройки переехали в файл чата. Такие файлы получают их.
+    let metas = storage::list_meta_filling(&ChatSettings::capture(&ctx));
     // Активным становится самый свежий из НЕархивных: архивные чаты в
     // рейле не видны, и открывать их молча нельзя.
     if let Some(top) = metas.iter().find(|m| !m.archived).cloned() {
@@ -67,6 +80,9 @@ pub fn create_new() -> String {
     autosave::flush();
     let now = unix_secs();
     let id = format!("{:016x}", unix_nanos());
+    // Новый чат начинает с настроек открытого (сэмплинг — так же: `params`
+    // при создании не сбрасываются), дальше они у каждого свои.
+    let settings = ChatSettings::capture(&ctx);
     let stored = StoredChat {
         id: id.clone(),
         title: tr!("chat.registry.new_chat_title"),
@@ -75,6 +91,7 @@ pub fn create_new() -> String {
         model_name: None,
         messages: Vec::new(),
         syn_params: None,
+        settings: Some(settings.clone()),
         archived: false,
     };
     storage::save_async(stored.clone());
@@ -88,8 +105,12 @@ pub fn create_new() -> String {
     ctx.error.set(None);
     // Отпечаток ставим последним — params к этому моменту уже те, с
     // которыми чат уйдёт в автосейв.
-    ctx.last_saved_fp
-        .set(state_fingerprint(&stored.title, &[], &ctx.params.get_untracked()));
+    ctx.last_saved_fp.set(state_fingerprint(
+        &stored.title,
+        &[],
+        &ctx.params.get_untracked(),
+        &settings,
+    ));
     ctx.loading.set(false);
     id
 }
@@ -179,10 +200,17 @@ fn select_internal(id: &str, ctx: &SynChatCtx) {
         .syn_params
         .unwrap_or_else(|| crate::config::AppConfig::load().syn_chat_defaults);
     ctx.params.set_always(params.clone());
+    // Инструменты, скилы и промпт чата — в панели. Файла без них после
+    // заполнения на старте (`load_all`) не бывает; если всё же попался —
+    // чат остаётся с тем, что открыто сейчас, и запишет это с первой правкой.
+    let settings = stored
+        .settings
+        .unwrap_or_else(|| ChatSettings::capture(ctx));
+    settings.apply(ctx);
     // Отпечаток — ровно тот, что посчитает автосейв. Иначе выбор чата
     // выглядит для него как правка и двигает чат наверх списка.
     ctx.last_saved_fp
-        .set(state_fingerprint(&title, &messages, &params));
+        .set(state_fingerprint(&title, &messages, &params, &settings));
     ctx.input.set(String::new());
     ctx.input_tokens.set_always(0);
     // Черновик вложений принадлежал прошлому чату — сами blob'ы остаются
@@ -264,6 +292,7 @@ pub fn archive(id: &str) {
                 &snap.title,
                 &snap.messages,
                 &ctx.params.get_untracked(),
+                snap.settings.as_ref().expect("снимок открытого чата с настройками"),
             ));
             storage::save_async(snap);
         }
@@ -345,6 +374,7 @@ pub(crate) fn stored_from_meta(
     meta: &ChatMeta,
     messages: Vec<ChatMsg>,
     params: SamplingParams,
+    settings: ChatSettings,
     model_name: Option<String>,
 ) -> StoredChat {
     StoredChat {
@@ -355,6 +385,7 @@ pub(crate) fn stored_from_meta(
         model_name,
         messages,
         syn_params: Some(params),
+        settings: Some(settings),
         archived: meta.archived,
     }
 }
@@ -376,6 +407,7 @@ pub fn snapshot_current() -> Option<StoredChat> {
         &meta,
         ctx.messages.get_untracked(),
         ctx.params.get_untracked(),
+        ChatSettings::capture(&ctx),
         model_name,
     ))
 }

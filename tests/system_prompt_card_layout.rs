@@ -1,5 +1,6 @@
 //! Карточка «Система» правой панели: кнопки библиотеки промптов помещаются
-//! в узкую панель, дропдаун пресетов — на всю ширину карточки.
+//! в узкую панель, дропдаун пресетов — на всю ширину карточки, строка
+//! «изменён в этом чате» со своими кнопками — тоже в пределах карточки.
 //!
 //! Зачем тест: шапка карточки — `Row` с заголовком слева и четырьмя
 //! `ToolButton` справа. `measure_row` меряет не-flex детей с бесконечной
@@ -95,5 +96,34 @@ fn actions_fit_in_narrow_panel_and_picker_spans_card() {
         let edits = harness.find_by_class("system-prompt-edit");
         assert_eq!(edits.len(), 1, "редактор в карточке");
         assert!(right_edge(&harness, edits[0]) <= card_right + 0.5);
+        assert!(
+            harness.find_by_class("system-prompt-modified").is_empty(),
+            "текст совпадает с пресетом — строки «изменён» нет"
+        );
     }
+
+    // Текст чата разошёлся с пресетом: под дропдауном строка «изменён» с
+    // двумя кнопками, и в узкой панели они не вылезают за карточку.
+    ctx.system_prompt.set("правка только в этом чате".into());
+    let mut harness = TestHarness::new(Box::new(right_panel::system_prompt_card()));
+    let engine = harness.apply_mss(synthos::styles::styles());
+    settle(&mut harness, &engine, NARROW);
+    let card = harness.element_bounds(harness.find_by_class("sampling-card")[0]);
+    let card_right = card.origin.x + card.size.width;
+    let row = harness.find_by_class("system-prompt-modified");
+    assert_eq!(row.len(), 1, "строка «изменён»");
+    let buttons = harness.find_by_class("system-prompt-modified-action");
+    assert_eq!(buttons.len(), 2, "сохранить в пресет / вернуть текст");
+    for id in &buttons {
+        let b = harness.element_bounds(*id);
+        assert!(b.size.width > 0.0 && b.size.height > 0.0, "кнопка схлопнулась: {b:?}");
+        assert!(right_edge(&harness, *id) <= card_right + 0.5, "кнопка за карточкой: {b:?}");
+    }
+    let picker = harness.element_bounds(harness.find_by_class("system-prompt-picker")[0]);
+    let edit = harness.element_bounds(harness.find_by_class("system-prompt-edit")[0]);
+    let row_b = harness.element_bounds(row[0]);
+    assert!(
+        picker.origin.y < row_b.origin.y && row_b.origin.y < edit.origin.y,
+        "строка между дропдауном и редактором: {picker:?} {row_b:?} {edit:?}"
+    );
 }

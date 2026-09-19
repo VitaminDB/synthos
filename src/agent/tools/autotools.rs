@@ -111,8 +111,8 @@ fn requested_ids(args_json: &str) -> Result<Vec<String>, ToolError> {
     Ok(out)
 }
 
-/// Снимок с main-потока: наборы активных и пула и живое описание `autoskill`
-/// (список скилов в нём собирается из сигнала).
+/// Снимок с main-потока: наборы активных и пула хода и живое описание
+/// `autoskill` (список скилов в нём собирается из сигнала).
 struct Snapshot {
     active: Vec<String>,
     auto: Vec<String>,
@@ -124,10 +124,13 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let app = use_context::<AppCtx>();
+        // Настройки своего хода: чат мог уйти в фон, и панели показывают
+        // инструменты другого.
+        let turn = crate::syn_chat::chat_settings::for_turn(&use_context::<crate::syn_chat::SynChatCtx>());
         let _ = tx.send(Snapshot {
-            active: app.tools.active.get_untracked(),
-            auto: app.tools.auto.get_untracked(),
-            autoskill: crate::agent::tool_flow::build_autoskill_chat_tool(&app),
+            autoskill: crate::agent::tool_flow::build_autoskill_chat_tool(&app, &turn.chat.skills_active),
+            active: turn.chat.tools_active,
+            auto: turn.chat.tools_auto,
         });
     });
     let snap = rx.await.map_err(|e| ToolError::Runtime(format!("autotools: {e}")))?;

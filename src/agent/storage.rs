@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::syn_chat::chat_settings::ChatSettings;
 use crate::syn_chat::params::SamplingParams;
 
 use super::state::{ChatMeta, ChatMsg};
@@ -44,6 +45,12 @@ pub struct StoredChat {
     pub messages: Vec<ChatMsg>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syn_params: Option<SamplingParams>,
+    /// Инструменты, скилы и системный промпт чата. `None` — файл записан до
+    /// 19.09.2026, когда эти настройки были общими на все чаты; такие файлы
+    /// получают тогдашние общие настройки при первом чтении списка
+    /// (`syn_chat::storage::list_meta_filling`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<ChatSettings>,
     /// Чат убран из рейла в архив (Настройки → Архив). Файл остаётся на
     /// диске, история цела; «Вернуть» снимает флаг, «Удалить» из архива
     /// стирает файл насовсем.
@@ -61,6 +68,7 @@ impl Default for StoredChat {
             model_name: None,
             messages: Vec::new(),
             syn_params: None,
+            settings: None,
             archived: false,
         }
     }

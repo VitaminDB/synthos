@@ -802,31 +802,18 @@ fn install_config_autosave(ctx: &AppCtx) {
     });
 }
 
-/// Автосохранение Syn-чатов на диск + sync system_prompt с AppConfig.
+/// Автосохранение Syn-чатов на диск.
 ///
 /// Лента открытого чата — `syn_chat::autosave`: эффекты там только отмечают
-/// правку (`messages`, `params`, название чата), запись — после паузы и в
-/// фоновом потоке. Отпечаток `registry::state_fingerprint` включает params,
-/// чтобы изменение слайдеров тоже сохранялось (params пишутся в
-/// StoredChat), и он же кладётся в `last_saved_fp` при выборе чата, чтобы
-/// простое переключение не считалось правкой.
-///
-/// Эффект system_prompt (global): переливает текст в активный пресет
-/// библиотеки промптов (`syn_chat::prompt_presets`), та пишется на диск с
-/// дебаунсом. Стартовое значение `system_prompt` берёт конструктор
-/// `SynChatCtx` из той же библиотеки.
+/// правку (`messages`, `params`, настройки чата, название), запись — после
+/// паузы и в фоновом потоке. Отпечаток `registry::state_fingerprint`
+/// включает params и настройки (инструменты, скилы, системный промпт),
+/// чтобы их правка тоже сохранялась в файл чата, и он же кладётся в
+/// `last_saved_fp` при выборе чата, чтобы простое переключение не считалось
+/// правкой.
 fn install_syn_chat_autosave() {
     let ctx = use_context::<syn_chat::SynChatCtx>();
-
-    // Лента открытого чата.
     syn_chat::autosave::install(&ctx);
-
-    // system_prompt → активный пресет библиотеки промптов.
-    let ctx2 = ctx.clone();
-    create_effect(move || {
-        let prompt = ctx2.system_prompt.get();
-        syn_chat::prompt_presets::sync_active_text(&ctx2, &prompt);
-    });
 }
 
 /// Effect автосохранения сессии node-editor'а на диск.

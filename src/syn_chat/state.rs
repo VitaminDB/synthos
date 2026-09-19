@@ -19,6 +19,7 @@ pub use crate::agent::state::{
 pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
 
 use crate::config::SynChatCardsConfig;
+use crate::syn_chat::chat_settings::TurnSettings;
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::prompt_presets::{self, PromptDialog, PromptPreset};
 use crate::syn_chat::telemetry::AgentRun;
@@ -98,6 +99,10 @@ pub struct SynChatCtx {
     /// возврате в чат генерация всё ещё идёт, а `send_message` — что вторую
     /// параллельную генерацию запускать нельзя (одна карта на всех).
     pub generating_chat: RwSignal<Option<String>>,
+    /// Настройки, с которыми начат идущий ход (`chat_settings::for_turn`):
+    /// панели после переключения чата показывают уже другой чат, а ход
+    /// доигрывает со своими инструментами, скилами, промптом и сэмплингом.
+    pub turn_settings: RwSignal<Option<TurnSettings>>,
     /// Черновик ввода.
     pub input: RwSignal<String>,
     /// Вложения, прикреплённые к ещё не отправленному сообщению. Уезжают в
@@ -150,15 +155,17 @@ pub struct SynChatCtx {
 
     /// Параметры sampling (двусторонне связаны с right_panel слайдерами).
     pub params: RwSignal<SamplingParams>,
-    /// Текст активного системного промпта — то, что уходит модели. Его
-    /// правят редактор в правой панели и плавающее окно; эффект в
-    /// `lib.rs::install_syn_chat_autosave` переливает текст в активный
-    /// пресет `prompt_presets` и пишет библиотеку на диск.
+    /// Текст системного промпта открытого чата — то, что уходит модели. Его
+    /// правят редактор в правой панели и плавающее окно; хранится в файле
+    /// чата (`chat_settings::ChatSettings::system_prompt`), в библиотеку
+    /// пресетов сам не попадает.
     pub system_prompt: RwSignal<String>,
     /// Библиотека именованных системных промптов
-    /// ([`crate::syn_chat::prompt_presets`]). Всегда непуста.
+    /// ([`crate::syn_chat::prompt_presets`]) — заготовки: выбор пресета
+    /// копирует его текст в чат. Всегда непуста.
     pub prompt_presets: RwSignal<Vec<PromptPreset>>,
-    /// id активного пресета из `prompt_presets`.
+    /// id пресета, из которого взят текст открытого чата. Пусто или пресета
+    /// уже нет — текст чата свой.
     pub prompt_active: RwSignal<String>,
     /// Плавающее окно редактора системного промпта: открыто ли, где и
     /// какого размера (размер/позиция переживают закрытие в рамках сессии).
@@ -352,6 +359,7 @@ impl SynChatCtx {
             streaming_thinking: use_signal(String::new()),
             streaming_tool: use_signal(String::new()),
             generating_chat: use_signal(None),
+            turn_settings: use_signal(None),
             input: use_signal(String::new()),
             pending_attachments: use_signal(Vec::new()),
             attach_share_paths: use_signal(false),

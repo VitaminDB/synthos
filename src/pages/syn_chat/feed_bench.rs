@@ -450,8 +450,9 @@ fn open_chat(ctx: &SynChatCtx, msgs: Vec<ChatMsg>) {
     ctx.messages.set(msgs.clone());
     let params = ctx.params.get_untracked();
     let title = CHAT_TITLE.to_string();
+    let settings = crate::syn_chat::chat_settings::ChatSettings::capture(ctx);
     ctx.last_saved_fp
-        .set(crate::syn_chat::registry::state_fingerprint(&title, &msgs, &params));
+        .set(crate::syn_chat::registry::state_fingerprint(&title, &msgs, &params, &settings));
     ctx.highlight_msg.set(None);
     ctx.editing_msg.set(None);
     ctx.streaming_body.set(String::new());

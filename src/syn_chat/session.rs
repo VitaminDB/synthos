@@ -47,6 +47,7 @@ use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
     ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, QueuedMsg, SynChatCtx, ThinkParser,
 };
+use crate::syn_chat::chat_settings::{ChatSettings, TurnSettings};
 use crate::syn_chat::system_prompt::{self, PromptEnv};
 use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
 use synaptix_tokenizer::{Gemma4Ids, Gemma4StreamParser};
@@ -1320,6 +1321,11 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     // Владелец хода: он переживёт переключение чатов, и по нему воркер решает,
     // писать ли в открытую ленту или прямо в файл своего чата.
     ctx.generating_chat.set(ctx.active_chat_id.get_untracked());
+    // Настройки хода: если его чат уйдёт в фон, инструменты посреди хода
+    // (`autotools`, `subagent`, автокомпакт) возьмут их отсюда, а не из
+    // панелей уже другого чата.
+    let turn = TurnSettings::capture(&ctx);
+    ctx.turn_settings.set(Some(turn.clone()));
 
     // Карточки субагентов прошлого хода к новому вопросу отношения не
     // имеют — панель «Детали» начинает с чистого листа.
@@ -1327,20 +1333,20 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
 
     // 2. Snapshot params + история + tool-схемы (всё на main thread!).
     // В режиме `default` сэмплинг — из пресета модели.
-    let params = ctx.params.get_untracked().effective(&model.sampling);
+    let params = turn.params.effective(&model.sampling);
     let max_turns = app_ctx.general.agent_max_turns.get_untracked().max(1) as usize;
     // Системный промпт агента: базовые правила + пользовательская добавка из
     // настроек. Пустое поле в настройках больше не означает «промпта нет».
     let system_prompt = system_prompt::build(&PromptEnv::snapshot(
-        active_tool_labels(&app_ctx),
-        pool_tool_labels(&app_ctx),
+        declared_tool_labels(&turn.chat.tools_active),
+        pool_tool_labels(&turn.chat),
         max_turns,
-        ctx.system_prompt.get_untracked(),
+        turn.chat.system_prompt.clone(),
     ));
     let channel = ChannelIds::detect(&model.tokenizer).is_some();
     let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt, channel);
     let caps = snapshot_media_caps(&app_ctx, &model, params.max_seq_len);
-    let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx);
+    let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx, &turn.chat);
     let abort_snapshot = ctx.abort.load(Ordering::Relaxed);
     let chat_id = ctx.active_chat_id.get_untracked();
     let repeats = seen_calls_in_current_turn(&ctx);
@@ -3811,13 +3817,8 @@ async fn view_media_call(
     }
 }
 
-/// Лейблы активных инструментов для системного промпта — в том же порядке,
-/// в каком они уходят в tool-схемы.
-fn active_tool_labels(app: &AppCtx) -> Vec<String> {
-    declared_tool_labels(&app.tools.active.get_untracked())
-}
-
-/// Лейблы тех ключей, что уходят модели схемой: инструменты каталога, кроме
+/// Лейблы тех ключей, что уходят модели схемой (для системного промпта — в
+/// том же порядке, в каком уходят схемы): инструменты каталога, кроме
 /// неявных. Ключ вне каталога схемы не получает, и в строке «available
 /// tools» его быть не должно — 13.09.2026 `web_read`/`web_search` из
 /// конфига до слияния в `web` попадали туда именами, и модель при пустых
@@ -3832,8 +3833,8 @@ fn declared_tool_labels(keys: &[String]) -> Vec<String> {
 
 /// Лейблы инструментов из пула `autotools` — для строки про пул в системном
 /// промпте.
-fn pool_tool_labels(app: &AppCtx) -> Vec<String> {
-    tools::autotools::pool(&app.tools.active.get_untracked(), &app.tools.auto.get_untracked())
+fn pool_tool_labels(settings: &ChatSettings) -> Vec<String> {
+    tools::autotools::pool(&settings.tools_active, &settings.tools_auto)
         .iter()
         .map(|t| t.label.to_string())
         .collect()
@@ -3844,22 +3845,22 @@ fn pool_tool_labels(app: &AppCtx) -> Vec<String> {
 /// расширяется актуальным списком скилов через [`build_autoskill_chat_tool`],
 /// и пул: он уходит одной схемой `autotools` в конце списка, а схемы самих
 /// инструментов из пула модель получает ответом `autotools`.
-fn collect_active_tool_schemas(app: &AppCtx) -> Vec<serde_json::Value> {
+fn collect_active_tool_schemas(app: &AppCtx, settings: &ChatSettings) -> Vec<serde_json::Value> {
     use crate::agent::tools::catalog::KEY_AUTOSKILL;
-    let keys = app.tools.active.get_untracked();
-    let mut schemas: Vec<serde_json::Value> = keys
+    let mut schemas: Vec<serde_json::Value> = settings
+        .tools_active
         .iter()
         .filter_map(|k| {
             let tool = Tool::by_key(k).filter(|t| !t.is_implicit())?;
             let t = if k == KEY_AUTOSKILL {
-                crate::agent::tool_flow::build_autoskill_chat_tool(app)
+                crate::agent::tool_flow::build_autoskill_chat_tool(app, &settings.skills_active)
             } else {
                 tool.to_chat_tool()
             };
             serde_json::to_value(&t).ok()
         })
         .collect();
-    if let Some(t) = crate::agent::tool_flow::build_autotools_chat_tool(app) {
+    if let Some(t) = crate::agent::tool_flow::build_autotools_chat_tool(settings) {
         schemas.extend(serde_json::to_value(&t).ok());
     }
     schemas

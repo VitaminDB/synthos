@@ -661,7 +661,9 @@ async fn read_ctx_usage_on_main() -> Option<(u32, u32, u32)> {
         let _ = tx.send((
             ctx.last_prompt_tokens.get_untracked(),
             ctx.ctx_budget_tokens.get_untracked(),
-            ctx.params.get_untracked().max_seq_len,
+            // Автокомпакт идёт после хода, чей чат мог уйти в фон, — потолок
+            // контекста его, а не открытого чата.
+            crate::syn_chat::chat_settings::for_turn(&ctx).params.max_seq_len,
         ));
     });
     rx.await.ok()

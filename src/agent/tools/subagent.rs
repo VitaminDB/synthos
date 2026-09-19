@@ -37,6 +37,7 @@ use synaptix::facade::llm::{LlmGeneration, Message};
 use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
+use crate::syn_chat::chat_settings::ChatSettings;
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::channel_parser::{self, ChannelIds, ATEM_CLOSE};
 use crate::syn_chat::session::{
@@ -181,17 +182,20 @@ async fn snapshot_from_main() -> Result<SubagentSnapshot, ToolError> {
         let snap = reg.current.get_untracked().map(|model| {
             let abort = syn.abort.clone();
             let abort_baseline = abort.load(Ordering::Relaxed);
+            // Настройки хода, который вызвал субагента: его чат мог уйти в
+            // фон, и панели показывают уже другой.
+            let turn = crate::syn_chat::chat_settings::for_turn(&syn);
             // Пресет модели разрешается здесь, по режиму размышлений чата, —
             // до того как субагент выключит размышления себе: иначе режим
             // `default` отдал бы ему Instruct-пресет со штрафом присутствия,
             // а штрафы ломают синтаксис tool-вызова (см. `params.rs`).
-            let params = syn.params.get_untracked().effective(&model.sampling);
+            let params = turn.params.effective(&model.sampling);
             SubagentSnapshot {
                 model,
                 params,
-                default_system_prompt: syn.system_prompt.get_untracked(),
-                active_tools: build_active_tools_for_subagent(&app),
-                pool_tools: build_pool_tools_for_subagent(&app),
+                active_tools: build_active_tools_for_subagent(&app, &turn.chat),
+                pool_tools: build_pool_tools_for_subagent(&app, &turn.chat),
+                default_system_prompt: turn.chat.system_prompt,
                 max_turns: app.general.subagent_max_turns.get_untracked().max(1) as usize,
                 abort,
                 abort_baseline,
@@ -214,8 +218,8 @@ fn subagent_excluded(key: &str) -> bool {
 /// Собирает дескрипторы активных тулов для субагента: те же активные ключи,
 /// что в основном чате, но с явным исключением `subagent` (рекурсия
 /// запрещена) и с динамическим autoskill-обогащением.
-fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
-    let keys = app.tools.active.get_untracked();
+fn build_active_tools_for_subagent(app: &AppCtx, settings: &ChatSettings) -> Vec<ChatTool> {
+    let keys = &settings.tools_active;
     let mut tools: Vec<ChatTool> = keys
         .iter()
         // Визард — панель для пользователя в ленте; у субагента ни ленты,
@@ -223,7 +227,7 @@ fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
         .filter(|k| !subagent_excluded(k))
         .filter_map(|k| {
             if k == KEY_AUTOSKILL {
-                Some(crate::agent::tool_flow::build_autoskill_chat_tool(app))
+                Some(crate::agent::tool_flow::build_autoskill_chat_tool(app, &settings.skills_active))
             } else {
                 Tool::by_key(k).filter(|t| !t.is_implicit()).map(|t| t.to_chat_tool())
             }
@@ -231,7 +235,7 @@ fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
         .collect();
     // Пул — тем же `autotools`, что у чата, но без инструментов, которых у
     // субагента нет.
-    let pool: Vec<&Tool> = super::autotools::pool(&keys, &app.tools.auto.get_untracked())
+    let pool: Vec<&Tool> = super::autotools::pool(keys, &settings.tools_auto)
         .into_iter()
         .filter(|t| !subagent_excluded(t.key))
         .collect();
@@ -242,13 +246,13 @@ fn build_active_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
 }
 
 /// Полные дескрипторы инструментов пула — для явного `args.tools`.
-fn build_pool_tools_for_subagent(app: &AppCtx) -> Vec<ChatTool> {
-    super::autotools::pool(&app.tools.active.get_untracked(), &app.tools.auto.get_untracked())
+fn build_pool_tools_for_subagent(app: &AppCtx, settings: &ChatSettings) -> Vec<ChatTool> {
+    super::autotools::pool(&settings.tools_active, &settings.tools_auto)
         .into_iter()
         .filter(|t| !subagent_excluded(t.key))
         .map(|t| {
             if t.key == KEY_AUTOSKILL {
-                crate::agent::tool_flow::build_autoskill_chat_tool(app)
+                crate::agent::tool_flow::build_autoskill_chat_tool(app, &settings.skills_active)
             } else {
                 t.to_chat_tool()
             }

@@ -282,10 +282,11 @@
 }
 
 
-/* ── Карточка «Система»: библиотека промптов и окно редактора ──
+/* ── Карточка «Система»: промпт чата, библиотека пресетов и окно ──
  * Шапка карточки: заголовок + четыре маленькие ToolButton (создать /
  * переименовать / удалить / открыть в окне). Под ней — дропдаун пресетов на
- * всю ширину, ниже — компактный редактор. Плавающее окно
+ * всю ширину, строка «изменён» (если текст чата разошёлся с пресетом),
+ * ниже — компактный редактор. Плавающее окно
  * (`pages::syn_chat::prompt_window`) — редактор на всю площадь, растёт
  * вместе с окном через flex-grow. */
 
@@ -307,6 +308,25 @@
   border-radius: 6px;
   border: 1px solid var(--border-soft);
   background-color: var(--bg-window);
+  color: var(--text);
+}
+
+/* Строка «изменён в этом чате» под дропдауном: подпись забирает остаток
+ * ширины, справа — «сохранить в пресет» и «вернуть текст пресета». */
+.system-prompt-modified-text {
+  flex-grow: 1;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.system-prompt-modified-action {
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.system-prompt-modified-action:hover {
+  background-color: var(--surface-hover);
   color: var(--text);
 }
 

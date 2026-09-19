@@ -15,6 +15,7 @@ use syngui::context_provider::use_context;
 use crate::agent::schema::{ChatTool, ChatToolCall, ToolFunctionSchema};
 use crate::agent::tools::{self, catalog::KEY_AUTOSKILL, PendingApproval, Tool, ToolDecision};
 use crate::context::AppCtx;
+use crate::syn_chat::chat_settings::{offered_skills, ChatSettings};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Время (без chrono/time)
@@ -49,20 +50,25 @@ pub(crate) fn today_utc_iso(unix_secs: i64) -> String {
 // autoskill-дескриптор
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Динамический ChatTool для `autoskill`: статическое описание + актуальный
-/// список доступных скилов (читается из `AppCtx.skills`). Если скилов нет —
+/// Динамический ChatTool для `autoskill`: статическое описание + скилы,
+/// которые чат предлагает модели (`active` — активные скилы чата, пустой —
+/// все из `AppCtx.skills`, см. [`offered_skills`]).
+pub(crate) fn build_autoskill_chat_tool(app: &AppCtx, active: &[String]) -> ChatTool {
+    autoskill_chat_tool(&offered_skills(&app.skills.get_untracked(), active))
+}
+
+/// ChatTool `autoskill` над готовым списком скилов. Если скилов нет —
 /// description явно сообщает об этом, enum в schema пустой → модель не
 /// сможет вызвать tool, что и ожидается.
-pub(crate) fn build_autoskill_chat_tool(app: &AppCtx) -> ChatTool {
+fn autoskill_chat_tool(skills: &[crate::skills::Skill]) -> ChatTool {
     let descriptor = Tool::by_key(KEY_AUTOSKILL).expect("autoskill descriptor должен существовать");
-    let skills = app.skills.get_untracked();
 
     let mut description = descriptor.description.to_string();
     description.push_str("\n\nAvailable skills (id — description):\n");
     if skills.is_empty() {
         description.push_str("- (empty, the user has no skills)\n");
     } else {
-        for s in &skills {
+        for s in skills {
             let desc = if s.description.is_empty() {
                 "(no description)"
             } else {
@@ -98,13 +104,10 @@ pub(crate) fn build_autoskill_chat_tool(app: &AppCtx) -> ChatTool {
     }
 }
 
-/// ChatTool `autotools` для текущего пула (см. [`tools::autotools`]) или
+/// ChatTool `autotools` для пула чата (см. [`tools::autotools`]) или
 /// `None`, когда пул пуст: тогда инструмент модели не объявляется вовсе.
-pub(crate) fn build_autotools_chat_tool(app: &AppCtx) -> Option<ChatTool> {
-    let pool = tools::autotools::pool(
-        &app.tools.active.get_untracked(),
-        &app.tools.auto.get_untracked(),
-    );
+pub(crate) fn build_autotools_chat_tool(settings: &ChatSettings) -> Option<ChatTool> {
+    let pool = tools::autotools::pool(&settings.tools_active, &settings.tools_auto);
     (!pool.is_empty()).then(|| tools::autotools::chat_tool(&pool))
 }
 
@@ -239,56 +242,13 @@ mod tests {
         }
     }
 
-    /// Чистая копия логики `build_autoskill_chat_tool` без зависимости от
-    /// `AppCtx` (он в thread-local и недоступен в обычных unit-тестах).
-    fn build_autoskill_for_tests(skills: &[crate::skills::Skill]) -> ChatTool {
-        let descriptor = Tool::by_key(KEY_AUTOSKILL).expect("autoskill descriptor present");
-        let mut description = descriptor.description.to_string();
-        description.push_str("\n\nAvailable skills (id — description):\n");
-        if skills.is_empty() {
-            description.push_str("- (empty, the user has no skills)\n");
-        } else {
-            for s in skills {
-                let desc = if s.description.is_empty() {
-                    "(no description)"
-                } else {
-                    s.description.as_str()
-                };
-                description.push_str(&format!("- {} — {}\n", s.id, desc));
-            }
-        }
-        let ids: Vec<String> = skills.iter().map(|s| s.id.clone()).collect();
-        let mut schema = descriptor.schema.clone();
-        if !ids.is_empty() {
-            if let Some(props) = schema.get_mut("properties").and_then(|v| v.as_object_mut()) {
-                if let Some(id_field) = props.get_mut("id").and_then(|v| v.as_object_mut()) {
-                    id_field.insert(
-                        "enum".to_string(),
-                        serde_json::Value::Array(
-                            ids.into_iter().map(serde_json::Value::String).collect(),
-                        ),
-                    );
-                }
-            }
-        }
-        ChatTool {
-            kind: "function".to_string(),
-            function: ToolFunctionSchema {
-                name: descriptor.key.to_string(),
-                description: Some(description),
-                parameters: Some(schema),
-                strict: None,
-            },
-        }
-    }
-
     #[test]
     fn autoskill_descriptor_lists_skills_in_description() {
         let skills = vec![
             make_skill("greet", "Greeting", "Tone of the first message"),
             make_skill("apo", "Apology", ""),
         ];
-        let tool = build_autoskill_for_tests(&skills);
+        let tool = autoskill_chat_tool(&skills);
         let desc = tool.function.description.unwrap();
         assert!(desc.contains("- greet — Tone of the first message"), "{desc}");
         assert!(desc.contains("- apo — (no description)"), "{desc}");
@@ -297,7 +257,7 @@ mod tests {
     #[test]
     fn autoskill_descriptor_schema_enum_lists_ids() {
         let skills = vec![make_skill("a", "A", ""), make_skill("b", "B", "")];
-        let tool = build_autoskill_for_tests(&skills);
+        let tool = autoskill_chat_tool(&skills);
         let params = tool.function.parameters.unwrap();
         let enum_arr = params
             .get("properties")
@@ -312,7 +272,7 @@ mod tests {
     #[test]
     fn autoskill_descriptor_handles_empty_skills() {
         let skills: Vec<crate::skills::Skill> = Vec::new();
-        let tool = build_autoskill_for_tests(&skills);
+        let tool = autoskill_chat_tool(&skills);
         let desc = tool.function.description.unwrap();
         assert!(desc.contains("(empty, the user has no skills)"));
         let params = tool.function.parameters.unwrap();

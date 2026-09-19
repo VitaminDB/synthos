@@ -234,6 +234,8 @@ fn run() -> std::result::Result<(), String> {
         model_name: bundle.file_stem().and_then(|s| s.to_str()).map(String::from),
         messages: Vec::new(),
         syn_params: Some(params),
+        // Инструменты хода берутся из сигналов выше; файлу они не нужны.
+        settings: None,
         archived: false,
     });
     provide_context(chat.clone());

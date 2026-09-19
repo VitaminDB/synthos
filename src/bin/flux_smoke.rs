@@ -218,6 +218,9 @@ fn run() -> Result<(), String> {
 }
 
 fn main() {
+    // Без отметки главного потока `set()` из воркера нод шёл бы в чужой
+    // thread-local рантайм сигналов вместо очереди главного потока.
+    syngui::signal::init_main_thread();
     if let Err(e) = run() {
         eprintln!("flux_smoke: ошибка: {e}");
         std::process::exit(1);

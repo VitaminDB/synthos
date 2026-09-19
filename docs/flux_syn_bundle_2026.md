@@ -59,6 +59,11 @@ FLUX_DIR=… FLUX_SYN=… cargo test --release -p synaptix-image-flux \
   `scheduler_config.json` (динамический сдвиг dev, статический `shift` schnell).
 - `FluxPipeline::txt2img` (CLI `synaptix imagine`) — те же стадии подряд;
   `imagine` понимает и `.syn`.
+- Память: веса грузятся под `WeightsAllocGuard` (weights-пул), после каждой
+  стадии — `model::release_pools` → `hard_trim_all_pools_device`. Без этого
+  T5 оставлял ~10 ГБ в пуле активаций (порог освобождения — бесконечность),
+  и их не видели ни DiT, ни следующая модель графа (LTX/H3). Запас
+  auto-offload плотного DiT включает 1,5 ГБ под рабочий стол.
 
 ## synthos: ноды
 

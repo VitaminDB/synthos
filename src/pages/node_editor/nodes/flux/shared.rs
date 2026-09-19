@@ -150,10 +150,9 @@ pub fn remember_conditioning(key: String, cond: Arc<FluxConditioning>) {
     }
 }
 
-/// Вернуть драйверу память, отпущенную в пул (энкодеры, VAE, старый DiT).
+/// Вернуть драйверу память, отпущенную во все пулы (энкодеры, VAE, старый
+/// DiT): пул активаций сам ничего не отдаёт, и после T5 в нём оставалось
+/// ~10 ГБ — их не видели ни трансформер, ни видео-модели дальше по графу.
 pub fn trim_pool(device: Device) {
-    if let Device::Cuda(ord) = device {
-        let _ = synaptix_core::device::cuda::synchronize(ord);
-        let _ = synaptix_core::memory::cuda_pool::trim_cuda_mempool_device(ord);
-    }
+    synaptix_image_flux::model::release_pools(device);
 }

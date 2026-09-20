@@ -7,4 +7,4 @@
 # Формат: <имя>=<полный sha>. Пустое значение → релизная сборка возьмёт master.
 
 syngui=8603ee9da1b6f3e9539e6dcfae5d513c3b383841
-synaptix=2e4c9e53a1eb3dce2a29f6bd3aecd517dab0426e
+synaptix=711dc5296c65cb0da6d3e6d669c19010a26541e9

@@ -4,11 +4,21 @@
 //! `tokio::task::spawn_blocking` в обёртке `run`). Прогресс публикуется
 //! через коллбек `report_progress`, чтобы не было жёсткой связи с
 //! syngui::async_runtime в этом модуле.
+//!
+//! Два правила, на которых держится честность коллекции:
+//! - документ попадает в БД только вместе со своими чанками
+//!   ([`Store::write_document`]) — оборванная индексация не оставляет после
+//!   себя строку без единого фрагмента, по которой поиск молча ничего не
+//!   находит, а повторный запуск пропускает файл по совпавшему sha;
+//! - ни одна ошибка источника не теряется: она попадает в
+//!   [`IngestOutcome::failed`], и вызывающий показывает её пользователю,
+//!   а не только в лог.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use syngui::tr;
 use synaptix_rag::doc::{chunk, parse, ChunkConfig, ParsedDoc, SourceKind};
 use synaptix::facade::embedding::Embedder;
 
@@ -50,6 +60,30 @@ pub struct IngestJob {
     pub cancel_flag: Arc<AtomicBool>,
 }
 
+/// Чем кончилась индексация. Возвращается наружу, чтобы вызывающий сказал
+/// пользователю правду: сколько источников легло в коллекцию, сколько было
+/// уже проиндексировано и что именно не получилось.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IngestOutcome {
+    /// Источники, чьи чанки записаны в БД в этом прогоне.
+    pub indexed: usize,
+    /// Источники, пропущенные как неизменившиеся (sha тот же, чанки на месте).
+    pub skipped: usize,
+    /// Сколько чанков записано.
+    pub chunks: usize,
+    /// Источники, которые не удалось проиндексировать.
+    pub failed: Vec<IngestFailure>,
+    /// Прогон оборвали кнопкой «Отменить».
+    pub cancelled: bool,
+}
+
+/// Источник и причина, по которой он не попал в коллекцию.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IngestFailure {
+    pub source: String,
+    pub error: String,
+}
+
 /// Реализация ingest'а как чистая функция: на вход — job, store, embedder,
 /// колбек прогресса. Никаких глобальных синглтонов — облегчает тестирование
 /// и переиспользование (одну функцию можно вызвать из CLI, тестов, UI).
@@ -65,7 +99,7 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
     embedding_dim: usize,
     mut report: F,
     fetch_url: Option<&dyn Fn(&str) -> Result<(String, String), String>>,
-) -> Result<(), IngestError> {
+) -> Result<IngestOutcome, IngestError> {
     let cancel_flag = job.cancel_flag.clone();
     let mut emit = |stage: IngestStage,
                     current: usize,
@@ -82,6 +116,7 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
             error,
         });
     };
+    let mut outcome = IngestOutcome::default();
 
     // 1. Discovery — раскручиваем все sources в плоский список (path/url, kind, bytes_loader).
     emit(IngestStage::Discovering, 0, 0, None, None);
@@ -89,14 +124,18 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
     let mut tasks: Vec<DiscoveredTask> = Vec::new();
     for src in &job.sources {
         match src {
-            DocSource::File(p) => {
-                if let Some(kind) = SourceKind::from_path(p) {
-                    tasks.push(DiscoveredTask::File {
-                        path: p.clone(),
-                        kind,
-                    });
-                }
-            }
+            DocSource::File(p) => match SourceKind::from_path(p) {
+                Some(kind) => tasks.push(DiscoveredTask::File {
+                    path: p.clone(),
+                    kind,
+                }),
+                // Формат неизвестен: раньше такой файл просто исчезал из
+                // задания — пользователь видел «готово» и пустую коллекцию.
+                None => outcome.failed.push(IngestFailure {
+                    source: p.display().to_string(),
+                    error: tr!("kb.ingest.unsupported_format"),
+                }),
+            },
             DocSource::Pdf(p) => tasks.push(DiscoveredTask::File {
                 path: p.clone(),
                 kind: SourceKind::Pdf,
@@ -124,200 +163,182 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
     let total = tasks.len();
     if total == 0 {
         emit(IngestStage::Done, 0, 0, None, None);
-        return Ok(());
+        return Ok(outcome);
     }
 
     // 2. Per-task: read → parse → chunk → embed → store.
     for (idx, task) in tasks.iter().enumerate() {
         if cancel_flag.load(Ordering::Relaxed) {
+            outcome.cancelled = true;
             emit(IngestStage::Cancelled, idx, total, None, None);
-            return Ok(());
+            return Ok(outcome);
         }
 
         let task_label = task.display();
-
-        // --- Parsing ---
-        emit(
-            IngestStage::Parsing,
-            idx,
-            total,
-            Some(task_label.clone()),
-            None,
-        );
-        let (bytes, source_kind, source_kind_str, source_path, doc_title): (
-            Vec<u8>,
-            SourceKind,
-            String,
-            String,
-            Option<String>,
-        ) = match task {
-            DiscoveredTask::File { path, kind } => {
-                let bs = match std::fs::read(path) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log::warn!("kb ingest: read {}: {e}", path.display());
-                        continue;
-                    }
-                };
-                let title = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.to_string());
-                (
-                    bs,
-                    *kind,
-                    match kind {
-                        SourceKind::Pdf => "pdf".into(),
-                        _ => "file".into(),
-                    },
-                    path.display().to_string(),
-                    title,
-                )
+        // Ошибка одного источника не останавливает остальные, но и не
+        // теряется: `?` внутри замыкания → запись в `outcome.failed`.
+        match ingest_one(
+            task,
+            store,
+            embedder,
+            chunk_cfg,
+            tokenizer,
+            embedding_dim,
+            fetch_url,
+            |stage| emit(stage, idx, total, Some(task_label.clone()), None),
+        ) {
+            Ok(TaskResult::Indexed { chunks }) => {
+                outcome.indexed += 1;
+                outcome.chunks += chunks;
             }
-            DiscoveredTask::Url(u) => {
-                let fetch = match fetch_url {
-                    Some(f) => f,
-                    None => {
-                        log::warn!("kb ingest: URL '{u}' пропущен — fetch_url не задан");
-                        continue;
-                    }
-                };
-                match fetch(u) {
-                    Ok((md, title)) => (
-                        md.into_bytes(),
-                        SourceKind::Markdown,
-                        "url".into(),
-                        u.clone(),
-                        Some(title),
-                    ),
-                    Err(e) => {
-                        log::warn!("kb ingest: fetch {u}: {e}");
-                        continue;
-                    }
-                }
+            Ok(TaskResult::Skipped) => outcome.skipped += 1,
+            Err(error) => {
+                log::warn!("kb ingest: {task_label}: {error}");
+                outcome.failed.push(IngestFailure {
+                    source: task_label.clone(),
+                    error,
+                });
             }
-        };
-
-        let parsed = match parse(&bytes, source_kind) {
-            Ok(p) => p,
-            Err(e) => {
-                log::warn!("kb ingest: parse {task_label}: {e}");
-                continue;
-            }
-        };
-        if parsed.plain_text.is_empty() {
-            continue;
         }
-        // ParsedDoc::title (h1 для md, <title> для html) превалирует над именем файла.
-        let final_title = parsed.title.clone().or(doc_title);
-
-        // sha256 от исходных bytes — стабильнее, чем от parsed.plain_text
-        // (markdown / html форматирование может менять чанк, но если bytes
-        // те же — ингест уже актуальный).
-        let sha256 = sha256_hex(&bytes);
-
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let doc_row = DocumentRow {
-            id: None,
-            source_kind: source_kind_str,
-            source_path,
-            sha256,
-            title: final_title,
-            bytes: bytes.len() as i64,
-            indexed_at: now,
-        };
-
-        // --- Chunking ---
-        emit(
-            IngestStage::Chunking,
-            idx,
-            total,
-            Some(task_label.clone()),
-            None,
-        );
-        let chunks = match chunk(&parsed, tokenizer, chunk_cfg) {
-            Ok(c) => c,
-            Err(e) => {
-                log::warn!("kb ingest: chunk {task_label}: {e}");
-                continue;
-            }
-        };
-        if chunks.is_empty() {
-            continue;
-        }
-
-        // upsert_document: если sha не изменился, fresh=false → пропустим embed.
-        let (doc_id, fresh) = match store.upsert_document(&doc_row) {
-            Ok(t) => t,
-            Err(e) => {
-                log::warn!("kb ingest: upsert_document: {e}");
-                continue;
-            }
-        };
-        if !fresh {
-            // Документ не изменился — пропускаем embed/store, идём дальше.
-            continue;
-        }
-
-        // --- Embedding ---
-        emit(
-            IngestStage::Embedding,
-            idx,
-            total,
-            Some(task_label.clone()),
-            None,
-        );
-        let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-        let vectors = match embedder.encode(&texts) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("kb ingest: embed {task_label}: {e}");
-                continue;
-            }
-        };
-        if vectors.len() != chunks.len() {
-            log::warn!(
-                "kb ingest: embedder вернул {} векторов на {} чанков — пропускаю",
-                vectors.len(),
-                chunks.len()
-            );
-            continue;
-        }
-
-        // --- Storing ---
-        emit(
-            IngestStage::Storing,
-            idx,
-            total,
-            Some(task_label.clone()),
-            None,
-        );
-        let chunk_rows: Vec<ChunkRow> = chunks
-            .into_iter()
-            .zip(vectors)
-            .enumerate()
-            .map(|(ord, (c, v))| ChunkRow {
-                ord: ord as i32,
-                text: c.text,
-                start_byte: c.start_byte,
-                end_byte: c.end_byte,
-                token_count: c.token_count,
-                embedding: v,
-            })
-            .collect();
-        if let Err(e) = store.insert_chunks(doc_id, &chunk_rows, embedding_dim) {
-            log::warn!("kb ingest: insert_chunks {task_label}: {e}");
-            continue;
-        }
-
-        let _ = parsed; // drop heavy buffers to keep peak memory low
     }
 
-    emit(IngestStage::Done, total, total, None, None);
-    Ok(())
+    emit(
+        IngestStage::Done,
+        total,
+        total,
+        None,
+        outcome.failed.first().map(|f| f.error.clone()),
+    );
+    Ok(outcome)
+}
+
+/// Что стало с одним источником.
+enum TaskResult {
+    Indexed { chunks: usize },
+    Skipped,
+}
+
+/// Один источник: прочитать → сверить с БД → распарсить → нарезать →
+/// посчитать эмбеддинги → записать документ с чанками одной транзакцией.
+/// Любой сбой — `Err(текст)`, который увидит пользователь.
+#[allow(clippy::too_many_arguments)]
+fn ingest_one(
+    task: &DiscoveredTask,
+    store: &mut Store,
+    embedder: &dyn Embedder,
+    chunk_cfg: &ChunkConfig,
+    tokenizer: &tokenizers::Tokenizer,
+    embedding_dim: usize,
+    fetch_url: Option<&dyn Fn(&str) -> Result<(String, String), String>>,
+    mut stage: impl FnMut(IngestStage),
+) -> Result<TaskResult, String> {
+    stage(IngestStage::Parsing);
+
+    let (bytes, source_kind, source_kind_str, source_path, doc_title): (
+        Vec<u8>,
+        SourceKind,
+        String,
+        String,
+        Option<String>,
+    ) = match task {
+        DiscoveredTask::File { path, kind } => {
+            let bs = std::fs::read(path).map_err(|e| e.to_string())?;
+            let title = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string());
+            (
+                bs,
+                *kind,
+                match kind {
+                    SourceKind::Pdf => "pdf".into(),
+                    _ => "file".into(),
+                },
+                path.display().to_string(),
+                title,
+            )
+        }
+        DiscoveredTask::Url(u) => {
+            let fetch = fetch_url.ok_or_else(|| tr!("kb.ingest.no_fetcher"))?;
+            let (md, title) = fetch(u)?;
+            (
+                md.into_bytes(),
+                SourceKind::Markdown,
+                "url".into(),
+                u.clone(),
+                Some(title),
+            )
+        }
+    };
+
+    // sha256 от исходных bytes — стабильнее, чем от parsed.plain_text
+    // (markdown / html форматирование может менять чанк, но если bytes
+    // те же — ингест уже актуальный). Документ без чанков переиндексируем
+    // даже при совпавшем sha: искать по нему всё равно нечего.
+    let sha256 = sha256_hex(&bytes);
+    let known = store
+        .document_status(&source_kind_str, &source_path)
+        .map_err(|e| e.to_string())?;
+    if known.is_some_and(|d| d.sha256 == sha256 && d.chunk_count > 0) {
+        return Ok(TaskResult::Skipped);
+    }
+
+    let parsed = parse(&bytes, source_kind).map_err(|e| e.to_string())?;
+    if parsed.plain_text.trim().is_empty() {
+        return Err(tr!("kb.ingest.no_text"));
+    }
+    // ParsedDoc::title (h1 для md, <title> для html) превалирует над именем файла.
+    let final_title = parsed.title.clone().or(doc_title);
+
+    stage(IngestStage::Chunking);
+    let chunks = chunk(&parsed, tokenizer, chunk_cfg).map_err(|e| e.to_string())?;
+    if chunks.is_empty() {
+        return Err(tr!("kb.ingest.no_chunks"));
+    }
+
+    stage(IngestStage::Embedding);
+    let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+    let vectors = embedder.encode(&texts)?;
+    if vectors.len() != chunks.len() {
+        return Err(tr!(
+            "kb.ingest.vector_count_mismatch",
+            got = vectors.len(),
+            expected = chunks.len()
+        ));
+    }
+
+    stage(IngestStage::Storing);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let doc_row = DocumentRow {
+        id: None,
+        source_kind: source_kind_str,
+        source_path,
+        sha256,
+        title: final_title,
+        bytes: bytes.len() as i64,
+        indexed_at: now,
+    };
+    let count = chunks.len();
+    let chunk_rows: Vec<ChunkRow> = chunks
+        .into_iter()
+        .zip(vectors)
+        .enumerate()
+        .map(|(ord, (c, v))| ChunkRow {
+            ord: ord as i32,
+            text: c.text,
+            start_byte: c.start_byte,
+            end_byte: c.end_byte,
+            token_count: c.token_count,
+            embedding: v,
+        })
+        .collect();
+    store
+        .write_document(&doc_row, &chunk_rows, embedding_dim)
+        .map_err(|e| e.to_string())?;
+    Ok(TaskResult::Indexed { chunks: count })
 }
 
 /// Удобный async-launcher, который вызывает `run_blocking` в spawn_blocking.
@@ -331,7 +352,7 @@ pub async fn run<F>(
     embedding_dim: usize,
     on_progress: F,
     fetch_url: Option<Arc<dyn Fn(&str) -> Result<(String, String), String> + Send + Sync>>,
-) -> Result<(), IngestError>
+) -> Result<IngestOutcome, IngestError>
 where
     F: Fn(IngestProgress) + Send + 'static,
 {
@@ -396,7 +417,119 @@ fn _type_anchor() -> Option<ParsedDoc> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use synaptix::facade::embedding::EmbeddingResult;
+
     use super::*;
+    use crate::kb::collection::CollectionMeta;
+
+    const DIM: usize = 8;
+
+    /// Эмбеддер, которым можно управлять из теста: считает «хэш-векторы»,
+    /// а при `fail` падает — как настоящий на нехватке VRAM.
+    struct StubEmbedder {
+        fail: bool,
+    }
+
+    impl Embedder for StubEmbedder {
+        fn dim(&self) -> usize {
+            DIM
+        }
+        fn max_tokens(&self) -> usize {
+            512
+        }
+        fn encode(&self, texts: &[&str]) -> EmbeddingResult<Vec<Vec<f32>>> {
+            if self.fail {
+                return Err("CUDA out of memory".to_string());
+            }
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let seed = t.len() as f32;
+                    let mut v = vec![0.0f32; DIM];
+                    for (i, x) in v.iter_mut().enumerate() {
+                        *x = ((seed + i as f32) % 7.0) / 7.0;
+                    }
+                    let n = synaptix::facade::embedding::l2_norm(&v).max(1e-12);
+                    for x in v.iter_mut() {
+                        *x /= n;
+                    }
+                    v
+                })
+                .collect())
+        }
+    }
+
+    /// Пословный токенайзер: чанкеру нужны только offset'ы токенов.
+    fn tokenizer() -> tokenizers::Tokenizer {
+        const JSON: &str = r#"{
+            "version": "1.0",
+            "truncation": null,
+            "padding": null,
+            "added_tokens": [],
+            "normalizer": null,
+            "pre_tokenizer": { "type": "Whitespace" },
+            "post_processor": null,
+            "decoder": null,
+            "model": { "type": "WordLevel", "vocab": { "[UNK]": 0 }, "unk_token": "[UNK]" }
+        }"#;
+        tokenizers::Tokenizer::from_bytes(JSON.as_bytes()).unwrap()
+    }
+
+    fn store() -> Store {
+        let mut s = Store::open_in_memory().unwrap();
+        s.ensure_schema().unwrap();
+        s.upsert_collection(&CollectionMeta {
+            id: "test".into(),
+            name: "test".into(),
+            created_at: 0,
+            embedding_model: "stub".into(),
+            embedding_dim: DIM as i32,
+            chunk_target_tokens: 16,
+            chunk_overlap_tokens: 4,
+            document_count: 0,
+            chunk_count: 0,
+        })
+        .unwrap();
+        s
+    }
+
+    fn job(paths: Vec<std::path::PathBuf>) -> IngestJob {
+        IngestJob {
+            job_id: 1,
+            collection_id: "test".into(),
+            sources: paths.into_iter().map(DocSource::File).collect(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn run(job: &IngestJob, store: &mut Store, fail: bool) -> IngestOutcome {
+        let cfg = ChunkConfig {
+            target_tokens: 16,
+            overlap_tokens: 4,
+            min_tokens: 2,
+        };
+        run_blocking(
+            job,
+            store,
+            &StubEmbedder { fail },
+            &cfg,
+            &tokenizer(),
+            DIM,
+            |_| {},
+            None,
+        )
+        .unwrap()
+    }
+
+    fn temp_md(name: &str, text: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("synthos-kb-pipeline-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    }
 
     #[test]
     fn sha256_stable() {
@@ -412,5 +545,78 @@ mod tests {
         let s: IngestStage = IngestStage::Discovering;
         assert_eq!(s, IngestStage::Discovering);
         assert_ne!(s, IngestStage::Done);
+    }
+
+    /// Сбой эмбеддинга не должен оставлять документ в БД: раньше строка
+    /// записывалась до векторов, и коллекция с виду была полной, а поиск
+    /// по ней не находил ничего — навсегда, потому что повторная
+    /// индексация пропускала файл по совпавшему sha.
+    #[test]
+    fn failed_embedding_leaves_nothing_and_next_run_retries() {
+        let path = temp_md("family.md", "Брачный возраст восемнадцать лет для мужчин и женщин.");
+        let job = job(vec![path.clone()]);
+        let mut store = store();
+
+        let outcome = run(&job, &mut store, true);
+        assert_eq!(outcome.indexed, 0);
+        assert_eq!(outcome.failed.len(), 1, "ошибка источника видна наружу");
+        assert!(outcome.failed[0].error.contains("out of memory"), "{outcome:?}");
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.document_count, 0, "пустых документов в БД не остаётся");
+        assert_eq!(stats.chunk_count, 0);
+
+        let outcome = run(&job, &mut store, false);
+        assert_eq!(outcome.indexed, 1, "следующий запуск берётся за файл снова");
+        assert!(outcome.failed.is_empty());
+        assert!(outcome.chunks > 0);
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.document_count, 1);
+        assert!(stats.chunk_count > 0);
+
+        // Тот же файл без изменений — повторно не считаем.
+        let outcome = run(&job, &mut store, false);
+        assert_eq!(outcome.indexed, 0);
+        assert_eq!(outcome.skipped, 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Документ без чанков (наследство старой версии) переиндексируется,
+    /// хотя sha файла не менялся.
+    #[test]
+    fn document_without_chunks_is_reindexed() {
+        let path = temp_md("orphan.md", "Опека и попечительство устанавливаются судом.");
+        let job = job(vec![path.clone()]);
+        let mut store = store();
+        let bytes = std::fs::read(&path).unwrap();
+        store
+            .upsert_document(&DocumentRow {
+                id: None,
+                source_kind: "file".into(),
+                source_path: path.display().to_string(),
+                sha256: sha256_hex(&bytes),
+                title: None,
+                bytes: bytes.len() as i64,
+                indexed_at: 0,
+            })
+            .unwrap();
+        assert_eq!(store.stats().unwrap().chunk_count, 0);
+
+        let outcome = run(&job, &mut store, false);
+        assert_eq!(outcome.indexed, 1, "пустой документ не считается свежим");
+        assert!(store.stats().unwrap().chunk_count > 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Файл неизвестного формата раньше молча исчезал из задания.
+    #[test]
+    fn unsupported_format_is_reported() {
+        let path = temp_md("archive.bin", "не текст");
+        let job = job(vec![path.clone()]);
+        let mut store = store();
+        let outcome = run(&job, &mut store, false);
+        assert_eq!(outcome.indexed, 0);
+        assert_eq!(outcome.failed.len(), 1);
+        assert_eq!(outcome.failed[0].source, path.display().to_string());
+        let _ = std::fs::remove_file(path);
     }
 }

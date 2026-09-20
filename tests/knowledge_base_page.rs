@@ -20,7 +20,7 @@ use synthos::context::AppCtx;
 use synthos::kb::ctx::ModelState;
 use synthos::kb::ingest::pipeline::{IngestProgress, IngestStage};
 use synthos::kb::models::{FoundBy, FoundModel, ModelPaths};
-use synthos::kb::store::DocumentRow;
+use synthos::kb::store::{ChunkRow, DocumentRow};
 use synthos::pages::settings::knowledge_base::{self, collections_panel};
 
 const WIDTH: f32 = 1100.0;
@@ -101,10 +101,32 @@ fn knowledge_base_page_sections_states_and_actions() {
     assert_eq!(kb.registry.get_untracked().items.len(), 1);
 
     // Документы кладём прямо в БД — индексации (и моделей) тест не трогает.
+    // Первый — с фрагментом, остальные без: так выглядит документ, чью
+    // индексацию оборвали, и страница обязана это показывать.
+    let dim = kb.registry.get_untracked().get(&id).unwrap().embedding_dim as usize;
     {
-        let store = kb.registry.get_untracked().open_store(&id).unwrap();
+        let mut store = kb.registry.get_untracked().open_store(&id).unwrap();
         for i in 0..30 {
-            store.upsert_document(&doc(&format!("/home/user/project/docs/chapter-{i:02}.md"))).unwrap();
+            let doc_id = store
+                .upsert_document(&doc(&format!("/home/user/project/docs/chapter-{i:02}.md")))
+                .unwrap()
+                .0;
+            if i == 0 {
+                store
+                    .insert_chunks(
+                        doc_id,
+                        &[ChunkRow {
+                            ord: 0,
+                            text: "chapter zero".into(),
+                            start_byte: 0,
+                            end_byte: 12,
+                            token_count: 2,
+                            embedding: vec![0.0; dim],
+                        }],
+                        dim,
+                    )
+                    .unwrap();
+            }
         }
     }
     kb.registry.update(|r| r.scan());
@@ -130,6 +152,9 @@ fn knowledge_base_page_sections_states_and_actions() {
     // Длинный список — частями, с фильтром и кнопкой «Показать все».
     assert_eq!(count(&h, "kb-doc-title"), 25, "первая страница документов");
     assert_eq!(count(&h, "kb-filter-field"), 1, "фильтр появляется на длинном списке");
+    // Фрагменты видны в каждой строке, «нет фрагментов» — подсвечено.
+    assert_eq!(count(&h, "kb-doc-meta"), 25, "счётчик фрагментов у каждой строки");
+    assert_eq!(count(&h, "warn"), 24, "документы без фрагментов помечены");
 
     // ── Строки моделей ────────────────────────────────────────────────
     // Поиск ещё идёт: ни предупреждения, ни кнопок.
@@ -196,11 +221,15 @@ fn knowledge_base_page_sections_states_and_actions() {
 
     // ── Удаление документа: строка уходит, счётчик коллекции обновляется ──
     let before = kb.registry.get_untracked().get(&id).unwrap().document_count;
-    let trash: Vec<ElementId> = h
-        .find_by_class("kb-icon-btn")
-        .into_iter()
-        .filter(|e| h.element_bounds(*e).origin.y > h.element_bounds(h.find_by_class("kb-doc-title")[0]).origin.y - 30.0)
-        .collect();
+    let first_doc_y = h.element_bounds(h.find_by_class("kb-doc-title")[0]).origin.y;
+    let rows_from = |h: &TestHarness, class: &str| -> Vec<ElementId> {
+        h.find_by_class(class)
+            .into_iter()
+            .filter(|e| h.element_bounds(*e).origin.y > first_doc_y - 30.0)
+            .collect()
+    };
+    assert_eq!(rows_from(&h, "kb-icon-btn").len(), 50, "переиндексация + корзина у строки");
+    let trash: Vec<ElementId> = rows_from(&h, "danger");
     assert_eq!(trash.len(), 25, "корзина у каждой строки документа");
     h.send_events(&click_at(center(&h, trash[0])));
     settle(&mut h, WIDTH);

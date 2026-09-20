@@ -18,7 +18,7 @@ use syngui::{tr, trn};
 use synaptix_rag::doc::ChunkConfig;
 
 use crate::kb::ctx::KbCtx;
-use crate::kb::ingest::pipeline::{self, IngestJob, IngestProgress, IngestStage};
+use crate::kb::ingest::pipeline::{self, IngestJob, IngestOutcome, IngestProgress, IngestStage};
 use crate::kb::loader::{self, LoadPlan};
 use crate::kb::models::{self, ModelKind};
 use crate::kb::ingest::source::DocSource;
@@ -146,21 +146,14 @@ pub fn start(
             cancel_flag,
         };
 
+        // Прогресс только рисует карточку: итог подводится по-настоящему
+        // ниже, из `IngestOutcome`. Раньше здесь же говорилось «Готово:
+        // проиндексировано N» по числу найденных файлов — даже если ни один
+        // из них не дошёл до БД.
         let kb_pp = kb_for_progress.clone();
-        let notifications_pp = notifications_for_progress.clone();
         let on_progress = move |p: pipeline::IngestProgress| {
-            let stage = p.stage;
-            let total = p.total;
             let kb_inner = kb_pp.clone();
-            let n_inner = notifications_pp.clone();
-            run_on_main_thread(move || {
-                kb_inner.ingest_progress.set(Some(p));
-                if stage == IngestStage::Done {
-                    n_inner.success(trn!("kb.runner.ingest_done", total));
-                } else if stage == IngestStage::Cancelled {
-                    n_inner.info(tr!("kb.runner.ingest_cancelled"));
-                }
-            });
+            run_on_main_thread(move || kb_inner.ingest_progress.set(Some(p)));
         };
 
         let result = pipeline::run(
@@ -186,14 +179,65 @@ pub fn start(
             kb_done.documents_rev.update(|r| *r += 1);
         });
 
-        if let Err(e) = result {
-            let n_err = notifications_for_progress.clone();
-            run_on_main_thread(move || {
-                n_err.error(tr!("kb.runner.ingest_error", error = e));
-            });
+        let n_end = notifications_for_progress.clone();
+        match result {
+            Ok(outcome) => run_on_main_thread(move || report_outcome(&n_end, &outcome)),
+            Err(e) => run_on_main_thread(move || {
+                n_end.error(tr!("kb.runner.ingest_error", error = e));
+            }),
         }
     });
     true
+}
+
+/// Сказать пользователю, чем кончилась индексация. Ошибки источников —
+/// отдельным сообщением: молчание про них и оставляло пустые коллекции,
+/// про которые никто не знал.
+fn report_outcome(notifications: &NotificationCtx, outcome: &IngestOutcome) {
+    if outcome.cancelled {
+        notifications.info(tr!("kb.runner.ingest_cancelled"));
+        return;
+    }
+    if outcome.indexed > 0 {
+        notifications.success(tr!(
+            "kb.runner.ingest_done",
+            sources = outcome.indexed,
+            chunks = outcome.chunks
+        ));
+    } else if outcome.skipped > 0 && outcome.failed.is_empty() {
+        notifications.info(trn!("kb.runner.ingest_unchanged", outcome.skipped));
+    }
+    if let Some(first) = outcome.failed.first() {
+        let text = if outcome.failed.len() == 1 {
+            tr!(
+                "kb.runner.ingest_failed_one",
+                source = short_source(&first.source),
+                error = first.error
+            )
+        } else {
+            tr!(
+                "kb.runner.ingest_failed_many",
+                n = outcome.failed.len(),
+                source = short_source(&first.source),
+                error = first.error
+            )
+        };
+        notifications.error(text);
+    }
+}
+
+/// Имя файла вместо полного пути — в узкий snackbar путь не влезает.
+fn short_source(source: &str) -> String {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        return source.to_string();
+    }
+    source
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(source)
+        .to_string()
 }
 
 /// Отменить активный job.

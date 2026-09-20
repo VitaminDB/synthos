@@ -256,6 +256,16 @@ TextField.kb-filter-field {
     font-family: monospace;
 }
 
+/* Сколько фрагментов у документа; `warn` — ни одного, искать по нему нечем. */
+.kb-doc-meta {
+    color: var(--text-subtle);
+    font-size: 12px;
+}
+
+.kb-doc-meta.warn {
+    color: var(--warning);
+}
+
 .kb-placeholder-icon {
     icon-size: 32px;
     color: var(--text-subtle);

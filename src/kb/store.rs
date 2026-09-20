@@ -151,10 +151,14 @@ impl Store {
         // synchronous=NORMAL — компромисс надёжность/скорость; для индекса
         // с лёгким revert (re-index) это ок.
         // foreign_keys — для каскадного удаления chunks при delete document.
+        // busy_timeout — страница настроек перечитывает список документов из
+        // той же БД, пока идёт индексация; без ожидания запись падала бы
+        // мгновенным SQLITE_BUSY.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA foreign_keys=ON;
+             PRAGMA busy_timeout=5000;
              PRAGMA temp_store=MEMORY;",
         )?;
         Ok(())
@@ -294,6 +298,35 @@ impl Store {
         Ok(id)
     }
 
+    /// Что БД уже знает про источник: id, sha и сколько у него чанков.
+    ///
+    /// Ноль чанков — документ «пустой»: строку записали, а эмбеддинги до неё
+    /// не дошли (прошлую индексацию оборвали или она упала). Такой источник
+    /// надо индексировать заново, поэтому [`super::ingest::pipeline`] смотрит
+    /// не только на sha.
+    pub fn document_status(
+        &self,
+        source_kind: &str,
+        source_path: &str,
+    ) -> Result<Option<DocumentStatus>, StoreError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT d.id, d.sha256, (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) \
+                 FROM documents d WHERE d.source_kind=?1 AND d.source_path=?2",
+                params![source_kind, source_path],
+                |r| {
+                    Ok(DocumentStatus {
+                        id: r.get(0)?,
+                        sha256: r.get(1)?,
+                        chunk_count: r.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// Вставить или обновить документ. Возвращает row id.
     /// Если sha256 совпал с существующим — НЕ пересоздаём, возвращаем
     /// прежний id и `false` во втором поле (caller'у это сигнал
@@ -389,6 +422,91 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Записать документ вместе с его чанками — одной транзакцией.
+    ///
+    /// Либо в БД появляется документ со всеми своими чанками, либо не
+    /// меняется ничего. Раздельные `upsert_document` + `insert_chunks`
+    /// оставляли после сбоя (или закрытия приложения между ними) строку
+    /// документа без единого чанка: поиск по такой коллекции ничего не
+    /// находил, а повторная индексация пропускала файл по совпавшему sha.
+    pub fn write_document(
+        &mut self,
+        doc: &DocumentRow,
+        chunks: &[ChunkRow],
+        embedding_dim: usize,
+    ) -> Result<i64, StoreError> {
+        for c in chunks {
+            if c.embedding.len() != embedding_dim {
+                return Err(StoreError::DimMismatch {
+                    expected: embedding_dim,
+                    got: c.embedding.len(),
+                });
+            }
+        }
+        let vec_index_active = self
+            .vec_index
+            .as_ref()
+            .map(|v| v.is_sqlite_vec())
+            .unwrap_or(false);
+        let tx = self.conn.transaction()?;
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM documents WHERE source_kind=?1 AND source_path=?2",
+                params![doc.source_kind, doc.source_path],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let doc_id = match existing {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE documents SET sha256=?1, title=?2, bytes=?3, indexed_at=?4 WHERE id=?5",
+                    params![doc.sha256, doc.title, doc.bytes, doc.indexed_at, id],
+                )?;
+                // Триггеры FTS и `chunks_vec_ad` вычистят индексы сами.
+                tx.execute("DELETE FROM chunks WHERE document_id=?1", params![id])?;
+                id
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO documents (source_kind, source_path, sha256, title, bytes, indexed_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![doc.source_kind, doc.source_path, doc.sha256, doc.title, doc.bytes, doc.indexed_at],
+                )?;
+                tx.last_insert_rowid()
+            }
+        };
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO chunks \
+                 (document_id, ord, text, start_byte, end_byte, token_count, embedding) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            let mut vec_stmt = if vec_index_active {
+                Some(tx.prepare("INSERT INTO chunks_vec(chunk_id, embedding) VALUES (?1, ?2)")?)
+            } else {
+                None
+            };
+            for c in chunks {
+                let blob = vec_f32_to_le_bytes(&c.embedding);
+                stmt.execute(params![
+                    doc_id,
+                    c.ord,
+                    c.text,
+                    c.start_byte as i64,
+                    c.end_byte as i64,
+                    c.token_count as i64,
+                    blob.as_slice(),
+                ])?;
+                if let Some(vs) = vec_stmt.as_mut() {
+                    let chunk_id = tx.last_insert_rowid();
+                    vs.execute(params![chunk_id, blob.as_slice()])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(doc_id)
     }
 
     /// FTS5 поиск по тексту. Возвращает (chunk_id, BM25-score).
@@ -525,6 +643,32 @@ impl Store {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    /// Документы со счётчиком чанков — то, что показывает страница
+    /// коллекции. Ноль у строки значит, что искать по этому документу
+    /// нечем, и его стоит проиндексировать заново.
+    pub fn list_documents_with_counts(&self) -> Result<Vec<DocumentInfo>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.id, d.source_kind, d.source_path, d.sha256, d.title, d.bytes, d.indexed_at, \
+                    (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) \
+             FROM documents d ORDER BY d.indexed_at DESC, d.source_path ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(DocumentInfo {
+                row: DocumentRow {
+                    id: Some(r.get(0)?),
+                    source_kind: r.get(1)?,
+                    source_path: r.get(2)?,
+                    sha256: r.get(3)?,
+                    title: r.get(4)?,
+                    bytes: r.get(5)?,
+                    indexed_at: r.get(6)?,
+                },
+                chunk_count: r.get(7)?,
+            })
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
     pub fn stats(&self) -> Result<KbStats, StoreError> {
         let document_count: i64 =
             self.conn.query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))?;
@@ -535,6 +679,21 @@ impl Store {
             chunk_count,
         })
     }
+}
+
+/// Состояние источника в БД — для решения «индексировать или пропустить».
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentStatus {
+    pub id: i64,
+    pub sha256: String,
+    pub chunk_count: i64,
+}
+
+/// Строка документа вместе с числом его чанков (для списка в настройках).
+#[derive(Debug, Clone)]
+pub struct DocumentInfo {
+    pub row: DocumentRow,
+    pub chunk_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -767,6 +926,46 @@ mod tests {
         let (id2, fresh2) = s.upsert_document(&sample_doc()).unwrap();
         assert_eq!(id1, id2);
         assert!(!fresh2, "повторный sha256 → fresh=false");
+    }
+
+    #[test]
+    fn write_document_is_all_or_nothing_and_status_sees_empty_doc() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.ensure_schema().unwrap();
+        s.upsert_collection(&sample_meta()).unwrap();
+
+        // Строка документа без чанков — так выглядит оборванная индексация.
+        let (_, _) = s.upsert_document(&sample_doc()).unwrap();
+        let st = s.document_status("file", "/tmp/a.md").unwrap().unwrap();
+        assert_eq!(st.sha256, "abc");
+        assert_eq!(st.chunk_count, 0, "по такому документу искать нечем");
+
+        // Запись документа вместе с чанками — одной транзакцией.
+        s.write_document(&sample_doc(), &sample_chunks(), 4).unwrap();
+        let st = s.document_status("file", "/tmp/a.md").unwrap().unwrap();
+        assert_eq!(st.chunk_count, 3);
+        assert_eq!(s.stats().unwrap().document_count, 1, "документ не задвоился");
+
+        // Сбой на чанке не должен оставить документ в половинчатом виде.
+        let mut broken = sample_chunks();
+        broken[1].embedding = vec![0.0; 3];
+        let doc = DocumentRow {
+            sha256: "def".into(),
+            ..sample_doc()
+        };
+        assert!(s.write_document(&doc, &broken, 4).is_err());
+        let st = s.document_status("file", "/tmp/a.md").unwrap().unwrap();
+        assert_eq!(st.sha256, "abc", "старая версия документа на месте");
+        assert_eq!(st.chunk_count, 3, "чанки не потерялись");
+
+        // Повторная запись того же пути заменяет чанки, а не добавляет.
+        s.write_document(&doc, &sample_chunks()[..2], 4).unwrap();
+        let st = s.document_status("file", "/tmp/a.md").unwrap().unwrap();
+        assert_eq!(st.sha256, "def");
+        assert_eq!(st.chunk_count, 2);
+        let info = s.list_documents_with_counts().unwrap();
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].chunk_count, 2);
     }
 
     #[test]

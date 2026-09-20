@@ -1,14 +1,20 @@
 //! Секция «Документы»: что проиндексировано в коллекции.
 //!
+//! В строке видно число фрагментов: ноль значит, что искать по документу
+//! нечем (индексацию оборвали или она упала) — такая строка подсвечена, и
+//! рядом с ней кнопка «проиндексировать заново».
+//!
 //! Список перечитывается из БД по `registry` (счётчики после индексации) и
 //! `documents_rev` (удаление документа). Длинный список показывается частями:
 //! тысяча строк в одной колонке — это и лаг раскладки, и бесполезная простыня.
 
 use syngui::prelude::*;
+use syngui::trn;
 
 use crate::context::AppCtx;
 use crate::icons::*;
-use crate::kb::store::DocumentRow;
+use crate::kb::ingest::source::DocSource;
+use crate::kb::store::{DocumentInfo, DocumentRow};
 
 /// Сколько строк видно, пока не нажали «Показать все».
 const PAGE: usize = 25;
@@ -51,7 +57,7 @@ pub(super) fn view(collection_id: String) -> Box<dyn Widget> {
         let docs = registry
             .open_store(&collection_id)
             .ok()
-            .and_then(|s| s.list_documents().ok())
+            .and_then(|s| s.list_documents_with_counts().ok())
             .unwrap_or_default();
         vec![list(&collection_id, docs, &filter.get(), expanded)]
     });
@@ -65,7 +71,7 @@ pub(super) fn view(collection_id: String) -> Box<dyn Widget> {
 
 fn list(
     collection_id: &str,
-    docs: Vec<DocumentRow>,
+    docs: Vec<DocumentInfo>,
     filter: &str,
     expanded: RwSignal<bool>,
 ) -> Box<dyn Widget> {
@@ -73,12 +79,12 @@ fn list(
         return placeholder(MI_DESCRIPTION, tr!("settings.knowledge_base.documents.empty"));
     }
     let needle = filter.trim().to_lowercase();
-    let matched: Vec<DocumentRow> = docs
+    let matched: Vec<DocumentInfo> = docs
         .into_iter()
         .filter(|d| {
             needle.is_empty()
-                || d.source_path.to_lowercase().contains(&needle)
-                || d.title.as_deref().is_some_and(|t| t.to_lowercase().contains(&needle))
+                || d.row.source_path.to_lowercase().contains(&needle)
+                || d.row.title.as_deref().is_some_and(|t| t.to_lowercase().contains(&needle))
         })
         .collect();
     if matched.is_empty() {
@@ -124,16 +130,24 @@ fn placeholder(icon: &str, text: String) -> Box<dyn Widget> {
     )
 }
 
-fn doc_row(collection_id: &str, doc: DocumentRow) -> Box<dyn Widget> {
+fn doc_row(collection_id: &str, info: DocumentInfo) -> Box<dyn Widget> {
+    let doc = info.row;
     let title = doc
         .title
         .clone()
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| file_name(&doc.source_path));
     let size = crate::models::human_bytes(doc.bytes.max(0) as u64);
+    let empty = info.chunk_count <= 0;
+    let fragments = if empty {
+        tr!("settings.knowledge_base.documents.no_fragments")
+    } else {
+        trn!("settings.knowledge_base.documents.fragments", info.chunk_count as u64)
+    };
+    let meta_class = if empty { "kb-doc-meta warn" } else { "kb-doc-meta" };
 
     let mut cells: Vec<Box<dyn Widget>> = vec![
-        super::row_icon(kind_icon(&doc)),
+        super::row_icon(if empty { MI_SYNC_PROBLEM } else { kind_icon(&doc) }),
         Box::new(
             DecoratedBox::new().class("grow kb-min0").child(
                 Column::new()
@@ -147,8 +161,22 @@ fn doc_row(collection_id: &str, doc: DocumentRow) -> Box<dyn Widget> {
                     ),
             ),
         ),
-        Box::new(Text::new(size).class("kb-doc-size")),
+        Box::new(
+            Column::new()
+                .gap(2.0)
+                .cross_axis_alignment(CrossAxisAlignment::End)
+                .child(Text::new(size).class("kb-doc-size"))
+                .child(Text::new(fragments).class(meta_class)),
+        ),
     ];
+    let source = reindex_source(&doc);
+    let cid_reindex = collection_id.to_string();
+    cells.push(Box::new(
+        ToolButton::new(MI_AUTORENEW)
+            .tooltip(tr!("settings.knowledge_base.documents.reindex"))
+            .on_click(move || reindex(cid_reindex.clone(), source.clone()))
+            .class("kb-icon-btn"),
+    ));
     if let Some(doc_id) = doc.id {
         let cid = collection_id.to_string();
         cells.push(Box::new(
@@ -168,6 +196,32 @@ fn doc_row(collection_id: &str, doc: DocumentRow) -> Box<dyn Widget> {
             ),
         ),
     )
+}
+
+/// Из чего документ индексировался — чтобы повторить это одной кнопкой.
+fn reindex_source(doc: &DocumentRow) -> DocSource {
+    match doc.source_kind.as_str() {
+        "url" => DocSource::Url(doc.source_path.clone()),
+        "pdf" => DocSource::Pdf(doc.source_path.clone().into()),
+        _ => DocSource::File(doc.source_path.clone().into()),
+    }
+}
+
+/// Индексация того же источника ещё раз. Неизменившийся файл с фрагментами
+/// конвейер пропустит сам; пустой документ (оборванная индексация) —
+/// переиндексирует.
+fn reindex(collection_id: String, source: DocSource) {
+    let app = use_context::<AppCtx>();
+    if let DocSource::File(p) | DocSource::Pdf(p) = &source {
+        if !p.is_file() {
+            app.notifications.error(tr!(
+                "settings.knowledge_base.documents.reindex_missing",
+                path = p.display()
+            ));
+            return;
+        }
+    }
+    super::launch(collection_id, vec![source]);
 }
 
 fn kind_icon(doc: &DocumentRow) -> &'static str {

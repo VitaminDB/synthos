@@ -96,11 +96,21 @@ async fn stale_config_path_bundles_load_index_and_search() {
         cancel_flag: Arc::new(AtomicBool::new(false)),
     };
     let chunk_cfg = ChunkConfig { target_tokens: 512, overlap_tokens: 64, min_tokens: 8 };
-    pipeline::run_blocking(&job, &mut store, embedder.as_ref(), &chunk_cfg, &tokenizer, 1024, |_| {}, None)
-        .expect("индексация");
+    let outcome =
+        pipeline::run_blocking(&job, &mut store, embedder.as_ref(), &chunk_cfg, &tokenizer, 1024, |_| {}, None)
+            .expect("индексация");
+    assert_eq!(outcome.indexed, 2, "оба файла записаны: {outcome:?}");
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert!(outcome.chunks >= 2, "{outcome:?}");
     let stats = store.stats().unwrap();
     assert_eq!(stats.document_count, 2);
     assert!(stats.chunk_count >= 2, "{stats:?}");
+
+    // Второй прогон по тем же файлам ничего не пересчитывает.
+    let outcome =
+        pipeline::run_blocking(&job, &mut store, embedder.as_ref(), &chunk_cfg, &tokenizer, 1024, |_| {}, None)
+            .expect("повторная индексация");
+    assert_eq!((outcome.indexed, outcome.skipped), (0, 2), "{outcome:?}");
 
     let hits = hybrid_search_with_rerank(
         &store,

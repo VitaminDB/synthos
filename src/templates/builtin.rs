@@ -8,6 +8,7 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
+    Yue2CheckpointStateData, Yue2GenerateStateData,
     FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
     QwenImageCheckpointStateData, SdxlCheckpointStateData, SdxlSamplerStateData,
     H3KeyframeStateData, H3SamplerStateData, LlmStateData, LtxSamplerStage1StateData, NodeData,
@@ -39,6 +40,9 @@ pub fn all() -> Vec<Template> {
         acestep_edit_template(),
         acestep_cover_template(),
         acestep_extract_template(),
+        yue2_song_template(),
+        yue2_edit_score_template(),
+        yue2_cover_template(),
         h3_text_to_video_template(),
         h3_turbo_template(),
         h3_first_frame_template(),
@@ -2013,6 +2017,108 @@ fn acestep_text2music_template() -> Template {
         "Checkpoint + tags/lyrics → Generate (text2music) → плеер. Базовая генерация музыки из текста.",
         "energetic electronic dance, driving synths, 128 bpm",
         acestep_gen(0, |_| {}),
+    )
+}
+
+/// Партитура и лирика показываются текстовыми нодами: их можно прочитать,
+/// поправить и подать назад во вход `abc` — на этом и держится «белый ящик»
+/// YuE2.
+fn yue2_checkpoint_state() -> NodeStateData {
+    NodeStateData::Yue2Checkpoint(Yue2CheckpointStateData {
+        models_dir: None,
+        device_idx: 1, // GPU
+        ..Default::default()
+    })
+}
+
+fn yue2_gen(cot_idx: usize, seconds: f32) -> NodeStateData {
+    NodeStateData::Yue2Generate(Yue2GenerateStateData {
+        cot_idx,
+        seconds,
+        ..Default::default()
+    })
+}
+
+/// Checkpoint + стиль/лирика → Generate → плеер, а партитура выводится в
+/// текстовую ноду.
+fn yue2_song_like(
+    id: &str,
+    name: &str,
+    desc: &str,
+    style: &str,
+    lyrics: &str,
+    gen: NodeStateData,
+    with_abc_input: bool,
+) -> Template {
+    let mut nodes = vec![
+        node_with_state(1, NodeKind::Yue2Checkpoint, 60.0, 60.0, yue2_checkpoint_state()),
+        node_with_state(2, NodeKind::TextView, 60.0, 380.0, acestep_text_state(style, 80.0)),
+        node_with_state(3, NodeKind::TextView, 60.0, 520.0, acestep_text_state(lyrics, 220.0)),
+        node_with_state(4, NodeKind::Yue2Generate, 480.0, 180.0, gen),
+        node_plain(5, NodeKind::AudioPlayer, 1000.0, 200.0),
+        // Партитура с выхода `score`: её видно целиком и можно скопировать.
+        node_with_state(6, NodeKind::TextView, 1000.0, 420.0, acestep_text_state("", 260.0)),
+    ];
+    let mut connections = vec![
+        conn(1, "model", 4, "model"),
+        conn(2, "out", 4, "style"),
+        conn(3, "out", 4, "lyrics"),
+        conn(4, "audio", 5, "in"),
+        conn(4, "score", 6, "in"),
+    ];
+    if with_abc_input {
+        // Партитура из отдельной ноды сильнее сгенерированной: сюда вставляется
+        // правленый ABC.
+        nodes.push(node_with_state(7, NodeKind::TextView, 60.0, 820.0, acestep_text_state("", 260.0)));
+        connections.push(conn(7, "out", 4, "abc"));
+    }
+    Template {
+        id: id.into(),
+        builtin: true,
+        name: name.into(),
+        description: desc.into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+fn yue2_song_template() -> Template {
+    yue2_song_like(
+        "builtin-yue2-song",
+        "YuE2: песня",
+        "Стиль и лирика → партитура с аккордами → песня; партитуру видно в текстовой ноде.",
+        "english, dream pop, female vocal, warm synths, soft drums",
+        "[verse]\nTonight I'm awake, watching city lights\n[chorus]\nHold on, hold on, the morning comes slow",
+        yue2_gen(0, 60.0),
+        false,
+    )
+}
+
+fn yue2_edit_score_template() -> Template {
+    yue2_song_like(
+        "builtin-yue2-edit-score",
+        "YuE2: рендер по партитуре",
+        "Партитура берётся из ноды abc: вставьте правленый ABC и отрендерьте заново.",
+        "english, jazz-funk, warm lead vocal, Rhodes, bass and drums",
+        "[verse]\nTonight I'm awake, watching city lights",
+        yue2_gen(0, 60.0),
+        true,
+    )
+}
+
+/// Кавер: мелодия без аккордовых символов, аккомпанемент модель придумывает
+/// под новый стиль (рекомендация релиза — `cot = melody`).
+fn yue2_cover_template() -> Template {
+    yue2_song_like(
+        "builtin-yue2-cover",
+        "YuE2: кавер по мелодии",
+        "Мелодия без аккордов из ноды abc + новый стиль: аккомпанемент подстроится.",
+        "english, acoustic folk, male vocal, fingerpicked guitar",
+        "[verse]\nWe were younger then, the road was long",
+        yue2_gen(1, 60.0),
+        true,
     )
 }
 

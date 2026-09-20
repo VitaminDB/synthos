@@ -26,7 +26,7 @@ use super::nodes::{
     qwen_image, sdxl,
     markdown_view,
     minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
-    voxcpm2,
+    voxcpm2, yue2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
@@ -186,6 +186,9 @@ static ACESTEP_VAE_ENCODE_EXEC: acestep::vae_encode::VaeEncodeExec =
 static ACESTEP_CHECKPOINT_EXEC: acestep::checkpoint::CheckpointExec =
     acestep::checkpoint::CheckpointExec;
 static ACESTEP_GENERATE_EXEC: acestep::generate::GenerateExec = acestep::generate::GenerateExec;
+static YUE2_CHECKPOINT_EXEC: yue2::checkpoint::CheckpointExec = yue2::checkpoint::CheckpointExec;
+static YUE2_GENERATE_EXEC: yue2::generate::GenerateExec = yue2::generate::GenerateExec;
+static YUE2_VAE_DECODE_EXEC: yue2::vae_decode::VaeDecodeExec = yue2::vae_decode::VaeDecodeExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
 static LTX_CHECKPOINT_EXEC: ltx::checkpoint::CheckpointExec = ltx::checkpoint::CheckpointExec;
 static H3_CHECKPOINT_EXEC: minimax_h3::checkpoint::CheckpointExec = minimax_h3::checkpoint::CheckpointExec;
@@ -392,6 +395,30 @@ const ACESTEP_GENERATE_INPUTS: &[PortSchema] = &[
 const ACESTEP_GENERATE_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "audio",  label: "audio",  kind: PortKind::Audio },
     PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+
+const YUE2_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+];
+
+const YUE2_GENERATE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model",  label: "model",  kind: PortKind::Data },
+    PortSchema { name: "style",  label: "style",  kind: PortKind::Text },
+    PortSchema { name: "lyrics", label: "lyrics", kind: PortKind::Text },
+    PortSchema { name: "abc",    label: "abc",    kind: PortKind::Text },
+];
+const YUE2_GENERATE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "audio",  label: "audio",  kind: PortKind::Audio },
+    PortSchema { name: "score",  label: "score",  kind: PortKind::Text },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+
+const YUE2_VAE_DECODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model",  label: "model",  kind: PortKind::Data },
+    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
+];
+const YUE2_VAE_DECODE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
 ];
 
 const FFMPEG_PLAYER_INPUTS: &[PortSchema] = &[
@@ -1180,6 +1207,62 @@ const ACESTEP_GENERATE: NodeKindMeta = NodeKindMeta {
     executor: &ACESTEP_GENERATE_EXEC,
     on_run: Some(acestep::generate::on_run),
     busy_signal: Some(acestep::generate::busy_signal),
+};
+
+// ── YuE2 (3 ноды) ────────────────────────────────────────────────────────
+
+/// Подкатегория в меню «Добавить ноду» (под `NodeCategory::Neuro`).
+const YUE2_SUBCATEGORY: &str = "yue2";
+
+const YUE2_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Yue2Checkpoint,
+    icon: MI_INVENTORY_2,
+    title: "YuE2 Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(YUE2_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(YUE2_CHECKPOINT_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(yue2::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &YUE2_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+const YUE2_GENERATE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Yue2Generate,
+    icon: MI_LIBRARY_MUSIC,
+    title: "YuE2 Generate",
+    category: NodeCategory::Neuro,
+    subcategory: Some(YUE2_SUBCATEGORY),
+    inputs: PortsSpec::Static(YUE2_GENERATE_INPUTS),
+    outputs: PortsSpec::Static(YUE2_GENERATE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(yue2::generate::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &YUE2_GENERATE_EXEC,
+    on_run: Some(yue2::generate::on_run),
+    busy_signal: Some(yue2::generate::busy_signal),
+};
+
+const YUE2_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Yue2VaeDecode,
+    icon: MI_AUDIOTRACK,
+    title: "YuE2 VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(YUE2_SUBCATEGORY),
+    inputs: PortsSpec::Static(YUE2_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(YUE2_VAE_DECODE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(yue2::vae_decode::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &YUE2_VAE_DECODE_EXEC,
+    on_run: Some(yue2::vae_decode::on_run),
+    busy_signal: Some(yue2::vae_decode::busy_signal),
 };
 
 const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
@@ -2112,6 +2195,9 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     ACESTEP_VAE_ENCODE,
     ACESTEP_CHECKPOINT,
     ACESTEP_GENERATE,
+    YUE2_CHECKPOINT,
+    YUE2_GENERATE,
+    YUE2_VAE_DECODE,
     FFMPEG_PLAYER,
     LTX_CHECKPOINT,
     LTX_TEXT_ENCODER,
@@ -2982,6 +3068,53 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             cancel: Arc::new(AtomicBool::new(false)),
             v_out: Arc::new(Mutex::new(None)),
             a_out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Yue2Checkpoint => NodeRuntime::Yue2Checkpoint {
+            // Каталог моделей приложения — нода из меню сразу находит бандлы
+            // по дефолтным именам, без ручного выбора файлов.
+            models_dir: use_signal(Some(yue2::app_models_dir())),
+            model_path: use_signal(None),
+            vae_path: use_signal(None),
+            // GPU по умолчанию: 3,6B на CPU считались бы минутами.
+            device_idx: use_signal(1_usize),
+            quant_idx: use_signal(0_usize),
+            compute_idx: use_signal(0_usize),
+            vae_dtype_idx: use_signal(0_usize),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::Yue2Generate => NodeRuntime::Yue2Generate {
+            cot_idx: use_signal(0_usize),
+            seconds: use_signal(yue2::generate::DEFAULT_SECONDS),
+            ode_steps: use_signal(32_u32),
+            // 0 — дефолт режима (1.0, у `off` — 1.01).
+            cfg_scale: use_signal(0.0_f32),
+            seed: use_signal(0_u64),
+            temperature: use_signal(1.0_f32),
+            top_p: use_signal(0.95_f32),
+            top_k: use_signal(100_u32),
+            repetition_penalty: use_signal(1.2_f32),
+            vae_core_frames: use_signal(1024_u32),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            output_buf_audio: Arc::new(Mutex::new(None)),
+            output_buf_latent: Arc::new(Mutex::new(None)),
+            output_buf_score: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Yue2VaeDecode => NodeRuntime::Yue2VaeDecode {
+            vae_path: use_signal(None),
+            vae_core_frames: use_signal(1024_u32),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            output_buf_audio: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
         },
         NodeKind::AceStepCheckpoint => NodeRuntime::AceStepCheckpoint {

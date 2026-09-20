@@ -380,7 +380,7 @@ fn ports_line(spec: PortsSpec) -> String {
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
         acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice, qwen_image,
-        sdxl, sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2,
+        sdxl, sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2, yue2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
@@ -416,6 +416,13 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("quant_idx", llm::QUANT_OPTIONS),
             ("compute_idx", llm::COMPUTE_OPTIONS),
         ],
+        NodeKind::Yue2Checkpoint => vec![
+            ("device_idx", yue2::DEVICE_OPTIONS),
+            ("quant_idx", yue2::QUANT_OPTIONS),
+            ("compute_idx", yue2::COMPUTE_OPTIONS),
+            ("vae_dtype_idx", yue2::VAE_DTYPE_OPTIONS),
+        ],
+        NodeKind::Yue2Generate => vec![("cot_idx", yue2::COT_OPTIONS)],
         NodeKind::AceStepCheckpoint => vec![
             ("device_idx", acestep::DEVICE_OPTIONS),
             ("quant_dit_idx", acestep::QUANT_OPTIONS),
@@ -538,6 +545,10 @@ fn path_hints_lines(kind: NodeKind) -> Vec<String> {
         format!("{field} (null = pick from models_dir): {vals}")
     };
     match kind {
+        NodeKind::Yue2Checkpoint => vec![
+            named("model_path", synaptix_music_yue2::pipeline::MODEL_NAMES),
+            named("vae_path", synaptix_music_yue2::pipeline::VAE_NAMES),
+        ],
         NodeKind::AceStepCheckpoint => vec![
             named("lm_path", generate::LM_NAMES),
             named("text_encoder_path", generate::TEXT_ENC_NAMES),
@@ -1705,8 +1716,9 @@ mod tests {
         // был на пределе, а резать описания всех шаблонов хуже для выбора.
         // 5600 → 5800 с «FLUX.2: Image to Image» (5660 символов), 5800 → 6000
         // с «FLUX.2: LLM Upsampling», 6000 → 6600 с Qwen-Image Edit / Multi-Image
-        // Edit и SDXL Text / Image to Image (6438 символов).
-        assert!(len < 6600, "раздел шаблонов раздулся до {len} символов");
+        // Edit и SDXL Text / Image to Image (6438 символов), 6600 → 6900 с тремя
+        // шаблонами YuE2 (6700 символов).
+        assert!(len < 6900, "раздел шаблонов раздулся до {len} символов");
     }
 
     /// Фильтр — набор токенов: перечисление нод возвращает их все.

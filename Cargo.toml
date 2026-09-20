@@ -6,7 +6,7 @@ members = ["."]
 # Версия — сквозной номер сборки (тот же, что pkgver в packaging/PKGBUILD и
 # тег релиза v268). Cargo требует semver, поэтому номер живёт в мажоре, а
 # приложение показывает только его — см. build.rs (SYNTHOS_VERSION).
-version = "272.0.0"
+version = "273.0.0"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -142,6 +142,7 @@ synaptix-tts-vibevoice = { path = "../synaptix/crates/synaptix-models/tts/vibevo
 # Нативный synaptix-порт ACE-Step v1.5 (node_editor/nodes/acestep). Backend-
 # агностичен: считает на зарегистрированном synaptix-kernels-{cpu,cuda}.
 synaptix-music-acestep = { path = "../synaptix/crates/synaptix-models/music/acestep" }
+synaptix-music-yue2 = { path = "../synaptix/crates/synaptix-models/music/yue2" }
 
 # Нативный synaptix-LLM-стек для LLM-ноды (node_editor/nodes/llm). qwen3 —
 # dense/MoE Qwen3, qwen3-next-hybrid — GatedDeltaNet+full-attn (model_type

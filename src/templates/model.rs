@@ -240,6 +240,9 @@ pub enum NodeStateData {
     AceStepSampler(AceStepSamplerStateData),
     AceStepCheckpoint(AceStepCheckpointStateData),
     AceStepGenerate(AceStepGenerateStateData),
+    Yue2Checkpoint(Yue2CheckpointStateData),
+    Yue2Generate(Yue2GenerateStateData),
+    Yue2VaeDecode(Yue2VaeDecodeStateData),
     FfmpegPlayer(FfmpegPlayerStateData),
     SynCheckpoint(SynCheckpointStateData),
     LtxCheckpoint(LtxCheckpointStateData),
@@ -1603,6 +1606,72 @@ pub struct AceStepCheckpointStateData {
     pub compute_idx: usize,
     /// Держать модели в VRAM после прогона. Старые шаблоны → false.
     pub resident: bool,
+}
+
+/// State чекпойнта YuE2: каталог моделей, опц. override'ы костяка и декодера,
+/// точности.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Yue2CheckpointStateData {
+    pub models_dir: Option<String>,
+    pub model_path: Option<String>,
+    pub vae_path: Option<String>,
+    pub device_idx: usize,
+    pub quant_idx: usize,
+    pub compute_idx: usize,
+    pub vae_dtype_idx: usize,
+    pub resident: bool,
+}
+
+/// State YuE2 Generate: режим партитуры, длительность, решатель и сэмплинг.
+/// Контент (стиль, лирика, партитура) и модель приходят портами.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Yue2GenerateStateData {
+    /// 0 = full, 1 = melody, 2 = off.
+    pub cot_idx: usize,
+    /// Желаемая длительность, с (`0` — пока модель не закончит сама).
+    pub seconds: f32,
+    pub ode_steps: u32,
+    /// `0` — дефолт режима.
+    pub cfg_scale: f32,
+    pub seed: u64,
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: u32,
+    pub repetition_penalty: f32,
+    pub vae_core_frames: u32,
+}
+
+impl Default for Yue2GenerateStateData {
+    fn default() -> Self {
+        Self {
+            cot_idx: 0,
+            seconds: 60.0,
+            ode_steps: 32,
+            cfg_scale: 0.0,
+            seed: 0,
+            temperature: 1.0,
+            top_p: 0.95,
+            top_k: 100,
+            repetition_penalty: 1.2,
+            vae_core_frames: 1024,
+        }
+    }
+}
+
+/// State YuE2 VAE Decode: чем декодировать и каким тайлом.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Yue2VaeDecodeStateData {
+    pub vae_path: Option<String>,
+    pub vae_core_frames: u32,
+}
+
+impl Default for Yue2VaeDecodeStateData {
+    fn default() -> Self {
+        Self { vae_path: None, vae_core_frames: 1024 }
+    }
 }
 
 /// State ACE-Step Generate-ноды (монолит): режим + sampler/AR/DCW-параметры

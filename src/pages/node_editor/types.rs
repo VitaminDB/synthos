@@ -372,6 +372,18 @@ pub enum NodeKind {
     /// 25 Hz латент). Вспомогательная: внешнее аудио → `src_latent` Generate.
     AceStepVaeEncode,
 
+    // ── YuE2 (Нейро → YuE2) ──
+    /// Хэндл чекпойнта YuE2: каталог моделей, опц. override костяка и
+    /// декодера, device/quant/compute → `model: Data(Model)`.
+    Yue2Checkpoint,
+    /// `(model, style, lyrics, опц. abc) → (audio, score, latent)`: партитура,
+    /// семантические токены, акустические латенты и 48 кГц стерео — одним
+    /// прогоном.
+    Yue2Generate,
+    /// `(model, latent) → audio`: передекодировать латенты YuE2 (другим
+    /// декодером — например `legacy` — без повторной генерации).
+    Yue2VaeDecode,
+
     FfmpegPlayer,
 
     // ── LTX-2.3 (Нейро → LTX Video) ──
@@ -521,6 +533,9 @@ impl NodeKind {
         NodeKind::AceStepCheckpoint,
         NodeKind::AceStepGenerate,
         NodeKind::AceStepVaeEncode,
+        NodeKind::Yue2Checkpoint,
+        NodeKind::Yue2Generate,
+        NodeKind::Yue2VaeDecode,
         NodeKind::FfmpegPlayer,
         NodeKind::LtxCheckpoint,
         NodeKind::LtxTextEncoder,
@@ -695,6 +710,8 @@ pub enum PortValue {
 pub enum DataBlob {
     /// Тензоры из пайплайна ACE-Step v1.5.
     AceStep(AceStepBlob),
+    /// Хэндл и латенты пайплайна YuE2.
+    Yue2(Yue2Blob),
     /// Хэндлы и тензоры пайплайна LTX-2.3 (synaptix).
     Ltx(LtxBlob),
     /// Хэндлы и тензоры пайплайна MiniMax-H3 (synaptix).
@@ -1089,6 +1106,38 @@ pub struct AceStepModelHandle {
     pub resident: bool,
 }
 
+/// Конфиг чекпойнта YuE2: каталог моделей (как CLI `--models`), опциональные
+/// override'ы костяка и декодера, устройство и точность. Дешёвый POD — веса
+/// грузит Generate-нода, резолв путей делает
+/// `nodes::yue2::shared::resolve_paths`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Yue2ModelHandle {
+    pub models_dir: Option<PathBuf>,
+    /// `yue2-3b.syn` — костяк AR–NAR.
+    pub model_path: Option<PathBuf>,
+    /// `yue2-vae.syn` — декодер звука.
+    pub vae_path: Option<PathBuf>,
+    pub device_idx: usize,
+    /// Квант весов костяка: индекс в `QUANT_OPTIONS`.
+    pub quant_idx: usize,
+    /// Тип вычислений костяка: индекс в `COMPUTE_OPTIONS`.
+    pub compute_idx: usize,
+    /// Тип вычислений декодера: индекс в `VAE_DTYPE_OPTIONS` (эталон — F32).
+    pub vae_dtype_idx: usize,
+    /// Держать модели в VRAM после прогона.
+    pub resident: bool,
+}
+
+/// Типизированный payload YuE2.
+#[derive(Debug)]
+pub enum Yue2Blob {
+    /// Конфиг чекпойнта от `Yue2Checkpoint`.
+    Model(Arc<Yue2ModelHandle>),
+    /// Акустические латенты `[кадры, 64]` (F32) — их можно передекодировать,
+    /// не повторяя генерацию.
+    Latent(synaptix_core::tensor::Tensor),
+}
+
 /// Видео-латент с метаданными латентной сетки (нужны downstream-нодам для
 /// pixel_coords/audio_token_count без пере-вычисления из UI-полей).
 #[derive(Clone, Debug)]
@@ -1182,6 +1231,16 @@ impl std::fmt::Debug for PortValue {
             }
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::H3(blob) => write!(f, "Data(H3::{blob:?})"),
+                DataBlob::Yue2(Yue2Blob::Model(h)) => {
+                    write!(
+                        f,
+                        "Data(Yue2::Model(dir={:?}))",
+                        h.models_dir.as_ref().and_then(|p| p.file_name()).unwrap_or_default()
+                    )
+                }
+                DataBlob::Yue2(Yue2Blob::Latent(t)) => {
+                    write!(f, "Data(Yue2::Latent{:?})", t.dims())
+                }
                 DataBlob::AceStep(AceStepBlob::Model(h)) => {
                     write!(f, "Data(AceStep::Model(dir={:?}))", h.models_dir.as_ref().and_then(|p| p.file_name()).unwrap_or_default())
                 }
@@ -1381,6 +1440,28 @@ impl PortValue {
         match self {
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::AceStep(AceStepBlob::Latent(t)) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь хэндл чекпойнта YuE2.
+    pub fn as_yue2_model(&self) -> Option<Arc<Yue2ModelHandle>> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Yue2(Yue2Blob::Model(h)) => Some(h.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Извлечь акустические латенты YuE2.
+    pub fn as_yue2_latent(&self) -> Option<synaptix_core::tensor::Tensor> {
+        match self {
+            PortValue::Data(b) => match b.as_ref() {
+                DataBlob::Yue2(Yue2Blob::Latent(t)) => Some(t.clone()),
                 _ => None,
             },
             _ => None,
@@ -2360,6 +2441,69 @@ pub enum NodeRuntime {
         output_version: RwSignal<u32>,
     },
 
+    /// Чекпойнт YuE2: пути и точности, без загрузки весов.
+    Yue2Checkpoint {
+        models_dir: RwSignal<Option<PathBuf>>,
+        model_path: RwSignal<Option<PathBuf>>,
+        vae_path: RwSignal<Option<PathBuf>>,
+        device_idx: RwSignal<usize>,
+        quant_idx: RwSignal<usize>,
+        compute_idx: RwSignal<usize>,
+        vae_dtype_idx: RwSignal<usize>,
+        /// Держать модели в VRAM после прогона.
+        resident: RwSignal<bool>,
+        /// Кэш Arc-хэндла: новый Arc только при смене параметров.
+        handle_cache: Arc<Mutex<Option<Arc<Yue2ModelHandle>>>>,
+    },
+    /// YuE2 Generate: партитура → музыка → латенты → звук одним прогоном.
+    Yue2Generate {
+        /// Партитура: 0 = full (с аккордами), 1 = melody, 2 = off.
+        cot_idx: RwSignal<usize>,
+        /// Желаемая длительность, с. `0` — пока модель не закончит сама
+        /// (в пределах окна).
+        seconds: RwSignal<f32>,
+        /// Шагов решателя flow matching.
+        ode_steps: RwSignal<u32>,
+        /// CFG. `0` — дефолт режима (1.0, у `off` — 1.01).
+        cfg_scale: RwSignal<f32>,
+        seed: RwSignal<u64>,
+        // ── Сэмплинг фазы музыки ──
+        temperature: RwSignal<f32>,
+        top_p: RwSignal<f32>,
+        top_k: RwSignal<u32>,
+        repetition_penalty: RwSignal<f32>,
+        /// Кадров в ядре тайла декодера.
+        vae_core_frames: RwSignal<u32>,
+        // ── Статус + выходы ──
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        /// Кооперативная отмена: прогон песни идёт десятки секунд, и его надо
+        /// уметь остановить, не дожидаясь конца.
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        /// Готовый стерео-PCM (48 кГц) для порта `audio`.
+        output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
+        /// Акустические латенты `[кадры, 64]` для порта `latent`.
+        output_buf_latent: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
+        /// Партитура в ABC для порта `score`.
+        output_buf_score: Arc<Mutex<Option<String>>>,
+        output_version: RwSignal<u32>,
+    },
+    /// YuE2 VAE Decode: латенты → звук (например, другим декодером).
+    Yue2VaeDecode {
+        /// Override декодера: пусто — берётся из чекпойнта.
+        vae_path: RwSignal<Option<PathBuf>>,
+        vae_core_frames: RwSignal<u32>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
+        output_version: RwSignal<u32>,
+    },
+
     /// Универсальный видеоплеер: файл (ffmpeg `VideoPlayer`) ИЛИ кадры из
     /// памяти (`FramesView` + `AudioPlayer`). Режим выбирается по наличию
     /// входа `frames` (память приоритетнее файла) — позволяет ставить плеер
@@ -3022,6 +3166,8 @@ impl NodeRuntime {
             | R::LtxLipdub { cancel, .. }
             | R::LtxA2V { cancel, .. }
             | R::AceStepVaeEncode { cancel, .. }
+            | R::Yue2Generate { cancel, .. }
+            | R::Yue2VaeDecode { cancel, .. }
             | R::H3Sampler { cancel, .. }
             | R::FluxSampler { cancel, .. }
             | R::Flux2Sampler { cancel, .. }
@@ -3375,6 +3521,25 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::AceStepGenerate { running, mode_idx, .. } => {
                 write!(f, "NodeRuntime::AceStepGenerate{{running={}, mode={}}}", running.get_untracked(), mode_idx.get_untracked())
+            }
+            NodeRuntime::Yue2Checkpoint { models_dir, .. } => {
+                let p = models_dir
+                    .get_untracked()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                write!(f, "NodeRuntime::Yue2Checkpoint{{dir={p}}}")
+            }
+            NodeRuntime::Yue2Generate { running, cot_idx, seconds, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::Yue2Generate{{running={}, cot={}, sec={}}}",
+                    running.get_untracked(),
+                    cot_idx.get_untracked(),
+                    seconds.get_untracked()
+                )
+            }
+            NodeRuntime::Yue2VaeDecode { running, .. } => {
+                write!(f, "NodeRuntime::Yue2VaeDecode{{running={}}}", running.get_untracked())
             }
         }
     }

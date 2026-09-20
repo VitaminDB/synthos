@@ -80,7 +80,8 @@ is exactly what gets loaded, with nothing to resolve at runtime.
   weights if you quantize — the dialog will not combine quantization with "delete sources
   after packing".
 - Large multi-part models have packing notes of their own: LTX-2.3 with its Gemma text
-  encoder, MiniMax-H3, Muse Glimmer and Qwen3.8 — see `docs/*_syn_bundle_2026.md`.
+  encoder, MiniMax-H3, Muse Glimmer, Qwen3.8 and YuE2 — see `docs/*_syn_bundle_2026.md`
+  and `docs/yue2_2026.md`.
 
 ## Features
 
@@ -180,8 +181,12 @@ is exactly what gets loaded, with nothing to resolve at runtime.
   spatial upscaler. MiniMax-H3: text, first-frame or first+last-frame → video with
   synchronized stereo audio, plus Ref2VA — an ordered list of up to twelve image, video
   and audio references the model keeps identity and voice from; a 6-step turbo preset.
-- **Music** — ACE-Step: generate, cover, edit, extend, extract, repaint, retake, with a
-  per-stage progress readout.
+- **Music** — YuE2: style and lyrics become an editable melody-and-chord score in ABC,
+  then a full song with vocals and accompaniment in 48 kHz stereo; the score comes out of
+  the graph as text, so you can read it, change the harmony and render again, and the
+  acoustic latents can be re-decoded with another decoder without generating twice.
+  ACE-Step: generate, cover, edit, extend, extract, repaint, retake, with a per-stage
+  progress readout.
 - **Speech** — VoxCPM2 and OmniVoice text-to-speech with zero-shot voice cloning (the
   reference is transcribed automatically); VibeVoice for long-form multi-speaker dialogue
   from a `Speaker N:` script with up to four reference voices.

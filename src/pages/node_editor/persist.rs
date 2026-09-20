@@ -942,6 +942,54 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = seed.get();
             let _ = output_version.get();
         }
+        NodeRuntime::Yue2Checkpoint {
+            models_dir,
+            model_path,
+            vae_path,
+            device_idx,
+            quant_idx,
+            compute_idx,
+            vae_dtype_idx,
+            resident,
+            ..
+        } => {
+            let _ = models_dir.get();
+            let _ = model_path.get();
+            let _ = vae_path.get();
+            let _ = device_idx.get();
+            let _ = quant_idx.get();
+            let _ = compute_idx.get();
+            let _ = vae_dtype_idx.get();
+            let _ = resident.get();
+        }
+        NodeRuntime::Yue2Generate {
+            cot_idx,
+            seconds,
+            ode_steps,
+            cfg_scale,
+            seed,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            vae_core_frames,
+            ..
+        } => {
+            let _ = cot_idx.get();
+            let _ = seconds.get();
+            let _ = ode_steps.get();
+            let _ = cfg_scale.get();
+            let _ = seed.get();
+            let _ = temperature.get();
+            let _ = top_p.get();
+            let _ = top_k.get();
+            let _ = repetition_penalty.get();
+            let _ = vae_core_frames.get();
+        }
+        NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. } => {
+            let _ = vae_path.get();
+            let _ = vae_core_frames.get();
+        }
         NodeRuntime::AceStepCheckpoint {
             models_dir,
             lm_path,

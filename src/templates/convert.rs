@@ -18,6 +18,7 @@ use syngui::prelude::*;
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData,
+    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2VaeDecodeStateData,
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
@@ -788,6 +789,56 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             fps_idx: fps_idx.get_untracked(),
             seed: seed.get_untracked(),
         })),
+        NodeRuntime::Yue2Checkpoint {
+            models_dir,
+            model_path,
+            vae_path,
+            device_idx,
+            quant_idx,
+            compute_idx,
+            vae_dtype_idx,
+            resident,
+            ..
+        } => Some(NodeStateData::Yue2Checkpoint(Yue2CheckpointStateData {
+            models_dir: models_dir.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            vae_path: vae_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            device_idx: device_idx.get_untracked(),
+            quant_idx: quant_idx.get_untracked(),
+            compute_idx: compute_idx.get_untracked(),
+            vae_dtype_idx: vae_dtype_idx.get_untracked(),
+            resident: resident.get_untracked(),
+        })),
+        NodeRuntime::Yue2Generate {
+            cot_idx,
+            seconds,
+            ode_steps,
+            cfg_scale,
+            seed,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            vae_core_frames,
+            ..
+        } => Some(NodeStateData::Yue2Generate(Yue2GenerateStateData {
+            cot_idx: cot_idx.get_untracked(),
+            seconds: seconds.get_untracked(),
+            ode_steps: ode_steps.get_untracked(),
+            cfg_scale: cfg_scale.get_untracked(),
+            seed: seed.get_untracked(),
+            temperature: temperature.get_untracked(),
+            top_p: top_p.get_untracked(),
+            top_k: top_k.get_untracked(),
+            repetition_penalty: repetition_penalty.get_untracked(),
+            vae_core_frames: vae_core_frames.get_untracked(),
+        })),
+        NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. } => {
+            Some(NodeStateData::Yue2VaeDecode(Yue2VaeDecodeStateData {
+                vae_path: vae_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                vae_core_frames: vae_core_frames.get_untracked(),
+            }))
+        }
         NodeRuntime::AceStepCheckpoint {
             models_dir,
             lm_path,
@@ -1605,6 +1656,67 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             duration_seconds.set(data.duration_seconds);
             fps_idx.set(data.fps_idx);
             seed.set(data.seed);
+        }
+        (
+            NodeRuntime::Yue2Checkpoint {
+                models_dir,
+                model_path,
+                vae_path,
+                device_idx,
+                quant_idx,
+                compute_idx,
+                vae_dtype_idx,
+                resident,
+                ..
+            },
+            NodeStateData::Yue2Checkpoint(data),
+        ) => {
+            // `None` в шаблоне = «каталог приложения» (дефолт runtime'а), а не
+            // «сбросить в пусто».
+            if let Some(dir) = &data.models_dir {
+                models_dir.set(Some(PathBuf::from(dir)));
+            }
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            vae_path.set(data.vae_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx);
+            quant_idx.set(data.quant_idx);
+            compute_idx.set(data.compute_idx);
+            vae_dtype_idx.set(data.vae_dtype_idx);
+            resident.set(data.resident);
+        }
+        (
+            NodeRuntime::Yue2Generate {
+                cot_idx,
+                seconds,
+                ode_steps,
+                cfg_scale,
+                seed,
+                temperature,
+                top_p,
+                top_k,
+                repetition_penalty,
+                vae_core_frames,
+                ..
+            },
+            NodeStateData::Yue2Generate(data),
+        ) => {
+            cot_idx.set(data.cot_idx);
+            seconds.set(data.seconds);
+            ode_steps.set(data.ode_steps);
+            cfg_scale.set(data.cfg_scale);
+            seed.set(data.seed);
+            temperature.set(data.temperature);
+            top_p.set(data.top_p);
+            top_k.set(data.top_k);
+            repetition_penalty.set(data.repetition_penalty);
+            vae_core_frames.set(data.vae_core_frames);
+        }
+        (
+            NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. },
+            NodeStateData::Yue2VaeDecode(data),
+        ) => {
+            vae_path.set(data.vae_path.as_ref().map(PathBuf::from));
+            vae_core_frames.set(data.vae_core_frames);
         }
         (
             NodeRuntime::AceStepCheckpoint {

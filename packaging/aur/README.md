@@ -26,22 +26,29 @@
 
 ## Выпуск новой версии
 
+Версия — сквозной номер сборки (`268`, `269`, …): он же `pkgver`, он же тег
+`v268`, он же версия в AUR. Подробнее — [`docs/release_2026.md`](../../docs/release_2026.md).
+
 ```sh
 # 1. пины зависимостей и версия
 packaging/pin-deps.sh
-$EDITOR packaging/PKGBUILD          # pkgver/pkgrel
-$EDITOR Cargo.toml                  # version — должна совпасть с pkgver
+$EDITOR packaging/PKGBUILD          # pkgver=268, pkgrel=1
+$EDITOR Cargo.toml                  # version = "268.0.0" — мажор равен pkgver
 
-git commit -am "релиз v0.2.0"
-git tag v0.2.0 && git push --follow-tags
+git commit -am "релиз v268"
+git tag v268 && git push --follow-tags
 
 # 2. дождаться, пока workflow release соберёт пакет и выложит артефакты
 
 # 3. обновить версию в AUR-пакетах и запушить
-$EDITOR packaging/aur/synthos-bin/PKGBUILD     # pkgver, pkgrel=1
-packaging/aur/publish.sh synthos-bin
+$EDITOR packaging/aur/synthos-bin/PKGBUILD     # pkgver=268, pkgrel=1
+packaging/aur/publish.sh synthos-bin           # sha256 tarball посчитает updpkgsums
 packaging/aur/publish.sh synthos-git           # pkgver считается из git автоматически
 ```
+
+`pkgrel` у AUR-пакетов — ревизия самого пакета (правка зависимостей,
+пересборка под новый ffmpeg), а не номер сборки synthos: с каждым новым
+`pkgver` он снова `1`.
 
 `--dry-run` вторым аргументом готовит коммит, но не пушит — удобно проверить
 дифф перед первой публикацией.

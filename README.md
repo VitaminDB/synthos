@@ -17,8 +17,9 @@ engine: no Python, no torch, no cloud. The UI is built with
 synthos is one desktop app around a local GPU. A chat client runs 27B–125B models from
 single-file `.syn` bundles and drives the rest of the app through tools; a notes mode holds
 your documents, kanban boards, mind maps and calendar in a single project file; a node editor
-wires generative models into runnable graphs — text or image → video with sound, lyrics →
-music, script → multi-voice dialogue, audio → transcript. The agent can build and run those
+wires generative models into runnable graphs — prompt → image, image + instruction →
+edited image, text or image → video with sound, lyrics → music, script → multi-voice
+dialogue, audio → transcript. The agent can build and run those
 graphs itself, write into your notes, search your knowledge base and read the web. Nothing
 leaves the machine.
 
@@ -94,7 +95,9 @@ is exactly what gets loaded, with nothing to resolve at runtime.
   card), Gemma-3, Gemma-4 26B A4B, Muse Glimmer 30B and Llama. Vision towers where the model
   has one — images and video go straight into the prompt.
 - **Attachments** — images and video to the vision tower, documents inlined, audio
-  transcribed on device; results of a pipeline run play right in the thread.
+  transcribed on device; results of a pipeline run play right in the thread, in the same
+  video player the node editor and the viewer use (audio-clocked, ±1 s jumps, seek on a
+  paused frame).
 - **Agent tools** — web search and read, knowledge-base retrieval, system status (VRAM / RAM,
   loaded models), **pipelines** (discover, build, edit and run node graphs from the chat,
   unloading itself for the run if VRAM is short), **notes** (full read/write access to pages,
@@ -167,10 +170,16 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 
 ![The node editor: the Neuro node menu, a running graph and the models-in-memory panel](docs/screenshots/nodes-menu-models.png)
 
+- **Images** — FLUX.1 (dev), FLUX.2 (dev 32B, klein 4B/9B, klein base) with img2img and
+  up to ten references, Qwen-Image-Edit and Edit-2509/2511 (edit one picture, or compose
+  up to four — "put the fox from the second picture on the rock from the first"), and SDXL
+  for text-to-image and image-to-image. Weights run as NVFP4, MXFP8 or dense; the picture
+  a graph produces can be fed straight into a video model as its first frame.
 - **Video** — LTX-2.3: text-to-video, image-to-video, audio-to-video, IC-LoRA control from
   depth (Depth Anything V2) or canny edges, lip-dub and retake, two-stage sampling with a
   spatial upscaler. MiniMax-H3: text, first-frame or first+last-frame → video with
-  synchronized stereo audio; a 6-step turbo preset.
+  synchronized stereo audio, plus Ref2VA — an ordered list of up to twelve image, video
+  and audio references the model keeps identity and voice from; a 6-step turbo preset.
 - **Music** — ACE-Step: generate, cover, edit, extend, extract, repaint, retake, with a
   per-stage progress readout.
 - **Speech** — VoxCPM2 and OmniVoice text-to-speech with zero-shot voice cloning (the
@@ -182,7 +191,9 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 - **Audio** — recorder, file and FFmpeg players, mixer with dynamic inputs, 6/10/20/30-band
   equalizers, filter, gain, reverb, save-to-file; PCM streams between nodes.
 - **Editor** — checkpoint nodes (ComfyUI-style) with a "keep in memory" switch per model
-  family, built-in and custom templates, multi-tab graphs, run/pause/stop, per-node and
+  family, built-in templates for every family (FLUX / FLUX.2 text-to-image, edit and
+  multi-reference, Qwen-Image edit and multi-image edit, SDXL text-to-image and
+  image-to-image, LTX and H3 video, music, podcast) plus your own, multi-tab graphs, run/pause/stop, per-node and
   per-run timers, a panel of loaded models, workspace autosave, Markdown annotation nodes.
 
 <details>
@@ -213,7 +224,9 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 
 ### Models
 
-- A Hugging Face browser for fetching models, with GGUF import converted in-app to `.syn`.
+- A Hugging Face browser for fetching models, with GGUF import converted in-app to `.syn`;
+  downloads run in a dock at the bottom of the window (list or icon view, per-file progress,
+  a progress chip in the title bar) and survive navigating away.
 - A model catalogue in Settings — one `.syn` file per model, read zero-copy via mmap, with
   "optimal" and "custom" profiles per model.
 - **Syn packages** — pack models into `.syn` (see
@@ -244,6 +257,17 @@ and stream in at ~39 GB/s, the KV cache is MXFP8, and prefill runs layer-by-laye
 prompt never needs three copies of the activation stream. A 3k-token follow-up turn on top of
 an 80k history takes 3.3 s thanks to prefix-KV reuse.
 
+Image generation on the same card, 1024²: SDXL 30 steps in 6.5 s, Qwen-Image-Edit-2511
+40 steps in 188 s (MXFP8, 17.8 GB peak) or 155 s (NVFP4), FLUX.2 klein 4 steps in a few
+seconds.
+
+**A 7 GB card is enough for all of it.** Every model family was measured with a ballast
+process holding all but 7 GB of VRAM: chat models from 27B to a 125B MoE, Gemma-4, FLUX.1,
+FLUX.2, MiniMax-H3, LTX-2.3, ACE-Step with its 4B LM, VibeVoice. What does not fit streams
+from RAM (or from the mmapped bundle), so the limit is patience rather than capacity — a
+27B hybrid answers at 1–2 tok/s with 7 of its 64 blocks resident, while FLUX.2 klein still
+draws a 1024² image in 2–3 s. Details in `docs/small_vram_7gb_2026.md`.
+
 ## Build
 
 synthos is a Cargo workspace that path-depends on its two sibling repositories. Check all
@@ -270,8 +294,9 @@ then `makepkg` against the existing binary.
 - Linux x86_64. Runtime: gtk3, wayland, libxkbcommon, fontconfig, a Vulkan driver, alsa,
   ffmpeg.
 - GPU (optional, strongly recommended): NVIDIA driver + CUDA runtime, loaded at runtime. The
-  compile baseline is sm_80 (Ampere); native NVFP4 needs sm_120 (Blackwell). Without a GPU
-  the node engine falls back to CPU for smoke tests and debugging.
+  compile baseline is sm_80 (Ampere); native NVFP4 needs sm_120 (Blackwell). 7 GB of VRAM is
+  enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
+  to CPU for smoke tests and debugging.
 - A Windows build is planned — the app currently depends on Linux-only components.
 
 ## Models and licences

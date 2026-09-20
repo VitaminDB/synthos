@@ -48,7 +48,7 @@ pub fn run_desktop() {
     // в `logging.rs`.
     logging::init();
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = env!("SYNTHOS_VERSION"),
         "Synthos starting"
     );
 
@@ -77,7 +77,7 @@ pub fn run_desktop() {
     i18n::install(ctx.general);
 
     App::new()
-        .title(concat!("Synthos v", env!("CARGO_PKG_VERSION")))
+        .title(concat!("Synthos v", env!("SYNTHOS_VERSION")))
         .frameless()
         .transparent(true)
         .background(Color::from_srgb(0, 0, 0, 0.0))
@@ -163,7 +163,7 @@ fn android_main(app: syngui::app::AndroidApp) {
     let (theme_mss, ctx) = build_context();
 
     App::new()
-        .title(concat!("Synthos v", env!("CARGO_PKG_VERSION")))
+        .title(concat!("Synthos v", env!("SYNTHOS_VERSION")))
         .vsync(true)
         .gpu_backend(GpuBackend::Gl)
         .gpu_power(GpuPowerPreference::LowPower)

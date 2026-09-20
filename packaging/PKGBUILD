@@ -1,7 +1,12 @@
 # Maintainer: Alexeyev Vitaly
 pkgname=synthos
-pkgver=0.2.0
-pkgrel=267
+# Версия — сквозной номер сборки: он же version в Cargo.toml (там semver
+# «268.0.0», Cargo иначе не умеет), он же тег релиза v268, он же номер, который
+# показывает титлбар. pkgrel — ревизия пакета: растёт, только если тот же код
+# пересобирается под новые библиотеки (мажорный ffmpeg), и сбрасывается в 1
+# вместе с новым pkgver.
+pkgver=268
+pkgrel=1
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода"
 license=("MIT" "Apache-2.0")
 arch=("x86_64")
@@ -48,9 +53,9 @@ build() {
         return 1
     fi
 
-    # pkgrel зашивается в бинарь на этапе компиляции (build.rs → SYNTHOS_PKGREL,
-    # его показывает пилюля в титлбаре). Если pkgrel подняли уже после сборки,
-    # пакет N уедет с бинарём, который показывает N-1 — ловим это по mtime.
+    # pkgver зашивается в бинарь на этапе компиляции (build.rs → SYNTHOS_VERSION,
+    # его показывает титлбар). Если версию подняли уже после сборки, пакет N
+    # уедет с бинарём, который показывает N-1 — ловим это по mtime.
     if [ "$startdir/PKGBUILD" -nt "$WORKSPACE_ROOT/target/release/synthos" ]; then
         error "PKGBUILD новее бинаря — pkgrel подняли после сборки; пересоберите 'cargo build --release -p synthos'"
         return 1

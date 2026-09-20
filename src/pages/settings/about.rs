@@ -52,7 +52,7 @@ fn identity_card() -> impl Widget {
             DecoratedBox::new().class("grow").child(mgui! {
                 Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
                     Text::new("Synthos").class("about-identity-name"),
-                    Text::new(tr!("settings.about.version", version = env!("CARGO_PKG_VERSION"))).class("about-identity-version"),
+                    Text::new(tr!("settings.about.version", version = env!("SYNTHOS_VERSION"))).class("about-identity-version"),
                     Text::new(tr!("settings.about.tagline")).class("about-identity-tagline"),
                 ]
             }),

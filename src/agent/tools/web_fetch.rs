@@ -23,7 +23,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// User-Agent для исходящего HTTP-запроса. Многие сайты 403'ят дефолтный
 /// `reqwest/x.y` — даём осмысленный self-identifier.
-pub const USER_AGENT: &str = concat!("syngui-synthos/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("syngui-synthos/", env!("SYNTHOS_VERSION"));
 
 /// Категории content-type, которые мы умеем обрабатывать.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

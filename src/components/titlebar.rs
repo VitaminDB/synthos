@@ -1,8 +1,9 @@
 //! Custom title bar for the frameless window.
 //!
-//! Left: app name + version (`Synthos v<CARGO_PKG_VERSION>`), пилюля стадии
-//! («beta») и номер сборки — `pkgrel` из `packaging/PKGBUILD`, который
-//! пробрасывает `build.rs`. По нему сразу видно, какая сборка запущена.
+//! Left: app name + version (`Synthos v<SYNTHOS_VERSION>` — сквозной номер
+//! сборки, `pkgver` из `packaging/PKGBUILD`, который пробрасывает `build.rs`;
+//! по нему сразу видно, какая сборка запущена), пилюля стадии («beta») и —
+//! только если пакет пересобирали под новые библиотеки — ревизия пакета.
 //! Right: прогресс загрузок HuggingFace (пока они есть), затем чипы Donate и
 //! GitHub вплотную к кнопкам окна (те же ссылки есть в
 //! «Настройки → О программе»), затем window controls — either the built-in
@@ -52,7 +53,8 @@ pub fn view() -> impl Widget {
     )
 }
 
-/// Номер сборки: пусто, если собирали вне репозитория (см. `build.rs`).
+/// Ревизия пакета Arch: пусто при обычном `pkgrel=1` и вне репозитория —
+/// сам номер сборки живёт в версии рядом (см. `build.rs`).
 const PKGREL: &str = env!("SYNTHOS_PKGREL");
 
 fn title_text() -> impl Widget {
@@ -60,7 +62,7 @@ fn title_text() -> impl Widget {
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(
-            Text::new(tr!("titlebar.title", version = env!("CARGO_PKG_VERSION")))
+            Text::new(tr!("titlebar.title", version = env!("SYNTHOS_VERSION")))
                 .class("titlebar-title"),
         )
         .child(badge(tr!("titlebar.stage.beta"), "titlebar-badge-stage"));

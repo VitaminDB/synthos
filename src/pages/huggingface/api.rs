@@ -92,7 +92,7 @@ fn push_segment_progress(
 }
 
 const API_HOST: &str = "https://huggingface.co";
-const USER_AGENT: &str = concat!("synthos-hf/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("synthos-hf/", env!("SYNTHOS_VERSION"));
 
 /// Минимальный интервал между UI-флэшами прогресса (мс). Прогресс копится в
 /// задаче и шлётся в main-thread не чаще — на быстрой сети это срезает тысячи

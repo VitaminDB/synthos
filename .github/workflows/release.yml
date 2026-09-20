@@ -78,24 +78,29 @@ jobs:
         run: |
           set -euo pipefail
           ref="${{ github.event.inputs.ref || github.ref_name }}"
+          # Версия — сквозной номер сборки (268). В Cargo.toml он записан как
+          # semver «268.0.0» (Cargo другого формата не принимает), в PKGBUILD и
+          # в теге — просто «268»; сверяем мажор с pkgver.
           cargo_ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
           pkgver="$(grep -m1 '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
           pkgrel="$(grep -m1 '^pkgrel=' packaging/PKGBUILD | cut -d= -f2)"
 
-          if [ "$cargo_ver" != "$pkgver" ]; then
+          if [ "${cargo_ver%%.*}" != "$pkgver" ]; then
             echo "::error::Cargo.toml version=$cargo_ver, PKGBUILD pkgver=$pkgver — разошлись"
             exit 1
           fi
 
-          # Тег обязан совпадать с версией; ручной запуск с master этого не требует.
+          # Тег обязан совпадать с версией; ручной запуск с master этого не
+          # требует — такая сборка получает свой тег с коммитом, чтобы не занять
+          # имя настоящего релиза.
           case "$ref" in
             v*)
-              if [ "${ref#v}" != "$cargo_ver" ]; then
-                echo "::error::тег $ref не совпадает с версией $cargo_ver"
+              if [ "${ref#v}" != "$pkgver" ]; then
+                echo "::error::тег $ref не совпадает с версией $pkgver"
                 exit 1
               fi
               tag="$ref" ;;
-            *)  tag="v$cargo_ver-build$pkgrel" ;;
+            *)  tag="v$pkgver-build-$(git rev-parse --short HEAD)" ;;
           esac
 
           echo "tag=$tag"         >> "$GITHUB_OUTPUT"

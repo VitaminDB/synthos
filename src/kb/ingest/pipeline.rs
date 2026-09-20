@@ -18,6 +18,8 @@ use crate::kb::store::{ChunkRow, DocumentRow, Store};
 /// Высокоуровневый стейдж — для UI ProgressBar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestStage {
+    /// Job принят, но конвейер ещё не пошёл: грузится эмбеддер/токенайзер.
+    Preparing,
     Discovering,
     Parsing,
     Chunking,

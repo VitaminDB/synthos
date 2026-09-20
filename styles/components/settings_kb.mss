@@ -1,132 +1,391 @@
 /* ===========================================================================
  * Settings → Базы знаний (RAG / KB)
  *
- * Стиль повторяет audio_models / models — общая «карточная» сетка с белыми
- * (тёмно-серыми) панелями и outlines. Доп. стили — для kb-специфичных
- * элементов: progress bar индексации, чип «активна в чате», meta-line.
+ * Страница собрана из тех же кирпичей, что «Общие»: `.settings-section-title`
+ * + `.settings-card` со строками `.settings-row` (иконка в `--primary-soft`,
+ * заголовок, описание, контрол справа). Здесь — только своё: шапка коллекции,
+ * чипы состояния, кнопки, строки документов и выдача пробного поиска. Цвета —
+ * только переменные темы: страница обязана жить во всех оформлениях.
  * =========================================================================== */
 
 .kb-page {
-    background: var(--bg-shell, #f7f7f9);
+    background-color: transparent;
 }
 
-.kb-meta-line {
-    color: var(--text-muted, #6b7280);
-    font-size: 12px;
-    line-height: 18px;
+/* Даёт тексту внутри flex-строки ужиматься (elide), а не распирать строку. */
+.kb-min0 {
+    min-width: 0;
 }
 
-.kb-embedder-status {
-    color: var(--text, #1f2937);
-    font-weight: 500;
+/* ── Пустое состояние ─────────────────────────────────────────────────── */
+
+.kb-empty-bubble {
+    width: 88px;
+    height: 88px;
+    border-radius: 999px;
+    background-color: var(--primary-soft);
+}
+
+.kb-empty-icon {
+    color: var(--primary);
+    icon-size: 40px;
+}
+
+.kb-empty-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+/* Ширину ограничивает сам текст: обёртка-бокс вокруг него в свободной по
+ * высоте колонке растягивалась на всю высоту страницы. */
+.kb-empty-text {
+    max-width: 460px;
     font-size: 14px;
+    line-height: 21px;
+    color: var(--text-muted);
+    text-align: center;
 }
 
-.kb-embedder-hint {
-    color: var(--text-subtle, #9ca3af);
+/* ── Шапка коллекции ──────────────────────────────────────────────────── */
+
+.kb-hero-badge {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background-color: var(--primary-soft);
+}
+
+.kb-hero-badge-icon {
+    color: var(--primary);
+    icon-size: 28px;
+}
+
+/* Имя — поле без рамки: выглядит заголовком, пока в него не щёлкнули. */
+TextField.kb-hero-name {
+    width: 100%;
+    background-color: transparent;
+    border-color: transparent;
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+TextField.kb-hero-name:hover {
+    background-color: var(--bg-search);
+}
+
+TextField.kb-hero-name:focus {
+    background-color: var(--bg-search);
+    border-color: var(--primary);
+}
+
+.kb-stat-chip {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: var(--bg-search);
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.kb-stat-chip-icon {
+    icon-size: 14px;
+    color: var(--text-subtle);
+}
+
+.kb-stat-chip-label {
     font-size: 12px;
-    line-height: 16px;
+    color: var(--text-muted);
 }
 
-.kb-embedder-btn {
+.kb-stat-chip-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.kb-confirm-text {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* ── Кнопки ───────────────────────────────────────────────────────────── */
+
+.kb-btn {
     padding: 8px 14px;
-    border-radius: 8px;
-    background: var(--bg-panel, #ffffff);
-    border: 1px solid var(--border, #e5e7eb);
-    color: var(--text, #1f2937);
-    transition: background 120ms ease, border-color 120ms ease;
-}
-.kb-embedder-btn:hover {
-    background: var(--surface-hover, #f3f4f6);
-}
-.kb-embedder-btn.primary {
-    background: var(--primary, #3B82F6);
-    border-color: var(--primary, #3B82F6);
-    color: #ffffff;
-}
-.kb-embedder-btn.primary:hover {
-    background: var(--primary-hover, #2563EB);
+    border-radius: 10px;
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--border-strong);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
 }
 
-.kb-source-btn {
-    padding: 8px 12px;
-    border-radius: 8px;
-    background: var(--bg-panel, #ffffff);
-    border: 1px solid var(--border, #e5e7eb);
-    color: var(--text, #1f2937);
-    transition: background 120ms ease;
-}
-.kb-source-btn:hover {
-    background: var(--surface-hover, #f3f4f6);
+.kb-btn:hover {
+    background-color: var(--surface-hover);
 }
 
-.kb-progress-card {
-    background: var(--bg-panel, #ffffff);
-    border-color: var(--primary, #3B82F6);
+.kb-btn.kb-btn-primary {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: var(--on-primary);
+    font-weight: 600;
 }
+
+.kb-btn.kb-btn-primary:hover {
+    background-color: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
+
+.kb-btn.kb-btn-soft {
+    background-color: var(--primary-soft);
+    border-color: transparent;
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.kb-btn.kb-btn-soft:hover {
+    background-color: var(--primary);
+    color: var(--on-primary);
+}
+
+.kb-btn.kb-btn-danger {
+    background-color: var(--error);
+    border-color: var(--error);
+    color: var(--text-inverse);
+    font-weight: 600;
+}
+
+.kb-btn.kb-btn-danger:hover {
+    background-color: var(--error-hover);
+    border-color: var(--error-hover);
+}
+
+/* «В чате» — пилюля-переключатель: выключена — контур, включена — акцент. */
+.kb-chat-pill {
+    padding: 8px 14px;
+    border-radius: 999px;
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.kb-chat-pill:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
+.kb-chat-pill.on {
+    background-color: var(--primary-soft);
+    border-color: transparent;
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.kb-chat-pill.on:hover {
+    background-color: var(--primary-soft);
+    color: var(--primary-hover);
+}
+
+.kb-icon-btn {
+    color: var(--text-muted);
+    background-color: transparent;
+    border-radius: 8px;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.kb-icon-btn:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
+.kb-icon-btn.danger:hover {
+    color: var(--error);
+}
+
+/* ── Строки-кнопки «Источники» ────────────────────────────────────────── */
+
+.kb-click-row {
+    cursor: pointer;
+}
+
+.kb-row-action-icon {
+    icon-size: 20px;
+    color: var(--text-subtle);
+}
+
 .kb-progress-bar {
     height: 6px;
     border-radius: 3px;
-    accent-color: var(--primary, #3B82F6);
-    background-color: var(--border, #e5e7eb);
-}
-.kb-progress-line {
-    color: var(--text-muted, #6b7280);
-    font-size: 12px;
+    accent-color: var(--primary);
+    background-color: var(--bg-search);
 }
 
-.kb-doc-row {
-    background: var(--bg-panel, #ffffff);
-    border: 1px solid var(--border-soft, #eef0f2);
-    border-radius: 8px;
-    transition: border-color 120ms ease;
-}
-.kb-doc-row:hover {
-    border-color: var(--border, #e5e7eb);
-}
-.kb-doc-line {
-    color: var(--text, #1f2937);
-    font-size: 12px;
-    line-height: 17px;
+/* ── Документы ────────────────────────────────────────────────────────── */
+
+TextField.kb-filter-field {
+    padding: 6px 12px;
+    font-size: 13px;
 }
 
-/* Правая панель — список коллекций */
-.kb-panel { /* fallback к skills-panel/models-panel — наследуем layout */ }
-
-.kb-coll-row {
-    background: var(--bg-panel, #ffffff);
-    border: 1px solid var(--border-soft, #eef0f2);
-    border-radius: 10px;
-    transition: border-color 120ms ease, background 120ms ease;
-}
-.kb-coll-row:hover {
-    border-color: var(--border, #e5e7eb);
-}
-.kb-coll-row.selected {
-    border-color: var(--primary, #3B82F6);
-    background: var(--primary-soft, #eff6ff);
-}
-.kb-coll-title {
-    color: var(--text, #1f2937);
-    font-weight: 500;
+.kb-doc-title {
+    color: var(--text);
     font-size: 14px;
+    font-weight: 600;
 }
-.kb-coll-subtitle {
-    color: var(--text-muted, #6b7280);
-    font-size: 11px;
-    line-height: 14px;
+
+.kb-doc-path {
+    color: var(--text-muted);
+    font-size: 12px;
 }
-.kb-coll-toggle {
-    padding: 4px 10px;
-    font-size: 11px;
+
+.kb-doc-size {
+    color: var(--text-subtle);
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.kb-placeholder-icon {
+    icon-size: 32px;
+    color: var(--text-subtle);
+}
+
+.kb-placeholder-text {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* ── Проверка поиска ──────────────────────────────────────────────────── */
+
+TextField.kb-probe-field {
+    width: 100%;
+}
+
+.kb-probe-row {
+    border-top-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.kb-probe-note {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.kb-probe-note.error {
+    color: var(--error);
+}
+
+.kb-probe-rank {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background-color: var(--primary-soft);
+}
+
+.kb-probe-rank-text {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.kb-probe-snippet {
+    font-size: 13px;
+    line-height: 19px;
+    color: var(--text-muted);
+}
+
+.kb-badge {
+    padding: 2px 8px;
     border-radius: 6px;
-    background: var(--bg-shell, #f7f7f9);
-    border: 1px solid var(--border, #e5e7eb);
-    color: var(--text-muted, #6b7280);
-    transition: background 120ms ease;
+    background-color: var(--bg-search);
+    border-width: 1px;
+    border-color: var(--border-soft);
 }
-.kb-coll-toggle:hover {
-    background: var(--surface-hover, #f3f4f6);
+
+.kb-badge.accent {
+    background-color: var(--primary-soft);
+    border-color: transparent;
+}
+
+.kb-badge-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.kb-badge.accent .kb-badge-text {
+    color: var(--primary);
+}
+
+/* ── Модели ───────────────────────────────────────────────────────────── */
+
+.kb-desc-warn {
+    color: var(--warning);
+}
+
+.kb-desc-error {
+    color: var(--error);
+}
+
+.kb-state-chip {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: var(--bg-search);
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.kb-state-chip-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.kb-state-chip.ready {
+    border-color: var(--success);
+}
+
+.kb-state-chip.ready .kb-state-chip-text {
+    color: var(--success);
+}
+
+.kb-state-chip.busy {
+    border-color: var(--primary);
+}
+
+.kb-state-chip.busy .kb-state-chip-text {
+    color: var(--primary);
+}
+
+/* ── Правая панель: список коллекций (строки — от .skill-list-*) ──────── */
+
+.kb-panel {
+    background-color: transparent;
+}
+
+/* Коллекция подключена к чату — иконка залита акцентом. */
+.kb-coll-in-chat {
+    background-color: var(--primary);
+}
+
+.kb-coll-in-chat-icon {
+    color: var(--on-primary);
+}
+
+.kb-coll-chat.on {
+    color: var(--primary);
 }
 
 /* Snackbar глобальный — общий для KB и других приложений (до этапа полного

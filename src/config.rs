@@ -989,8 +989,9 @@ pub fn dtype_name(dt: synaptix_core::dtype::DType) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KbConfig {
-    /// Каталог с моделью эмбеддера. Дефолт: `~/models/bge-m3`.
-    /// При смене требует перезагрузки эмбеддера через UI.
+    /// Ручной путь к эмбеддеру: `.syn`-бандл или каталог HF-снапшота.
+    /// Пусто (дефолт) = найти самим в каталоге из «AI модели»
+    /// (`bge-m3.syn`), см. `kb::models`. Несуществующий путь поиску не мешает.
     pub embedder_model_path: String,
     /// Устройство инференса: `"cpu"`, `"cuda"`, `"metal"`. Для CUDA/Metal
     /// нужен соответствующий feature-флаг билда (`kb-cuda`, `kb-metal`).
@@ -1025,9 +1026,9 @@ pub struct KbConfig {
     /// автоматически включается sqlite-vec. Меньшие коллекции остаются
     /// на full-scan (там это быстрее по latency и не требует extension'а).
     pub vector_index_threshold: usize,
-    /// Каталог с моделью cross-encoder реранкера. Пусто = реранкер
-    /// отключён, `hybrid_search` работает без post-rerank phase'ы.
-    /// Конвенция: `~/models/bge-reranker-v2-m3`.
+    /// Ручной путь к cross-encoder реранкеру — как `embedder_model_path`:
+    /// пусто = найти `bge-reranker-v2-m3.syn` самим. Выключается реранкер
+    /// флагом `reranker_enabled`, а не пустым путём.
     pub reranker_model_path: String,
     /// Устройство инференса реранкера: `"cpu"` / `"cuda"` / `"metal"`.
     pub reranker_device: String,
@@ -1046,7 +1047,7 @@ pub struct KbConfig {
 impl Default for KbConfig {
     fn default() -> Self {
         Self {
-            embedder_model_path: default_kb_embedder_path(),
+            embedder_model_path: String::new(),
             embedder_device: "cpu".to_string(),
             embedder_dtype: "f32".to_string(),
             chunk_target_tokens: 512,
@@ -1058,7 +1059,7 @@ impl Default for KbConfig {
             auto_approve_kb_search: true,
             vector_index_kind: "auto".to_string(),
             vector_index_threshold: 100_000,
-            reranker_model_path: default_kb_reranker_path(),
+            reranker_model_path: String::new(),
             reranker_device: "cpu".to_string(),
             reranker_dtype: "f32".to_string(),
             reranker_enabled: true,
@@ -1066,33 +1067,6 @@ impl Default for KbConfig {
             reranker_max_tokens: 512,
         }
     }
-}
-
-/// `~/models/bge-reranker-v2-m3.syn` — single-file model bundle (см. крейт
-/// `syn-format`); реранкер ~568 MB, multilingual. Пакуется один раз через
-/// `syn-pack ~/models/bge-reranker-v2-m3 -o ~/models/bge-reranker-v2-m3.syn`.
-pub fn default_kb_reranker_path() -> String {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home)
-        .join("models/bge-reranker-v2-m3.syn")
-        .display()
-        .to_string()
-}
-
-/// `~/models/bge-m3.syn` — конвенция single-file model bundle'а (см. крейт
-/// `syn-format`). Старый layout `~/models/bge-m3/` с россыпью файлов больше
-/// не поддерживается embedding-bge — его нужно один раз перепаковать через
-/// `syn-pack ~/models/bge-m3 -o ~/models/bge-m3.syn`.
-pub fn default_kb_embedder_path() -> String {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home)
-        .join("models/bge-m3.syn")
-        .display()
-        .to_string()
 }
 
 /// `~/.config/synthos/kb` — рядом с `blobs/`, `chats/`. Создаётся лениво

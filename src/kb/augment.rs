@@ -28,8 +28,10 @@ use crate::kb::search::{hybrid_search_with_rerank, SearchHit, DEFAULT_RERANK_MUL
 /// который стоит показать в `notifications.warning`.
 #[derive(Debug, thiserror::Error)]
 pub enum AugmentError {
-    #[error("эмбеддер не загружен")]
-    NoEmbedder,
+    /// Эмбеддер не удалось поднять; внутри — готовый текст причины
+    /// (файл не найден / ошибка загрузки).
+    #[error("эмбеддер недоступен: {0}")]
+    NoEmbedder(String),
     #[error("нет активных коллекций в чате")]
     NoCollections,
     #[error("spawn_blocking panic: {0}")]
@@ -42,7 +44,9 @@ impl AugmentError {
     /// по KB-чипу в input-панели).
     pub fn user_message(&self) -> Option<String> {
         match self {
-            AugmentError::NoEmbedder => Some(tr!("kb.augment.no_embedder_warning")),
+            AugmentError::NoEmbedder(why) => {
+                Some(tr!("kb.augment.no_embedder_warning", error = why))
+            }
             AugmentError::NoCollections => None,
             AugmentError::Spawn(_) => Some(tr!("kb.augment.spawn_panic_warning")),
         }
@@ -52,9 +56,9 @@ impl AugmentError {
 /// Снимок данных, нужных worker'у. Берётся на main-потоке, использует
 /// blocking worker — `use_context` доступен только на main.
 struct AugmentSnapshot {
-    embedder: std::sync::Arc<dyn synaptix::facade::embedding::Embedder + Send + Sync>,
-    /// Опциональный cross-encoder reranker (для post-rerank phase'ы).
-    reranker: Option<std::sync::Arc<dyn synaptix::facade::rerank::Reranker + Send + Sync>>,
+    kb: crate::kb::KbCtx,
+    /// Конфиг и каталоги поиска — модели грузятся по первой надобности.
+    plan: crate::kb::loader::LoadPlan,
     /// `(id, name)` активных коллекций в порядке `active_in_chat_ids`.
     /// `name` нужен для подписи источника в формате блока.
     collections: Vec<(String, String)>,
@@ -77,6 +81,16 @@ pub async fn compute(
     }
 
     let snapshot = snapshot_from_main().await?;
+    let embedder = crate::kb::loader::embedder_ready(&snapshot.kb, &snapshot.plan)
+        .await
+        .map_err(AugmentError::NoEmbedder)?;
+    // Реранкер — улучшение, а не условие: не поднялся — ищем без него.
+    let reranker = crate::kb::loader::reranker_ready(&snapshot.kb, &snapshot.plan)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("kb augment: reranker: {e}");
+            None
+        });
 
     let query_clone = q.to_string();
     let per_collection_k: usize = 5;
@@ -85,8 +99,8 @@ pub async fn compute(
     let hits = tokio::task::spawn_blocking(move || {
         merge_hits_across_collections(
             &snapshot.kb_dir,
-            snapshot.embedder.as_ref(),
-            snapshot.reranker.as_deref(),
+            embedder.as_ref(),
+            reranker.as_deref(),
             &snapshot.collections,
             &query_clone,
             per_collection_k,
@@ -109,14 +123,6 @@ async fn snapshot_from_main() -> Result<AugmentSnapshot, AugmentError> {
             let _ = tx.send(Err(AugmentError::NoCollections));
             return;
         }
-        let embedder = match kb.get_embedder() {
-            Some(e) => e,
-            None => {
-                let _ = tx.send(Err(AugmentError::NoEmbedder));
-                return;
-            }
-        };
-        let reranker = kb.get_reranker();
         let registry = kb.registry.get_untracked();
         let collections: Vec<(String, String)> = active_ids
             .iter()
@@ -128,8 +134,8 @@ async fn snapshot_from_main() -> Result<AugmentSnapshot, AugmentError> {
             return;
         }
         let _ = tx.send(Ok(AugmentSnapshot {
-            embedder,
-            reranker,
+            plan: crate::kb::loader::plan(),
+            kb,
             collections,
             kb_dir: registry.kb_dir.clone(),
         }));
@@ -318,8 +324,8 @@ mod tests {
 
     #[test]
     fn user_message_for_no_embedder_is_actionable() {
-        let m = AugmentError::NoEmbedder.user_message().unwrap();
-        assert_eq!(m, tr!("kb.augment.no_embedder_warning"));
+        let m = AugmentError::NoEmbedder("нет файла".into()).user_message().unwrap();
+        assert_eq!(m, tr!("kb.augment.no_embedder_warning", error = "нет файла"));
     }
 
     #[test]

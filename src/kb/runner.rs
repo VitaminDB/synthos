@@ -1,13 +1,14 @@
 //! Высокоуровневый запуск ingest job'а из UI / команд.
 //!
 //! Связывает реактивный [`KbCtx`] с pipeline'ом из `kb::ingest`:
-//! - Проверяет, что эмбеддер уже загружен (если нет — стартует загрузку).
-//! - Загружает tokenizer.json модели, открывает [`Store`] коллекции.
+//! - Берёт эмбеддер через `loader::embedder_ready` — не загружен, значит
+//!   грузится здесь же; пользователь не обязан помнить про кнопку.
+//! - Читает tokenizer.json модели (из бандла или каталога), открывает
+//!   [`Store`] коллекции.
 //! - Спавнит async pipeline через `tokio::task::spawn_blocking` и
 //!   публикует прогресс в `KbCtx.ingest_progress` через `run_on_main_thread`.
 //! - Сбрасывает `cancel_flag`, чтобы предыдущая отмена не аффектила новый job.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -16,30 +17,28 @@ use syngui::widgets::feedback::NotificationCtx;
 use syngui::{tr, trn};
 use synaptix_rag::doc::ChunkConfig;
 
-use crate::config::KbConfig;
 use crate::kb::ctx::KbCtx;
-use crate::kb::ingest::pipeline::{self, IngestJob, IngestStage};
+use crate::kb::ingest::pipeline::{self, IngestJob, IngestProgress, IngestStage};
+use crate::kb::loader::{self, LoadPlan};
+use crate::kb::models::{self, ModelKind};
 use crate::kb::ingest::source::DocSource;
 use crate::kb::store::Store;
 
 static JOB_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Стартовать ingest. Если эмбеддер ещё не загружен — выдаёт snackbar и
-/// возвращает `false` (UI должен сначала загрузить модель).
+/// Стартовать ingest. `false` — job не запущен (нет источников, коллекции
+/// или уже идёт другой). Только с главного потока.
 pub fn start(
     kb: KbCtx,
     notifications: NotificationCtx,
-    cfg: KbConfig,
+    plan: LoadPlan,
     collection_id: String,
     sources: Vec<DocSource>,
 ) -> bool {
-    let embedder = match kb.get_embedder() {
-        Some(e) => e,
-        None => {
-            notifications.warning(tr!("kb.runner.embedder_not_loaded"));
-            return false;
-        }
-    };
+    if kb.ingest_progress.get_untracked().is_some() {
+        notifications.warning(tr!("kb.runner.busy"));
+        return false;
+    }
     if sources.is_empty() {
         notifications.info(tr!("kb.runner.no_sources"));
         return false;
@@ -61,42 +60,61 @@ pub fn start(
 
     let job_id = JOB_ID.fetch_add(1, Ordering::Relaxed);
     let chunk_cfg = ChunkConfig {
-        target_tokens: cfg.chunk_target_tokens,
-        overlap_tokens: cfg.chunk_overlap_tokens,
+        target_tokens: plan.cfg.chunk_target_tokens,
+        overlap_tokens: plan.cfg.chunk_overlap_tokens,
         min_tokens: 32,
     };
-    let embedding_dim = embedder.dim();
-    let model_path = PathBuf::from(&cfg.embedder_model_path);
+
+    // Карточка прогресса появляется сразу, а не после загрузки модели.
+    kb.ingest_progress.set(Some(IngestProgress {
+        job_id,
+        collection_id: collection_id.clone(),
+        stage: IngestStage::Preparing,
+        current: 0,
+        total: 0,
+        current_file: None,
+        error: None,
+    }));
 
     let kb_for_progress = kb.clone();
     let notifications_for_progress = notifications.clone();
 
     spawn(async move {
-        // Загружаем tokenizer (нужен chunker'у). Тот же tokenizer.json,
-        // что использует эмбеддер — единый словарь.
-        let tokenizer_path = model_path.join("tokenizer.json");
-        let tokenizer = match tokenizers::Tokenizer::from_file(&tokenizer_path) {
+        // Любой ранний выход обязан снять карточку прогресса.
+        let fail = |msg: String| {
+            let kb = kb_for_progress.clone();
+            let n = notifications_for_progress.clone();
+            run_on_main_thread(move || {
+                kb.ingest_progress.set(None);
+                n.error(msg);
+            });
+        };
+
+        let embedder = match loader::embedder_ready(&kb_for_progress, &plan).await {
+            Ok(e) => e,
+            Err(e) => return fail(e),
+        };
+        let embedding_dim = embedder.dim();
+
+        // Tokenizer нужен chunker'у — тот же tokenizer.json, что у эмбеддера.
+        let plan_tok = plan.clone();
+        let tokenizer = tokio::task::spawn_blocking(move || {
+            let found = models::find(ModelKind::Embedder, &plan_tok.cfg, &plan_tok.dirs)
+                .ok_or_else(|| "model file disappeared".to_string())?;
+            let bytes = models::read_tokenizer_json(&found.path)?;
+            tokenizers::Tokenizer::from_bytes(&bytes).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        let tokenizer = match tokenizer {
             Ok(t) => t,
-            Err(e) => {
-                let msg = tr!("kb.runner.tokenizer_error", error = e);
-                let n = notifications_for_progress.clone();
-                run_on_main_thread(move || {
-                    n.error(msg);
-                });
-                return;
-            }
+            Err(e) => return fail(tr!("kb.runner.tokenizer_error", error = e)),
         };
 
         let store = match Store::open(&db_path) {
             Ok(s) => s,
-            Err(e) => {
-                let msg = tr!("kb.runner.store_open_error", error = e);
-                let n = notifications_for_progress.clone();
-                run_on_main_thread(move || {
-                    n.error(msg);
-                });
-                return;
-            }
+            Err(e) => return fail(tr!("kb.runner.store_open_error", error = e)),
         };
 
         // URL fetcher — общий с web_read tool.
@@ -165,6 +183,7 @@ pub fn start(
             kb_done.ingest_progress.set(None);
             // Перечитываем counts в registry.
             kb_done.registry.update(|reg| reg.scan());
+            kb_done.documents_rev.update(|r| *r += 1);
         });
 
         if let Err(e) = result {

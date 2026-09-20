@@ -20,7 +20,30 @@ use syngui::prelude::{use_signal, RwSignal};
 
 use super::collection::CollectionRegistry;
 use super::ingest::IngestProgress;
+use super::models::{ModelKind, ModelPaths};
 use super::search::SearchHit;
+
+/// Состояние модели KB для UI. Сами модели лежат под `Mutex` (их берут
+/// рабочие потоки), а сигнал — зеркало для отрисовки: без него карточка
+/// «Модели» не узнавала, что загрузка закончилась.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum ModelState {
+    #[default]
+    Idle,
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+/// Состояние пробного поиска на странице коллекции.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum ProbeState {
+    #[default]
+    Idle,
+    Running,
+    Done(Vec<SearchHit>),
+    Failed(String),
+}
 
 /// Реактивный контекст KB.
 #[derive(Clone)]
@@ -57,6 +80,22 @@ pub struct KbCtx {
     /// опциональная пост-фаза в `hybrid_search` поверх RRF top-K'. Если
     /// `None` — поиск ведёт себя как раньше (BM25 ⊕ cosine RRF).
     pub reranker: Arc<Mutex<Option<Arc<dyn Reranker + Send + Sync>>>>,
+    /// Где на диске лежат модели — итог `kb::models::discover`.
+    pub model_paths: RwSignal<ModelPaths>,
+    /// `false`, пока первый поиск моделей не закончился: UI пишет «ищу…»,
+    /// а не «не найдена».
+    pub model_paths_ready: RwSignal<bool>,
+    pub embedder_state: RwSignal<ModelState>,
+    pub reranker_state: RwSignal<ModelState>,
+    /// Загрузку одной модели ведёт один поток: кнопка в настройках, ingest
+    /// и `kb_search` могут попросить её одновременно.
+    pub embedder_load_lock: Arc<tokio::sync::Mutex<()>>,
+    pub reranker_load_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Пробный поиск по открытой коллекции (страница настроек).
+    pub probe: RwSignal<ProbeState>,
+    /// Растёт при каждой правке документов коллекции мимо `registry`
+    /// (удаление документа) — список документов перечитывается по нему.
+    pub documents_rev: RwSignal<u64>,
 }
 
 impl KbCtx {
@@ -75,6 +114,22 @@ impl KbCtx {
             last_search_hits: use_signal(Vec::new()),
             embedder: Arc::new(Mutex::new(None)),
             reranker: Arc::new(Mutex::new(None)),
+            model_paths: use_signal(ModelPaths::default()),
+            model_paths_ready: use_signal(false),
+            embedder_state: use_signal(ModelState::Idle),
+            reranker_state: use_signal(ModelState::Idle),
+            embedder_load_lock: Arc::new(tokio::sync::Mutex::new(())),
+            reranker_load_lock: Arc::new(tokio::sync::Mutex::new(())),
+            probe: use_signal(ProbeState::Idle),
+            documents_rev: use_signal(0),
+        }
+    }
+
+    /// Сигнал состояния модели. Только с главного потока.
+    pub fn model_state(&self, kind: ModelKind) -> RwSignal<ModelState> {
+        match kind {
+            ModelKind::Embedder => self.embedder_state,
+            ModelKind::Reranker => self.reranker_state,
         }
     }
 

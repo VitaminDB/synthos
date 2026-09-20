@@ -27,6 +27,7 @@ pub mod collection;
 pub mod ctx;
 pub mod ingest;
 pub mod loader;
+pub mod models;
 pub mod runner;
 pub mod search;
 pub mod store;

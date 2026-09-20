@@ -54,8 +54,9 @@ fn parse_args(args_json: &str) -> Result<Args, ToolError> {
 /// Snapshot-данные, собранные на main-потоке.
 struct KbSnapshot {
     active_ids: Vec<String>,
-    embedder: Option<std::sync::Arc<dyn synaptix::facade::embedding::Embedder + Send + Sync>>,
-    reranker: Option<std::sync::Arc<dyn synaptix::facade::rerank::Reranker + Send + Sync>>,
+    kb: crate::kb::KbCtx,
+    /// Конфиг и каталоги поиска — модели грузятся по первой надобности.
+    plan: crate::kb::loader::LoadPlan,
     collections: Vec<(String, String)>,
     kb_dir: std::path::PathBuf,
 }
@@ -72,39 +73,17 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         let kb = app.kb.clone();
         let active_ids = kb.active_collection_ids();
 
-        let snapshot = if active_ids.is_empty() {
-            // Возвращаем пустой snapshot — результат решим по active_ids
-            KbSnapshot {
-                active_ids,
-                embedder: None,
-                reranker: None,
-                collections: Vec::new(),
-                kb_dir: kb.registry.get_untracked().kb_dir.clone(),
-            }
-        } else {
-            let embedder = kb.get_embedder();
-            if embedder.is_none() {
-                KbSnapshot {
-                    active_ids,
-                    embedder: None,
-                    reranker: None,
-                    collections: Vec::new(),
-                    kb_dir: kb.registry.get_untracked().kb_dir.clone(),
-                }
-            } else {
-                let registry = kb.registry.get_untracked();
-                let collections: Vec<(String, String)> = active_ids
-                    .iter()
-                    .filter_map(|id| registry.get(id).map(|m| (m.id.clone(), m.name.clone())))
-                    .collect();
-                KbSnapshot {
-                    active_ids,
-                    embedder,
-                    reranker: kb.get_reranker(),
-                    collections,
-                    kb_dir: registry.kb_dir.clone(),
-                }
-            }
+        let registry = kb.registry.get_untracked();
+        let collections: Vec<(String, String)> = active_ids
+            .iter()
+            .filter_map(|id| registry.get(id).map(|m| (m.id.clone(), m.name.clone())))
+            .collect();
+        let snapshot = KbSnapshot {
+            active_ids,
+            plan: crate::kb::loader::plan(),
+            collections,
+            kb_dir: registry.kb_dir.clone(),
+            kb,
         };
 
         let _ = tx.send(snapshot);
@@ -121,19 +100,6 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         ));
     }
 
-    let embedder = match snapshot.embedder {
-        Some(e) => e,
-        None => {
-            return Ok(format_envelope(
-                &args.query,
-                &[],
-                "Embedder not loaded. Settings → Knowledge Bases → \
-                 \"Load embedder model\" / make sure the model is downloaded \
-                 to the configured directory (default ~/models/bge-m3).",
-            ));
-        }
-    };
-
     let collections = snapshot.collections;
     if collections.is_empty() {
         return Ok(format_envelope(
@@ -143,8 +109,27 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
         ));
     }
 
+    // Модели поднимаются здесь же: первый вызов ждёт загрузку (секунды),
+    // следующие получают готовый Arc.
+    let embedder = match crate::kb::loader::embedder_ready(&snapshot.kb, &snapshot.plan).await {
+        Ok(e) => e,
+        Err(why) => {
+            return Ok(format_envelope(
+                &args.query,
+                &[],
+                &format!("Knowledge base search is unavailable — the embedding model failed to load: {why}"),
+            ));
+        }
+    };
+    // Реранкер — улучшение, а не условие: не поднялся — ищем без него.
+    let reranker = crate::kb::loader::reranker_ready(&snapshot.kb, &snapshot.plan)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("kb_search: reranker: {e}");
+            None
+        });
+
     let kb_dir = snapshot.kb_dir;
-    let reranker = snapshot.reranker;
     let query_for_worker = args.query.clone();
     let top_k = args.top_k;
 

@@ -36,8 +36,10 @@ pub struct CollectionMeta {
 }
 
 impl CollectionMeta {
-    /// Сгенерировать новый id. Простая 8-символьная hex-строка из времени
-    /// + PID — достаточно для уникальности в рамках одного пользователя.
+    /// Сгенерировать новый id: 8 hex-символов из времени и PID. Берём
+    /// МЛАДШИЕ 32 бита наносекунд: старшие меняются раз в ~4,3 с, и две
+    /// коллекции, созданные подряд, получали один id и один файл БД.
+    /// От совпадения с уже существующим файлом страхует `create`.
     pub fn new_id() -> String {
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -45,7 +47,7 @@ impl CollectionMeta {
             .unwrap_or(0);
         let pid = std::process::id() as u128;
         let mix = nanos.wrapping_add(pid.wrapping_mul(2654435761));
-        format!("{:016x}", mix as u64)[..8].to_string()
+        format!("{:08x}", mix as u32)
     }
 
     /// Путь к БД на диске.
@@ -130,7 +132,10 @@ impl CollectionRegistry {
         if !self.kb_dir.is_dir() {
             std::fs::create_dir_all(&self.kb_dir).map_err(StoreError::Io)?;
         }
-        let id = CollectionMeta::new_id();
+        let mut id = CollectionMeta::new_id();
+        while self.kb_dir.join(format!("{id}.sqlite")).exists() {
+            id = CollectionMeta::new_id();
+        }
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

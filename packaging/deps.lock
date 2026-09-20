@@ -6,5 +6,5 @@
 #
 # Формат: <имя>=<полный sha>. Пустое значение → релизная сборка возьмёт master.
 
-syngui=4ab1fab00db3ac1ed455684ee1113c527eb834eb
+syngui=adb6365805b0dfcdbd959761d9719f448a4edd62
 synaptix=2e4c9e53a1eb3dce2a29f6bd3aecd517dab0426e

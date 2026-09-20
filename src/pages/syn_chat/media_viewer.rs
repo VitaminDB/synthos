@@ -16,29 +16,35 @@
 //! └───────────────────────────────────────────────┘
 //! ```
 //!
-//! Тело зависит от модальности: картинка — в `PanZoomViewport` (колёсико
-//! масштабирует, перетаскивание двигает), видео — плеер
+//! Тело зависит от модальности: картинка — сцена [`super::image_stage`]
+//! (размытый фон из неё же, масштаб к курсору, полосы прокрутки, поворот,
+//! лента миниатюр и панель инструментов поверх; подвала у неё нет), видео — плеер
 //! [`crate::components::video_player`] во всю сцену (умеет разворачиваться
 //! на всё окно), аудио — waveform с play/pause, документ — первые килобайты
-//! текста. Подвал есть только когда в нём что-то есть: масштаб картинки или
-//! счётчик вложений.
+//! текста. Подвал есть только когда в нём что-то есть — счётчик вложений.
+//!
+//! Окно картинки и видео можно развернуть на всё окно приложения (кнопка в
+//! шапке, двойной щелчок по шапке, `M`) и тянуть за края. Карточка стоит по
+//! центру, поэтому край уходит на столько же и с другой стороны.
 
 use std::sync::Arc;
 
 use syngui::audio::AudioPlayer;
 use syngui::core::sync::Mutex;
 use syngui::mgui;
+use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::video::{HwAccel, VideoPlayer};
-use syngui::widgets::containers::PanZoomViewport;
+use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::overlay::PortalAnchor;
 use syngui::widgets::visual::StaticWaveform;
 use syngui::StyledWidget;
 
+use crate::components::drag_handle::{DragHandle, DragPhase};
 use crate::components::video_player::{FullscreenCtl, VideoPlayerView};
 use crate::icons::{
-    MI_CHEVRON_LEFT, MI_CHEVRON_RIGHT, MI_CLOSE, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE,
-    MI_PLAY_ARROW, MI_ZOOM_IN, MI_ZOOM_OUT,
+    MI_CHEVRON_LEFT, MI_CHEVRON_RIGHT, MI_CLOSE, MI_CLOSE_FULLSCREEN, MI_CONTENT_COPY,
+    MI_OPEN_IN_FULL, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW,
 };
 use crate::syn_chat::attach::{self, blobs};
 use crate::syn_chat::state::{AttachmentKind, MsgAttachment, SynChatCtx};
@@ -47,21 +53,35 @@ use crate::syn_chat::state::{AttachmentKind, MsgAttachment, SynChatCtx};
 /// всё равно уходит в модель — здесь нужен именно быстрый взгляд.
 const DOC_PREVIEW_CHARS: usize = 20_000;
 
-/// Пределы масштабирования картинки колёсиком.
-const ZOOM_MIN: f32 = 0.1;
-const ZOOM_MAX: f32 = 12.0;
+/// Размер карточки, пока её не тянули (он же в `.media-viewer`), наименьший
+/// при ресайзе и доля окна приложения, больше которой карточка не бывает.
+const CARD_DEFAULT: (f32, f32) = (1280.0, 860.0);
+const CARD_MIN: (f32, f32) = (520.0, 400.0);
+const CARD_MAX_FRACTION: (f32, f32) = (0.96, 0.94);
 
 /// Общее состояние просмотрщика, живущее между перестроениями тела.
 #[derive(Clone, Copy)]
 struct ViewerSignals {
-    zoom: RwSignal<f32>,
-    pan: RwSignal<Point>,
+    image: super::image_stage::ImageSignals,
+    win: WinSignals,
     /// Декод и воспроизведение — общие с инлайн-карточкой ленты.
     audio: super::media_audio::AudioSignals,
     full: FullSignals,
 }
 
-/// «Во весь экран» у видео: карточка на всё окно, окно — полноэкранное.
+/// Окно просмотрщика: размер после ресайза и «развёрнуто».
+#[derive(Clone, Copy)]
+struct WinSignals {
+    /// `None` — размер из MSS.
+    size: RwSignal<Option<Size>>,
+    maximized: RwSignal<bool>,
+    /// Размер в момент, когда край взяли мышью. Живёт в сигнале, а не в
+    /// замыкании ручки: каждое движение пересобирает карточку и с ней
+    /// замыкание, а смещение мыши считается от точки нажатия.
+    resize_base: RwSignal<Option<Size>>,
+}
+
+/// «Во весь экран»: карточка на всё окно, окно — полноэкранное.
 #[derive(Clone, Copy)]
 struct FullSignals {
     active: RwSignal<bool>,
@@ -87,8 +107,12 @@ pub fn view() -> impl Widget {
     });
 
     let signals = ViewerSignals {
-        zoom: use_signal(1.0),
-        pan: use_signal(Point::new(0.0, 0.0)),
+        image: super::image_stage::ImageSignals::new(),
+        win: WinSignals {
+            size: use_signal(None),
+            maximized: use_signal(false),
+            resize_base: use_signal(None),
+        },
         audio: super::media_audio::AudioSignals::new(),
         full: FullSignals {
             active: use_signal(false),
@@ -137,16 +161,41 @@ fn card(
 
         let total = state.items.len();
         let index = state.index;
-        let is_video = matches!(item.kind, AttachmentKind::Video) && !is_zoomable(&item);
+        let is_image = is_zoomable(&item);
+        let is_video = matches!(item.kind, AttachmentKind::Video) && !is_image;
         if !is_video {
             release_video(&video);
         }
+        // Развернуть и тянуть можно то, что умеет занять любое место:
+        // у аудио и документа сцена фиксированного размера.
+        let sizable = is_image || is_video;
+        let full = sizable && signals.full.active.get();
 
-        if is_video && signals.full.active.get() {
+        if is_video && full {
             // Во весь экран — только кадр и его панель, без шапки и листания.
             return DecoratedBox::new()
                 .class("media-viewer media-viewer-full")
                 .child(video_stage(&item, signals.full, &video, true));
+        }
+        if is_image {
+            let stage = super::image_stage::image_stage(
+                &item,
+                &state,
+                signals.image,
+                stage_host(&item, signals, full),
+            );
+            if full {
+                return DecoratedBox::new()
+                    .class("media-viewer media-viewer-full")
+                    .child(stage);
+            }
+            let body = DecoratedBox::new().class("media-viewer-body").child(
+                Row::new()
+                    .gap(0.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .child(DecoratedBox::new().class("media-viewer-image-stage").child(stage)),
+            );
+            return window(signals.win, vec![Box::new(header(&item, signals.win, true)), Box::new(body)]);
         }
 
         let stage: Box<dyn Widget> = if is_video {
@@ -179,12 +228,15 @@ fn card(
             .children(row_items);
 
         let mut rows: Vec<Box<dyn Widget>> = vec![
-            Box::new(header(&item)),
+            Box::new(header(&item, signals.win, sizable)),
             Box::new(DecoratedBox::new().class("media-viewer-body").child(stage_row)),
         ];
         // Пустой подвал у видео и аудио оставлял под сценой голую полосу.
-        if is_zoomable(&item) || total > 1 {
-            rows.push(Box::new(footer(&item, signals, index, total)));
+        if total > 1 {
+            rows.push(Box::new(footer(index, total)));
+        }
+        if sizable {
+            return window(signals.win, rows);
         }
         DecoratedBox::new().class("media-viewer").child(
             Column::new()
@@ -196,10 +248,178 @@ fn card(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Окно: размер, разворот, ручки по краям
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Карточка изменяемого размера: содержимое и поверх него ручки по краям.
+fn window(win: WinSignals, rows: Vec<Box<dyn Widget>>) -> StyledWidget<DecoratedBox> {
+    let maximized = win.maximized.get();
+    let size = win.size.get();
+
+    let content = Column::new()
+        .gap(0.0)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .children(rows);
+    let mut layers = Stack::new().fit(StackFit::Expand).child(content);
+    if !maximized {
+        layers = layers
+            .child(edge_layer(win, Edge::Left))
+            .child(edge_layer(win, Edge::Right))
+            .child(edge_layer(win, Edge::Bottom))
+            .child(edge_layer(win, Edge::BottomLeft))
+            .child(edge_layer(win, Edge::BottomRight));
+    }
+
+    let card = DecoratedBox::new().class(if maximized {
+        "media-viewer media-viewer-max"
+    } else {
+        "media-viewer"
+    });
+    let card = match (maximized, size) {
+        (false, Some(s)) => card
+            .style("width", StyleValue::px(s.width))
+            .style("height", StyleValue::px(s.height)),
+        _ => card,
+    };
+    card.child(layers)
+}
+
+#[derive(Clone, Copy)]
+enum Edge {
+    Left,
+    Right,
+    Bottom,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Edge {
+    /// Во сколько раз смещение мыши меняет ширину и высоту. Карточка стоит
+    /// по центру: чтобы край шёл за курсором, размер растёт вдвое быстрее.
+    fn factors(self) -> (f32, f32) {
+        match self {
+            Edge::Left => (-2.0, 0.0),
+            Edge::Right => (2.0, 0.0),
+            Edge::Bottom => (0.0, 2.0),
+            Edge::BottomLeft => (-2.0, 2.0),
+            Edge::BottomRight => (2.0, 2.0),
+        }
+    }
+
+    fn class(self) -> &'static str {
+        match self {
+            Edge::Left | Edge::Right => "media-viewer-grip media-viewer-grip-x",
+            Edge::Bottom => "media-viewer-grip media-viewer-grip-y",
+            Edge::BottomLeft => "media-viewer-grip media-viewer-grip-sw",
+            Edge::BottomRight => "media-viewer-grip media-viewer-grip-se",
+        }
+    }
+}
+
+/// Слой во всю карточку с ручкой у нужного края. Пустое место слоя событий
+/// не ловит — они уходят содержимому под ним.
+fn edge_layer(win: WinSignals, edge: Edge) -> Box<dyn Widget> {
+    let (fx, fy) = edge.factors();
+    let grip = DecoratedBox::new().class(edge.class()).child(
+        DragHandle::new(DecoratedBox::new().class("media-viewer-grip-fill")).on_drag(
+            move |phase| match phase {
+                DragPhase::Move { delta, .. } => {
+                    let base = win.resize_base.get_untracked().unwrap_or_else(|| {
+                        let now = card_size(win.size.get_untracked(), window_size());
+                        win.resize_base.set(Some(now));
+                        now
+                    });
+                    let next = Size::new(base.width + delta.x * fx, base.height + delta.y * fy);
+                    win.size.set(Some(clamp_card(next, window_size())));
+                }
+                DragPhase::End => win.resize_base.set(None),
+            },
+        ),
+    );
+    match edge {
+        Edge::Left | Edge::Right => Box::new(
+            Row::new()
+                .main_axis_alignment(if matches!(edge, Edge::Left) {
+                    MainAxisAlignment::Start
+                } else {
+                    MainAxisAlignment::End
+                })
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .child(grip),
+        ),
+        Edge::Bottom => Box::new(
+            Column::new()
+                .main_axis_alignment(MainAxisAlignment::End)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .child(grip),
+        ),
+        Edge::BottomLeft | Edge::BottomRight => Box::new(
+            Column::new()
+                .main_axis_alignment(MainAxisAlignment::End)
+                .cross_axis_alignment(if matches!(edge, Edge::BottomLeft) {
+                    CrossAxisAlignment::Start
+                } else {
+                    CrossAxisAlignment::End
+                })
+                .child(grip),
+        ),
+    }
+}
+
+/// Размер окна приложения в логических пикселях. `None` — окна нет (тесты).
+fn window_size() -> Option<Size> {
+    let w = syngui::signal::primary_window()?;
+    let w = w.winit_window();
+    let px = w.inner_size();
+    let k = w.scale_factor() as f32;
+    (px.width > 0 && px.height > 0 && k > 0.0)
+        .then(|| Size::new(px.width as f32 / k, px.height as f32 / k))
+}
+
+/// Пределы карточки: не меньше [`CARD_MIN`], не больше доли окна.
+fn clamp_card(size: Size, window: Option<Size>) -> Size {
+    let (max_w, max_h) = match window {
+        Some(w) => (w.width * CARD_MAX_FRACTION.0, w.height * CARD_MAX_FRACTION.1),
+        None => (f32::INFINITY, f32::INFINITY),
+    };
+    Size::new(
+        size.width.min(max_w).max(CARD_MIN.0.min(max_w)),
+        size.height.min(max_h).max(CARD_MIN.1.min(max_h)),
+    )
+}
+
+/// Сколько карточка занимает сейчас: заданный размер или размер из MSS — в
+/// пределах окна, как их ограничит раскладка.
+fn card_size(size: Option<Size>, window: Option<Size>) -> Size {
+    clamp_card(
+        size.unwrap_or(Size::new(CARD_DEFAULT.0, CARD_DEFAULT.1)),
+        window,
+    )
+}
+
+fn toggle_maximize(win: WinSignals) {
+    win.maximized.update(|m| *m = !*m);
+}
+
+fn stage_host(
+    item: &MsgAttachment,
+    signals: ViewerSignals,
+    fullscreen: bool,
+) -> super::image_stage::StageHost {
+    let for_copy = item.clone();
+    super::image_stage::StageHost {
+        fullscreen,
+        toggle_fullscreen: Arc::new(move || set_full(signals.full, !signals.full.active.get_untracked())),
+        toggle_maximize: Arc::new(move || toggle_maximize(signals.win)),
+        copy: Arc::new(move || copy_image(&for_copy)),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Шапка и подвал
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn header(a: &MsgAttachment) -> impl Widget {
+fn header(a: &MsgAttachment, win: WinSignals, sizable: bool) -> impl Widget {
     let name = if a.original_name.is_empty() {
         a.kind.label().to_string()
     } else {
@@ -209,86 +429,97 @@ fn header(a: &MsgAttachment) -> impl Widget {
     let source = blobs::source_path(a);
     let for_save = a.clone();
 
-    mgui! {
-        DecoratedBox::new().class("media-viewer-header") => [
-            Row::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Icon::new(super::attachments::kind_icon(a.kind)).class("media-viewer-kind-icon"),
-                Column::new().gap(1.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
-                    Text::new(name).class("media-viewer-title"),
-                    Text::new(meta).class("media-viewer-subtitle"),
-                ],
-                DecoratedBox::new().class("grow"),
-                ToolButton::new(crate::icons::MI_DOWNLOAD)
-                    .tooltip(tr!("chat.media.save_as.tooltip"))
-                    .on_click(move || super::media_inline::save_as(&for_save))
-                    .class("media-viewer-action"),
-                ToolButton::new(MI_OPEN_IN_NEW)
-                    .tooltip(tr!("chat.media_viewer.open_external.tooltip"))
-                    .on_click(move || open_externally(&source))
-                    .class("media-viewer-action"),
-                ToolButton::new(MI_CLOSE)
-                    .tooltip(tr!("chat.media_viewer.close.tooltip"))
-                    .on_click(close_viewer)
-                    .class("media-viewer-action media-viewer-close"),
-            ]
+    let mut actions: Vec<Box<dyn Widget>> = Vec::new();
+    if is_zoomable(a) && !blobs::is_svg(a) {
+        let for_copy = a.clone();
+        actions.push(Box::new(
+            ToolButton::new(MI_CONTENT_COPY)
+                .tooltip(tr!("chat.media_viewer.copy.tooltip"))
+                .on_click(move || copy_image(&for_copy))
+                .class("media-viewer-action"),
+        ));
+    }
+    actions.push(Box::new(
+        ToolButton::new(crate::icons::MI_DOWNLOAD)
+            .tooltip(tr!("chat.media.save_as.tooltip"))
+            .on_click(move || super::media_inline::save_as(&for_save))
+            .class("media-viewer-action"),
+    ));
+    actions.push(Box::new(
+        ToolButton::new(MI_OPEN_IN_NEW)
+            .tooltip(tr!("chat.media_viewer.open_external.tooltip"))
+            .on_click(move || open_externally(&source))
+            .class("media-viewer-action"),
+    ));
+    if sizable {
+        let maximized = win.maximized.get();
+        actions.push(Box::new(DecoratedBox::new().class("media-viewer-action-sep")));
+        actions.push(Box::new(
+            ToolButton::new(if maximized { MI_CLOSE_FULLSCREEN } else { MI_OPEN_IN_FULL })
+                .tooltip(if maximized {
+                    tr!("chat.media_viewer.restore.tooltip")
+                } else {
+                    tr!("chat.media_viewer.maximize.tooltip")
+                })
+                .on_click(move || toggle_maximize(win))
+                .class("media-viewer-action"),
+        ));
+    }
+    actions.push(Box::new(
+        ToolButton::new(MI_CLOSE)
+            .tooltip(tr!("chat.media_viewer.close.tooltip"))
+            .on_click(close_viewer)
+            .class("media-viewer-action media-viewer-close"),
+    ));
+
+    let title = mgui! {
+        Row::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+            Icon::new(super::attachments::kind_icon(a.kind)).class("media-viewer-kind-icon"),
+            Column::new().gap(1.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
+                Text::new(name).class("media-viewer-title"),
+                Text::new(meta).class("media-viewer-subtitle"),
+            ],
         ]
-    }
-}
-
-fn footer(
-    a: &MsgAttachment,
-    signals: ViewerSignals,
-    index: usize,
-    total: usize,
-) -> impl Widget {
-    let zoomable = is_zoomable(a);
-    let mut left: Vec<Box<dyn Widget>> = Vec::new();
-    if zoomable {
-        left.push(Box::new(
-            ToolButton::new(MI_ZOOM_OUT)
-                .tooltip(tr!("chat.media_viewer.zoom_out.tooltip"))
-                .on_click(move || scale_by(signals, 1.0 / 1.25))
-                .class("media-viewer-action"),
-        ));
-        left.push(Box::new(zoom_label(signals)));
-        left.push(Box::new(
-            ToolButton::new(MI_ZOOM_IN)
-                .tooltip(tr!("chat.media_viewer.zoom_in.tooltip"))
-                .on_click(move || scale_by(signals, 1.25))
-                .class("media-viewer-action"),
-        ));
-        left.push(Box::new(
-            ToolButton::new(MI_FIT_SCREEN)
-                .tooltip(tr!("chat.media_viewer.fit.tooltip"))
-                .on_click(move || reset_zoom(signals))
-                .class("media-viewer-action"),
-        ));
-    }
-
-    let counter = if total > 1 {
-        format!("{} / {}", index + 1, total)
+    };
+    // Двойной щелчок по названию разворачивает окно — как у заголовка
+    // обычного окна. Кнопки справа в жест не входят.
+    let title: Box<dyn Widget> = if sizable {
+        Box::new(
+            // `grow` — самой обёртке: строка шапки растягивает своих прямых
+            // детей, до класса вложенного бокса ей дела нет.
+            GestureDetector::new()
+                .on_double_click(move || toggle_maximize(win))
+                .class("grow")
+                .child(DecoratedBox::new().class("media-viewer-title-area").child(title)),
+        )
     } else {
-        String::new()
+        Box::new(DecoratedBox::new().class("media-viewer-title-area").child(title))
     };
 
+    DecoratedBox::new().class("media-viewer-header").child(
+        Row::new()
+            .gap(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .child(title)
+            .child(
+                Row::new()
+                    .gap(4.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .children(actions),
+            ),
+    )
+}
+
+/// Подвал сцен без своей панели (видео, аудио, документ): счётчик вложений.
+fn footer(index: usize, total: usize) -> impl Widget {
     mgui! {
         DecoratedBox::new().class("media-viewer-footer") => [
             Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).children(left),
                 DecoratedBox::new().class("grow"),
-                Text::new(counter).class("media-viewer-counter"),
+                Text::new(format!("{} / {}", index + 1, total)).class("media-viewer-counter"),
             ]
         ]
     }
-}
-
-fn zoom_label(signals: ViewerSignals) -> impl Widget {
-    Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let z = signals.zoom.get();
-        vec![Box::new(
-            Text::new(format!("{:.0}%", z * 100.0)).class("media-viewer-zoom"),
-        )]
-    })
 }
 
 /// Стрелка листания. При одном вложении превращается в невидимую распорку,
@@ -320,7 +551,6 @@ fn body(
     audio_player: Arc<Mutex<Option<AudioPlayer>>>,
 ) -> Box<dyn Widget> {
     match a.kind {
-        _ if is_zoomable(a) => Box::new(image_stage(a, signals)),
         AttachmentKind::Audio => audio_stage(a, signals, audio_player),
         AttachmentKind::Document => Box::new(document_stage(a)),
         _ => Box::new(unsupported_stage(a)),
@@ -331,21 +561,6 @@ fn body(
 /// растеризует.
 fn is_zoomable(a: &MsgAttachment) -> bool {
     matches!(a.kind, AttachmentKind::Image) || blobs::is_svg(a)
-}
-
-fn image_stage(a: &MsgAttachment, signals: ViewerSignals) -> impl Widget {
-    let path = blobs::display_path(a);
-    let image = Image::new(path.display().to_string())
-        .fit(ImageFit::Contain)
-        .class("media-viewer-image");
-
-    PanZoomViewport::new()
-        .zoom(signals.zoom)
-        .pan(signals.pan)
-        .zoom_range(ZOOM_MIN, ZOOM_MAX)
-        .grid(false)
-        .child(image)
-        .class("media-viewer-panzoom")
 }
 
 fn video_stage(
@@ -592,14 +807,30 @@ fn step(delta: isize) {
     });
 }
 
-fn scale_by(signals: ViewerSignals, factor: f32) {
-    let next = (signals.zoom.get_untracked() * factor).clamp(ZOOM_MIN, ZOOM_MAX);
-    signals.zoom.set(next);
-}
-
-fn reset_zoom(signals: ViewerSignals) {
-    signals.zoom.set(1.0);
-    signals.pan.set(Point::new(0.0, 0.0));
+/// Картинку — в буфер: PNG (вставится в редактор или мессенджер) и ссылка на
+/// файл (вставится в файловый менеджер), текстом — путь.
+fn copy_image(a: &MsgAttachment) {
+    let path = blobs::display_path(a);
+    let png = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
+        std::fs::read(&path).map_err(|e| e.to_string())
+    } else {
+        image::open(&path).map_err(|e| e.to_string()).and_then(|img| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::Png)
+                .map(|()| out.into_inner())
+                .map_err(|e| e.to_string())
+        })
+    };
+    let uris = syngui::clipboard::uri_list(&[&path]);
+    let mut formats: Vec<(&str, &[u8])> = vec![("text/uri-list", uris.as_bytes())];
+    match &png {
+        Ok(bytes) => formats.insert(0, ("image/png", bytes.as_slice())),
+        Err(e) => log::warn!("[media-viewer] копия {} как PNG: {e}", path.display()),
+    }
+    syngui::clipboard::copy_rich(&path.display().to_string(), &formats);
+    use_context::<crate::context::AppCtx>()
+        .notifications
+        .success(tr!("chat.media_viewer.copied"));
 }
 
 fn open_externally(path: &std::path::Path) {

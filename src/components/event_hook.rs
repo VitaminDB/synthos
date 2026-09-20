@@ -23,6 +23,7 @@ pub enum KeyReply {
 
 type KeyHandler = Arc<dyn Fn(Key, Modifiers) -> KeyReply + Send + Sync>;
 type KeyFilter = Arc<dyn Fn(Key) -> bool + Send + Sync>;
+type CharHandler = Arc<dyn Fn(char) -> bool + Send + Sync>;
 type MoveHandler = Arc<dyn Fn(bool) + Send + Sync>;
 
 /// Прозрачная обёртка: перехват клавиш и наблюдение за собственной геометрией.
@@ -37,6 +38,7 @@ pub struct EventHook {
     on_key_down: Option<KeyHandler>,
     on_key_up: Option<KeyHandler>,
     capture_keys: Option<KeyFilter>,
+    on_char: Option<CharHandler>,
     on_mouse_move: Option<MoveHandler>,
     bounds_out: Option<Arc<Mutex<Rect>>>,
     child: Option<Box<dyn Widget>>,
@@ -48,6 +50,7 @@ impl EventHook {
             on_key_down: None,
             on_key_up: None,
             capture_keys: None,
+            on_char: None,
             on_mouse_move: None,
             bounds_out: None,
             child: None,
@@ -75,6 +78,13 @@ impl EventHook {
     /// у `Slider`, пробел у `ToolButton`.
     pub fn capture_keys(mut self, filter: impl Fn(Key) -> bool + Send + Sync + 'static) -> Self {
         self.capture_keys = Some(Arc::new(filter));
+        self
+    }
+
+    /// Печатный символ (`+`, `-`): у таких клавиш нет своего `Key`, они
+    /// приходят только как ввод. `true` — символ обработан.
+    pub fn on_char(mut self, handler: impl Fn(char) -> bool + Send + Sync + 'static) -> Self {
+        self.on_char = Some(Arc::new(handler));
         self
     }
 
@@ -109,6 +119,7 @@ impl Widget for EventHook {
             on_key_down: self.on_key_down.clone(),
             on_key_up: self.on_key_up.clone(),
             capture_keys: self.capture_keys.clone(),
+            on_char: self.on_char.clone(),
             on_mouse_move: self.on_mouse_move.clone(),
             bounds_out: self.bounds_out.clone(),
             has_child: self.child.is_some(),
@@ -153,6 +164,7 @@ struct EventHookElement {
     on_key_down: Option<KeyHandler>,
     on_key_up: Option<KeyHandler>,
     capture_keys: Option<KeyFilter>,
+    on_char: Option<CharHandler>,
     on_mouse_move: Option<MoveHandler>,
     bounds_out: Option<Arc<Mutex<Rect>>>,
     has_child: bool,
@@ -178,6 +190,7 @@ impl Element for EventHookElement {
             self.on_key_down = hook.on_key_down.clone();
             self.on_key_up = hook.on_key_up.clone();
             self.capture_keys = hook.capture_keys.clone();
+            self.on_char = hook.on_char.clone();
             self.on_mouse_move = hook.on_mouse_move.clone();
             self.bounds_out = hook.bounds_out.clone();
             self.has_child = hook.child.is_some();
@@ -212,6 +225,12 @@ impl Element for EventHookElement {
                 handler(self.bounds.contains(*pos));
             }
             return EventResult::Ignored;
+        }
+        if let Event::CharInput(c) = event {
+            return match &self.on_char {
+                Some(handler) if handler(*c) => EventResult::Handled,
+                _ => EventResult::Ignored,
+            };
         }
         let (key, handler) = match event {
             Event::KeyDown(key) => (*key, self.on_key_down.as_ref()),

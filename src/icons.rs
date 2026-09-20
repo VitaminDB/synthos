@@ -310,3 +310,14 @@ pub const MI_INSERT_EMOTICON: &str     = "\u{E24E}"; // смайлик — па�
 pub const MI_VIEW_LIST: &str           = "\u{E8EF}";
 pub const MI_GRID_VIEW: &str           = "\u{E9B0}";
 pub const MI_IMAGE: &str               = "\u{E3F4}";
+
+// --- Просмотрщик картинок (`pages::syn_chat::image_stage`)
+pub const MI_ROTATE_LEFT: &str         = "\u{E419}";
+pub const MI_ROTATE_RIGHT: &str        = "\u{E41A}";
+/// «flip» — отражение по горизонтали; по вертикали — «swap_vert».
+pub const MI_FLIP: &str                = "\u{E3E8}";
+pub const MI_SWAP_VERT: &str           = "\u{E8D5}";
+/// «open_in_full» — развернуть окно просмотрщика на всё окно приложения.
+pub const MI_OPEN_IN_FULL: &str        = "\u{F1CE}";
+/// «zoom_out_map» — заполнить область картинкой.
+pub const MI_ZOOM_OUT_MAP: &str        = "\u{E56B}";

@@ -44,6 +44,7 @@ pub mod emoji_picker;
 #[cfg(all(test, feature = "testing"))]
 mod feed_bench;
 pub mod float_window;
+pub mod image_stage;
 pub mod input_panel;
 pub mod lane;
 pub mod left_panel;

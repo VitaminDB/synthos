@@ -36,7 +36,7 @@ $EDITOR packaging/PKGBUILD          # pkgver=268, pkgrel=1
 $EDITOR Cargo.toml                  # version = "268.0.0" — мажор равен pkgver
 
 git commit -am "релиз v268"
-git tag v268 && git push --follow-tags
+git tag v268 && git push origin master v268    # --follow-tags легковесный тег не пушит
 
 # 2. дождаться, пока workflow release соберёт пакет и выложит артефакты
 

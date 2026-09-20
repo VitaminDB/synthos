@@ -107,6 +107,24 @@ jobs:
           echo "pkgver=$pkgver"   >> "$GITHUB_OUTPUT"
           echo "pkgrel=$pkgrel"   >> "$GITHUB_OUTPUT"
 
+      - name: Окружение сборки
+        run: |
+          set -euo pipefail
+          # Раннер живёт пользовательским systemd-сервисом, а systemd даёт ему
+          # PATH=/usr/local/bin:/usr/bin — ни ~/.cargo/bin, ни /opt/cuda/bin
+          # туда не попадают, и build.rs форка cudarc падает на
+          # «`nvcc --version` failed … NotFound». Файл ~/actions-runner/.path
+          # это не спасает, поэтому PATH задаётся здесь, в репозитории.
+          echo "/opt/cuda/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Версии инструментов
+        run: |
+          set -euo pipefail
+          cargo --version
+          rustc --version
+          nvcc --version | tail -2
+
       - name: cargo build --release
         working-directory: synthos
         run: |

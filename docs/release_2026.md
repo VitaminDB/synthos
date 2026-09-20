@@ -29,9 +29,19 @@ _work/synthos-ci-target/   ← CARGO_TARGET_DIR, переживает очист
 - Сервис — **пользовательский** systemd, без sudo:
   `~/.config/systemd/user/actions-runner-synthos.service`. Живёт без входа в
   сессию благодаря `loginctl enable-linger` (уже включён). `OOMScoreAdjust=500`.
-- PATH раннера зафиксирован при регистрации в `~/actions-runner/.path`: там
-  `~/.cargo/bin` и `/opt/cuda/bin`. Если переедет `nvcc` или cargo — перерегистрировать
-  или поправить `.path` и перезапустить сервис.
+- **PATH задаётся в двух местах, и `.path` — не одно из них.** У сервиса systemd
+  даёт `PATH=/usr/local/bin:/usr/bin`, а `~/actions-runner/.path` на job не
+  распространяется: 20.09 сборка упала на `build.rs` форка cudarc с
+  «`nvcc --version` failed … NotFound». Теперь PATH прописан
+  `Environment=` в `~/.config/systemd/user/actions-runner-synthos.service` и
+  продублирован шагом «Окружение сборки» в `release.yml` (`$GITHUB_PATH`) —
+  второе версионируется в репозитории и переживает переустановку раннера.
+- **Рестарт сервиса оставляет старый `Runner.Listener` сиротой** (`KillMode=process`
+  убивает только `run.sh`). Два слушателя на одну регистрацию — путаница в
+  очереди; после `systemctl --user restart` проверяйте
+  `ps -eo pid,cmd | grep actions-runner/bin/Runner.Listener` и убивайте лишний.
+  Осторожно с `pkill -f Runner.Listener`: шаблон совпадает и с собственной
+  командной строкой шелла.
 
 ```sh
 systemctl --user status actions-runner-synthos        # жив ли
@@ -96,7 +106,7 @@ packaging/pin-deps.sh                    # SHA syngui и synaptix → deps.lock
 $EDITOR Cargo.toml packaging/PKGBUILD    # version = "268.0.0" ↔ pkgver=268, pkgrel=1
 git commit -am "релиз v268"
 git tag v268
-git push --follow-tags
+git push origin master v268        # именно так: --follow-tags легковесный тег не пушит
 ```
 
 Дальше workflow сам: клонирует три репозитория по пинам, сверяет тег с версией

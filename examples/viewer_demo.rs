@@ -57,6 +57,9 @@ fn main() {
     App::new()
         .title("Synthos viewer demo")
         .size(1700, 1050)
+        // Как у приложения: встроенная графика. На дискретной карте тяжёлые
+        // стили (размытие на весь экран) не тормозят, и демо врёт.
+        .gpu_power(GpuPowerPreference::LowPower)
         .with_icon_font(syngui::text::icon_fonts::material::FONT_DATA)
         .with_styles_str(synthos::styles::styles())
         .with_dynamic_theme(theme)

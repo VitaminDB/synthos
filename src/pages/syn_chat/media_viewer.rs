@@ -35,7 +35,6 @@ use syngui::mgui;
 use syngui::mss::StyleValue;
 use syngui::prelude::*;
 use syngui::video::{HwAccel, VideoPlayer};
-use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::overlay::PortalAnchor;
 use syngui::widgets::visual::StaticWaveform;
 use syngui::StyledWidget;
@@ -79,6 +78,14 @@ struct WinSignals {
     /// замыкании ручки: каждое движение пересобирает карточку и с ней
     /// замыкание, а смещение мыши считается от точки нажатия.
     resize_base: RwSignal<Option<Size>>,
+    /// Куда окно утащили за шапку (от центра) и то же на момент нажатия.
+    user_offset: RwSignal<Point>,
+    move_base: RwSignal<Option<Point>>,
+    /// Смещение, которое видит `Portal`: развёрнутое и полноэкранное окно
+    /// стоит на месте, куда бы его до того ни утащили.
+    offset: RwSignal<Point>,
+    /// Прошлый щелчок по шапке — второй подряд разворачивает окно.
+    last_title_click: RwSignal<Option<std::time::Instant>>,
 }
 
 /// «Во весь экран»: карточка на всё окно, окно — полноэкранное.
@@ -87,6 +94,8 @@ struct FullSignals {
     active: RwSignal<bool>,
     /// Окно развернули мы (а не F11 до нас) — нам его и возвращать.
     window_ours: RwSignal<bool>,
+    /// Во весь экран окно встаёт на место, куда бы его ни утащили.
+    win: WinSignals,
 }
 
 /// Открытый плеер текущего видео и sha его вложения. Живёт вне реактивного
@@ -106,17 +115,23 @@ pub fn view() -> impl Widget {
         }
     });
 
+    let win = WinSignals {
+        size: use_signal(None),
+        maximized: use_signal(false),
+        resize_base: use_signal(None),
+        user_offset: use_signal(Point::new(0.0, 0.0)),
+        move_base: use_signal(None),
+        offset: use_signal(Point::new(0.0, 0.0)),
+        last_title_click: use_signal(None),
+    };
     let signals = ViewerSignals {
         image: super::image_stage::ImageSignals::new(),
-        win: WinSignals {
-            size: use_signal(None),
-            maximized: use_signal(false),
-            resize_base: use_signal(None),
-        },
+        win,
         audio: super::media_audio::AudioSignals::new(),
         full: FullSignals {
             active: use_signal(false),
             window_ours: use_signal(false),
+            win,
         },
     };
     // Плееры живут вне реактивного дерева: их нужно останавливать при
@@ -131,6 +146,7 @@ pub fn view() -> impl Widget {
         .modal(true)
         .backdrop(true)
         .anchor(PortalAnchor::Center)
+        .offset(signals.win.offset)
         .on_close(move || {
             super::media_audio::stop(&player_for_close);
             release_video(&video_for_close);
@@ -158,6 +174,10 @@ fn card(
         let Some(item) = state.current().cloned() else {
             return DecoratedBox::new().class("media-viewer-empty");
         };
+
+        // Подписка: `Portal` читает смещение окна при раскладке, а раскладку
+        // запускает пересборка карточки.
+        signals.win.offset.get();
 
         let total = state.items.len();
         let index = state.index;
@@ -255,7 +275,6 @@ fn card(
 fn window(win: WinSignals, rows: Vec<Box<dyn Widget>>) -> StyledWidget<DecoratedBox> {
     let maximized = win.maximized.get();
     let size = win.size.get();
-
     let content = Column::new()
         .gap(0.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -399,6 +418,59 @@ fn card_size(size: Option<Size>, window: Option<Size>) -> Size {
 
 fn toggle_maximize(win: WinSignals) {
     win.maximized.update(|m| *m = !*m);
+    sync_offset(win, false);
+}
+
+/// Смещение для `Portal` из того, куда окно утащили, и его состояния.
+fn sync_offset(win: WinSignals, fullscreen: bool) {
+    let pinned = fullscreen || win.maximized.get_untracked();
+    win.offset.set(if pinned {
+        Point::new(0.0, 0.0)
+    } else {
+        win.user_offset.get_untracked()
+    });
+}
+
+/// Окно тащат за шапку. Утащить совсем нельзя: шапка остаётся в окне
+/// приложения, по бокам видно хотя бы [`KEEP_VISIBLE`] пикселей.
+fn move_window(win: WinSignals, phase: DragPhase) {
+    const KEEP_VISIBLE: f32 = 160.0;
+    const HEADER: f32 = 56.0;
+    match phase {
+        DragPhase::Move { delta, .. } => {
+            if win.maximized.get_untracked() {
+                return;
+            }
+            let base = win.move_base.get_untracked().unwrap_or_else(|| {
+                let now = win.user_offset.get_untracked();
+                win.move_base.set(Some(now));
+                now
+            });
+            let mut next = Point::new(base.x + delta.x, base.y + delta.y);
+            if let Some(ws) = window_size() {
+                let cs = card_size(win.size.get_untracked(), Some(ws));
+                let max_x = ((ws.width + cs.width) * 0.5 - KEEP_VISIBLE).max(0.0);
+                let top = (ws.height - cs.height) * 0.5;
+                next.x = next.x.clamp(-max_x, max_x);
+                next.y = next.y.clamp(-top, (ws.height - HEADER - top).max(-top));
+            }
+            win.user_offset.set(next);
+            sync_offset(win, false);
+        }
+        DragPhase::End => win.move_base.set(None),
+    }
+}
+
+fn title_clicked(win: WinSignals, sizable: bool) {
+    let now = std::time::Instant::now();
+    let double = win
+        .last_title_click
+        .get_untracked()
+        .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(400));
+    win.last_title_click.set(if double { None } else { Some(now) });
+    if double && sizable {
+        toggle_maximize(win);
+    }
 }
 
 fn stage_host(
@@ -481,20 +553,14 @@ fn header(a: &MsgAttachment, win: WinSignals, sizable: bool) -> impl Widget {
             ],
         ]
     };
-    // Двойной щелчок по названию разворачивает окно — как у заголовка
-    // обычного окна. Кнопки справа в жест не входят.
-    let title: Box<dyn Widget> = if sizable {
-        Box::new(
-            // `grow` — самой обёртке: строка шапки растягивает своих прямых
-            // детей, до класса вложенного бокса ей дела нет.
-            GestureDetector::new()
-                .on_double_click(move || toggle_maximize(win))
-                .class("grow")
-                .child(DecoratedBox::new().class("media-viewer-title-area").child(title)),
-        )
-    } else {
-        Box::new(DecoratedBox::new().class("media-viewer-title-area").child(title))
-    };
+    // За название окно тащат, двойной щелчок разворачивает — как у
+    // заголовка обычного окна. Кнопки справа в ручку не входят. `grow` — у
+    // самого бокса: строка шапки растягивает только прямых детей.
+    let title = DecoratedBox::new().class("grow media-viewer-title-area").child(
+        DragHandle::new(title)
+            .on_click(move || title_clicked(win, sizable))
+            .on_drag(move |phase| move_window(win, phase)),
+    );
 
     DecoratedBox::new().class("media-viewer-header").child(
         Row::new()
@@ -642,6 +708,7 @@ fn set_full(full: FullSignals, on: bool) {
         return;
     }
     full.active.set(on);
+    sync_offset(full.win, on);
     let window_full = window_is_fullscreen();
     if on {
         if !window_full {

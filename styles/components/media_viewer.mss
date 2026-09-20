@@ -1,19 +1,24 @@
-/* Полноэкранный просмотрщик вложений (Portal поверх страницы чата).
+/* Просмотрщик вложений (Portal поверх страницы чата).
  *
- * Тёмная «фотогалерейная» палитра независимо от темы приложения: под
- * картинкой и видео нейтральный тёмный фон читается лучше светлого, а сам
- * просмотрщик — модальный слой, а не часть страницы. */
+ * Окно — в теме приложения: панель, текст, рамки и кнопки на её токенах.
+ * Тёмными остаются только сцены, где тема ни при чём: кадр видео и
+ * затемнение поверх размытого фона картинки.
+ *
+ * Фильтров GPU (`filter`, `backdrop-filter`) здесь нет намеренно: приложение
+ * рисуется встроенной графикой, и полноэкранные проходы размытия на каждый
+ * кадр масштабирования подвешивали интерфейс. */
 
 .media-viewer {
     width: 1280px;
     height: 860px;
     max-width: 96%;
     max-height: 94%;
-    background-color: #14151A;
+    background-color: var(--bg-panel);
+    color: var(--text);
     border-radius: var(--radius-panel);
     border-width: 1px;
-    border-color: rgba(255, 255, 255, 0.10);
-    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.55);
+    border-color: var(--border-strong);
+    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.45);
     overflow: hidden;
 }
 
@@ -28,27 +33,27 @@
 /* ── Шапка ──────────────────────────────────────────────────────────────── */
 
 .media-viewer-header {
-    background-color: rgba(255, 255, 255, 0.04);
-    padding: 12px 14px 12px 16px;
+    background-color: var(--bg-panel);
+    padding: 8px 14px 8px 16px;
     border-width: 0;
     border-bottom-width: 1px;
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--border-soft);
 }
 
 .media-viewer-kind-icon {
     icon-size: 22px;
-    color: rgba(255, 255, 255, 0.62);
+    color: var(--text-muted);
 }
 
 .media-viewer-title {
-    color: #F2F3F5;
+    color: var(--text);
     font-size: 14px;
     font-weight: 600;
     line-clamp: 1;
 }
 
 .media-viewer-subtitle {
-    color: rgba(255, 255, 255, 0.52);
+    color: var(--text-muted);
     font-size: 12px;
 }
 
@@ -57,15 +62,15 @@ ToolButton.media-viewer-action {
     height: 32px;
     border-radius: 8px;
     background-color: transparent;
-    color: rgba(255, 255, 255, 0.72);
+    color: var(--text-muted);
     icon-size: 18px;
     transition: background-color var(--duration-fast) var(--ease-standard),
                 color var(--duration-fast) var(--ease-standard);
 }
 
 ToolButton.media-viewer-action:hover {
-    background-color: rgba(255, 255, 255, 0.12);
-    color: #FFFFFF;
+    background-color: var(--surface-hover);
+    color: var(--text);
 }
 
 ToolButton.media-viewer-close:hover {
@@ -73,11 +78,14 @@ ToolButton.media-viewer-close:hover {
     color: #FFFFFF;
 }
 
+/* За неё окно тащат; высота задана, потому что ручка внутри занимает всё,
+ * что ей дадут. */
 .media-viewer-title-area {
     background-color: transparent;
     border-width: 0;
     padding: 0 0 0 0;
-    flex-grow: 1;
+    height: 40px;
+    cursor: move;
 }
 
 .media-viewer-action-sep {
@@ -85,14 +93,14 @@ ToolButton.media-viewer-close:hover {
     height: 18px;
     margin-left: 4px;
     margin-right: 4px;
-    background-color: rgba(255, 255, 255, 0.14);
+    background-color: var(--border-strong);
     border-width: 0;
 }
 
 /* ── Тело ───────────────────────────────────────────────────────────────── */
 
 .media-viewer-body {
-    background-color: #0E0F13;
+    background-color: var(--bg-window);
     padding: 0 0 0 0;
     border-width: 0;
     flex-grow: 1;
@@ -110,7 +118,7 @@ ToolButton.media-viewer-close:hover {
 /* Сцена картинки — от края до края тела, любого размера: окно тянут и
  * разворачивают. Что внутри — см. «Сцена картинки» ниже. */
 .media-viewer-image-stage {
-    background-color: #0B0C10;
+    background-color: var(--bg-window);
     border-width: 0;
     padding: 0 0 0 0;
     flex-grow: 1;
@@ -162,22 +170,22 @@ ToolButton.media-viewer-close:hover {
 }
 
 .media-viewer-audio-name {
-    color: #F2F3F5;
+    color: var(--text);
     font-size: 16px;
     font-weight: 600;
     text-align: center;
 }
 
 .media-viewer-audio-meta {
-    color: rgba(255, 255, 255, 0.52);
+    color: var(--text-muted);
     font-size: 12px;
     text-align: center;
 }
 
 .media-viewer-waveform {
     accent-color: var(--primary);
-    color: rgba(255, 255, 255, 0.28);
-    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--text-subtle);
+    background-color: var(--bg-search);
     border-radius: 12px;
 }
 
@@ -200,7 +208,7 @@ ToolButton.media-viewer-play:hover {
 /* ── Документ ───────────────────────────────────────────────────────────── */
 
 .media-viewer-doc {
-    background-color: #16171C;
+    background-color: var(--bg-window);
     border-width: 0;
     padding: 0 0 0 0;
     width: 1080px;
@@ -214,7 +222,7 @@ ToolButton.media-viewer-play:hover {
 }
 
 .media-viewer-doc-text {
-    color: #D7DAE0;
+    color: var(--text);
     font-family: monospace;
     font-size: 13px;
     line-height: 20px;
@@ -225,11 +233,11 @@ ToolButton.media-viewer-play:hover {
 
 .media-viewer-big-icon {
     icon-size: 72px;
-    color: rgba(255, 255, 255, 0.32);
+    color: var(--text-subtle);
 }
 
 .media-viewer-hint {
-    color: rgba(255, 255, 255, 0.52);
+    color: var(--text-muted);
     font-size: 13px;
     text-align: center;
 }
@@ -240,8 +248,8 @@ ToolButton.media-viewer-nav {
     width: 46px;
     height: 46px;
     border-radius: 50%;
-    background-color: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.82);
+    background-color: var(--bg-panel);
+    color: var(--text-muted);
     icon-size: 26px;
     margin-left: 10px;
     margin-right: 10px;
@@ -250,7 +258,8 @@ ToolButton.media-viewer-nav {
 }
 
 ToolButton.media-viewer-nav:hover {
-    background-color: rgba(255, 255, 255, 0.18);
+    background-color: var(--surface-hover);
+    color: var(--text);
     transform: scale(1.06);
 }
 
@@ -265,22 +274,22 @@ ToolButton.media-viewer-nav:hover {
 /* ── Подвал ─────────────────────────────────────────────────────────────── */
 
 .media-viewer-footer {
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: var(--bg-panel);
     padding: 8px 14px 8px 14px;
     border-width: 0;
     border-top-width: 1px;
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--border-soft);
 }
 
 .media-viewer-zoom {
-    color: rgba(255, 255, 255, 0.72);
+    color: var(--text-muted);
     font-size: 12px;
     width: 48px;
     text-align: center;
 }
 
 .media-viewer-counter {
-    color: rgba(255, 255, 255, 0.52);
+    color: var(--text-muted);
     font-size: 12px;
 }
 
@@ -325,10 +334,10 @@ ToolButton.media-viewer-nav:hover {
 
 /* ── Сцена картинки (`pages::syn_chat::image_stage`) ───────────────────────
  * Слои: размытая копия картинки → затемнение → область просмотра → стрелки,
- * лента миниатюр и панель инструментов. */
+ * лента миниатюр и панель инструментов. Панели — цвета темы, непрозрачные. */
 
 .iv-stage {
-    background-color: #0B0C10;
+    background-color: var(--bg-window);
     border-width: 0;
     padding: 0 0 0 0;
     width: 100%;
@@ -336,36 +345,32 @@ ToolButton.media-viewer-nav:hover {
     overflow: hidden;
 }
 
-/* Фон вместо чёрных полей. `scale` прячет за край сцены прозрачную кайму,
- * которую размытие даёт по периметру слоя. */
+/* Фон вместо пустых полей: заранее размытая крошечная копия картинки
+ * (`<sha>.blur.png`), растянутая на сцену. Пока её нет — цвет сцены. */
 .iv-backdrop {
+    width: 100%;
+    height: 100%;
+}
+
+.iv-backdrop-empty {
     background-color: transparent;
     border-width: 0;
-    padding: 0 0 0 0;
-    width: 100%;
-    height: 100%;
-    filter: blur(32px) blur(32px) saturate(1.3);
-    scale: 1.18;
-}
-
-.iv-backdrop-img {
     width: 100%;
     height: 100%;
 }
 
-/* Затемнение поверх размытой копии: картинка должна оставаться главной, а
- * белые панели — читаться на любом фоне. */
+/* Затемнение поверх размытой копии: картинка должна оставаться главной.
+ * Внутренняя тень — виньетка к краям сцены. */
 .iv-scrim {
-    background: linear-gradient(to bottom, rgba(8, 9, 12, 0.50), rgba(8, 9, 12, 0.62) 60%, rgba(8, 9, 12, 0.82));
-    /* Размытие у края слоя смешивается с пустотой за ним и даёт тёмную
-     * кайму; внутренняя тень превращает её в обычную виньетку. */
-    box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.55);
+    background: linear-gradient(to bottom, rgba(8, 9, 12, 0.42), rgba(8, 9, 12, 0.55) 60%, rgba(8, 9, 12, 0.74));
+    box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.45);
     border-width: 0;
     width: 100%;
     height: 100%;
 }
 
-/* `color` — цвет ползунков полос прокрутки и подписи «Загрузка…». */
+/* `color` — цвет ползунков полос прокрутки и подписи «Загрузка…»: они лежат
+ * на затемнённом фоне, поэтому белые в любой теме. */
 .iv-viewport {
     background-color: transparent;
     color: #FFFFFF;
@@ -375,31 +380,31 @@ ToolButton.iv-nav {
     width: 44px;
     height: 44px;
     border-radius: 50%;
-    background-color: rgba(16, 17, 22, 0.55);
-    color: rgba(255, 255, 255, 0.86);
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border-strong);
+    color: var(--text-muted);
     icon-size: 26px;
     margin-left: 16px;
     margin-right: 16px;
-    backdrop-filter: blur(16px);
     transition: background-color var(--duration-fast) var(--ease-standard),
                 transform var(--duration-fast) var(--ease-standard);
 }
 
 ToolButton.iv-nav:hover {
-    background-color: rgba(40, 42, 52, 0.80);
-    color: #FFFFFF;
+    background-color: var(--surface-hover);
+    color: var(--text);
     transform: scale(1.06);
 }
 
-/* Панель инструментов: «стеклянная» пилюля внизу по центру. */
+/* Панель инструментов: пилюля внизу по центру. */
 .iv-toolbar {
-    background-color: rgba(18, 19, 25, 0.62);
-    backdrop-filter: blur(24px);
+    background-color: var(--bg-panel);
     border-width: 1px;
-    border-color: rgba(255, 255, 255, 0.12);
+    border-color: var(--border-strong);
     border-radius: 16px;
     padding: 5px 8px 5px 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.40);
 }
 
 .iv-bottom-gap {
@@ -414,15 +419,15 @@ ToolButton.iv-tool {
     height: 34px;
     border-radius: 10px;
     background-color: transparent;
-    color: rgba(255, 255, 255, 0.78);
+    color: var(--text-muted);
     icon-size: 20px;
     transition: background-color var(--duration-fast) var(--ease-standard),
                 color var(--duration-fast) var(--ease-standard);
 }
 
 ToolButton.iv-tool:hover {
-    background-color: rgba(255, 255, 255, 0.14);
-    color: #FFFFFF;
+    background-color: var(--surface-hover);
+    color: var(--text);
 }
 
 Button.iv-tool-text {
@@ -432,7 +437,7 @@ Button.iv-tool-text {
     border-radius: 10px;
     border-width: 0;
     background-color: transparent;
-    color: rgba(255, 255, 255, 0.78);
+    color: var(--text-muted);
     font-size: 12px;
     font-weight: 700;
     transition: background-color var(--duration-fast) var(--ease-standard),
@@ -440,8 +445,8 @@ Button.iv-tool-text {
 }
 
 Button.iv-tool-text:hover {
-    background-color: rgba(255, 255, 255, 0.14);
-    color: #FFFFFF;
+    background-color: var(--surface-hover);
+    color: var(--text);
 }
 
 .iv-tool-sep {
@@ -449,12 +454,12 @@ Button.iv-tool-text:hover {
     height: 18px;
     margin-left: 5px;
     margin-right: 5px;
-    background-color: rgba(255, 255, 255, 0.14);
+    background-color: var(--border-strong);
     border-width: 0;
 }
 
 .iv-zoom {
-    color: #FFFFFF;
+    color: var(--text);
     font-size: 12px;
     font-weight: 600;
     width: 52px;
@@ -462,19 +467,19 @@ Button.iv-tool-text:hover {
 }
 
 .iv-counter {
-    color: rgba(255, 255, 255, 0.72);
+    color: var(--text-muted);
     font-size: 12px;
     padding: 0 6px 0 6px;
 }
 
 /* Лента миниатюр над панелью. */
 .iv-strip {
-    background-color: rgba(18, 19, 25, 0.55);
-    backdrop-filter: blur(24px);
+    background-color: var(--bg-panel);
     border-width: 1px;
-    border-color: rgba(255, 255, 255, 0.10);
+    border-color: var(--border-strong);
     border-radius: 14px;
     padding: 6px 6px 6px 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.40);
 }
 
 .iv-thumb {
@@ -483,7 +488,7 @@ Button.iv-tool-text:hover {
     border-radius: 9px;
     border-width: 2px;
     border-color: transparent;
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: var(--bg-search);
     overflow: hidden;
     opacity: 0.62;
     transition: opacity var(--duration-fast) var(--ease-standard),
@@ -506,5 +511,5 @@ Button.iv-tool-text:hover {
 
 .iv-thumb-icon {
     icon-size: 24px;
-    color: rgba(255, 255, 255, 0.62);
+    color: var(--text-muted);
 }

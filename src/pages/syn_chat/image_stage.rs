@@ -7,7 +7,7 @@
 //! │  ‹  │          картинка            │  ›          │ ← ImageViewport + листание
 //! │ ░░░ └──────────────────────────────┘ ░░░░░░░░░░░ │
 //! │          ▢ ▣ ▢ ▢   миниатюры вложений            │
-//! │   ( − 100% + │ ⛶ 1:1 ⤢ │ ⟲ ⟳ ⇋ ⇅ │ ⛶ )          │ ← «стеклянная» панель
+//! │   ( − 100% + │ ⛶ 1:1 ⤢ │ ⟲ ⟳ ⇋ ⇅ │ ⛶ )          │ ← панель инструментов
 //! └──────────────────────────────────────────────────┘
 //! ```
 //!
@@ -60,6 +60,8 @@ pub struct ImageSignals {
     pub orientation: RwSignal<Orientation>,
     /// Что показывает область: масштаб для подписи, вписано ли.
     pub info: RwSignal<ImageViewInfo>,
+    /// Растёт, когда фоновый поток дописал размытый фон очередной картинки.
+    pub blur_ready: RwSignal<u64>,
 }
 
 impl ImageSignals {
@@ -68,6 +70,7 @@ impl ImageSignals {
             cmd: use_signal((0, ImageViewCommand::Fit)),
             orientation: use_signal(Orientation::default()),
             info: use_signal(ImageViewInfo::default()),
+            blur_ready: use_signal(0),
         }
     }
 
@@ -133,7 +136,7 @@ pub fn image_stage(
 
     let mut stack = Stack::new()
         .fit(StackFit::Expand)
-        .child(backdrop(a))
+        .child(backdrop(a, signals))
         .child(DecoratedBox::new().class("iv-scrim"))
         .child(viewport);
     if total > 1 {
@@ -151,17 +154,80 @@ pub fn image_stage(
         .child(DecoratedBox::new().class("iv-stage").child(stack))
 }
 
-/// Фон сцены вместо чёрных полей: та же картинка, растянутая на всю сцену и
-/// размытая. Берём миниатюру (≤ 512 px): после растяжения она и сама мягкая,
-/// а размытие шейдера ограничено 32 px и на полном размере почти не видно.
-fn backdrop(a: &MsgAttachment) -> impl Widget {
-    let path = blobs::preview_path(a).unwrap_or_else(|| blobs::display_path(a));
-    DecoratedBox::new().class("iv-backdrop").child(
-        Image::new(path.display().to_string())
-            .fit(ImageFit::Cover)
-            .placeholder(false)
-            .class("iv-backdrop-img"),
-    )
+/// Фон сцены вместо чёрных полей: та же картинка на всю сцену, размытая.
+///
+/// Размытие делается один раз на процессоре и кладётся рядом с миниатюрами
+/// (`<sha>.blur.png`, [`BLUR_SIDE`] px по длинной стороне): при растяжении на
+/// сцену такая картинка остаётся гладкой, а рисуется одним прямоугольником.
+/// Фильтром GPU (`filter: blur`) так делать нельзя: приложение работает на
+/// встроенной графике, и полноэкранные проходы размытия на каждый кадр
+/// масштабирования роняли интерфейс до слайд-шоу.
+fn backdrop(a: &MsgAttachment, signals: ImageSignals) -> Box<dyn Widget> {
+    // Подписка: фоновый поток дёрнет сигнал, когда файл будет готов.
+    signals.blur_ready.get();
+    match blurred_backdrop(a, signals) {
+        Some(path) => Box::new(
+            Image::new(path.display().to_string())
+                .fit(ImageFit::Cover)
+                .placeholder(false)
+                .class("iv-backdrop"),
+        ),
+        None => Box::new(DecoratedBox::new().class("iv-backdrop-empty")),
+    }
+}
+
+const BLUR_SIDE: u32 = 96;
+const BLUR_SIGMA: f32 = 3.0;
+
+pub(super) fn blur_path(sha: &str) -> std::path::PathBuf {
+    blobs::thumbs_dir().join(format!("{sha}.blur.png"))
+}
+
+/// Готовый размытый фон или `None`, пока он делается в фоне (SVG и то, что
+/// не декодируется, остаются без фона — под ними цвет сцены).
+fn blurred_backdrop(a: &MsgAttachment, signals: ImageSignals) -> Option<std::path::PathBuf> {
+    static IN_FLIGHT: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+
+    let dst = blur_path(&a.sha256);
+    if dst.exists() {
+        return Some(dst);
+    }
+    if blobs::is_svg(a) {
+        return None;
+    }
+    let src = blobs::preview_path(a)?;
+    let sha = a.sha256.clone();
+    {
+        let mut guard = IN_FLIGHT.lock().ok()?;
+        if !guard.get_or_insert_with(Default::default).insert(sha.clone()) {
+            // Уже делается (или не получилось) — второй раз не запускаем.
+            return None;
+        }
+    }
+    std::thread::spawn(move || match make_blur(&src, &dst) {
+        Ok(()) => signals.blur_ready.set(signals.blur_ready.get_untracked() + 1),
+        Err(e) => log::warn!("[media-viewer] размытый фон {}: {e}", src.display()),
+    });
+    None
+}
+
+pub(super) fn make_blur(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> std::result::Result<(), String> {
+    let img = image::open(src).map_err(|e| e.to_string())?;
+    let small = img.thumbnail(BLUR_SIDE, BLUR_SIDE).blur(BLUR_SIGMA).to_rgb8();
+    if let Some(dir) = dst.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    // Через временный файл: наполовину записанный PNG просмотрщик принял бы
+    // за готовый фон.
+    let tmp = dst.with_extension("tmp");
+    small
+        .save_with_format(&tmp, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dst).map_err(|e| e.to_string())
 }
 
 /// Стрелка листания у края сцены. Слой — строка во всю сцену; пустое место
@@ -511,6 +577,23 @@ mod tests {
         for i in 0..40 {
             assert!(strip_range(i, 40).contains(&i));
         }
+    }
+
+    #[test]
+    fn blurred_backdrop_is_tiny_and_opaque() {
+        let dir = std::env::temp_dir().join(format!("synthos-blur-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("src.png");
+        image::RgbaImage::from_fn(900, 300, |x, _| image::Rgba([(x % 256) as u8, 40, 200, 128]))
+            .save(&src)
+            .unwrap();
+        let dst = dir.join("out.blur.png");
+        make_blur(&src, &dst).unwrap();
+        let out = image::open(&dst).unwrap();
+        assert_eq!((out.width(), out.height()), (96, 32));
+        assert!(!out.color().has_alpha(), "фон непрозрачный");
+        assert!(!dir.join("out.blur.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

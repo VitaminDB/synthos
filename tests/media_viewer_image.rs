@@ -108,6 +108,18 @@ fn image_stage_fills_card_and_window_resizes() {
     let engine = h.apply_mss(synthos::styles::styles());
     frames(&mut h, &engine);
 
+    // Фильтров GPU в сцене нет: приложение рисуется встроенной графикой, и
+    // полноэкранное размытие на каждый кадр масштабирования подвешивало его.
+    for class in ["iv-stage", "iv-scrim", "iv-toolbar", "iv-strip", "iv-nav", "media-viewer"] {
+        for id in h.find_by_class(class) {
+            let mss = h.element_mss(id).expect("стили элемента");
+            assert!(
+                mss.filter.is_none() && mss.backdrop_filter.is_none(),
+                ".{class}: фильтр GPU в просмотрщике"
+            );
+        }
+    }
+
     // Карточка по центру окна; под шапкой — сцена до самого низа и во всю
     // ширину, область просмотра — вся сцена. Подвала у картинки нет.
     let card = one(&h, "media-viewer");
@@ -122,7 +134,9 @@ fn image_stage_fills_card_and_window_resizes() {
     assert!((bottom(stage) - bottom(card)).abs() < 1.5, "{stage:?} / {card:?}");
     assert!((stage.size.width - card.size.width).abs() < 2.5, "{stage:?} / {card:?}");
     assert!(same(viewport(&h), stage), "область просмотра во всю сцену");
-    assert!(same(one(&h, "iv-backdrop"), stage), "размытый фон во всю сцену");
+    // Файлов картинок в тесте нет — вместо размытого фона стоит заглушка.
+    assert!(same(one(&h, "iv-backdrop-empty"), stage), "фон во всю сцену");
+    assert!(same(one(&h, "iv-scrim"), stage), "затемнение во всю сцену");
 
     // Кнопки шапки прижаты к правому краю, а не идут сразу за названием.
     let close = one(&h, "media-viewer-close");
@@ -165,7 +179,34 @@ fn image_stage_fills_card_and_window_resizes() {
     frames(&mut h, &engine);
     assert_eq!(zoom_text(&mut h), fitted);
 
-    // «M» разворачивает окно на всё окно приложения, шапка остаётся.
+    // Окно тащат за шапку: карточка и сцена уезжают вместе с курсором.
+    let before = one(&h, "media-viewer");
+    let grab = Point::new(before.origin.x + 200.0, before.origin.y + 20.0);
+    let drop_at = Point::new(grab.x + 80.0, grab.y + 50.0);
+    h.send_event(&Event::MouseMove(grab));
+    h.send_event(&Event::MouseDown {
+        button: syngui::input::MouseButton::Left,
+        position: grab,
+    });
+    h.send_event(&Event::MouseMove(Point::new(grab.x + 40.0, grab.y + 25.0)));
+    frames(&mut h, &engine);
+    h.send_event(&Event::MouseMove(drop_at));
+    frames(&mut h, &engine);
+    h.send_event(&Event::MouseUp {
+        button: syngui::input::MouseButton::Left,
+        position: drop_at,
+    });
+    frames(&mut h, &engine);
+    let moved = one(&h, "media-viewer");
+    assert!(
+        (moved.origin.x - before.origin.x - 80.0).abs() < 1.5
+            && (moved.origin.y - before.origin.y - 50.0).abs() < 1.5,
+        "было {before:?}, стало {moved:?}"
+    );
+    assert!(same(viewport(&h), one(&h, "iv-stage")), "сцена едет вместе с окном");
+
+    // «M» разворачивает окно на всё окно приложения (куда бы его ни утащили),
+    // шапка остаётся.
     h.send_events(&press_key(Key::M));
     frames(&mut h, &engine);
     let card = one(&h, "media-viewer");
@@ -183,6 +224,10 @@ fn image_stage_fills_card_and_window_resizes() {
     assert!((right(stage) - W).abs() < 1.5 && (bottom(stage) - H).abs() < 1.5);
     h.send_events(&press_key(Key::M));
     frames(&mut h, &engine);
+    assert!(
+        same(one(&h, "media-viewer"), moved),
+        "после разворота окно возвращается туда, куда его утащили"
+    );
 
     // Правый край тянем на 100 px вправо: карточка по центру, поэтому
     // ширина растёт на 200, а край оказывается под курсором.

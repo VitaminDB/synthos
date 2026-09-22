@@ -8,7 +8,7 @@
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    Yue2CheckpointStateData, Yue2GenerateStateData,
+    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2TranscribeStateData,
     FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
     QwenImageCheckpointStateData, QwenImage21CheckpointStateData, QwenImage21SamplerStateData,
     SdxlCheckpointStateData, SdxlSamplerStateData,
@@ -2374,18 +2374,60 @@ fn yue2_edit_score_template() -> Template {
     )
 }
 
-/// Кавер: мелодия без аккордовых символов, аккомпанемент модель придумывает
-/// под новый стиль (рекомендация релиза — `cot = melody`).
+/// Кавер записи: SheetSage2 снимает мелодию (вокал и инструментальную тему,
+/// без аккордов), она видна и правится в текстовой ноде, а Generate с
+/// `cot = melody` поёт её в новом стиле — аккомпанемент придумывается заново
+/// (так кавер и задуман в релизе). Длительность 0 — песня идёт, пока не
+/// кончится партитура.
 fn yue2_cover_template() -> Template {
-    yue2_song_like(
-        "builtin-yue2-cover",
-        "YuE2: кавер по мелодии",
-        "Мелодия без аккордов из ноды abc + новый стиль: аккомпанемент подстроится.",
-        "english, acoustic folk, male vocal, fingerpicked guitar",
-        "[verse]\nWe were younger then, the road was long",
-        yue2_gen(1, 60.0),
-        true,
-    )
+    Template {
+        id: "builtin-yue2-cover".into(),
+        builtin: true,
+        name: "YuE2: кавер записи".into(),
+        description: "Запись → мелодия без аккордов (SheetSage2, правится в ноде) → песня в новом стиле с новой лирикой."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: vec![
+            node_with_state(1, NodeKind::Yue2Checkpoint, 60.0, 60.0, yue2_checkpoint_state()),
+            node_plain(2, NodeKind::AudioFile, 60.0, 420.0),
+            node_with_state(
+                3,
+                NodeKind::Yue2Transcribe,
+                440.0,
+                420.0,
+                NodeStateData::Yue2Transcribe(Yue2TranscribeStateData::default()),
+            ),
+            // Мелодия записи: её видно целиком, можно поправить до генерации.
+            node_with_state(4, NodeKind::TextView, 820.0, 420.0, acestep_text_state("", 260.0)),
+            node_with_state(
+                5,
+                NodeKind::TextView,
+                440.0,
+                60.0,
+                acestep_text_state("english, acoustic folk, male vocal, fingerpicked guitar", 80.0),
+            ),
+            node_with_state(
+                6,
+                NodeKind::TextView,
+                440.0,
+                180.0,
+                acestep_text_state("[verse]\nWe were younger then, the road was long", 200.0),
+            ),
+            node_with_state(7, NodeKind::Yue2Generate, 1200.0, 60.0, yue2_gen(1, 0.0)),
+            node_plain(8, NodeKind::AudioPlayer, 1720.0, 80.0),
+        ],
+        connections: vec![
+            conn(1, "model", 3, "model"),
+            conn(2, "out", 3, "audio"),
+            conn(3, "score", 4, "in"),
+            conn(1, "model", 7, "model"),
+            conn(5, "out", 7, "style"),
+            conn(6, "out", 7, "lyrics"),
+            conn(4, "out", 7, "abc"),
+            conn(7, "audio", 8, "in"),
+        ],
+        viewport: None,
+    }
 }
 
 fn acestep_retake_template() -> Template {

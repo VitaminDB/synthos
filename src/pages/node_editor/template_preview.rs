@@ -162,7 +162,10 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::AceStepVaeEncode => Color::new(0.85, 0.45, 0.95, 1.0),
         // YuE2 — та же «музыкальная» гамма, но холоднее: рядом на полотне
         // семейства различимы.
-        NodeKind::Yue2Checkpoint | NodeKind::Yue2Generate | NodeKind::Yue2VaeDecode => {
+        NodeKind::Yue2Checkpoint
+        | NodeKind::Yue2Generate
+        | NodeKind::Yue2VaeDecode
+        | NodeKind::Yue2Transcribe => {
             Color::new(0.62, 0.40, 0.96, 1.0)
         }
         NodeKind::FfmpegPlayer => Color::new(0.93, 0.27, 0.60, 1.0),

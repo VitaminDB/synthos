@@ -1009,6 +1009,10 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = vae_path.get();
             let _ = vae_core_frames.get();
         }
+        NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. } => {
+            let _ = mode_idx.get();
+            let _ = voices_idx.get();
+        }
         NodeRuntime::AceStepCheckpoint {
             models_dir,
             lm_path,

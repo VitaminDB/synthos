@@ -18,7 +18,7 @@ use syngui::prelude::*;
 
 use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData,
-    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2VaeDecodeStateData,
+    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2TranscribeStateData, Yue2VaeDecodeStateData,
     AceStepVaeStateData, AsrGigaamStateData,
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
@@ -859,6 +859,12 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             Some(NodeStateData::Yue2VaeDecode(Yue2VaeDecodeStateData {
                 vae_path: vae_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
                 vae_core_frames: vae_core_frames.get_untracked(),
+            }))
+        }
+        NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. } => {
+            Some(NodeStateData::Yue2Transcribe(Yue2TranscribeStateData {
+                mode_idx: mode_idx.get_untracked(),
+                voices_idx: voices_idx.get_untracked(),
             }))
         }
         NodeRuntime::AceStepCheckpoint {
@@ -1762,6 +1768,10 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
         ) => {
             vae_path.set(data.vae_path.as_ref().map(PathBuf::from));
             vae_core_frames.set(data.vae_core_frames);
+        }
+        (NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. }, NodeStateData::Yue2Transcribe(data)) => {
+            mode_idx.set(data.mode_idx);
+            voices_idx.set(data.voices_idx);
         }
         (
             NodeRuntime::AceStepCheckpoint {

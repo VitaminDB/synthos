@@ -243,6 +243,7 @@ pub enum NodeStateData {
     Yue2Checkpoint(Yue2CheckpointStateData),
     Yue2Generate(Yue2GenerateStateData),
     Yue2VaeDecode(Yue2VaeDecodeStateData),
+    Yue2Transcribe(Yue2TranscribeStateData),
     FfmpegPlayer(FfmpegPlayerStateData),
     SynCheckpoint(SynCheckpointStateData),
     LtxCheckpoint(LtxCheckpointStateData),
@@ -1737,6 +1738,16 @@ impl Default for Yue2VaeDecodeStateData {
     fn default() -> Self {
         Self { vae_path: None, vae_core_frames: 1024 }
     }
+}
+
+/// State YuE2 Transcribe: что писать в партитуру и какие мелодии оставить.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Yue2TranscribeStateData {
+    /// 0 = melody (без аккордов), 1 = full.
+    pub mode_idx: usize,
+    /// 0 = обе, 1 = только вокал, 2 = только инструментальная.
+    pub voices_idx: usize,
 }
 
 /// State ACE-Step Generate-ноды (монолит): режим + sampler/AR/DCW-параметры

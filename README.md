@@ -186,6 +186,9 @@ is exactly what gets loaded, with nothing to resolve at runtime.
   then a full song with vocals and accompaniment in 48 kHz stereo; the score comes out of
   the graph as text, so you can read it, change the harmony and render again, and the
   acoustic latents can be re-decoded with another decoder without generating twice.
+  Covers start from a recording: SheetSage2 transcribes its melody into the same ABC
+  dialect (vocal and instrumental lines, chords optional), and YuE2 sings it in a new
+  style with new lyrics.
   ACE-Step: generate, cover, edit, extend, extract, repaint, retake, with a per-stage
   progress readout.
 - **Speech** — VoxCPM2 and OmniVoice text-to-speech with zero-shot voice cloning (the

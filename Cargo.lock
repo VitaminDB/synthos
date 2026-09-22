@@ -7294,6 +7294,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-music-sheetsage2"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "memmap2",
+ "rubato",
+ "rustfft",
+ "safetensors",
+ "serde_json",
+ "sha2",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-io",
+ "synaptix-ops",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-music-yue2"
 version = "0.1.1"
 dependencies = [
@@ -7602,7 +7620,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "274.0.0"
+version = "275.0.0"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7647,6 +7665,7 @@ dependencies = [
  "synaptix-llm-qwen3",
  "synaptix-llm-qwen3-next-hybrid",
  "synaptix-music-acestep",
+ "synaptix-music-sheetsage2",
  "synaptix-music-yue2",
  "synaptix-rag",
  "synaptix-tokenizer",

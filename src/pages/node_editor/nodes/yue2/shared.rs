@@ -18,6 +18,7 @@ use synaptix_music_yue2::pipeline::{MODEL_NAMES, VAE_NAMES};
 use synaptix_music_yue2::protocol::CONTEXT;
 use synaptix_music_yue2::vae::Yue2Vae;
 use synaptix_music_yue2::Yue2Tokenizer;
+use synaptix_music_sheetsage2::SheetSage2;
 
 use crate::pages::node_editor::types::Yue2ModelHandle;
 
@@ -71,6 +72,7 @@ where
 const AR_COMPONENT: &str = "AR (партитура и музыка)";
 const NAR_COMPONENT: &str = "NAR (акустика)";
 const VAE_COMPONENT: &str = "VAE (декодер)";
+const SHEET_COMPONENT: &str = "SheetSage2 (транскрипция)";
 
 fn ensure_kernels() {
     synaptix_kernels_cpu::ensure_registered();
@@ -99,6 +101,7 @@ static AR_CACHE: OnceLock<Mutex<HashMap<ModelKey, Weak<Yue2Ar>>>> = OnceLock::ne
 static NAR_CACHE: OnceLock<Mutex<HashMap<ModelKey, Weak<Yue2Nar>>>> = OnceLock::new();
 static VAE_CACHE: OnceLock<Mutex<HashMap<ModelKey, Weak<Yue2Vae>>>> = OnceLock::new();
 static TOK_CACHE: OnceLock<Mutex<HashMap<PathBuf, Weak<Yue2Tokenizer>>>> = OnceLock::new();
+static SHEET_CACHE: OnceLock<Mutex<HashMap<ModelKey, Weak<SheetSage2>>>> = OnceLock::new();
 
 pub fn load_ar(path: &Path, device_idx: usize, quant_idx: usize, compute_idx: usize) -> Result<Arc<Yue2Ar>, String> {
     get_or_load(
@@ -157,6 +160,25 @@ pub fn load_vae(path: &Path, device_idx: usize, dtype_idx: usize) -> Result<Arc<
     )
 }
 
+/// SheetSage2 — компонент того же бандла. Считает в BF16 (эталонный режим
+/// релиза — автокаст BF16); F32 — только если так выбрано в чекпойнте.
+pub fn load_sheet(path: &Path, device_idx: usize, compute_idx: usize) -> Result<Arc<SheetSage2>, String> {
+    get_or_load(
+        &SHEET_CACHE,
+        ModelKey { path: path.to_path_buf(), device_idx, quant_idx: 0, compute_idx },
+        SHEET_COMPONENT,
+        |k| {
+            ensure_kernels();
+            let compute = match super::compute_from_idx(k.compute_idx) {
+                DType::F32 => DType::F32,
+                _ => DType::BF16,
+            };
+            SheetSage2::open(&k.path, super::device_from_idx(k.device_idx), compute)
+                .map_err(|e| format!("SheetSage2::open: {e}"))
+        },
+    )
+}
+
 /// Текстовый BPE из бандла. В панель памяти не попадает: 2,5 МБ таблицы рангов.
 pub fn load_tokenizer(path: &Path) -> Result<Arc<Yue2Tokenizer>, String> {
     let map = TOK_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -209,6 +231,29 @@ pub fn resolve_paths(h: &Yue2ModelHandle) -> Result<(PathBuf, PathBuf), String> 
         }
     }
     Ok((model, vae))
+}
+
+/// Только костяк (в нём же лежит SheetSage2) — декодер для транскрипции не
+/// нужен и не обязан существовать.
+pub fn resolve_model_path(h: &Yue2ModelHandle) -> Result<PathBuf, String> {
+    let path = match &h.model_path {
+        Some(p) if p.is_relative() => match &h.models_dir {
+            Some(d) => d.join(p),
+            None => p.clone(),
+        },
+        Some(p) => p.clone(),
+        None => match &h.models_dir {
+            Some(d) => d.join(default_bundle_name(Some(d), MODEL_NAMES)),
+            None => return Err(tr!("node.yue2.error.missing_dir_or_override", name = MODEL_NAMES[0])),
+        },
+    };
+    if !path.exists() {
+        return Err(tr!("node.yue2.error.bundle_not_found", label = "model", path = path.display()));
+    }
+    if !synaptix_music_sheetsage2::loader::bundle_has_sheetsage2(&path) {
+        return Err(tr!("node.yue2_transcribe.error.no_component", path = path.display()));
+    }
+    Ok(path)
 }
 
 /// Устройство и точности хэндла — в одном месте, чтобы воркеры не собирали их

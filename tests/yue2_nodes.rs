@@ -23,8 +23,12 @@ use synthos::pages::node_editor::types::{
 use synthos::templates::convert;
 use synthos::templates::model::NodeStateData;
 
-const KINDS: [NodeKind; 3] =
-    [NodeKind::Yue2Checkpoint, NodeKind::Yue2Generate, NodeKind::Yue2VaeDecode];
+const KINDS: [NodeKind; 4] = [
+    NodeKind::Yue2Checkpoint,
+    NodeKind::Yue2Generate,
+    NodeKind::Yue2VaeDecode,
+    NodeKind::Yue2Transcribe,
+];
 
 /// Без каталогов `tr!` возвращает сам ключ, и проверка текста карточки
 /// проверяла бы не то. Регистрация одна на процесс.
@@ -84,7 +88,7 @@ fn texts(h: &mut TestHarness) -> String {
 }
 
 #[test]
-fn registry_knows_all_three_nodes() {
+fn registry_knows_all_four_nodes() {
     for kind in KINDS {
         let meta = registry::meta(kind);
         assert_eq!(meta.kind, kind, "meta({kind:?}) вернула чужую ноду");
@@ -100,6 +104,12 @@ fn registry_knows_all_three_nodes() {
     let decode = registry::meta(NodeKind::Yue2VaeDecode);
     assert_eq!(port_names(&decode.inputs), vec!["model", "latent"]);
     assert_eq!(port_names(&decode.outputs), vec!["audio"]);
+
+    // Транскрипция: модель и запись на входе, партитура на выходе.
+    let sheet = registry::meta(NodeKind::Yue2Transcribe);
+    assert_eq!(port_names(&sheet.inputs), vec!["model", "audio"]);
+    assert_eq!(port_names(&sheet.outputs), vec!["score"]);
+    assert!(sheet.on_run.is_some() && sheet.busy_signal.is_some(), "Transcribe без запуска");
 
     let ckpt = registry::meta(NodeKind::Yue2Checkpoint);
     assert!(port_names(&ckpt.inputs).is_empty(), "у чекпойнта входов нет");
@@ -130,6 +140,70 @@ fn node_bodies_render() {
     for expect in ["full", "32", "Seed"] {
         assert!(text.contains(expect), "на карточке Generate нет `{expect}`: {text}");
     }
+    // На карточке Transcribe — режим (по умолчанию мелодия) и выбор голосов.
+    let node = make_node(NodeKind::Yue2Transcribe, 1);
+    let body = registry::meta(NodeKind::Yue2Transcribe).body.unwrap()(&node);
+    let mut h = render(body);
+    let text = texts(&mut h);
+    for expect in ["Партитура", "melody", "Мелодии", "both"] {
+        assert!(text.contains(expect), "на карточке Transcribe нет `{expect}`: {text}");
+    }
+}
+
+#[test]
+fn transcribe_state_round_trips_through_template() {
+    let node = make_node(NodeKind::Yue2Transcribe, 1);
+    {
+        let guard = node.runtime.lock().unwrap();
+        let NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. } = &*guard else {
+            panic!("не тот runtime");
+        };
+        // По умолчанию — мелодия обоих голосов: то, что нужно каверу.
+        assert_eq!((mode_idx.get_untracked(), voices_idx.get_untracked()), (0, 0));
+        mode_idx.set(1);
+        voices_idx.set(2);
+    }
+    let state = {
+        let guard = node.runtime.lock().unwrap();
+        convert::runtime_to_state(&guard).expect("состояние ноды")
+    };
+    let NodeStateData::Yue2Transcribe(data) = &state else {
+        panic!("ожидался Yue2Transcribe, а получен {state:?}");
+    };
+    assert_eq!((data.mode_idx, data.voices_idx), (1, 2));
+    let fresh = make_node(NodeKind::Yue2Transcribe, 2);
+    let guard = fresh.runtime.lock().unwrap();
+    convert::apply_state_to_runtime(&guard, &state);
+    let NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. } = &*guard else {
+        panic!("не тот runtime");
+    };
+    assert_eq!((mode_idx.get_untracked(), voices_idx.get_untracked()), (1, 2));
+}
+
+/// Режим и голоса хранятся индексами — порядок пунктов тоже часть формата.
+#[test]
+fn transcribe_options_order() {
+    use synaptix_music_sheetsage2::VoiceSelect;
+    use yue2::transcribe::{voices_from_idx, MODE_OPTIONS, VOICE_OPTIONS};
+    assert_eq!(MODE_OPTIONS, &["melody", "full"]);
+    assert_eq!(VOICE_OPTIONS, &["both", "vocal", "ins"]);
+    assert_eq!(voices_from_idx(0), VoiceSelect::Both);
+    assert_eq!(voices_from_idx(1), VoiceSelect::Vocal);
+    assert_eq!(voices_from_idx(2), VoiceSelect::Instrumental);
+    assert_eq!(voices_from_idx(9), VoiceSelect::Both);
+}
+
+/// Бандл без компонента SheetSage2 — ошибка с командой упаковки, а не
+/// «тензор не найден» из глубины загрузчика.
+#[test]
+fn transcribe_requires_sheetsage2_component() {
+    init_i18n();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("yue2-3b.syn"), b"x").unwrap();
+    let err = yue2::shared::resolve_model_path(&handle(Some(dir.path()), None)).unwrap_err();
+    assert!(err.contains("sheet-pack"), "в ошибке нет команды упаковки: {err}");
+    // Декодер для транскрипции не нужен: его отсутствие — не ошибка резолва.
+    assert!(!err.contains("vae"), "{err}");
 }
 
 #[test]
@@ -297,7 +371,26 @@ fn builtin_templates_reference_existing_ports() {
             t.id
         );
     }
-    // Два из трёх шаблонов принимают правленую партитуру во вход `abc`.
+    // Два из трёх шаблонов принимают партитуру во вход `abc`.
     let with_abc = ours.iter().filter(|t| t.connections.iter().any(|c| c.to_port == "abc")).count();
     assert_eq!(with_abc, 2, "шаблонов с входом abc должно быть два");
+
+    // Кавер: запись → Transcribe → текстовая нода (правка) → Generate.abc, режим melody.
+    let cover = ours.iter().find(|t| t.id == "builtin-yue2-cover").expect("шаблон кавера");
+    let id_of = |kind: NodeKind| cover.nodes.iter().find(|n| n.kind == kind).map(|n| n.id).unwrap();
+    let (file, sheet, gen) = (id_of(NodeKind::AudioFile), id_of(NodeKind::Yue2Transcribe), id_of(NodeKind::Yue2Generate));
+    let has = |f: u64, fp: &str, t: u64, tp: &str| {
+        cover.connections.iter().any(|c| c.from_node == f && c.from_port == fp && c.to_node == t && c.to_port == tp)
+    };
+    assert!(has(file, "out", sheet, "audio"), "запись не идёт в Transcribe");
+    let view = cover
+        .connections
+        .iter()
+        .find(|c| c.from_node == sheet && c.from_port == "score")
+        .map(|c| c.to_node)
+        .expect("партитура записи никуда не идёт");
+    assert!(has(view, "out", gen, "abc"), "мелодия из текстовой ноды не идёт в Generate.abc");
+    let gen_state = cover.nodes.iter().find(|n| n.id == gen).and_then(|n| n.state.clone());
+    let Some(NodeStateData::Yue2Generate(g)) = gen_state else { panic!("нет состояния Generate") };
+    assert_eq!(g.cot_idx, 1, "кавер поётся по мелодии (cot = melody)");
 }

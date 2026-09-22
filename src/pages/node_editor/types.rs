@@ -383,6 +383,9 @@ pub enum NodeKind {
     /// `(model, latent) → audio`: передекодировать латенты YuE2 (другим
     /// декодером — например `legacy` — без повторной генерации).
     Yue2VaeDecode,
+    /// `(model, audio) → score`: запись → партитура ABC (SheetSage2 из того же
+    /// бандла) — мелодия для кавера или полная партитура с аккордами.
+    Yue2Transcribe,
 
     FfmpegPlayer,
 
@@ -548,6 +551,7 @@ impl NodeKind {
         NodeKind::Yue2Checkpoint,
         NodeKind::Yue2Generate,
         NodeKind::Yue2VaeDecode,
+        NodeKind::Yue2Transcribe,
         NodeKind::FfmpegPlayer,
         NodeKind::LtxCheckpoint,
         NodeKind::LtxTextEncoder,
@@ -2670,6 +2674,21 @@ pub enum NodeRuntime {
         output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
         output_version: RwSignal<u32>,
     },
+    /// YuE2 Transcribe: запись → партитура ABC (SheetSage2).
+    Yue2Transcribe {
+        /// 0 = melody (без аккордов — план кавера), 1 = full (с аккордами).
+        mode_idx: RwSignal<usize>,
+        /// 0 = обе мелодии, 1 = только вокал, 2 = только инструментальная.
+        voices_idx: RwSignal<usize>,
+        running: RwSignal<bool>,
+        error: RwSignal<Option<String>>,
+        loaded_name: RwSignal<Option<String>>,
+        progress_pct: RwSignal<f32>,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        /// Партитура в ABC для порта `score`.
+        output_buf_score: Arc<Mutex<Option<String>>>,
+        output_version: RwSignal<u32>,
+    },
 
     /// Универсальный видеоплеер: файл (ffmpeg `VideoPlayer`) ИЛИ кадры из
     /// памяти (`FramesView` + `AudioPlayer`). Режим выбирается по наличию
@@ -3390,6 +3409,7 @@ impl NodeRuntime {
             | R::AceStepVaeEncode { cancel, .. }
             | R::Yue2Generate { cancel, .. }
             | R::Yue2VaeDecode { cancel, .. }
+            | R::Yue2Transcribe { cancel, .. }
             | R::H3Sampler { cancel, .. }
             | R::FluxSampler { cancel, .. }
             | R::Flux2Sampler { cancel, .. }
@@ -3784,6 +3804,14 @@ impl std::fmt::Debug for NodeRuntime {
             }
             NodeRuntime::Yue2VaeDecode { running, .. } => {
                 write!(f, "NodeRuntime::Yue2VaeDecode{{running={}}}", running.get_untracked())
+            }
+            NodeRuntime::Yue2Transcribe { running, mode_idx, .. } => {
+                write!(
+                    f,
+                    "NodeRuntime::Yue2Transcribe{{running={}, mode={}}}",
+                    running.get_untracked(),
+                    mode_idx.get_untracked()
+                )
             }
         }
     }

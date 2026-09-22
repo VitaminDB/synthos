@@ -189,6 +189,7 @@ static ACESTEP_GENERATE_EXEC: acestep::generate::GenerateExec = acestep::generat
 static YUE2_CHECKPOINT_EXEC: yue2::checkpoint::CheckpointExec = yue2::checkpoint::CheckpointExec;
 static YUE2_GENERATE_EXEC: yue2::generate::GenerateExec = yue2::generate::GenerateExec;
 static YUE2_VAE_DECODE_EXEC: yue2::vae_decode::VaeDecodeExec = yue2::vae_decode::VaeDecodeExec;
+static YUE2_TRANSCRIBE_EXEC: yue2::transcribe::TranscribeExec = yue2::transcribe::TranscribeExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
 static LTX_CHECKPOINT_EXEC: ltx::checkpoint::CheckpointExec = ltx::checkpoint::CheckpointExec;
 static H3_CHECKPOINT_EXEC: minimax_h3::checkpoint::CheckpointExec = minimax_h3::checkpoint::CheckpointExec;
@@ -425,6 +426,14 @@ const YUE2_VAE_DECODE_INPUTS: &[PortSchema] = &[
 ];
 const YUE2_VAE_DECODE_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
+];
+
+const YUE2_TRANSCRIBE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
+    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
+];
+const YUE2_TRANSCRIBE_OUTPUTS: &[PortSchema] = &[
+    PortSchema { name: "score", label: "score", kind: PortKind::Text },
 ];
 
 const FFMPEG_PLAYER_INPUTS: &[PortSchema] = &[
@@ -1215,7 +1224,7 @@ const ACESTEP_GENERATE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(acestep::generate::busy_signal),
 };
 
-// ── YuE2 (3 ноды) ────────────────────────────────────────────────────────
+// ── YuE2 (4 ноды) ────────────────────────────────────────────────────────
 
 /// Подкатегория в меню «Добавить ноду» (под `NodeCategory::Neuro`).
 const YUE2_SUBCATEGORY: &str = "yue2";
@@ -1269,6 +1278,23 @@ const YUE2_VAE_DECODE: NodeKindMeta = NodeKindMeta {
     executor: &YUE2_VAE_DECODE_EXEC,
     on_run: Some(yue2::vae_decode::on_run),
     busy_signal: Some(yue2::vae_decode::busy_signal),
+};
+
+const YUE2_TRANSCRIBE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::Yue2Transcribe,
+    icon: MI_LIBRARY_MUSIC,
+    title: "YuE2 Transcribe",
+    category: NodeCategory::Neuro,
+    subcategory: Some(YUE2_SUBCATEGORY),
+    inputs: PortsSpec::Static(YUE2_TRANSCRIBE_INPUTS),
+    outputs: PortsSpec::Static(YUE2_TRANSCRIBE_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(yue2::transcribe::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &YUE2_TRANSCRIBE_EXEC,
+    on_run: Some(yue2::transcribe::on_run),
+    busy_signal: Some(yue2::transcribe::busy_signal),
 };
 
 const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
@@ -2299,6 +2325,7 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     YUE2_CHECKPOINT,
     YUE2_GENERATE,
     YUE2_VAE_DECODE,
+    YUE2_TRANSCRIBE,
     FFMPEG_PLAYER,
     LTX_CHECKPOINT,
     LTX_TEXT_ENCODER,
@@ -3263,6 +3290,18 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             progress_pct: use_signal(0.0_f32),
             cancel: Arc::new(AtomicBool::new(false)),
             output_buf_audio: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::Yue2Transcribe => NodeRuntime::Yue2Transcribe {
+            // Мелодия без аккордов — то, что просит кавер.
+            mode_idx: use_signal(0_usize),
+            voices_idx: use_signal(0_usize),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            output_buf_score: Arc::new(Mutex::new(None)),
             output_version: use_signal(0_u32),
         },
         NodeKind::AceStepCheckpoint => NodeRuntime::AceStepCheckpoint {

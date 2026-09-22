@@ -423,6 +423,10 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("vae_dtype_idx", yue2::VAE_DTYPE_OPTIONS),
         ],
         NodeKind::Yue2Generate => vec![("cot_idx", yue2::COT_OPTIONS)],
+        NodeKind::Yue2Transcribe => vec![
+            ("mode_idx", yue2::transcribe::MODE_OPTIONS),
+            ("voices_idx", yue2::transcribe::VOICE_OPTIONS),
+        ],
         NodeKind::AceStepCheckpoint => vec![
             ("device_idx", acestep::DEVICE_OPTIONS),
             ("quant_dit_idx", acestep::QUANT_OPTIONS),
@@ -1726,8 +1730,10 @@ mod tests {
         // 5600 → 5800 с «FLUX.2: Image to Image» (5660 символов), 5800 → 6000
         // с «FLUX.2: LLM Upsampling», 6000 → 6600 с Qwen-Image Edit / Multi-Image
         // Edit и SDXL Text / Image to Image (6438 символов), 6600 → 6900 с тремя
-        // шаблонами YuE2 (6700 символов).
-        assert!(len < 6900, "раздел шаблонов раздулся до {len} символов");
+        // шаблонами YuE2 (6700 символов), 6900 → 7900 с пятью шаблонами
+        // Qwen-Image 2.1 (v274 не поднял предел — тест падал с 7674) и кавером
+        // YuE2 по записи (7687 символов).
+        assert!(len < 7900, "раздел шаблонов раздулся до {len} символов");
     }
 
     /// Фильтр — набор токенов: перечисление нод возвращает их все.

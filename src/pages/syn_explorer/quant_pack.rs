@@ -77,11 +77,8 @@ impl QuantManifest {
     }
 }
 
-pub fn format_key(kind: QuantKind) -> &'static str {
-    match kind {
-        QuantKind::Nvfp4 => "nvfp4",
-        QuantKind::Mxfp8 => "mxfp8",
-    }
+pub fn format_key(kind: QuantKind) -> String {
+    synaptix_bundle::quant_layout::format_key(kind)
 }
 
 /// Есть ли CUDA-устройство, на котором можно считать квант.
@@ -259,6 +256,10 @@ impl QuantizingStream {
             let qw = match kind {
                 QuantKind::Nvfp4 => gpu.quantize_to_nvfp4(),
                 QuantKind::Mxfp8 => gpu.quantize_to_mxfp8(),
+                // SQ-энкодер на GPU — этап 4 плана; ggml-энкодеров нет вовсе.
+                QuantKind::Sq(_) | QuantKind::Ggml(_) => {
+                    return Err(format!("{name}: формат {kind:?} упаковщик пока не пишет"));
+                }
             }
             .map_err(|e| format!("{name}: квантование: {e}"))?;
 
@@ -344,6 +345,9 @@ fn packed_shape(kind: QuantKind, slices: usize, n: usize, k: usize) -> Vec<usize
     let last = match kind {
         QuantKind::Nvfp4 => k / 2,
         QuantKind::Mxfp8 => k,
+        QuantKind::Sq(_) | QuantKind::Ggml(_) => {
+            synaptix_core::quant::block_row_bytes(kind.dtype(), k).unwrap_or(k)
+        }
     };
     if slices == 1 {
         vec![n, last]

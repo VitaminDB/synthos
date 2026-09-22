@@ -6895,6 +6895,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "synaptix-core",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -6991,6 +6992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
+ "synaptix-core",
  "thiserror 2.0.19",
  "tracing",
 ]

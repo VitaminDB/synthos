@@ -438,8 +438,25 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = memory_mode_idx.get();
             let _ = resident.get();
         }
+        NodeRuntime::QwenImage21Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resolution_idx, resident, .. } => {
+            let _ = model_path.get();
+            let _ = device_idx.get();
+            let _ = quant_idx.get();
+            let _ = memory_mode_idx.get();
+            let _ = resolution_idx.get();
+            let _ = resident.get();
+        }
+        NodeRuntime::QwenImage21Sampler { steps, cfg, seed, kv_cache, error, .. } => {
+            let _ = steps.get();
+            let _ = cfg.get();
+            let _ = seed.get();
+            let _ = kv_cache.get();
+            let _ = error.get();
+        }
         NodeRuntime::QwenImageTextEncoder { error, loaded_name, .. }
         | NodeRuntime::QwenImageReference { error, loaded_name, .. }
+        | NodeRuntime::QwenImage21TextEncoder { error, loaded_name, .. }
+        | NodeRuntime::QwenImage21Reference { error, loaded_name, .. }
         | NodeRuntime::SdxlTextEncoder { error, loaded_name, .. } => {
             let _ = error.get();
             let _ = loaded_name.get();
@@ -450,7 +467,9 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = seed.get();
             let _ = error.get();
         }
-        NodeRuntime::QwenImageVaeDecode { error, .. } | NodeRuntime::SdxlVaeDecode { error, .. } => {
+        NodeRuntime::QwenImageVaeDecode { error, .. }
+        | NodeRuntime::QwenImage21VaeDecode { error, .. }
+        | NodeRuntime::SdxlVaeDecode { error, .. } => {
             let _ = error.get();
         }
         NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. } => {

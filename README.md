@@ -172,9 +172,10 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 ![The node editor: the Neuro node menu, a running graph and the models-in-memory panel](docs/screenshots/nodes-menu-models.png)
 
 - **Images** — FLUX.1 (dev), FLUX.2 (dev 32B, klein 4B/9B, klein base) with img2img and
-  up to ten references, Qwen-Image-Edit and Edit-2509/2511 (edit one picture, or compose
-  up to four — "put the fox from the second picture on the rock from the first"), and SDXL
-  for text-to-image and image-to-image. Weights run as NVFP4, MXFP8 or dense; the picture
+  up to ten references, Qwen-Image 2.1 (one model for text-to-image, editing by up to ten
+  references and transparent RGBA output), Qwen-Image-Edit and Edit-2509/2511 (edit one
+  picture, or compose up to four — "put the fox from the second picture on the rock from
+  the first"), and SDXL for text-to-image and image-to-image. Weights run as NVFP4, MXFP8 or dense; the picture
   a graph produces can be fed straight into a video model as its first frame.
 - **Video** — LTX-2.3: text-to-video, image-to-video, audio-to-video, IC-LoRA control from
   depth (Depth Anything V2) or canny edges, lip-dub and retake, two-stage sampling with a
@@ -197,7 +198,8 @@ is exactly what gets loaded, with nothing to resolve at runtime.
   equalizers, filter, gain, reverb, save-to-file; PCM streams between nodes.
 - **Editor** — checkpoint nodes (ComfyUI-style) with a "keep in memory" switch per model
   family, built-in templates for every family (FLUX / FLUX.2 text-to-image, edit and
-  multi-reference, Qwen-Image edit and multi-image edit, SDXL text-to-image and
+  multi-reference, Qwen-Image 2.1 text-to-image, edit, multi-reference, transparent RGBA
+  and LLM prompt rewrite, Qwen-Image edit and multi-image edit, SDXL text-to-image and
   image-to-image, LTX and H3 video, music, podcast) plus your own, multi-tab graphs, run/pause/stop, per-node and
   per-run timers, a panel of loaded models, workspace autosave, Markdown annotation nodes.
 
@@ -262,7 +264,8 @@ and stream in at ~39 GB/s, the KV cache is MXFP8, and prefill runs layer-by-laye
 prompt never needs three copies of the activation stream. A 3k-token follow-up turn on top of
 an 80k history takes 3.3 s thanks to prefix-KV reuse.
 
-Image generation on the same card, 1024²: SDXL 30 steps in 6.5 s, Qwen-Image-Edit-2511
+Image generation on the same card, 1024²: SDXL 30 steps in 6.5 s, Qwen-Image 2.1 40 steps
+in 30 s (MXFP8, 13.6 GB peak) or 23 s (NVFP4) — 2048² in 172 s, Qwen-Image-Edit-2511
 40 steps in 188 s (MXFP8, 17.8 GB peak) or 155 s (NVFP4), FLUX.2 klein 4 steps in a few
 seconds.
 

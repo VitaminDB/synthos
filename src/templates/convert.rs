@@ -23,6 +23,7 @@ use super::model::{
     AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
     FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
     Flux2SamplerStateData, FluxCheckpointStateData, QwenImageCheckpointStateData, QwenImageSamplerStateData,
+    QwenImage21CheckpointStateData, QwenImage21SamplerStateData,
     SdxlCheckpointStateData, SdxlSamplerStateData,
     FluxEmptyLatentStateData, FluxSamplerStateData, FluxTextEncoderStateData, FluxVaeEncodeStateData,
     GainStateData, H3CheckpointStateData, ImageLoadStateData, ImageSaveStateData,
@@ -345,6 +346,27 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
         NodeRuntime::QwenImageTextEncoder { .. }
         | NodeRuntime::QwenImageReference { .. }
         | NodeRuntime::QwenImageVaeDecode { .. } => None,
+        NodeRuntime::QwenImage21Checkpoint {
+            model_path, device_idx, quant_idx, memory_mode_idx, resolution_idx, resident, ..
+        } => Some(NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData {
+            model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+            device_idx: device_idx.get_untracked(),
+            quant_idx: quant_idx.get_untracked(),
+            memory_mode_idx: memory_mode_idx.get_untracked(),
+            resolution_idx: resolution_idx.get_untracked(),
+            resident: resident.get_untracked(),
+        })),
+        NodeRuntime::QwenImage21Sampler { steps, cfg, seed, kv_cache, .. } => {
+            Some(NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData {
+                steps: steps.get_untracked(),
+                cfg: cfg.get_untracked(),
+                seed: seed.get_untracked(),
+                kv_cache: kv_cache.get_untracked(),
+            }))
+        }
+        NodeRuntime::QwenImage21TextEncoder { .. }
+        | NodeRuntime::QwenImage21Reference { .. }
+        | NodeRuntime::QwenImage21VaeDecode { .. } => None,
         NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. } => {
             Some(NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData {
                 model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
@@ -1429,6 +1451,29 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             seed.set(data.seed);
         }
         (
+            NodeRuntime::QwenImage21Checkpoint {
+                model_path, device_idx, quant_idx, memory_mode_idx, resolution_idx, resident, ..
+            },
+            NodeStateData::QwenImage21Checkpoint(data),
+        ) => {
+            use crate::pages::node_editor::nodes::qwen_image21;
+            model_path.set(data.model_path.as_ref().map(PathBuf::from));
+            device_idx.set(data.device_idx.min(qwen_image21::DEVICE_OPTIONS.len() - 1));
+            quant_idx.set(data.quant_idx.min(qwen_image21::QUANT_OPTIONS.len() - 1));
+            memory_mode_idx.set(data.memory_mode_idx.min(qwen_image21::MEMORY_MODE_OPTIONS.len() - 1));
+            resolution_idx.set(data.resolution_idx.min(qwen_image21::RESOLUTION_OPTIONS.len() - 1));
+            resident.set(data.resident);
+        }
+        (
+            NodeRuntime::QwenImage21Sampler { steps, cfg, seed, kv_cache, .. },
+            NodeStateData::QwenImage21Sampler(data),
+        ) => {
+            steps.set(data.steps.min(100));
+            cfg.set(data.cfg.max(1.0));
+            seed.set(data.seed);
+            kv_cache.set(data.kv_cache);
+        }
+        (
             NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. },
             NodeStateData::SdxlCheckpoint(data),
         ) => {
@@ -2393,6 +2438,28 @@ mod tests {
                 2,
                 NodeKind::QwenImageSampler,
                 NodeStateData::QwenImageSampler(QwenImageSamplerStateData { steps: 20, cfg: 2.5, seed: 7 }),
+            ),
+            mk(
+                6,
+                NodeKind::QwenImage21Checkpoint,
+                NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData {
+                    model_path: Some("/models/qwen-image-2.1.syn".into()),
+                    device_idx: 0,
+                    quant_idx: 2,
+                    memory_mode_idx: 1,
+                    resolution_idx: 4,
+                    resident: true,
+                }),
+            ),
+            mk(
+                7,
+                NodeKind::QwenImage21Sampler,
+                NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData {
+                    steps: 12,
+                    cfg: 1.0,
+                    seed: 3,
+                    kv_cache: false,
+                }),
             ),
             mk(
                 3,

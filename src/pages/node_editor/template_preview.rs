@@ -119,6 +119,12 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::QwenImageReference
         | NodeKind::QwenImageSampler
         | NodeKind::QwenImageVaeDecode => Color::new(0.58, 0.42, 0.93, 1.0),
+        // Qwen-Image 2.1 — тот же фиолетовый, чуть светлее.
+        NodeKind::QwenImage21Checkpoint
+        | NodeKind::QwenImage21TextEncoder
+        | NodeKind::QwenImage21Reference
+        | NodeKind::QwenImage21Sampler
+        | NodeKind::QwenImage21VaeDecode => Color::new(0.66, 0.50, 0.95, 1.0),
         NodeKind::SdxlCheckpoint
         | NodeKind::SdxlTextEncoder
         | NodeKind::SdxlVaeEncode

@@ -76,6 +76,7 @@ pub mod markdown_view;
 pub mod minimax_h3;
 pub mod omnivoice;
 pub mod qwen_image;
+pub mod qwen_image21;
 pub mod scalar;
 pub mod sdxl;
 pub mod sortformer_diarizer;

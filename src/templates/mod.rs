@@ -63,6 +63,7 @@ impl TemplateCategory {
         } else if id.starts_with("builtin-flux-")
             || id.starts_with("builtin-flux2-")
             || id.starts_with("builtin-qwen-image-")
+            || id.starts_with("builtin-qwen-image21-")
             || id.starts_with("builtin-sdxl-")
         {
             TemplateCategory::Image

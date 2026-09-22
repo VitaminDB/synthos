@@ -10,7 +10,8 @@ use super::model::{
     AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
     Yue2CheckpointStateData, Yue2GenerateStateData,
     FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
-    QwenImageCheckpointStateData, SdxlCheckpointStateData, SdxlSamplerStateData,
+    QwenImageCheckpointStateData, QwenImage21CheckpointStateData, QwenImage21SamplerStateData,
+    SdxlCheckpointStateData, SdxlSamplerStateData,
     H3KeyframeStateData, H3SamplerStateData, LlmStateData, LtxSamplerStage1StateData, NodeData,
     NodeStateData,
     PointData, SynCheckpointStateData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
@@ -63,6 +64,11 @@ pub fn all() -> Vec<Template> {
         flux2_multi_reference_template(),
         qwen_image_edit_template(),
         qwen_image_multi_edit_template(),
+        qwen_image21_text_to_image_template(),
+        qwen_image21_edit_template(),
+        qwen_image21_multi_reference_template(),
+        qwen_image21_transparent_template(),
+        qwen_image21_llm_rewrite_template(),
         sdxl_text_to_image_template(),
         sdxl_image_to_image_template(),
         ltx_flux_keyframe_template(),
@@ -411,6 +417,266 @@ fn qwen_image_edit_template() -> Template {
             "Replace the sky with a dramatic orange sunset; keep the buildings, people and lighting on them unchanged",
         ),
         connections: qwen_image_edit_connections(9),
+        viewport: None,
+    }
+}
+
+// ── Qwen-Image 2.1 ────────────────────────────────────────────────────────
+
+/// Костяк Qwen-Image 2.1: Checkpoint(1), промпт(2) → Text Encoder(3) →
+/// Sampler(5) → VAE Decode(6) → Image Save(7); Empty Latent(4) — только с
+/// явным размером (без него размер — из разрешения чекпойнта).
+fn qwen_image21_base_nodes(prompt: &str, size: Option<(u32, u32)>) -> Vec<NodeData> {
+    let mut nodes = vec![
+        node_with_state(
+            1,
+            NodeKind::QwenImage21Checkpoint,
+            60.0,
+            60.0,
+            NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData::default()),
+        ),
+        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
+        node_plain(3, NodeKind::QwenImage21TextEncoder, 960.0, 420.0),
+        node_with_state(
+            5,
+            NodeKind::QwenImage21Sampler,
+            1400.0,
+            420.0,
+            NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData::default()),
+        ),
+        node_plain(6, NodeKind::QwenImage21VaeDecode, 1840.0, 420.0),
+        node_plain(7, NodeKind::ImageSave, 2280.0, 420.0),
+    ];
+    if let Some((width, height)) = size {
+        nodes.push(node_with_state(
+            4,
+            NodeKind::FluxEmptyLatent,
+            960.0,
+            720.0,
+            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx: 0 }),
+        ));
+    }
+    nodes
+}
+
+fn qwen_image21_base_connections(size: bool) -> Vec<ConnData> {
+    let mut c = vec![
+        conn(1, "model", 3, "model"),
+        conn(1, "model", 5, "model"),
+        conn(1, "model", 6, "model"),
+        conn(2, "out", 3, "prompt"),
+        conn(3, "conditioning", 5, "conditioning"),
+        conn(5, "latent", 6, "latent"),
+        conn(6, "image", 7, "image"),
+    ];
+    if size {
+        c.push(conn(4, "latent", 5, "latent"));
+    }
+    c
+}
+
+fn qwen_image21_text_to_image_template() -> Template {
+    Template {
+        id: "builtin-qwen-image21-text-to-image".into(),
+        builtin: true,
+        name: "Qwen-Image 2.1: Text to Image".into(),
+        description: "Промпт → Text Encoder (Qwen3-VL) → Sampler (40 шагов, без CFG, KV-кэш) → \
+             VAE Decode → PNG. Размер — FLUX Empty Latent (стороны кратны 32; родные 1024² и 2048²). \
+             В Checkpoint — qwen-image-2.1.syn."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: qwen_image21_base_nodes(
+            "A neon shop sign that reads \"QWEN IMAGE 2.1\", rainy night, reflections on wet pavement, cinematic",
+            Some((1024, 1024)),
+        ),
+        connections: qwen_image21_base_connections(true),
+        viewport: None,
+    }
+}
+
+/// Правка: Image(8) → Reference(9) — и в энкодер, и в сэмплер; размер — с
+/// картинки (разрешение чекпойнта, пропорции исходника).
+fn qwen_image21_edit_template() -> Template {
+    let mut nodes = qwen_image21_base_nodes(
+        "Replace the sky with a dramatic orange sunset; keep the buildings, people and lighting on them unchanged",
+        None,
+    );
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
+    nodes.push(node_plain(9, NodeKind::QwenImage21Reference, 520.0, 720.0));
+    let mut connections = qwen_image21_base_connections(false);
+    connections.extend([
+        conn(1, "model", 9, "model"),
+        conn(8, "image", 9, "image"),
+        conn(9, "references", 3, "references"),
+        conn(9, "references", 5, "references"),
+    ]);
+    Template {
+        id: "builtin-qwen-image21-edit".into(),
+        builtin: true,
+        name: "Qwen-Image 2.1: Edit Image".into(),
+        description: "Картинка → Reference (в энкодер Qwen3-VL и в сэмплер) + инструкция правки → \
+             Sampler → PNG в пропорциях исходника. Прозрачные PNG правятся с альфой. Пишите, что \
+             изменить и что оставить."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+/// Несколько референсов цепочкой: Image(8) → Reference(9) → Reference(11) ←
+/// Image(10); в промпте — `<image1>`, `<image2>`.
+fn qwen_image21_multi_reference_template() -> Template {
+    let mut nodes = qwen_image21_base_nodes(
+        "The woman from <image1> is sitting at the café table from <image2>, holding a cup of coffee, natural daylight",
+        Some((1024, 1024)),
+    );
+    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
+    nodes.push(node_plain(9, NodeKind::QwenImage21Reference, 520.0, 720.0));
+    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1040.0));
+    nodes.push(node_plain(11, NodeKind::QwenImage21Reference, 520.0, 980.0));
+    let mut connections = qwen_image21_base_connections(true);
+    connections.extend([
+        conn(1, "model", 9, "model"),
+        conn(1, "model", 11, "model"),
+        conn(8, "image", 9, "image"),
+        conn(10, "image", 11, "image"),
+        conn(9, "references", 11, "references"),
+        conn(11, "references", 3, "references"),
+        conn(11, "references", 5, "references"),
+    ]);
+    Template {
+        id: "builtin-qwen-image21-multi-reference".into(),
+        builtin: true,
+        name: "Qwen-Image 2.1: Multi-Reference".into(),
+        description: "Две картинки → Reference → Reference (цепочкой, до 10) → энкодер и Sampler: \
+             человек, предмет или стиль с одной картинки в сцене другой. В промпте — <image1>, \
+             <image2> по порядку цепочки; размер — Empty Latent."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes,
+        connections,
+        viewport: None,
+    }
+}
+
+/// Прозрачная картинка: формат промпта из карточки модели, PNG с альфой.
+fn qwen_image21_transparent_template() -> Template {
+    Template {
+        id: "builtin-qwen-image21-transparent".into(),
+        builtin: true,
+        name: "Qwen-Image 2.1: Transparent RGBA".into(),
+        description: "Стикер, логотип или вырезанный объект без фона: промпт в формате карточки модели \
+             («This is an RGBA image with transparency … the background is transparent») → PNG с \
+             альфа-каналом. Image Save сохраняет прозрачность."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: qwen_image21_base_nodes(
+            "This is an RGBA image with transparency. A cute cartoon dragon sticker with bold outlines. The image has alpha channel and the background is transparent.",
+            Some((1024, 1024)),
+        ),
+        connections: qwen_image21_base_connections(true),
+        viewport: None,
+    }
+}
+
+const QWEN_IMAGE21_REWRITE_SYSTEM: &str = "You are an image prompt rewriting expert for Qwen-Image 2.1. \
+Turn the user's short image request into one long English paragraph that describes the finished image as if you \
+were looking at it. You are an observer reporting what is in the frame, not talking to the user.
+
+Rules:
+1. Keep everything the user fixed unchanged: every string of text they want shown (copy it character for \
+character, in its own script, in double quotes), every named object, count, colour, position and the aspect ratio.
+2. Decide everything they left open: subject, setting, time of day, lighting (quality, direction, colour), \
+materials and textures, camera and framing, palette. A three-word request still becomes a full description.
+3. Name colours with a modifier (deep navy, warm terracotta), give materials (brushed metal, coarse linen), \
+enumerate objects instead of summarising, describe people by their observable surface, keep shadows, reflections \
+and scale physically consistent.
+4. Text shown inside the image goes in double quotes exactly; do not add text the user did not ask for.
+5. Write in English whatever the language of the request; only quoted in-image text keeps its script.
+6. Output only the description paragraph — no JSON, no headings, no aspect ratio, no explanations.";
+
+/// Короткий промпт → LLM переписывает его в описание кадра по инструкции
+/// Qwen (Prompt Enhancer) → Text View (можно поправить) → Qwen-Image 2.1.
+fn qwen_image21_llm_rewrite_template() -> Template {
+    let llm = NodeStateData::Llm(LlmStateData {
+        model_path: None,
+        device_idx: crate::pages::node_editor::nodes::llm::default_device_idx(),
+        quant_idx: crate::pages::node_editor::nodes::llm::default_quant_idx(),
+        compute_idx: crate::pages::node_editor::nodes::llm::default_compute_idx(),
+        system_prompt: QWEN_IMAGE21_REWRITE_SYSTEM.into(),
+        context: 4096,
+        think: false,
+        max_tokens: 640,
+        temperature: 0.3,
+        top_k: 0,
+        top_p: 1.0,
+        min_p: 0.0,
+        repetition_penalty: 1.0,
+        seed: 0,
+    });
+    let checkpoint = NodeStateData::SynCheckpoint(SynCheckpointStateData {
+        model_path: None,
+        device_idx: 0,
+        storage_idx: 4,
+        compute_idx: 0,
+        resident: false,
+    });
+    let rewritten = NodeStateData::TextView(TextViewStateData { output_text: String::new(), width: 360.0, height: 260.0 });
+    Template {
+        id: "builtin-qwen-image21-llm-rewrite".into(),
+        builtin: true,
+        name: "Qwen-Image 2.1: LLM Prompt Rewrite".into(),
+        description: "Короткий промпт → LLM переписывает его в подробное описание кадра по инструкции \
+             Qwen (Prompt Enhancer: что зафиксировано — сохранить, остальное — додумать, надписи в кавычках) \
+             → Text View (можно поправить) → Qwen-Image 2.1 → PNG. В Syn Checkpoint — любая чат-LLM; \
+             «Держать в памяти» выключено, чтобы VRAM досталась DiT."
+            .into(),
+        kind: TemplateKind::Full,
+        nodes: vec![
+            node_with_state(
+                1,
+                NodeKind::QwenImage21Checkpoint,
+                60.0,
+                60.0,
+                NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData::default()),
+            ),
+            node_with_state(2, NodeKind::TextView, 60.0, 420.0, flux_prompt_state("кот читает газету в уличном кафе в Париже")),
+            node_with_state(8, NodeKind::SynCheckpoint, 60.0, 680.0, checkpoint),
+            node_with_state(9, NodeKind::Llm, 480.0, 420.0, llm),
+            node_with_state(10, NodeKind::TextView, 940.0, 420.0, rewritten),
+            node_plain(3, NodeKind::QwenImage21TextEncoder, 1380.0, 300.0),
+            node_with_state(
+                4,
+                NodeKind::FluxEmptyLatent,
+                1380.0,
+                560.0,
+                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
+            ),
+            node_with_state(
+                5,
+                NodeKind::QwenImage21Sampler,
+                1820.0,
+                300.0,
+                NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData::default()),
+            ),
+            node_plain(6, NodeKind::QwenImage21VaeDecode, 2260.0, 300.0),
+            node_plain(7, NodeKind::ImageSave, 2700.0, 300.0),
+        ],
+        connections: vec![
+            conn(2, "out", 9, "prompt"),
+            conn(8, "model", 9, "model"),
+            conn(9, "answer", 10, "in"),
+            conn(10, "out", 3, "prompt"),
+            conn(1, "model", 3, "model"),
+            conn(1, "model", 5, "model"),
+            conn(1, "model", 6, "model"),
+            conn(3, "conditioning", 5, "conditioning"),
+            conn(4, "latent", 5, "latent"),
+            conn(5, "latent", 6, "latent"),
+            conn(6, "image", 7, "image"),
+        ],
         viewport: None,
     }
 }

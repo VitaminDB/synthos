@@ -219,6 +219,11 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             | NodeKind::QwenImageReference
             | NodeKind::QwenImageSampler
             | NodeKind::QwenImageVaeDecode
+            | NodeKind::QwenImage21Checkpoint
+            | NodeKind::QwenImage21TextEncoder
+            | NodeKind::QwenImage21Reference
+            | NodeKind::QwenImage21Sampler
+            | NodeKind::QwenImage21VaeDecode
             | NodeKind::SdxlCheckpoint
             | NodeKind::SdxlTextEncoder
             | NodeKind::SdxlVaeEncode

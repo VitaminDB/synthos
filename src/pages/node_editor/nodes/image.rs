@@ -195,6 +195,11 @@ pub fn write_image(img: &ImageData, out: &std::path::Path) -> Result<(), String>
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    if img.has_alpha() {
+        // Прозрачность живёт в превью-буфере — PNG с альфой.
+        let out = if out.extension().is_some_and(|e| !e.eq_ignore_ascii_case("png")) { out.with_extension("png") } else { out };
+        return synaptix_io::image::save_image(&img.rgba_tensor()?, &out).map_err(|e| e.to_string());
+    }
     synaptix_io::image::save_image(&img.tensor, &out).map_err(|e| e.to_string())
 }
 

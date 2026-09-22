@@ -216,6 +216,11 @@ pub(super) fn build_all() -> Vec<Tool> {
                 (builtin-flux2-*: Image → FLUX.2 Reference → Sampler.references), \
                 instruction-based editing with Qwen-Image-Edit / 2511 (builtin-qwen-image-*: \
                 Image → Qwen-Image Reference → Text Encoder.references + Sampler.references), \
+                Qwen-Image 2.1 — one model for text→image, editing by up to 10 references and \
+                transparent RGBA output (builtin-qwen-image21-*: Text to Image, Edit Image, \
+                Multi-Reference, Transparent RGBA, LLM Prompt Rewrite; references go to both \
+                Text Encoder.references and Sampler.references, prompt refers to them as \
+                <image1>, <image2>…), \
                 SDXL text→image and image→image (builtin-sdxl-*), a FLUX \
                 frame straight into video (builtin-ltx-flux-keyframe, \
                 builtin-h3-flux-keyframe: FLUX VAE Decode.image → LTX Image / H3 \

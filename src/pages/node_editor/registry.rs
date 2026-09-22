@@ -23,7 +23,7 @@ use super::eval::NodeExecutor;
 use super::nodes::{
     acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, flux2, image, llm, ltx,
-    qwen_image, sdxl,
+    qwen_image, qwen_image21, sdxl,
     markdown_view,
     minimax_h3, omnivoice, scalar, sortformer_diarizer, syn_checkpoint, text_view, vibevoice,
     voxcpm2, yue2,
@@ -239,6 +239,12 @@ static QWEN_IMAGE_TEXT_ENCODER_EXEC: qwen_image::text_encoder::TextEncoderExec =
 static QWEN_IMAGE_REFERENCE_EXEC: qwen_image::reference::ReferenceExec = qwen_image::reference::ReferenceExec;
 static QWEN_IMAGE_SAMPLER_EXEC: qwen_image::sampler::SamplerExec = qwen_image::sampler::SamplerExec;
 static QWEN_IMAGE_VAE_DECODE_EXEC: qwen_image::vae::VaeDecodeExec = qwen_image::vae::VaeDecodeExec;
+static QWEN_IMAGE21_CHECKPOINT_EXEC: qwen_image21::checkpoint::CheckpointExec = qwen_image21::checkpoint::CheckpointExec;
+static QWEN_IMAGE21_TEXT_ENCODER_EXEC: qwen_image21::text_encoder::TextEncoderExec =
+    qwen_image21::text_encoder::TextEncoderExec;
+static QWEN_IMAGE21_REFERENCE_EXEC: qwen_image21::reference::ReferenceExec = qwen_image21::reference::ReferenceExec;
+static QWEN_IMAGE21_SAMPLER_EXEC: qwen_image21::sampler::SamplerExec = qwen_image21::sampler::SamplerExec;
+static QWEN_IMAGE21_VAE_DECODE_EXEC: qwen_image21::vae::VaeDecodeExec = qwen_image21::vae::VaeDecodeExec;
 static SDXL_CHECKPOINT_EXEC: sdxl::checkpoint::CheckpointExec = sdxl::checkpoint::CheckpointExec;
 static SDXL_TEXT_ENCODER_EXEC: sdxl::text_encoder::TextEncoderExec = sdxl::text_encoder::TextEncoderExec;
 static SDXL_VAE_ENCODE_EXEC: sdxl::vae::VaeEncodeExec = sdxl::vae::VaeEncodeExec;
@@ -1762,6 +1768,101 @@ const QWEN_IMAGE_VAE_DECODE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(qwen_image::vae::busy_signal),
 };
 
+// ── Qwen-Image 2.1 ────────────────────────────────────────────────────────
+
+/// Стабильный ключ каталога строк — отображаемое имя см.
+/// `node.subcategory.qwen_image21`.
+const QWEN_IMAGE21_SUBCATEGORY: &str = "qwen_image21";
+
+const QWEN_IMAGE21_CHECKPOINT: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImage21Checkpoint,
+    icon: MI_INVENTORY_2,
+    title: "Qwen-Image 2.1 Checkpoint",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE21_SUBCATEGORY),
+    inputs: PortsSpec::Static(&[]),
+    outputs: PortsSpec::Static(FLUX_MODEL_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image21::checkpoint::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE21_CHECKPOINT_EXEC,
+    on_run: None,
+    busy_signal: None,
+};
+
+/// Промпт, негатив (необязательно; пустой — без CFG) и референсы
+/// (необязательно — t2i той же моделью).
+const QWEN_IMAGE21_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImage21TextEncoder,
+    icon: MI_TRANSLATE,
+    title: "Qwen-Image 2.1 Text Encoder",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE21_SUBCATEGORY),
+    inputs: PortsSpec::Static(QWEN_IMAGE_TEXT_ENCODER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_TEXT_ENCODER_OUTPUTS),
+    fields: NO_FIELDS,
+    body: Some(qwen_image21::text_encoder::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE21_TEXT_ENCODER_EXEC,
+    on_run: Some(qwen_image21::text_encoder::on_run),
+    busy_signal: Some(qwen_image21::text_encoder::busy_signal),
+};
+
+const QWEN_IMAGE21_REFERENCE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImage21Reference,
+    icon: MI_LAYERS,
+    title: "Qwen-Image 2.1 Reference",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE21_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX2_REFERENCE_INPUTS),
+    outputs: PortsSpec::Static(FLUX2_REFERENCES_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image21::reference::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE21_REFERENCE_EXEC,
+    on_run: Some(qwen_image21::reference::on_run),
+    busy_signal: Some(qwen_image21::reference::busy_signal),
+};
+
+/// `references` — необязательно; `latent` — FLUX Empty Latent (размер),
+/// без него — размер от разрешения чекпойнта (и пропорций референса).
+const QWEN_IMAGE21_SAMPLER: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImage21Sampler,
+    icon: MI_AUTO_AWESOME,
+    title: "Qwen-Image 2.1 Sampler",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE21_SUBCATEGORY),
+    inputs: PortsSpec::Static(QWEN_IMAGE_SAMPLER_INPUTS),
+    outputs: PortsSpec::Static(FLUX_LATENT_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image21::sampler::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE21_SAMPLER_EXEC,
+    on_run: Some(qwen_image21::sampler::on_run),
+    busy_signal: Some(qwen_image21::sampler::busy_signal),
+};
+
+const QWEN_IMAGE21_VAE_DECODE: NodeKindMeta = NodeKindMeta {
+    kind: NodeKind::QwenImage21VaeDecode,
+    icon: MI_PALETTE,
+    title: "Qwen-Image 2.1 VAE Decode",
+    category: NodeCategory::Neuro,
+    subcategory: Some(QWEN_IMAGE21_SUBCATEGORY),
+    inputs: PortsSpec::Static(FLUX_VAE_DECODE_INPUTS),
+    outputs: PortsSpec::Static(IMAGE_OUT),
+    fields: NO_FIELDS,
+    body: Some(qwen_image21::vae::body),
+    ports_layout: PortsLayout::Rows,
+    port_row_extra: None,
+    executor: &QWEN_IMAGE21_VAE_DECODE_EXEC,
+    on_run: Some(qwen_image21::vae::on_run),
+    busy_signal: Some(qwen_image21::vae::busy_signal),
+};
+
 // ── SDXL ──────────────────────────────────────────────────────────────────
 
 /// Стабильный ключ каталога строк — отображаемое имя см.
@@ -2241,6 +2342,11 @@ pub const REGISTRY: &[NodeKindMeta] = &[
     QWEN_IMAGE_REFERENCE,
     QWEN_IMAGE_SAMPLER,
     QWEN_IMAGE_VAE_DECODE,
+    QWEN_IMAGE21_CHECKPOINT,
+    QWEN_IMAGE21_TEXT_ENCODER,
+    QWEN_IMAGE21_REFERENCE,
+    QWEN_IMAGE21_SAMPLER,
+    QWEN_IMAGE21_VAE_DECODE,
     SDXL_CHECKPOINT,
     SDXL_TEXT_ENCODER,
     SDXL_VAE_ENCODE,
@@ -2847,6 +2953,48 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::QwenImageVaeDecode => NodeRuntime::QwenImageVaeDecode {
+            running: use_signal(false),
+            error: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImage21Checkpoint => NodeRuntime::QwenImage21Checkpoint {
+            model_path: use_signal(None),
+            device_idx: use_signal(0_usize),
+            quant_idx: use_signal(qwen_image21::DEFAULT_QUANT_IDX),
+            memory_mode_idx: use_signal(0_usize),
+            resolution_idx: use_signal(qwen_image21::DEFAULT_RESOLUTION_IDX),
+            resident: use_signal(false),
+            handle_cache: Arc::new(Mutex::new(None)),
+        },
+        NodeKind::QwenImage21TextEncoder => NodeRuntime::QwenImage21TextEncoder {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImage21Reference => NodeRuntime::QwenImage21Reference {
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImage21Sampler => NodeRuntime::QwenImage21Sampler {
+            steps: use_signal(qwen_image21::sampler::DEFAULT_STEPS),
+            cfg: use_signal(qwen_image21::sampler::DEFAULT_CFG),
+            seed: use_signal(0_u64),
+            kv_cache: use_signal(true),
+            running: use_signal(false),
+            error: use_signal(None),
+            loaded_name: use_signal(None),
+            progress_pct: use_signal(0.0_f32),
+            cancel: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(None)),
+            output_version: use_signal(0_u32),
+        },
+        NodeKind::QwenImage21VaeDecode => NodeRuntime::QwenImage21VaeDecode {
             running: use_signal(false),
             error: use_signal(None),
             out: Arc::new(Mutex::new(None)),

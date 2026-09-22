@@ -379,7 +379,7 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice, qwen_image,
+        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice, qwen_image, qwen_image21,
         sdxl, sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2, yue2,
     };
     match kind {
@@ -490,6 +490,12 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("device_idx", qwen_image::DEVICE_OPTIONS),
             ("quant_idx", qwen_image::QUANT_OPTIONS),
             ("memory_mode_idx", qwen_image::MEMORY_MODE_OPTIONS),
+        ],
+        NodeKind::QwenImage21Checkpoint => vec![
+            ("device_idx", qwen_image21::DEVICE_OPTIONS),
+            ("quant_idx", qwen_image21::QUANT_OPTIONS),
+            ("memory_mode_idx", qwen_image21::MEMORY_MODE_OPTIONS),
+            ("resolution_idx", qwen_image21::RESOLUTION_OPTIONS),
         ],
         NodeKind::SdxlCheckpoint => vec![("device_idx", sdxl::DEVICE_OPTIONS), ("quant_idx", sdxl::QUANT_OPTIONS)],
         NodeKind::SdxlVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
@@ -736,7 +742,9 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
 /// FLUX.2, Qwen-Image или SDXL.
 fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
     let has = |kind: NodeKind| ctx.nodes.get_untracked().iter().any(|n| n.kind == kind && n.enabled.get_untracked());
-    if has(NodeKind::QwenImageTextEncoder) {
+    if has(NodeKind::QwenImage21TextEncoder) {
+        QWEN_IMAGE21_PROMPT
+    } else if has(NodeKind::QwenImageTextEncoder) {
         QWEN_IMAGE_PROMPT
     } else if has(NodeKind::SdxlTextEncoder) {
         SDXL_PROMPT
@@ -753,6 +761,7 @@ const H3_PROMPT_BASE: &str = include_str!("h3_prompt_base.md");
 const FLUX_PROMPT: &str = include_str!("flux_prompt.md");
 const FLUX2_PROMPT: &str = include_str!("flux2_prompt.md");
 const QWEN_IMAGE_PROMPT: &str = include_str!("qwen_image_prompt.md");
+const QWEN_IMAGE21_PROMPT: &str = include_str!("qwen_image21_prompt.md");
 const SDXL_PROMPT: &str = include_str!("sdxl_prompt.md");
 const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
 

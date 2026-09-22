@@ -424,6 +424,7 @@ fn planned_viewers(
             NodeRuntime::FluxVaeDecode { out: image_out, .. }
             | NodeRuntime::Flux2VaeDecode { out: image_out, .. }
             | NodeRuntime::QwenImageVaeDecode { out: image_out, .. }
+            | NodeRuntime::QwenImage21VaeDecode { out: image_out, .. }
             | NodeRuntime::SdxlVaeDecode { out: image_out, .. } => {
                 if skip_image {
                     continue;

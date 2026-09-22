@@ -7049,6 +7049,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-image-qwen21"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-diffusion",
+ "synaptix-image-qwen",
+ "synaptix-io",
+ "synaptix-nn",
+ "synaptix-ops",
+ "synaptix-tokenizer",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-image-sdxl"
 version = "0.1.1"
 dependencies = [
@@ -7585,7 +7602,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "273.0.0"
+version = "274.0.0"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7620,6 +7637,7 @@ dependencies = [
  "synaptix-image-flux",
  "synaptix-image-flux2",
  "synaptix-image-qwen",
+ "synaptix-image-qwen21",
  "synaptix-image-sdxl",
  "synaptix-io",
  "synaptix-kernels-cpu",

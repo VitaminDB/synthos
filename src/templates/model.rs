@@ -274,6 +274,8 @@ pub enum NodeStateData {
     Flux2Sampler(Flux2SamplerStateData),
     QwenImageCheckpoint(QwenImageCheckpointStateData),
     QwenImageSampler(QwenImageSamplerStateData),
+    QwenImage21Checkpoint(QwenImage21CheckpointStateData),
+    QwenImage21Sampler(QwenImage21SamplerStateData),
     SdxlCheckpoint(SdxlCheckpointStateData),
     /// Настройки те же, что у FLUX VAE Encode.
     SdxlVaeEncode(FluxVaeEncodeStateData),
@@ -490,6 +492,69 @@ impl Default for QwenImageSamplerStateData {
 
 fn default_qwen_image_cfg() -> f32 {
     crate::pages::node_editor::nodes::qwen_image::sampler::DEFAULT_CFG
+}
+
+/// State Qwen-Image 2.1 Checkpoint: бандл/каталог, железо и разрешение
+/// (`nodes::qwen_image21::RESOLUTION_OPTIONS`, по умолчанию 1024).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QwenImage21CheckpointStateData {
+    #[serde(default)]
+    pub model_path: Option<String>,
+    #[serde(default)]
+    pub device_idx: usize,
+    #[serde(default = "default_qwen_image21_quant_idx")]
+    pub quant_idx: usize,
+    #[serde(default)]
+    pub memory_mode_idx: usize,
+    #[serde(default = "default_qwen_image21_resolution_idx")]
+    pub resolution_idx: usize,
+    #[serde(default)]
+    pub resident: bool,
+}
+
+impl Default for QwenImage21CheckpointStateData {
+    fn default() -> Self {
+        Self {
+            model_path: None,
+            device_idx: 0,
+            quant_idx: default_qwen_image21_quant_idx(),
+            memory_mode_idx: 0,
+            resolution_idx: default_qwen_image21_resolution_idx(),
+            resident: false,
+        }
+    }
+}
+
+fn default_qwen_image21_quant_idx() -> usize {
+    crate::pages::node_editor::nodes::qwen_image21::DEFAULT_QUANT_IDX
+}
+
+fn default_qwen_image21_resolution_idx() -> usize {
+    crate::pages::node_editor::nodes::qwen_image21::DEFAULT_RESOLUTION_IDX
+}
+
+/// State Qwen-Image 2.1 Sampler. `steps` 0 — по модели (40); `cfg` — масштаб
+/// true CFG (≤ 1 — без CFG, умолчание модели); `kv_cache` — кэш K/V префикса.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QwenImage21SamplerStateData {
+    #[serde(default)]
+    pub steps: u32,
+    #[serde(default = "default_qwen_image21_cfg")]
+    pub cfg: f32,
+    #[serde(default)]
+    pub seed: u64,
+    #[serde(default = "default_true")]
+    pub kv_cache: bool,
+}
+
+impl Default for QwenImage21SamplerStateData {
+    fn default() -> Self {
+        Self { steps: 0, cfg: default_qwen_image21_cfg(), seed: 0, kv_cache: true }
+    }
+}
+
+fn default_qwen_image21_cfg() -> f32 {
+    crate::pages::node_editor::nodes::qwen_image21::sampler::DEFAULT_CFG
 }
 
 /// State SDXL Checkpoint. `quant_idx` — `nodes::sdxl::QUANT_OPTIONS`

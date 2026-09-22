@@ -6,7 +6,7 @@ members = ["."]
 # Версия — сквозной номер сборки (тот же, что pkgver в packaging/PKGBUILD и
 # тег релиза v268). Cargo требует semver, поэтому номер живёт в мажоре, а
 # приложение показывает только его — см. build.rs (SYNTHOS_VERSION).
-version = "273.0.0"
+version = "274.0.0"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -124,6 +124,7 @@ synaptix-video-minimax-h3 = { path = "../synaptix/crates/synaptix-models/video/m
 synaptix-image-flux = { path = "../synaptix/crates/synaptix-models/image/flux" }
 synaptix-image-flux2 = { path = "../synaptix/crates/synaptix-models/image/flux2" }
 synaptix-image-qwen = { path = "../synaptix/crates/synaptix-models/image/qwen_image" }
+synaptix-image-qwen21 = { path = "../synaptix/crates/synaptix-models/image/qwen_image21" }
 synaptix-image-sdxl = { path = "../synaptix/crates/synaptix-models/image/sdxl" }
 synaptix-llm-gemma3 = { path = "../synaptix/crates/synaptix-models/llm/gemma3" }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }

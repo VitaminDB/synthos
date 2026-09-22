@@ -566,6 +566,7 @@ voice.fab.refined.placeholder = "Klicken Sie auf ⟲, um es durch das Modell lau
 nodes.tabs.untitled = "Unbenannt"
 template.category.video = "Videogenerierung"
 template.category.music = "Musik"
+template.category.speech = "Sprache"
 template.category.audio = "Audio"
 template.category.basic = "Grundlagen"
 template.builtin-empty.name = "Empty"

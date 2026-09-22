@@ -566,6 +566,7 @@ voice.fab.refined.placeholder = "Fai clic su ⟲ per passarlo attraverso il mode
 nodes.tabs.untitled = "Senza titolo"
 template.category.video = "Generazione video"
 template.category.music = "Musica"
+template.category.speech = "Voce"
 template.category.audio = "Audio"
 template.category.basic = "Base"
 template.builtin-empty.name = "Empty"

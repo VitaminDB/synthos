@@ -561,6 +561,7 @@ voice.fab.refined.placeholder = "⟲ をクリックしてモデルで処理し�
 nodes.tabs.untitled = "無題"
 template.category.video = "動画生成"
 template.category.music = "音楽"
+template.category.speech = "音声"
 template.category.audio = "オーディオ"
 template.category.basic = "基本"
 template.builtin-empty.name = "Empty"

@@ -2693,7 +2693,7 @@ mod tests {
     }
 
     /// Оба voice-clone TTS-шаблона зарегистрированы, попадают в раздел
-    /// «Аудио» и все их связи ссылаются на валидные порты registry.
+    /// «Речь» и все их связи ссылаются на валидные порты registry.
     /// Signal-free (без `load_into_ctx`), поэтому проходит в обычном
     /// многопоточном тест-раннере.
     #[test]
@@ -2708,8 +2708,8 @@ mod tests {
         for t in &vc {
             assert_eq!(
                 TemplateCategory::for_template(t),
-                TemplateCategory::Audio,
-                "{}: должен попадать в раздел «Аудио»",
+                TemplateCategory::Speech,
+                "{}: должен попадать в раздел «Речь»",
                 t.id
             );
             assert!(!t.connections.is_empty(), "{}: есть связи", t.id);
@@ -2730,6 +2730,43 @@ mod tests {
                     c.to_node
                 );
             }
+        }
+    }
+
+    /// Каждое семейство моделей — в своём разделе окна шаблонов. «Базовые» —
+    /// только пустой граф и пример: новый шаблон без своего префикса в
+    /// [`TemplateCategory::for_template`] туда больше не провалится молча.
+    #[test]
+    fn builtin_templates_in_own_categories() {
+        use crate::templates::TemplateCategory as C;
+        let expected = |id: &str| -> Option<C> {
+            let rules: &[(&str, C)] = &[
+                ("builtin-ltx-", C::Video),
+                ("builtin-h3-", C::Video),
+                ("builtin-flux-", C::Image),
+                ("builtin-flux2-", C::Image),
+                ("builtin-qwen-image", C::Image),
+                ("builtin-sdxl-", C::Image),
+                ("builtin-acestep-", C::Music),
+                ("builtin-yue2-", C::Music),
+                ("builtin-voice-clone-", C::Speech),
+                ("builtin-vibevoice-", C::Speech),
+                ("builtin-audio-", C::Audio),
+                ("builtin-voice-recording", C::Audio),
+                ("builtin-save-", C::Audio),
+                ("builtin-mix-", C::Audio),
+                ("builtin-empty", C::Basic),
+                ("builtin-simple-add", C::Basic),
+            ];
+            rules.iter().find(|(p, _)| id.starts_with(p)).map(|(_, c)| *c)
+        };
+        let all = all();
+        for t in &all {
+            let want = expected(&t.id).unwrap_or_else(|| panic!("{}: семейство без раздела", t.id));
+            assert_eq!(C::for_template(t), want, "{}", t.id);
+        }
+        for cat in C::ORDER {
+            assert!(all.iter().any(|t| C::for_template(t) == cat), "раздел {cat:?} пуст");
         }
     }
 }

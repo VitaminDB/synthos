@@ -33,13 +33,18 @@ pub fn list_all() -> Vec<Template> {
 /// секции «Свои» — она не входит в этот enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TemplateCategory {
-    /// LTX-2.3 — генерация видео (`builtin-ltx-*`).
+    /// LTX-2.3 / MiniMax-H3 — генерация видео (`builtin-ltx-*`, `builtin-h3-*`).
     Video,
-    /// FLUX.1 / FLUX.2 — картинки (`builtin-flux-*`, `builtin-flux2-*`).
+    /// FLUX.1 / FLUX.2 / Qwen-Image / SDXL — картинки (`builtin-flux-*`,
+    /// `builtin-flux2-*`, `builtin-qwen-image*`, `builtin-sdxl-*`).
     Image,
-    /// ACE-Step — генерация музыки (`builtin-acestep-*`).
+    /// ACE-Step / YuE2 — генерация музыки (`builtin-acestep-*`, `builtin-yue2-*`).
     Music,
-    /// DSP / запись / микс (`builtin-audio-*`, `-voice-*`, `-save-*`, `-mix-*`).
+    /// VoxCPM / OmniVoice / VibeVoice — синтез и клонирование речи
+    /// (`builtin-voice-clone-*`, `builtin-vibevoice-*`).
+    Speech,
+    /// DSP / запись / микс (`builtin-audio-*`, `builtin-voice-recording`,
+    /// `-save-*`, `-mix-*`).
     Audio,
     /// Пустой граф и базовые примеры (`builtin-empty`, `builtin-simple-add`).
     Basic,
@@ -47,10 +52,11 @@ pub enum TemplateCategory {
 
 impl TemplateCategory {
     /// Все категории в порядке отображения в боковой панели окна.
-    pub const ORDER: [TemplateCategory; 5] = [
+    pub const ORDER: [TemplateCategory; 6] = [
         TemplateCategory::Video,
         TemplateCategory::Image,
         TemplateCategory::Music,
+        TemplateCategory::Speech,
         TemplateCategory::Audio,
         TemplateCategory::Basic,
     ];
@@ -67,8 +73,11 @@ impl TemplateCategory {
             || id.starts_with("builtin-sdxl-")
         {
             TemplateCategory::Image
-        } else if id.starts_with("builtin-acestep-") {
+        } else if id.starts_with("builtin-acestep-") || id.starts_with("builtin-yue2-") {
             TemplateCategory::Music
+        } else if id.starts_with("builtin-voice-clone-") || id.starts_with("builtin-vibevoice-") {
+            // До «Аудио»: `builtin-voice-` там — запись с микрофона.
+            TemplateCategory::Speech
         } else if id.starts_with("builtin-audio-")
             || id.starts_with("builtin-voice-")
             || id.starts_with("builtin-save-")
@@ -86,6 +95,7 @@ impl TemplateCategory {
             TemplateCategory::Video => "video",
             TemplateCategory::Image => "image",
             TemplateCategory::Music => "music",
+            TemplateCategory::Speech => "speech",
             TemplateCategory::Audio => "audio",
             TemplateCategory::Basic => "basic",
         }
@@ -97,6 +107,7 @@ impl TemplateCategory {
             TemplateCategory::Video => crate::icons::MI_MOVIE,
             TemplateCategory::Image => crate::icons::MI_IMAGE_ICON,
             TemplateCategory::Music => crate::icons::MI_LIBRARY_MUSIC,
+            TemplateCategory::Speech => crate::icons::MI_RECORD_VOICE_OVER,
             TemplateCategory::Audio => crate::icons::MI_GRAPHIC_EQ,
             TemplateCategory::Basic => crate::icons::MI_APPS,
         }

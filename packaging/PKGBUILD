@@ -5,7 +5,7 @@ pkgname=synthos
 # показывает титлбар. pkgrel — ревизия пакета: растёт, только если тот же код
 # пересобирается под новые библиотеки (мажорный ffmpeg), и сбрасывается в 1
 # вместе с новым pkgver.
-pkgver=275
+pkgver=276
 pkgrel=1
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода"
 license=("MIT" "Apache-2.0")

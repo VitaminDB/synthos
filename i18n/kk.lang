@@ -566,6 +566,7 @@ voice.fab.refined.placeholder = "Модель арқылы өткізу үшін
 nodes.tabs.untitled = "Атаусыз"
 template.category.video = "Видео генерациясы"
 template.category.music = "Музыка"
+template.category.speech = "Сөйлеу"
 template.category.audio = "Аудио"
 template.category.basic = "Негізгі"
 template.builtin-empty.name = "Empty"

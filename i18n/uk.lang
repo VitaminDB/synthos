@@ -571,6 +571,7 @@ voice.fab.refined.placeholder = "Натисніть ⟲, щоб пропусти
 nodes.tabs.untitled = "Untitled"
 template.category.video = "Генерація відео"
 template.category.music = "Музика"
+template.category.speech = "Мовлення"
 template.category.audio = "Аудіо"
 template.category.basic = "Базові"
 template.builtin-empty.name = "Empty"

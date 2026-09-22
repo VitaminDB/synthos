@@ -591,6 +591,7 @@ voice.fab.refined.placeholder = "Нажмите ⟲ чтобы пропусти�
 nodes.tabs.untitled = "Untitled"
 template.category.video = "Генерация видео"
 template.category.music = "Музыка"
+template.category.speech = "Речь"
 template.category.audio = "Аудио"
 template.category.basic = "Базовые"
 template.builtin-empty.name = "Empty"

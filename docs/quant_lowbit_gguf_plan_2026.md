@@ -1,6 +1,6 @@
 # План: низкобитные кванты, GGUF и ядра для карт ниже Blackwell (22.09.2026)
 
-Статус: **план v2 утверждён 22.09.2026. Этапы 0 и 1 — сделаны (`prearch_stage0_device_caps_2026.md`, `prearch_stage1_block_formats_2026.md`).**
+Статус: **план v2 утверждён 22.09.2026. Этапы 0–2 — сделаны (`prearch_stage0_device_caps_2026.md`, `prearch_stage1_block_formats_2026.md`, `prearch_stage2_portable_kernels_2026.md`); dp4a-GEMV, деквант в плитке GEMM, fp8-MMA на sm_89 и портируемые фьюзы — отложены (см. отчёт этапа 2).**
 
 ## 0. Что есть сейчас (по обходу кода)
 

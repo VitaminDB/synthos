@@ -146,11 +146,13 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 } else {
                     tr!("settings.ai_models.mode.optimal")
                 };
-                Some(format!(
-                    "{mode} · {} / {} KV",
-                    crate::config::dtype_name(resolved.policy.weights_storage).to_uppercase(),
-                    resolved.policy.kv_dtype.name().to_uppercase(),
-                ))
+                // Квантованный бандл без перекодировки исполняется в своём
+                // формате — его и показываем, а не пожелание политики.
+                let weights = match synaptix::facade::arch::bundle_quant_formats(&model.path).first() {
+                    Some((f, _)) if !resolved.policy.transcode => f.to_uppercase(),
+                    _ => crate::config::dtype_name(resolved.policy.weights_storage).to_uppercase(),
+                };
+                Some(format!("{mode} · {weights} / {} KV", resolved.policy.kv_dtype.name().to_uppercase()))
             }
             None => None,
         };

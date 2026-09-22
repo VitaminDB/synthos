@@ -113,19 +113,26 @@ pub fn storage_dtype_dropdown<F>(current: String, on_change: F) -> Box<dyn Widge
 where
     F: Fn(String) + Send + Sync + 'static,
 {
-    let items = vec![
+    // Подпись зависит от карты: без нативных ядер формат исполняется
+    // портируемым путём (деквант в регистрах GEMV / полосами перед GEMM).
+    let caps = synaptix::facade::device::cuda_caps(0).ok();
+    let native = |ok: Option<bool>| match ok {
+        Some(true) => tr!("settings.dtype.native"),
+        Some(false) => tr!("settings.dtype.portable"),
+        None => String::new(),
+    };
+    let fp4 = native(caps.as_ref().map(|c| c.fp4_mma()));
+    let fp8 = native(caps.as_ref().map(|c| c.mxfp8_mma()));
+    let mut items = vec![
         DropdownItem::new("f32", tr!("settings.dtype.storage.f32")),
         DropdownItem::new("bf16", tr!("settings.dtype.storage.bf16")),
         DropdownItem::new("f16", tr!("settings.dtype.storage.f16")),
-        DropdownItem::new(
-            "nvfp4",
-            "NVFP4 — native FP4 Tensor Cores (Blackwell sm_120)",
-        ),
-        DropdownItem::new(
-            "mxfp8",
-            "MXFP8 — native FP8 Tensor Cores (Hopper / Ada / Blackwell)",
-        ),
+        DropdownItem::new("nvfp4", format!("NVFP4 — 4.25 bit, FP4 Tensor Cores (Blackwell){fp4}")),
+        DropdownItem::new("mxfp8", format!("MXFP8 — 8 bit, FP8 Tensor Cores (Blackwell){fp8}")),
     ];
+    for bits in [8u8, 6, 5, 4, 3, 2] {
+        items.push(DropdownItem::new(format!("sq{bits}"), format!("SQ{bits} — {:.3} bit, {}", bits as f32 + 0.625, tr!("settings.dtype.sq.desc"))));
+    }
     Box::new(
         Dropdown::with_items(items)
             .selected(current)

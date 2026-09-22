@@ -181,12 +181,14 @@ impl QuantizingStream {
                 n,
                 k,
             });
-            plan.push(StreamTensor {
-                name: format!("{}{SCALES_SUFFIX}", t.name),
-                dtype: StDtype::U8,
-                shape: vec![scales_bytes],
-            });
-            items.push(Item::Scales { name: t.name.clone() });
+            if kind.has_scales() {
+                plan.push(StreamTensor {
+                    name: format!("{}{SCALES_SUFFIX}", t.name),
+                    dtype: StDtype::U8,
+                    shape: vec![scales_bytes],
+                });
+                items.push(Item::Scales { name: t.name.clone() });
+            }
 
             manifest.tensors.insert(
                 t.name.clone(),
@@ -256,9 +258,10 @@ impl QuantizingStream {
             let qw = match kind {
                 QuantKind::Nvfp4 => gpu.quantize_to_nvfp4(),
                 QuantKind::Mxfp8 => gpu.quantize_to_mxfp8(),
-                // SQ-энкодер на GPU — этап 4 плана; ggml-энкодеров нет вовсе.
-                QuantKind::Sq(_) | QuantKind::Ggml(_) => {
-                    return Err(format!("{name}: формат {kind:?} упаковщик пока не пишет"));
+                QuantKind::Sq(bits) => gpu.quantize_to_sq(bits),
+                // Энкодеров ggml нет и не будет: их форматы — только чтение GGUF.
+                QuantKind::Ggml(_) => {
+                    return Err(format!("{name}: формат {kind:?} упаковщик не пишет"));
                 }
             }
             .map_err(|e| format!("{name}: квантование: {e}"))?;
@@ -278,12 +281,12 @@ impl QuantizingStream {
                     .ok_or_else(|| format!("{name}: упакованные веса не на хосте"))?
                     .as_bytes(),
             );
-            scales_out.extend_from_slice(
-                cpu.scales()
-                    .as_cpu()
-                    .ok_or_else(|| format!("{name}: масштабы не на хосте"))?
-                    .as_bytes(),
-            );
+            // У одноблобных форматов (SQ) масштабов нет — блоб один.
+            if let Some(sc) = cpu.scales_opt() {
+                scales_out.extend_from_slice(
+                    sc.as_cpu().ok_or_else(|| format!("{name}: масштабы не на хосте"))?.as_bytes(),
+                );
+            }
         }
         Ok((packed_out, scales_out))
     }
@@ -313,7 +316,9 @@ impl TensorStream for QuantizingStream {
                     .quantize(&name, kind, slices, n, k)
                     .map_err(BundleError::Safetensors)?;
                 w.write_all(&packed)?;
-                self.pending_scales = Some((name, scales));
+                if kind.has_scales() {
+                    self.pending_scales = Some((name, scales));
+                }
                 Ok(())
             }
             Item::Scales { name } => {

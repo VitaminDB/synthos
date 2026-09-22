@@ -225,15 +225,32 @@ pub enum QuantChoice {
     Dense,
     Nvfp4,
     Mxfp8,
+    /// SQ`b` — одноблобный формат движка на 1..=8 бит, любая карта sm_80+.
+    Sq(u8),
 }
 
 impl QuantChoice {
+    /// Все варианты в порядке показа: плотно, нативные Blackwell-форматы,
+    /// затем SQ от точного к компактному.
+    pub const ALL: &'static [QuantChoice] = &[
+        QuantChoice::Dense,
+        QuantChoice::Nvfp4,
+        QuantChoice::Mxfp8,
+        QuantChoice::Sq(8),
+        QuantChoice::Sq(6),
+        QuantChoice::Sq(5),
+        QuantChoice::Sq(4),
+        QuantChoice::Sq(3),
+        QuantChoice::Sq(2),
+    ];
+
     /// Значение для `BundleMeta.extra` и для выбора ядра при упаковке.
-    pub fn key(self) -> &'static str {
+    pub fn key(self) -> String {
         match self {
-            QuantChoice::Dense => "dense",
-            QuantChoice::Nvfp4 => "nvfp4",
-            QuantChoice::Mxfp8 => "mxfp8",
+            QuantChoice::Dense => "dense".into(),
+            QuantChoice::Nvfp4 => "nvfp4".into(),
+            QuantChoice::Mxfp8 => "mxfp8".into(),
+            QuantChoice::Sq(b) => format!("sq{b}"),
         }
     }
     /// Формат для оценки размера; `None` — плотные веса.
@@ -242,13 +259,17 @@ impl QuantChoice {
             QuantChoice::Dense => None,
             QuantChoice::Nvfp4 => Some(QuantKind::Nvfp4),
             QuantChoice::Mxfp8 => Some(QuantKind::Mxfp8),
+            QuantChoice::Sq(b) => Some(QuantKind::Sq(b)),
         }
     }
     pub fn from_key(s: &str) -> Self {
         match s {
             "nvfp4" => QuantChoice::Nvfp4,
             "mxfp8" => QuantChoice::Mxfp8,
-            _ => QuantChoice::Dense,
+            other => match other.strip_prefix("sq").and_then(|b| b.parse::<u8>().ok()) {
+                Some(b) if (1..=8).contains(&b) => QuantChoice::Sq(b),
+                _ => QuantChoice::Dense,
+            },
         }
     }
     pub fn label(self) -> String {
@@ -256,6 +277,7 @@ impl QuantChoice {
             QuantChoice::Dense => tr!("explorer.quant.dense"),
             QuantChoice::Nvfp4 => "NVFP4".to_string(),
             QuantChoice::Mxfp8 => "MXFP8".to_string(),
+            QuantChoice::Sq(b) => format!("SQ{b}"),
         }
     }
 }
@@ -264,18 +286,24 @@ impl QuantChoice {
 ///
 /// Список задан не форматом `.syn`, а тем, что делает загрузчик
 /// (`synaptix-llm-common::model::build_ext` и `PrecisionConfig`):
-/// * внимание, MLP и `lm_head` идут через `QLinear::build` — оба формата;
-/// * эмбеддинги — только MXFP8: NVFP4-ядра gather'а не существует
-///   (`QuantWeight::embed_gather` отвергает всё, кроме MXFP8), а пресет
-///   `PrecisionConfig::nvfp4()` и вовсе оставляет эмбеддинги в F16;
+/// * внимание, MLP и `lm_head` идут через `QLinear::build` — NVFP4, MXFP8 и
+///   SQ1…SQ8 (энкодер SQ на карте, этап 4 плана низкобитных квантов);
+/// * эмбеддинги — MXFP8 и SQ: у них есть gather; NVFP4-ядра gather'а нет,
+///   а пресет `PrecisionConfig::nvfp4()` и вовсе оставляет эмбеддинги в F16;
 /// * остальное (свёртки, нормировки, vision-башня, модуляция DiT) движок
 ///   отдельной ручкой не адресует — предлагать там выбор значило бы врать.
 pub fn allowed_quants(role: LayerRole) -> &'static [QuantChoice] {
     match role {
-        LayerRole::Attention | LayerRole::Mlp | LayerRole::LmHead => {
-            &[QuantChoice::Dense, QuantChoice::Nvfp4, QuantChoice::Mxfp8]
-        }
-        LayerRole::Embedding => &[QuantChoice::Dense, QuantChoice::Mxfp8],
+        LayerRole::Attention | LayerRole::Mlp | LayerRole::LmHead => QuantChoice::ALL,
+        // Эмбеддинги: gather есть у MXFP8 и SQ (одно ядро с блоками GGUF),
+        // у NVFP4 — нет.
+        LayerRole::Embedding => &[
+            QuantChoice::Dense,
+            QuantChoice::Mxfp8,
+            QuantChoice::Sq(8),
+            QuantChoice::Sq(6),
+            QuantChoice::Sq(4),
+        ],
         _ => &[],
     }
 }
@@ -436,9 +464,7 @@ impl PackWizard {
                 *slot == expected
             })
         };
-        [QuantChoice::Dense, QuantChoice::Nvfp4, QuantChoice::Mxfp8]
-            .into_iter()
-            .find(|c| matches_global(*c))
+        QuantChoice::ALL.iter().copied().find(|c| matches_global(*c))
     }
 
     /// Выбор для роли (с учётом того, что роль может быть неквантуемой).

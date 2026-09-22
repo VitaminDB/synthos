@@ -2217,3 +2217,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: кадр FLUX у відео"
 template.builtin-ltx-flux-keyframe.desc = "FLUX малює перший кадр за промптом (16:9, 1344×768) → LTX Image → LTX-2.3 image-to-video зі звуком. Два промпти: верхній — що на кадрі, нижній — що відбувається у відео. У FLUX Checkpoint вкажіть flux.1-dev.syn, у LTX Checkpoint — чекпойнт, Gemma та upscaler."
 template.builtin-h3-flux-keyframe.name = "H3: кадр FLUX у відео"
 template.builtin-h3-flux-keyframe.desc = "FLUX малює перший кадр (16:9, 1344×768) → H3 Keyframe → відео MiniMax-H3 зі звуком від цього кадру. Верхній промпт — кадр, нижній — дія і звук у форматі H3. У FLUX Checkpoint вкажіть flux.1-dev.syn, у H3 Checkpoint — бандл MiniMax-H3."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · нативно"
+settings.dtype.portable = " · портовані ядра (у цієї карти немає нативних MMA)"
+settings.dtype.sq.desc = "портований блочний квант, будь-яка карта sm_80+"
+settings.ai_models.transcode = "Перекодувати квантований бандл"
+settings.ai_models.transcode.desc = "Бандл уже квантовано ({formats}). Увімкнено — під час завантаження він перекодовується у формати зберігання вище (подвійний квант, невелика втрата якості; кеш у RAM або на диску). Вимкнено — використовується формат файлу як є."
+settings.ai_models.transcode.desc_dense = "У бандлі щільні ваги: під час завантаження вони квантуються у формати вище; перекодовувати нічого."

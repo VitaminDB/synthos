@@ -2425,3 +2425,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: FLUX Frame to Video"
 template.builtin-ltx-flux-keyframe.desc = "FLUX draws the first frame from a prompt (16:9, 1344×768) → LTX Image → LTX-2.3 image-to-video with sound. Two prompts: the top one is the frame, the bottom one is what happens in the video. Point FLUX Checkpoint to flux.1-dev.syn and LTX Checkpoint to the checkpoint, Gemma and upscaler."
 template.builtin-h3-flux-keyframe.name = "H3: FLUX Frame to Video"
 template.builtin-h3-flux-keyframe.desc = "FLUX draws the first frame (16:9, 1344×768) → H3 Keyframe → MiniMax-H3 video with sound from that frame. The top prompt is the frame, the bottom one is the action and sound in H3 format. Point FLUX Checkpoint to flux.1-dev.syn and H3 Checkpoint to the MiniMax-H3 bundle."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · native"
+settings.dtype.portable = " · portable kernels (no native MMA on this GPU)"
+settings.dtype.sq.desc = "portable block quant, any GPU sm_80+"
+settings.ai_models.transcode = "Transcode quantized bundle"
+settings.ai_models.transcode.desc = "The bundle is already quantized ({formats}). On, it is re-encoded on load into the storage formats above (double quantization, slight quality loss; cached in RAM or on disk). Off, the stored format is used as is."
+settings.ai_models.transcode.desc_dense = "The bundle stores dense weights: they are quantized on load into the storage formats above; nothing to transcode."

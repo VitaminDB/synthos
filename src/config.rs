@@ -824,6 +824,10 @@ pub struct ModelProfileConfig {
     pub graph_decode: Option<bool>,
     pub speculation: Option<bool>,
     pub layer_sync: Option<String>,
+    /// Перекодировать уже квантованный бандл (NVFP4/MXFP8/GGUF) в форматы
+    /// профиля при загрузке — двойной квант, осознанно.
+    #[serde(default)]
+    pub transcode: Option<bool>,
 }
 
 impl Default for ModelProfileConfig {
@@ -838,6 +842,7 @@ impl Default for ModelProfileConfig {
             graph_decode: None,
             speculation: None,
             layer_sync: None,
+            transcode: None,
         }
     }
 }
@@ -911,6 +916,9 @@ impl ModelProfileConfig {
                 out.layer_sync = m;
             }
         }
+        if let Some(v) = self.transcode {
+            out.policy.transcode = v;
+        }
         out.policy.preset_name = "custom".into();
         out
     }
@@ -966,15 +974,13 @@ fn parse_compute_dtype(s: &str, fallback: synaptix_core::dtype::DType) -> synapt
 }
 
 /// `synaptix_core::dtype::DType` → стабильная строка для config.json/UI.
-pub fn dtype_name(dt: synaptix_core::dtype::DType) -> &'static str {
+pub fn dtype_name(dt: synaptix_core::dtype::DType) -> String {
     use synaptix_core::dtype::DType;
     match dt {
-        DType::F32 => "f32",
-        DType::F16 => "f16",
-        DType::BF16 => "bf16",
-        DType::NVFP4 => "nvfp4",
-        DType::MXFP8 => "mxfp8",
-        _ => "f16",
+        DType::F32 | DType::F16 | DType::BF16 | DType::NVFP4 | DType::MXFP8 | DType::Sq { .. } => {
+            synaptix_core::precision::dtype_name(dt)
+        }
+        _ => "f16".into(),
     }
 }
 

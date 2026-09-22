@@ -2205,3 +2205,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: fotograma FLUX a vídeo"
 template.builtin-ltx-flux-keyframe.desc = "FLUX dibuja el primer fotograma a partir del prompt (16:9, 1344×768) → LTX Image → LTX-2.3 image-to-video con sonido. Dos prompts: el de arriba es el fotograma, el de abajo lo que ocurre en el vídeo. Indica flux.1-dev.syn en FLUX Checkpoint y el checkpoint, Gemma y el upscaler en LTX Checkpoint."
 template.builtin-h3-flux-keyframe.name = "H3: fotograma FLUX a vídeo"
 template.builtin-h3-flux-keyframe.desc = "FLUX dibuja el primer fotograma (16:9, 1344×768) → H3 Keyframe → vídeo MiniMax-H3 con sonido a partir de ese fotograma. El prompt de arriba es el fotograma, el de abajo la acción y el sonido en formato H3. Indica flux.1-dev.syn en FLUX Checkpoint y el bundle MiniMax-H3 en H3 Checkpoint."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · nativo"
+settings.dtype.portable = " · núcleos portables (esta GPU no tiene MMA nativo)"
+settings.dtype.sq.desc = "cuantización por bloques portable, cualquier GPU sm_80+"
+settings.ai_models.transcode = "Recodificar el paquete cuantizado"
+settings.ai_models.transcode.desc = "El paquete ya está cuantizado ({formats}). Activado: al cargar se recodifica a los formatos de almacenamiento de arriba (doble cuantización, ligera pérdida; caché en RAM o disco). Desactivado: se usa el formato del archivo tal cual."
+settings.ai_models.transcode.desc_dense = "El paquete guarda pesos densos: al cargar se cuantizan a los formatos de arriba; no hay nada que recodificar."

@@ -2186,3 +2186,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX：FLUX 画面转视频"
 template.builtin-ltx-flux-keyframe.desc = "FLUX 根据提示词绘制首帧（16:9，1344×768）→ LTX Image → 带声音的 LTX-2.3 图生视频。两个提示词：上方描述画面，下方描述视频中发生的事。在 FLUX Checkpoint 中指定 flux.1-dev.syn，在 LTX Checkpoint 中指定检查点、Gemma 和 upscaler。"
 template.builtin-h3-flux-keyframe.name = "H3：FLUX 画面转视频"
 template.builtin-h3-flux-keyframe.desc = "FLUX 绘制首帧（16:9，1344×768）→ H3 Keyframe → 以该帧开始的带声音 MiniMax-H3 视频。上方提示词描述画面，下方按 H3 格式描述动作和声音。在 FLUX Checkpoint 中指定 flux.1-dev.syn，在 H3 Checkpoint 中指定 MiniMax-H3 包。"
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · 原生"
+settings.dtype.portable = " · 通用内核（此 GPU 无原生 MMA）"
+settings.dtype.sq.desc = "可移植的分块量化，任何 sm_80+ 显卡"
+settings.ai_models.transcode = "重新编码已量化的模型包"
+settings.ai_models.transcode.desc = "模型包已经量化（{formats}）。开启：加载时重新编码为上方的存储格式（二次量化，略有损失；缓存在内存或磁盘）。关闭：按文件原有格式使用。"
+settings.ai_models.transcode.desc_dense = "模型包保存的是稠密权重：加载时会量化为上方的格式，无需重新编码。"

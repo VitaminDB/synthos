@@ -20,6 +20,7 @@ use syngui::trn;
 use syngui::widgets::input::Toggle;
 use syngui::widgets::scroll::ScrollView;
 use syngui::widgets::{Checkbox, Dropdown, DropdownItem, ProgressBar, Stepper, TextField};
+use synaptix_bundle::inspect::QuantKind;
 use synaptix_bundle::inspect::LayerRole;
 use synaptix_bundle::pack_plan::{Guess, PackPlan};
 
@@ -120,12 +121,8 @@ fn quick_quant_row(wizard: PackWizard) -> impl Widget {
             return vec![];
         }
         let current = wizard.uniform_quant();
-        let selected = current.map(|c| c.key()).unwrap_or("mixed");
-        let mut items = vec![
-            DropdownItem::new("dense", QuantChoice::Dense.label()),
-            DropdownItem::new("nvfp4", "NVFP4"),
-            DropdownItem::new("mxfp8", "MXFP8"),
-        ];
+        let selected = current.map(|c| c.key()).unwrap_or_else(|| "mixed".into());
+        let mut items: Vec<DropdownItem> = QuantChoice::ALL.iter().map(|c| DropdownItem::new(c.key(), c.label())).collect();
         if current.is_none() {
             // Точность настроена по ролям в мастере — не затираем её молча
             // тем, что покажет дропдаун.
@@ -678,6 +675,8 @@ fn shape_hint(est: synaptix_bundle::inspect::SizeEstimate, current: QuantChoice)
     let alt = match current {
         QuantChoice::Nvfp4 if helps(est.mxfp8) => Some("MXFP8"),
         QuantChoice::Mxfp8 if helps(est.nvfp4) => Some("NVFP4"),
+        // NVFP4 требует N и K кратных 64, SQ — только K кратного 32.
+        QuantChoice::Nvfp4 | QuantChoice::Mxfp8 if helps(est.for_kind(Some(QuantKind::Sq(4)))) => Some("SQ4"),
         _ => None,
     };
     match alt {

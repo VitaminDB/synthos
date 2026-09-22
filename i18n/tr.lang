@@ -2202,3 +2202,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: FLUX karesinden videoya"
 template.builtin-ltx-flux-keyframe.desc = "FLUX istemden ilk kareyi çizer (16:9, 1344×768) → LTX Image → sesli LTX-2.3 image-to-video. İki istem: üstteki karede ne olduğunu, alttaki videoda ne olduğunu anlatır. FLUX Checkpoint'te flux.1-dev.syn'i, LTX Checkpoint'te checkpoint, Gemma ve upscaler'ı belirtin."
 template.builtin-h3-flux-keyframe.name = "H3: FLUX karesinden videoya"
 template.builtin-h3-flux-keyframe.desc = "FLUX ilk kareyi çizer (16:9, 1344×768) → H3 Keyframe → bu kareden başlayan sesli MiniMax-H3 videosu. Üstteki istem kare, alttaki H3 biçiminde eylem ve sestir. FLUX Checkpoint'te flux.1-dev.syn'i, H3 Checkpoint'te MiniMax-H3 paketini belirtin."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · yerel"
+settings.dtype.portable = " · taşınabilir çekirdekler (bu GPU'da yerel MMA yok)"
+settings.dtype.sq.desc = "taşınabilir blok kuantizasyonu, sm_80+ her GPU"
+settings.ai_models.transcode = "Kuantize paketi yeniden kodla"
+settings.ai_models.transcode.desc = "Paket zaten kuantize ({formats}). Açık: yüklemede yukarıdaki saklama biçimlerine yeniden kodlanır (çift kuantizasyon, hafif kalite kaybı; RAM veya diskte önbellek). Kapalı: dosyanın biçimi olduğu gibi kullanılır."
+settings.ai_models.transcode.desc_dense = "Paket yoğun ağırlıklar içeriyor: yüklemede yukarıdaki biçimlere kuantize edilir; yeniden kodlanacak bir şey yok."

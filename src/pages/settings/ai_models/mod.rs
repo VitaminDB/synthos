@@ -74,7 +74,16 @@ fn arch_label(path: &Path) -> String {
         }
     }
     let label = match synaptix::facade::arch::detect_llm_arch(path) {
-        Ok(a) => format!("{a:?}"),
+        Ok(a) => {
+            // Уже квантованный бандл — формат в подписи: пользователь видит,
+            // что настройки хранения к нему применятся только через
+            // перекодировку.
+            let fmts = synaptix::facade::arch::bundle_quant_formats(path);
+            match fmts.first() {
+                Some((f, _)) => format!("{a:?} · {}", f.to_uppercase()),
+                None => format!("{a:?}"),
+            }
+        }
         Err(_) => String::new(),
     };
     if let Ok(mut map) = cache.lock() {
@@ -244,7 +253,7 @@ fn overrides(
         let cur = profile
             .weights_storage
             .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.weights_storage).to_string());
+            .unwrap_or_else(|| crate::config::dtype_name(p.weights_storage));
         storage_dtype_dropdown(cur, move |s| {
             let k = k.clone();
             update_profile(&k, move |p| p.weights_storage = Some(s.clone()));
@@ -255,7 +264,7 @@ fn overrides(
         let cur = profile
             .compute
             .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.compute).to_string());
+            .unwrap_or_else(|| crate::config::dtype_name(p.compute));
         compute_dtype_dropdown(cur, move |s| {
             let k = k.clone();
             update_profile(&k, move |p| p.compute = Some(s.clone()));
@@ -274,7 +283,7 @@ fn overrides(
         let cur = profile
             .lm_head_storage
             .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.lm_head_storage).to_string());
+            .unwrap_or_else(|| crate::config::dtype_name(p.lm_head_storage));
         storage_dtype_dropdown(cur, move |s| {
             let k = k.clone();
             update_profile(&k, move |p| p.lm_head_storage = Some(s.clone()));
@@ -285,7 +294,7 @@ fn overrides(
         let cur = profile
             .embed_storage
             .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.embed_storage).to_string());
+            .unwrap_or_else(|| crate::config::dtype_name(p.embed_storage));
         storage_dtype_dropdown(cur, move |s| {
             let k = k.clone();
             update_profile(&k, move |p| p.embed_storage = Some(s.clone()));
@@ -329,6 +338,22 @@ fn overrides(
                 })
                 .class("models-active-dropdown"),
         ) as Box<dyn Widget>
+    };
+
+    let transcode = {
+        let k = k.clone();
+        let on = profile.transcode.unwrap_or(resolved.policy.transcode);
+        Box::new(Toggle::with_state(on).on_change(move |v| {
+            let k = k.clone();
+            update_profile(&k, move |p| p.transcode = Some(v));
+        })) as Box<dyn Widget>
+    };
+    let src_formats = synaptix::facade::arch::bundle_quant_formats(std::path::Path::new(key));
+    let transcode_desc = if src_formats.is_empty() {
+        tr!("settings.ai_models.transcode.desc_dense")
+    } else {
+        let f: Vec<String> = src_formats.iter().map(|(f, n)| format!("{}×{n}", f.to_uppercase())).collect();
+        tr!("settings.ai_models.transcode.desc", formats = f.join(", "))
     };
 
     let reset: Box<dyn Widget> = {
@@ -376,6 +401,12 @@ fn overrides(
             tr!("settings.ai_models.embed"),
             tr!("settings.ai_models.embed.desc"),
             embed,
+        ),
+        row_tip(
+            MI_AUTORENEW,
+            tr!("settings.ai_models.transcode"),
+            transcode_desc,
+            transcode,
         ),
         row_tip(
             MI_AUTO_AWESOME,

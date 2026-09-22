@@ -2212,3 +2212,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: klatka FLUX na wideo"
 template.builtin-ltx-flux-keyframe.desc = "FLUX rysuje pierwszą klatkę według promptu (16:9, 1344×768) → LTX Image → LTX-2.3 image-to-video z dźwiękiem. Dwa prompty: górny opisuje klatkę, dolny to, co dzieje się w wideo. W FLUX Checkpoint wskaż flux.1-dev.syn, w LTX Checkpoint — checkpoint, Gemmę i upscaler."
 template.builtin-h3-flux-keyframe.name = "H3: klatka FLUX na wideo"
 template.builtin-h3-flux-keyframe.desc = "FLUX rysuje pierwszą klatkę (16:9, 1344×768) → H3 Keyframe → wideo MiniMax-H3 z dźwiękiem od tej klatki. Górny prompt to klatka, dolny — akcja i dźwięk w formacie H3. W FLUX Checkpoint wskaż flux.1-dev.syn, w H3 Checkpoint — pakiet MiniMax-H3."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · natywnie"
+settings.dtype.portable = " · przenośne kernele (brak natywnych MMA na tej karcie)"
+settings.dtype.sq.desc = "przenośna kwantyzacja blokowa, dowolna karta sm_80+"
+settings.ai_models.transcode = "Przekoduj skwantyzowany pakiet"
+settings.ai_models.transcode.desc = "Pakiet jest już skwantyzowany ({formats}). Włączone: przy ładowaniu jest przekodowywany do powyższych formatów przechowywania (podwójna kwantyzacja, niewielka strata; pamięć podręczna w RAM lub na dysku). Wyłączone: używany jest format pliku bez zmian."
+settings.ai_models.transcode.desc_dense = "Pakiet zawiera gęste wagi: przy ładowaniu są kwantyzowane do powyższych formatów; nie ma czego przekodowywać."

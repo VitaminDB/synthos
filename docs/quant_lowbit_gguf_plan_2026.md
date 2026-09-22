@@ -1,6 +1,6 @@
 # План: низкобитные кванты, GGUF и ядра для карт ниже Blackwell (22.09.2026)
 
-Статус: **план v2 утверждён 22.09.2026. Этапы 0–3 — сделаны (`prearch_stage0_device_caps_2026.md`, `prearch_stage1_block_formats_2026.md`, `prearch_stage2_portable_kernels_2026.md`, `prearch_stage3_gguf_2026.md`); dp4a-GEMV, деквант в плитке GEMM, fp8-MMA на sm_89 и портируемые фьюзы — отложены (см. отчёт этапа 2); прямое исполнение GGUF qwen3moe/qwen35 и сверка логитов с llama.cpp — отложены (см. отчёт этапа 3). Дальше — этап 4.**
+Статус: **план v2 утверждён 22.09.2026. Этапы 0–4 — сделаны (`prearch_stage0_device_caps_2026.md`, `prearch_stage1_block_formats_2026.md`, `prearch_stage2_portable_kernels_2026.md`, `prearch_stage3_gguf_2026.md`, `prearch_stage4_sq_transcode_2026.md`); dp4a-GEMV, деквант в плитке GEMM, fp8-MMA на sm_89 и портируемые фьюзы — отложены (см. отчёт этапа 2); прямое исполнение GGUF qwen3moe/qwen35 и сверка логитов с llama.cpp — отложены (см. отчёт этапа 3); importance-взвешивание SQ и замер качества против Q4_K — этап 5. Дальше — этап 5.**
 
 ## 0. Что есть сейчас (по обходу кода)
 

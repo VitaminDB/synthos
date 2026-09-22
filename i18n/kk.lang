@@ -2196,3 +2196,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX: FLUX кадрын бейнеге
 template.builtin-ltx-flux-keyframe.desc = "FLUX промпт бойынша бірінші кадрды салады (16:9, 1344×768) → LTX Image → дыбысы бар LTX-2.3 image-to-video. Екі промпт: жоғарғысы — кадрда не бар, төменгісі — бейнеде не болады. FLUX Checkpoint-те flux.1-dev.syn, LTX Checkpoint-те — чекпойнт, Gemma және upscaler көрсетіңіз."
 template.builtin-h3-flux-keyframe.name = "H3: FLUX кадрын бейнеге"
 template.builtin-h3-flux-keyframe.desc = "FLUX бірінші кадрды салады (16:9, 1344×768) → H3 Keyframe → осы кадрдан басталатын дыбысы бар MiniMax-H3 бейнесі. Жоғарғы промпт — кадр, төменгісі — H3 форматындағы әрекет пен дыбыс. FLUX Checkpoint-те flux.1-dev.syn, H3 Checkpoint-те MiniMax-H3 бандлын көрсетіңіз."
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · нативті"
+settings.dtype.portable = " · тасымалды ядролар (бұл картада нативті MMA жоқ)"
+settings.dtype.sq.desc = "тасымалды блоктық квант, sm_80+ кез келген карта"
+settings.ai_models.transcode = "Квантталған бандлды қайта кодтау"
+settings.ai_models.transcode.desc = "Бандл қазірдің өзінде кванттталған ({formats}). Қосулы — жүктегенде жоғарыдағы сақтау форматтарына қайта кодталады (қос квант, сапа аздап төмендейді; кэш RAM-да немесе дискіде). Өшірулі — файл форматы сол күйінде қолданылады."
+settings.ai_models.transcode.desc_dense = "Бандлда тығыз салмақтар: жүктегенде олар жоғарыдағы форматтарға кванттталады; қайта кодтайтын ештеңе жоқ."

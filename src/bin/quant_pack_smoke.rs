@@ -231,7 +231,8 @@ fn verify_readback(out: &PathBuf, shards: &[PathBuf], kind: QuantKind) -> anyhow
             let reference = match kind {
                 QuantKind::Nvfp4 => slice.quantize_to_nvfp4(),
                 QuantKind::Mxfp8 => slice.quantize_to_mxfp8(),
-                QuantKind::Sq(_) | QuantKind::Ggml(_) => anyhow::bail!("smoke: формат {kind:?} не упаковывается"),
+                QuantKind::Sq(bits) => slice.quantize_to_sq(bits),
+                QuantKind::Ggml(_) => anyhow::bail!("smoke: формат {kind:?} не упаковывается"),
             }?;
 
             let (a_packed, a_scales) = host_bytes(got)?;
@@ -268,8 +269,10 @@ fn host_bytes(
         .ok_or_else(|| anyhow::anyhow!("упакованные веса не на хосте"))?
         .as_bytes()
         .to_vec();
-    let scales = cpu
-        .scales()
+    let Some(scales) = cpu.scales_opt() else {
+        return Ok((packed, Vec::new()));
+    };
+    let scales = scales
         .as_cpu()
         .ok_or_else(|| anyhow::anyhow!("масштабы не на хосте"))?
         .as_bytes()

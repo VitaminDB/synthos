@@ -2188,3 +2188,11 @@ template.builtin-ltx-flux-keyframe.name = "LTX：FLUX のフレームから動�
 template.builtin-ltx-flux-keyframe.desc = "FLUX がプロンプトから最初のフレームを描画（16:9、1344×768）→ LTX Image → 音声付き LTX-2.3 image-to-video。プロンプトは 2 つ：上はフレームの内容、下は動画で起こること。FLUX Checkpoint に flux.1-dev.syn、LTX Checkpoint にチェックポイント、Gemma、アップスケーラーを指定します。"
 template.builtin-h3-flux-keyframe.name = "H3：FLUX のフレームから動画"
 template.builtin-h3-flux-keyframe.desc = "FLUX が最初のフレームを描画（16:9、1344×768）→ H3 Keyframe → そのフレームから始まる音声付き MiniMax-H3 動画。上のプロンプトはフレーム、下は H3 形式の動作と音。FLUX Checkpoint に flux.1-dev.syn、H3 Checkpoint に MiniMax-H3 バンドルを指定します。"
+
+# Этап 4 плана низкобитных квантов: SQ, перекодировка бандла
+settings.dtype.native = " · ネイティブ"
+settings.dtype.portable = " · 汎用カーネル（このGPUにネイティブMMAなし）"
+settings.dtype.sq.desc = "移植可能なブロック量子化、sm_80以降の任意のGPU"
+settings.ai_models.transcode = "量子化済みバンドルを再エンコード"
+settings.ai_models.transcode.desc = "バンドルは既に量子化済みです（{formats}）。オン: 読み込み時に上記の保存形式へ再エンコードします（二重量子化、わずかな品質低下。RAMまたはディスクにキャッシュ）。オフ: ファイルの形式をそのまま使います。"
+settings.ai_models.transcode.desc_dense = "バンドルは密な重みを保持しています。読み込み時に上記の形式へ量子化されるため、再エンコードは不要です。"

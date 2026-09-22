@@ -101,9 +101,13 @@ fn scan_llm_models(dir: &Path) -> Vec<Found> {
                 } else {
                     scan(&p, depth + 1, out);
                 }
-            } else if p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("syn"))
-                == Some(true)
+            } else if p
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|x| x.eq_ignore_ascii_case("syn") || x.eq_ignore_ascii_case("gguf"))
             {
+                // `.gguf` движок грузит напрямую (llama/qwen2/qwen3/gemma3/
+                // gemma4): конфиг и токенизатор синтезируются из метаданных.
                 let size = e.metadata().map(|m| m.len()).unwrap_or(0);
                 push(&p, size, out);
             }
@@ -545,7 +549,7 @@ fn bundle_picker(sig: RwSignal<Option<String>>, title: impl Into<String>) -> Box
             .icon(MI_FOLDER_OPEN)
             .on_click(move || {
                 let dlg = rfd::FileDialog::new()
-                    .add_filter(tr!("settings.ai_models.bundle.filter"), &["syn"])
+                    .add_filter(tr!("settings.ai_models.bundle.filter"), &["syn", "gguf"])
                     .set_title(title.clone());
                 if let Some(p) = dlg.pick_file() {
                     sig.set(Some(p.to_string_lossy().to_string()));

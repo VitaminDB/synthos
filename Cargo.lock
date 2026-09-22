@@ -6806,6 +6806,7 @@ dependencies = [
  "synaptix-diarization-sortformer",
  "synaptix-embedding-bge-m3",
  "synaptix-infer",
+ "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
  "synaptix-llm-common",
@@ -7117,6 +7118,7 @@ dependencies = [
  "symphonia",
  "synaptix-bundle",
  "synaptix-core",
+ "synaptix-gguf",
  "thiserror 2.0.19",
 ]
 

@@ -726,7 +726,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let model_control: Box<dyn Widget> = node_file_picker(
         tr!("node.llm.pick_model_tooltip"),
         model_path,
-        &[("nodes.filter.model", &["syn", "json"]), ("nodes.filter.all_files", &["*"])],
+        &[("nodes.filter.model", &["syn", "gguf", "json"]), ("nodes.filter.all_files", &["*"])],
         move |_p| {
             if let Ok(mut g) = pipeline_h.lock() {
                 *g = None;

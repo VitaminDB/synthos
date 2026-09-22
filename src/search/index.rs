@@ -382,7 +382,11 @@ fn scan_models(dirs: &[PathBuf]) -> Vec<ModelEntry> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("syn") {
+            if !path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("syn") || e.eq_ignore_ascii_case("gguf"))
+            {
                 continue;
             }
             if !seen.insert(path.clone()) {

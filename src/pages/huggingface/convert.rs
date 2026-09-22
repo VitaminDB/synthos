@@ -111,8 +111,11 @@ pub fn start(ctx: HuggingFaceCtx, notif: NotificationCtx, repo_id: String, filen
             }
         });
 
+        // Кванты остаются блоками ggml (`.qpacked` + манифест) — без
+        // раздувания Q4 до F16; движок читает их теми же ядрами, что и сам
+        // `.gguf`. Нормы и всё, что блоками не отдаётся, — как в Auto.
         let opts = synaptix_gguf::ConvertOptions {
-            dtype: synaptix_gguf::OutDtype::Auto,
+            dtype: synaptix_gguf::OutDtype::Keep,
             mmproj,
             ..Default::default()
         };

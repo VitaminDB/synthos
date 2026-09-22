@@ -9,8 +9,8 @@
 
 `~/Storage/syn_models/qwen-image-2.1.syn` — 30,9 ГБ, `arch qwen-image-2.1`,
 `purpose image`, плотный BF16 (VAE — F32). Исходный каталог
-`~/models/Qwen/Qwen-Image-2.1` (HF `Qwen/Qwen-Image-2.1`, 31 ГБ) **оставлен**:
-удалять только по решению пользователя. Сверено: `syn-verify` (21 чанк CRC32C),
+`~/models/Qwen/Qwen-Image-2.1` (HF `Qwen/Qwen-Image-2.1`, 31 ГБ) **удалён**
+22.09 по просьбе пользователя после сверки — качать заново только с HF. Сверено: `syn-verify` (21 чанк CRC32C),
 все 1285 тензоров и 11 вспомогательных файлов байт в байт
 (`tests/bundle_source`).
 

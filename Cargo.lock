@@ -7142,6 +7142,7 @@ dependencies = [
  "parking_lot",
  "synaptix-core",
  "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]

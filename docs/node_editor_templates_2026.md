@@ -111,9 +111,12 @@ CRUD: `templates::create / save / rename / duplicate_to_custom / delete`.
 `bump_revision()`.
 
 ### Run-controls
-RwSignal `run_state` — пока декоративный (UI + Snackbar). Реальная
-интеграция с `eval.rs` (gate auto-eval по `Stopped`/`Paused`, time-based
-ticks для `Running`) — TODO когда появятся audio/animation-ноды.
+`run_state` управляет очередью прогона (`run_controls.rs`): Run строит
+очередь on_run-нод и запускает корни, Stop выкорчёвывает её и взводит
+cooperative-cancel флаги активных нод (`NodeRuntime::run_cancel_flag`).
+Pause (23.09.2026): идущие ноды доигрывают, готовые к старту откладываются в
+`RunQueue::deferred`; Run с паузы продолжает тот же прогон (`resume_run`).
+Time-based ticks для realtime-нод — по-прежнему не сделаны.
 
 Pulse-keyframe `ne-run-pulse-green` запускается на `.ne-run-btn--play.ne-run-btn--active`.
 
@@ -138,7 +141,6 @@ Pulse-keyframe `ne-run-pulse-green` запускается на `.ne-run-btn--pl
 - **Subgraph templates**: select-rectangle на canvas → group-as-template.
 - **Drag-and-drop** шаблона из панели на canvas (помимо двойного клика).
 - **Drag-reorder вкладок** в TabsBar.
-- **Time-based runtime** (animation tick) для realtime-нод; Run/Pause/Stop
-  тогда станут не декоративными.
+- **Time-based runtime** (animation tick) для realtime-нод.
 - **PNG-снимок canvas** как override для preview (сейчас preview всегда
   авто-генерируется из nodes/connections).

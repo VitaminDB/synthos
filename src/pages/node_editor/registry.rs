@@ -3325,6 +3325,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             track_idx: use_signal(0_usize),
             running: use_signal(false),
             error: use_signal(None),
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             loaded_name: use_signal(None),
             progress_pct: use_signal(0.0_f32),
             output_buf_audio: Arc::new(Mutex::new(None)),

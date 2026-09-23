@@ -796,14 +796,15 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     s.running.set(true);
     s.error.set(None);
 
-    let (output_buf_audio, output_buf_latent, output_version) = match node.runtime.lock() {
+    let (output_buf_audio, output_buf_latent, output_version, cancel) = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::AceStepGenerate {
                 output_buf_audio,
                 output_buf_latent,
                 output_version,
+                cancel,
                 ..
-            } => (output_buf_audio.clone(), output_buf_latent.clone(), *output_version),
+            } => (output_buf_audio.clone(), output_buf_latent.clone(), *output_version, cancel.clone()),
             _ => return,
         },
         Err(_) => return,
@@ -811,19 +812,22 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let running = s.running;
     let error = s.error;
     let loaded_name = s.loaded_name;
+    cancel.store(false, std::sync::atomic::Ordering::SeqCst);
 
     let _ = thread::Builder::new()
         .name("synthos-acestep-generate".into())
         .spawn(move || {
-            worker(
-                params,
-                running,
-                error,
-                loaded_name,
-                output_buf_audio,
-                output_buf_latent,
-                output_version,
-            );
+            synaptix_music_acestep::with_cancel(Some(cancel), || {
+                worker(
+                    params,
+                    running,
+                    error,
+                    loaded_name,
+                    output_buf_audio,
+                    output_buf_latent,
+                    output_version,
+                )
+            });
         });
 }
 
@@ -1002,7 +1006,10 @@ fn worker(
     ) {
         Ok(r) => r,
         Err(e) => {
-            error.set(Some(format!("generate_music: {e}")));
+            // Stop — не ошибка: плашку не показываем.
+            if !matches!(e, synaptix_music_acestep::AceError::Cancelled) {
+                error.set(Some(format!("generate_music: {e}")));
+            }
             drop(run_token);
             if !resident {
                 crate::models::trim_all();

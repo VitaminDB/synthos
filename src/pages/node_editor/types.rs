@@ -2582,6 +2582,9 @@ pub enum NodeRuntime {
         // ── Статус + выходы ──
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,
+        /// Stop: воркер отдаёт флаг `acestep::with_cancel` — шаги диффузии,
+        /// авторегрессия кодов и переходы между стадиями его опрашивают.
+        cancel: Arc<std::sync::atomic::AtomicBool>,
         loaded_name: RwSignal<Option<String>>,
         progress_pct: RwSignal<f32>,
         /// Готовый mono/stereo PCM для порта `audio`.
@@ -3379,6 +3382,7 @@ impl NodeRuntime {
             | R::LtxLipdub { cancel, .. }
             | R::LtxA2V { cancel, .. }
             | R::AceStepVaeEncode { cancel, .. }
+            | R::AceStepGenerate { cancel, .. }
             | R::Yue2Generate { cancel, .. }
             | R::Yue2VaeDecode { cancel, .. }
             | R::Yue2Transcribe { cancel, .. }

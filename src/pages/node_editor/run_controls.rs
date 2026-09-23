@@ -149,11 +149,14 @@ struct RunQueue {
     reports: Vec<NodeRunReport>,
     /// Нода → заголовок её on_run-предка, финишировавшего с ошибкой.
     failed_upstream: HashMap<NodeId, &'static str>,
+    /// Готовые к старту ноды, отложенные паузой: идущие ноды доигрывают,
+    /// новые не стартуют, пока не нажат Run.
+    deferred: Vec<NodeId>,
 }
 
 impl RunQueue {
     fn is_done(&self) -> bool {
-        self.active.is_empty() && self.remaining.values().all(|c| *c == 0)
+        self.active.is_empty() && self.deferred.is_empty() && self.remaining.values().all(|c| *c == 0)
     }
 }
 
@@ -273,6 +276,7 @@ fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection])
         notify: None,
         reports: Vec::new(),
         failed_upstream: HashMap::new(),
+        deferred: Vec::new(),
     }
 }
 
@@ -496,7 +500,12 @@ fn advance(ws: &EditorWorkspace, q: &mut RunQueue) -> bool {
                                 after = id.0,
                                 "нода разблокирована предком"
                             );
-                            fire(&ctx, d, q);
+                            if ws.run_state.get_untracked() == RunState::Paused {
+                                info!(target: RUN_LOG, node = d.0, "пауза: старт отложен");
+                                q.deferred.push(d);
+                            } else {
+                                fire(&ctx, d, q);
+                            }
                         } else {
                             info!(
                                 target: RUN_LOG,
@@ -631,6 +640,25 @@ pub fn start_run(
     Ok(started)
 }
 
+/// Снять паузу: запустить отложенные ноды и вернуть `Running`. `false` —
+/// прогона нет (пауза была без очереди), тогда Run стартует новый.
+fn resume_run() -> bool {
+    let ws = use_context::<EditorWorkspace>();
+    let Ok(mut guard) = run_queue().lock() else {
+        return false;
+    };
+    let Some(q) = guard.as_mut() else {
+        return false;
+    };
+    ws.run_state.set(RunState::Running);
+    let ctx = q.ctx;
+    for id in std::mem::take(&mut q.deferred) {
+        fire(&ctx, id, q);
+    }
+    info!(target: RUN_LOG, "run: пауза снята");
+    true
+}
+
 /// Остановить прогон: выкорчевать очередь, отдать инициатору `Stopped`,
 /// финализировать pill. `cancel_workers` — дополнительно взвести
 /// cooperative-cancel флаги активных нод. Возвращает false, если прогона
@@ -732,6 +760,10 @@ pub fn view(editor_ctx: NodeEditorCtx) -> impl Widget {
             .tooltip(tr!("nodes.run.start"))
             .on_click(move || {
                 info!(target: RUN_LOG, "run: нажат Run");
+                // С паузы — продолжить тот же прогон, а не начать новый.
+                if ws.run_state.get_untracked() == RunState::Paused && resume_run() {
+                    return;
+                }
                 match start_run(editor_ctx, None) {
                     Ok(started) => {
                         app_run.notifications.info(tr!("nodes.run.started_notice", count = started));

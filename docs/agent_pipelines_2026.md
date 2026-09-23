@@ -63,7 +63,7 @@
    и не вешают очередь.
 4. **wait**: `tokio::select!` c `wait_abort`; abort хода →
    `cancel_active_run()` — сброс очереди + взвод cancel-флагов активных нод
-   (`NodeRuntime::run_cancel_flag`; ACE-Step Generate флага не имеет и
+   (`NodeRuntime::run_cancel_flag`; ACE-Step Generate до 23.09.2026 флага не имел и
    досчитывает).
 5. **артефакты**: файлы save-нод, появившиеся/изменившиеся за прогон →
    `attach::ingest` (CAS + thumbnail) → вложения tool-result сообщения
@@ -441,7 +441,7 @@ vocals) в режиме extract; шаблон кладёт в теги `vocals`;
 
 - Прогон в subagent'е запрещён; статус-поллинг не нужен (run блокирующий).
 - `system unload` не ждёт занятых воркеров (честно сообщает «удерживается»).
-- Отмена не останавливает ACE-Step Generate (нет hooks в `generate_music`);
+- ~~Отмена не останавливает ACE-Step Generate~~ — с 23.09.2026 флаг `cancel` у ноды, `acestep::with_cancel`: шаги диффузии, AR-коды и переходы между стадиями;
   VAE Encode прерывается между окнами энкода.
 - `free_vram` теряет префикс-KV: после прогона история считается полным
   префиллом (на flash-next ~27 с на 20k токенов).

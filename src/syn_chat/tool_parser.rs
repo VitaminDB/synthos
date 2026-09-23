@@ -536,8 +536,265 @@ fn parse_xml_function_eq_style(body: &str) -> Option<RawToolCall> {
     Some(RawToolCall { name, arguments_json })
 }
 
+/// Вызовы Llama-3.x: шаблон просит модель ответить «JSON-вызовом»
+/// `{"name": …, "parameters": {…}}` без обёрточных тегов, иногда после
+/// спецтокена `<|python_tag|>`. Вызовом считается только ответ, который
+/// с такого объекта *начинается*: JSON посреди прозы — это текст.
+///
+/// Пока объект не закрыт, его текст идёт в `tool_delta` (live-превью), а не
+/// в ответ. Закрылся и разобрался — вызов; закрылся, но это не вызов —
+/// весь накопленный текст уходит в ответ. Поток оборвался внутри объекта —
+/// [`Self::take_tail`] пробует починить скобки, иначе отдаёт текст ответом.
+pub struct LlamaJsonParser {
+    python_tag: Option<u32>,
+    state: LlamaState,
+    /// Начальные пробелы хода и тело текущего объекта.
+    held: String,
+    depth: u32,
+    in_str: bool,
+    escaped: bool,
+    calls: Vec<RawToolCall>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LlamaState {
+    /// Ещё не видно, с чего начинается ответ.
+    Lead,
+    /// Внутри JSON-объекта вызова.
+    Json,
+    /// Вызов принят — хвост до стопа выкидываем (второй вызов шаблон Llama
+    /// всё равно не поддерживает, поток рвётся по `tool_call_ready`).
+    AfterCall,
+    /// Обычный текст ответа.
+    Text,
+}
+
+impl LlamaJsonParser {
+    pub fn new(python_tag: Option<u32>) -> Self {
+        Self {
+            python_tag,
+            state: LlamaState::Lead,
+            held: String::new(),
+            depth: 0,
+            in_str: false,
+            escaped: false,
+            calls: Vec::new(),
+        }
+    }
+
+    pub fn has_closed_call(&self) -> bool {
+        !self.calls.is_empty() && self.state != LlamaState::Json
+    }
+
+    /// Очередной токен → (текст ответа, live-текст вызова).
+    pub fn feed(&mut self, id: u32, delta: &str) -> (String, String) {
+        if Some(id) == self.python_tag {
+            if self.state == LlamaState::Lead {
+                self.held.clear();
+            }
+            return (String::new(), String::new());
+        }
+        let mut body = String::new();
+        let mut tool = String::new();
+        let mut rest = delta;
+        while !rest.is_empty() {
+            match self.state {
+                LlamaState::Text => {
+                    body.push_str(rest);
+                    break;
+                }
+                LlamaState::AfterCall => break,
+                LlamaState::Lead => {
+                    let trimmed = rest.trim_start();
+                    self.held.push_str(&rest[..rest.len() - trimmed.len()]);
+                    rest = trimmed;
+                    if rest.is_empty() {
+                        break;
+                    }
+                    if rest.starts_with('{') {
+                        self.held.clear();
+                        self.state = LlamaState::Json;
+                    } else {
+                        body.push_str(&std::mem::take(&mut self.held));
+                        self.state = LlamaState::Text;
+                    }
+                }
+                LlamaState::Json => {
+                    let (consumed, closed) = self.scan(rest);
+                    tool.push_str(&rest[..consumed]);
+                    self.held.push_str(&rest[..consumed]);
+                    rest = &rest[consumed..];
+                    if closed {
+                        match parse_llama_call(&self.held) {
+                            Some(call) => {
+                                self.calls.push(call);
+                                self.held.clear();
+                                self.state = LlamaState::AfterCall;
+                            }
+                            None => {
+                                body.push_str(&std::mem::take(&mut self.held));
+                                self.state = LlamaState::Text;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (body, tool)
+    }
+
+    /// Сколько байт `s` входит в текущий объект и закрылся ли он.
+    fn scan(&mut self, s: &str) -> (usize, bool) {
+        for (i, c) in s.char_indices() {
+            if self.in_str {
+                if self.escaped {
+                    self.escaped = false;
+                } else if c == '\\' {
+                    self.escaped = true;
+                } else if c == '"' {
+                    self.in_str = false;
+                }
+                continue;
+            }
+            match c {
+                '"' => self.in_str = true,
+                '{' | '[' => self.depth += 1,
+                '}' | ']' => {
+                    self.depth = self.depth.saturating_sub(1);
+                    if self.depth == 0 {
+                        return (i + c.len_utf8(), true);
+                    }
+                }
+                _ => {}
+            }
+        }
+        (s.len(), false)
+    }
+
+    /// Поток кончился: незакрытый объект — вызов, если скобки чинятся,
+    /// иначе текст ответа. Пробелы без ответа не нужны.
+    pub fn take_tail(&mut self) -> String {
+        if self.state != LlamaState::Json {
+            return String::new();
+        }
+        let held = std::mem::take(&mut self.held);
+        match parse_llama_call(&held) {
+            Some(call) => {
+                self.calls.push(call);
+                self.state = LlamaState::AfterCall;
+                String::new()
+            }
+            None => {
+                self.state = LlamaState::Text;
+                held
+            }
+        }
+    }
+
+    pub fn finish(self) -> Vec<RawToolCall> {
+        self.calls
+    }
+}
+
+/// `{"name": …, "parameters": {…}}` (Llama-3.x); `arguments` вместо
+/// `parameters` и обёртку `{"type": "function", …}` тоже принимаем.
+fn parse_llama_call(body: &str) -> Option<RawToolCall> {
+    let (v, _) = crate::agent::json_repair::parse_with_repair(body.trim())?;
+    let obj = v.as_object()?;
+    let obj = match obj.get("function").and_then(|f| f.as_object()) {
+        Some(f) if f.contains_key("name") => f,
+        _ => obj,
+    };
+    let name = obj.get("name")?.as_str()?.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = match obj.get("parameters").or_else(|| obj.get("arguments")) {
+        Some(a) => normalize_arguments(a.clone()),
+        None => serde_json::Value::Object(serde_json::Map::new()),
+    };
+    if !arguments.is_object() {
+        return None;
+    }
+    let arguments_json = serde_json::to_string(&arguments).ok()?;
+    Some(RawToolCall { name, arguments_json })
+}
+
 #[cfg(test)]
 mod tests {
+    fn llama_feed(p: &mut LlamaJsonParser, chunks: &[&str]) -> (String, String) {
+        let (mut body, mut tool) = (String::new(), String::new());
+        for c in chunks {
+            let (b, t) = p.feed(0, c);
+            body.push_str(&b);
+            tool.push_str(&t);
+        }
+        (body, tool)
+    }
+
+    /// Llama-3.2 отвечает вызовом без тегов, объект режется по токенам.
+    #[test]
+    fn llama_bare_json_call() {
+        let mut p = LlamaJsonParser::new(Some(7));
+        let (body, tool) = llama_feed(
+            &mut p,
+            &["\n", "{\"name\": \"ba", "sh\", \"parameters\": {\"command\": \"echo }\"", "}}", "\n\nлишнее"],
+        );
+        assert!(body.is_empty(), "ответ пуст: {body:?}");
+        assert!(tool.contains("\"bash\""));
+        assert!(p.has_closed_call());
+        let calls = p.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "bash");
+        assert_eq!(calls[0].arguments_json, "{\"command\":\"echo }\"}");
+    }
+
+    /// `<|python_tag|>` перед вызовом и `arguments` вместо `parameters`.
+    #[test]
+    fn llama_python_tag_and_arguments() {
+        let mut p = LlamaJsonParser::new(Some(7));
+        assert_eq!(p.feed(7, "<|python_tag|>"), (String::new(), String::new()));
+        let (body, _) = llama_feed(&mut p, &["{\"name\": \"notes\", \"arguments\": \"{\\\"action\\\": \\\"read\\\"}\"}"]);
+        assert!(body.is_empty());
+        let calls = p.finish();
+        assert_eq!(calls[0].name, "notes");
+        assert_eq!(calls[0].arguments_json, "{\"action\":\"read\"}");
+    }
+
+    /// Обычный ответ и JSON посреди прозы — текст, не вызов.
+    #[test]
+    fn llama_plain_text_passes_through() {
+        let mut p = LlamaJsonParser::new(None);
+        let (body, tool) = llama_feed(&mut p, &["  Привет", "! {\"name\": \"x\", \"parameters\": {}}"]);
+        assert_eq!(body, "  Привет! {\"name\": \"x\", \"parameters\": {}}");
+        assert!(tool.is_empty());
+        assert!(p.finish().is_empty());
+    }
+
+    /// Ответ-объект, который не вызов, возвращается текстом целиком.
+    #[test]
+    fn llama_json_answer_is_text() {
+        let mut p = LlamaJsonParser::new(None);
+        let (body, _) = llama_feed(&mut p, &["{\"city\": \"Paris\"}", " — готово"]);
+        assert_eq!(body, "{\"city\": \"Paris\"} — готово");
+        assert!(p.finish().is_empty());
+    }
+
+    /// Поток оборвался до закрытия: скобки чинятся — вызов, нет — текст.
+    #[test]
+    fn llama_unclosed_tail() {
+        let mut p = LlamaJsonParser::new(None);
+        llama_feed(&mut p, &["{\"name\": \"bash\", \"parameters\": {\"command\": \"ls\"}"]);
+        assert!(!p.has_closed_call());
+        assert_eq!(p.take_tail(), "");
+        assert_eq!(p.finish()[0].name, "bash");
+
+        let mut p = LlamaJsonParser::new(None);
+        llama_feed(&mut p, &["{\"na"]);
+        assert_eq!(p.take_tail(), "{\"na");
+        assert!(p.finish().is_empty());
+    }
+
     /// Стрим кончился сразу после JSON, без `</tool_call>` — вызов должен
     /// доехать: иначе ход теряется впустую и пользователь жмёт «Продолжить».
     #[test]

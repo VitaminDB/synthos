@@ -49,7 +49,7 @@ use crate::syn_chat::state::{
 };
 use crate::syn_chat::chat_settings::{ChatSettings, TurnSettings};
 use crate::syn_chat::system_prompt::{self, PromptEnv};
-use crate::syn_chat::tool_parser::{RawToolCall, ToolCallParser};
+use crate::syn_chat::tool_parser::{LlamaJsonParser, RawToolCall, ToolCallParser};
 use synaptix_tokenizer::{Gemma4Ids, Gemma4StreamParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
@@ -1530,10 +1530,14 @@ pub fn schedule_tokenize() {
 ///   `<|"|>`; всё это спецтокены, в тексте их нет — разбор по id живёт в
 ///   движке (`synaptix_tokenizer::parsers::gemma4`). Без него в ленту
 ///   утекало `call:notes{action:read,page:all}` текстом (MyLife, 09.09.2026).
+/// - [`Self::Llama`] — шаблон Llama-3.x: вызов — голый JSON
+///   `{"name": …, "parameters": …}` в начале ответа, без тегов; размышлений
+///   нет. Без него вызов показывался текстом и не исполнялся.
 pub(crate) enum StreamParser {
     ChatML { think: ThinkParser, tools: ToolCallParser },
     Channel(ChannelParser),
     Gemma(Gemma4StreamParser),
+    Llama(LlamaJsonParser),
 }
 
 impl StreamParser {
@@ -1546,6 +1550,9 @@ impl StreamParser {
     pub(crate) fn for_model(tokenizer: &LlmTokenizer, enable_thinking: bool, prompt: &str) -> Self {
         if let Some(ids) = ChannelIds::detect(tokenizer) {
             return Self::Channel(ChannelParser::new(ids));
+        }
+        if is_llama3_prompt(prompt) {
+            return Self::Llama(LlamaJsonParser::new(single_token(tokenizer, "<|python_tag|>")));
         }
         match gemma4_ids(tokenizer) {
             Some(ids) => Self::Gemma(Gemma4StreamParser::new(
@@ -1599,6 +1606,19 @@ impl StreamParser {
                 let split = p.feed(id, delta);
                 (split.body, split.thinking, split.tool)
             }
+            Self::Llama(p) => {
+                let (body, tool) = p.feed(id, delta);
+                (body, String::new(), tool)
+            }
+        }
+    }
+
+    /// Поток кончился: текст, который парсер придерживал до конца хода
+    /// (незакрытый JSON у Llama, если это не вызов). Отдать в ответ.
+    pub(crate) fn take_tail(&mut self) -> String {
+        match self {
+            Self::Llama(p) => p.take_tail(),
+            _ => String::new(),
         }
     }
 
@@ -1609,6 +1629,7 @@ impl StreamParser {
             Self::ChatML { tools, .. } => tools.calls_count() > 0 && tools.is_outside(),
             Self::Channel(p) => p.has_closed_call(),
             Self::Gemma(p) => p.has_closed_call(),
+            Self::Llama(p) => p.has_closed_call(),
         }
     }
 
@@ -1621,7 +1642,22 @@ impl StreamParser {
                 .into_iter()
                 .map(|c| RawToolCall { arguments_json: c.arguments_json(), name: c.name })
                 .collect(),
+            Self::Llama(p) => p.finish(),
         }
+    }
+}
+
+/// Промпт собран шаблоном Llama-3.x: генерация начинается после заголовка
+/// реплики ассистента. Смотрим на промпт, а не на словарь: у fine-tune'ов
+/// на базе Llama (Hermes и т. п.) словарь тот же, а протокол ChatML.
+fn is_llama3_prompt(prompt: &str) -> bool {
+    prompt.trim_end().ends_with("<|start_header_id|>assistant<|end_header_id|>")
+}
+
+fn single_token(tokenizer: &LlmTokenizer, s: &str) -> Option<u32> {
+    match tokenizer.encode(s) {
+        Ok(ids) if ids.len() == 1 => Some(ids[0]),
+        _ => None,
     }
 }
 
@@ -2263,6 +2299,9 @@ async fn run_agent_loop(
                 }
             };
 
+            let tail = parser.take_tail();
+            clean_text.push_str(&tail);
+            buf_body.push_str(&tail);
             // Финальный flush — гарантированно сбрасываем хвост буферов.
             flush_streaming(
                 &chat_id,
@@ -3167,6 +3206,7 @@ pub(crate) fn generate_summary(
         clean.push_str(&body);
         true
     });
+    clean.push_str(&parser.take_tail());
 
     // Ринг summary-запроса больше не нужен — возвращаем VRAM (см. комментарий
     // про cudaMallocAsync-пул в run_agent_loop).

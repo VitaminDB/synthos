@@ -446,13 +446,6 @@ pub struct AppCtx {
     /// в `AppConfig.models_dir`; читают агентский `pipelines list` и
     /// настройки. Резолв `~` — `config::resolve_models_dir`.
     pub models_dir: RwSignal<String>,
-    /// Путь к ACE-Step «общему» bandle'у (xl-base или xl-turbo): DiT,
-    /// проектор, энкодеры, FSQ и детокенизатор. Сохраняется в
-    /// `AppConfig.acestep_xl_bundle_path`.
-    pub acestep_xl_bundle_path: RwSignal<Option<String>>,
-    /// Путь к ACE-Step VAE bundle'у (`acestep_vae.syn`). Используется нодами
-    /// VaeEncode/VaeDecode. Сохраняется в `AppConfig.acestep_vae_bundle_path`.
-    pub acestep_vae_bundle_path: RwSignal<Option<String>>,
     /// Видимость левой/правой панели по страницам (тогглы в общей шапке).
     /// Persist: `AppConfig.panels`.
     pub panels: PanelsCtx,

@@ -115,42 +115,61 @@ pub fn default_bundle_name<'a>(dir: Option<&std::path::Path>, names: &'a [&'a st
         .unwrap_or(names[0])
 }
 
-/// Резолв 4 путей-бандлов из хэндла: override → каталог/первое существующее
-/// из дефолтных имён (иначе первое имя — для понятной ошибки «не найден»).
-/// Зеркалит CLI `pick`. Проверяет существование файлов.
+/// Путь одного бандла из хэндла: override → каталог/первое существующее из
+/// дефолтных имён (иначе первое имя — для понятной ошибки «не найден»).
+/// Зеркалит CLI `pick`. Существование не проверяет.
+fn pick_bundle(
+    h: &AceStepModelHandle,
+    o: &Option<PathBuf>,
+    names: &[&str],
+) -> std::result::Result<PathBuf, String> {
+    if let Some(p) = o {
+        // Голое имя бандла (агент пишет `acestep_5hz_lm_4b.syn` — так их
+        // печатает схема ноды) — от каталога моделей, а не от cwd.
+        if p.is_relative() {
+            if let Some(d) = &h.models_dir {
+                return Ok(d.join(p));
+            }
+        }
+        return Ok(p.clone());
+    }
+    match &h.models_dir {
+        Some(d) => Ok(d.join(default_bundle_name(Some(d), names))),
+        None => Err(tr!("node.acestep_generate.error.missing_dir_or_override", name = names[0])),
+    }
+}
+
+fn ensure_exists(label: &str, p: &std::path::Path) -> std::result::Result<(), String> {
+    if p.exists() {
+        Ok(())
+    } else {
+        Err(tr!(
+            "node.acestep_generate.error.bundle_not_found",
+            label = label,
+            path = p.display()
+        ))
+    }
+}
+
+/// Резолв 4 путей-бандлов из хэндла; проверяет существование файлов.
 pub fn resolve_paths(
     h: &AceStepModelHandle,
 ) -> std::result::Result<(PathBuf, PathBuf, PathBuf, PathBuf), String> {
-    let pick = |o: &Option<PathBuf>, names: &[&str]| -> std::result::Result<PathBuf, String> {
-        if let Some(p) = o {
-            // Голое имя бандла (агент пишет `acestep_5hz_lm_4b.syn` — так их
-            // печатает схема ноды) — от каталога моделей, а не от cwd.
-            if p.is_relative() {
-                if let Some(d) = &h.models_dir {
-                    return Ok(d.join(p));
-                }
-            }
-            return Ok(p.clone());
-        }
-        match &h.models_dir {
-            Some(d) => Ok(d.join(default_bundle_name(Some(d), names))),
-            None => Err(tr!("node.acestep_generate.error.missing_dir_or_override", name = names[0])),
-        }
-    };
-    let lm = pick(&h.lm_path, LM_NAMES)?;
-    let te = pick(&h.text_encoder_path, TEXT_ENC_NAMES)?;
-    let dit = pick(&h.dit_path, DIT_NAMES)?;
-    let vae = pick(&h.vae_path, VAE_NAMES)?;
+    let lm = pick_bundle(h, &h.lm_path, LM_NAMES)?;
+    let te = pick_bundle(h, &h.text_encoder_path, TEXT_ENC_NAMES)?;
+    let dit = pick_bundle(h, &h.dit_path, DIT_NAMES)?;
+    let vae = pick_bundle(h, &h.vae_path, VAE_NAMES)?;
     for (label, p) in [("lm", &lm), ("text-encoder", &te), ("dit", &dit), ("vae", &vae)] {
-        if !p.exists() {
-            return Err(tr!(
-                "node.acestep_generate.error.bundle_not_found",
-                label = label,
-                path = p.display()
-            ));
-        }
+        ensure_exists(label, p)?;
     }
     Ok((lm, te, dit, vae))
+}
+
+/// Только VAE-бандл — VAE Encode остальные подмодели не нужны.
+pub fn resolve_vae(h: &AceStepModelHandle) -> std::result::Result<PathBuf, String> {
+    let vae = pick_bundle(h, &h.vae_path, VAE_NAMES)?;
+    ensure_exists("vae", &vae)?;
+    Ok(vae)
 }
 
 pub struct GenerateExec;

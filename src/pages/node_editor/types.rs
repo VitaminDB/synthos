@@ -523,6 +523,20 @@ impl NodeKind {
     /// Слот-семейства, чья модель приходит только из Syn-чекпойнта на входе
     /// `model`: своих полей модели/device/точности у этих нод нет.
     pub fn needs_syn_checkpoint(self) -> bool {
+        self.model_input_source() == Some("SynCheckpoint")
+    }
+
+    /// Какой чекпойнт обязан висеть на входе `model`, чтобы нода вообще
+    /// получила модель (своего выбора модели у неё нет). `None` — у ноды
+    /// либо нет такого входа, либо его отсутствие ловит сама нода.
+    pub fn model_input_source(self) -> Option<&'static str> {
+        if self == NodeKind::AceStepVaeEncode {
+            return Some("AceStepCheckpoint");
+        }
+        self.slot_family().then_some("SynCheckpoint")
+    }
+
+    fn slot_family(self) -> bool {
         matches!(
             self,
             NodeKind::Llm
@@ -1212,6 +1226,8 @@ pub struct LtxModelHandle {
     pub model_path: PathBuf,
     pub gemma_dir: PathBuf,
     pub upscaler_path: Option<PathBuf>,
+    /// Каталог Depth Anything V2 — препроцессор IC-LoRA для control=depth.
+    pub depth_model_path: Option<PathBuf>,
     pub lora_path: Option<PathBuf>,
     pub lora_strength: f32,
     pub device_idx: usize,
@@ -2483,10 +2499,8 @@ pub enum NodeRuntime {
 
     // ── ACE-Step v1.5 (Нейро → ACE-Step) ──
     //
+    /// VAE, устройство и точность — от ACE-Step Checkpoint на входе `model`.
     AceStepVaeEncode {
-        device_idx: RwSignal<usize>,
-        storage_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
         /// Размер chunk'а encode в секундах (для длинных файлов).
         chunk_seconds: RwSignal<f32>,
         /// Overlap в секундах между chunk'ами (для cross-fade).
@@ -2636,10 +2650,8 @@ pub enum NodeRuntime {
         output_buf_score: Arc<Mutex<Option<String>>>,
         output_version: RwSignal<u32>,
     },
-    /// YuE2 VAE Decode: латенты → звук (например, другим декодером).
+    /// YuE2 VAE Decode: латенты → звук декодером из чекпойнта на `model`.
     Yue2VaeDecode {
-        /// Override декодера: пусто — берётся из чекпойнта.
-        vae_path: RwSignal<Option<PathBuf>>,
         vae_core_frames: RwSignal<u32>,
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,
@@ -2701,6 +2713,8 @@ pub enum NodeRuntime {
         model_path: RwSignal<Option<PathBuf>>,
         gemma_dir: RwSignal<Option<PathBuf>>,
         upscaler_path: RwSignal<Option<PathBuf>>,
+        /// Каталог Depth Anything V2 (IC-LoRA, control=depth).
+        depth_model_path: RwSignal<Option<PathBuf>>,
         lora_path: RwSignal<Option<PathBuf>>,
         lora_strength: RwSignal<f32>,
         device_idx: RwSignal<usize>,
@@ -2834,7 +2848,6 @@ pub enum NodeRuntime {
         control_idx: RwSignal<usize>,
         canny_low: RwSignal<f32>,
         canny_high: RwSignal<f32>,
-        depth_model_path: RwSignal<Option<PathBuf>>,
         seed: RwSignal<u64>,
         running: RwSignal<bool>,
         error: RwSignal<Option<String>>,

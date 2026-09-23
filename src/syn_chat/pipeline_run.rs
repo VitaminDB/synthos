@@ -221,12 +221,12 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         let has_model_input = conns
             .iter()
             .any(|c| c.to_node == n.id && c.to_port == "model");
-        if n.kind.needs_syn_checkpoint() && !has_model_input {
+        if let (Some(src), false) = (n.kind.model_input_source(), has_model_input) {
             missing.push(tr!(
                 "chat.pipeline.error.missing_field",
                 node_id = n.id.0,
                 node_title = registry::meta(n.kind).title,
-                field = "model ← SynCheckpoint"
+                field = format!("model ← {src}")
             ));
         }
         if let Ok(rt) = n.runtime.lock() {

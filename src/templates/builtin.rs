@@ -2205,11 +2205,9 @@ fn acestep_checkpoint_state() -> NodeStateData {
 
 fn acestep_vae_encode_state() -> NodeStateData {
     NodeStateData::AceStepVaeEncode(AceStepVaeStateData {
-        device_idx: 1,
-        storage_idx: 0,
-        compute_idx: 0,
         chunk_seconds: 30.0,
         overlap_seconds: 0.5,
+        ..Default::default()
     })
 }
 
@@ -2266,6 +2264,7 @@ fn acestep_audio_cond(id: &str, name: &str, desc: &str, tags: &str, gen: NodeSta
         ],
         connections: vec![
             conn(1, "model", 6, "model"),
+            conn(1, "model", 3, "model"),
             conn(2, "out", 3, "audio"),
             conn(3, "latent", 6, "src_latent"),
             conn(4, "out", 6, "tags"),

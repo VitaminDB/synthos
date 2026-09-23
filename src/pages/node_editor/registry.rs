@@ -383,6 +383,7 @@ const OMNIVOICE_OUTPUTS: &[PortSchema] = &[
 // ── ACE-Step ─────────────────────────────────────────────────────────────
 
 const ACESTEP_VAE_ENCODE_INPUTS: &[PortSchema] = &[
+    PortSchema { name: "model", label: "model", kind: PortKind::Data },
     PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
 ];
 const ACESTEP_VAE_ENCODE_OUTPUTS: &[PortSchema] = &[
@@ -2711,12 +2712,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             }
         }
         NodeKind::AceStepVaeEncode => NodeRuntime::AceStepVaeEncode {
-            // 1 = GPU, как у ACE-Step Checkpoint. Было 0 = CPU: агент видел
-            // его в «state (example with defaults)», «возвращал дефолт» — и
-            // энкод трека в 3,5 минуты уходил на процессор.
-            device_idx: use_signal(1_usize),
-            storage_idx: use_signal(acestep::default_storage_idx()),
-            compute_idx: use_signal(acestep::default_compute_idx()),
             chunk_seconds: use_signal(30.0_f32),
             overlap_seconds: use_signal(0.8_f32),
             loaded_cfg: Arc::new(Mutex::new(None)),
@@ -3058,6 +3053,7 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             model_path: use_signal(None),
             gemma_dir: use_signal(None),
             upscaler_path: use_signal(None),
+            depth_model_path: use_signal(None),
             lora_path: use_signal(None),
             lora_strength: use_signal(1.0_f32),
             device_idx: use_signal(0_usize),
@@ -3178,7 +3174,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             control_idx: use_signal(0_usize),
             canny_low: use_signal(0.1_f32),
             canny_high: use_signal(0.3_f32),
-            depth_model_path: use_signal(None),
             seed: use_signal(0_u64),
             running: use_signal(false),
             error: use_signal(None),
@@ -3256,7 +3251,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::Yue2VaeDecode => NodeRuntime::Yue2VaeDecode {
-            vae_path: use_signal(None),
             vae_core_frames: use_signal(1024_u32),
             running: use_signal(false),
             error: use_signal(None),

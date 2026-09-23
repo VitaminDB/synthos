@@ -2,10 +2,10 @@
 //!
 //! Нужна, когда генерация уже сделана, а звук хочется получить другим
 //! декодером: `yue2-vae.syn` (по умолчанию, для прослушивания) или
-//! `yue2-vae-legacy.syn` (декодер протокола бенчмарка). Генерация при этом не
-//! повторяется — латенты приходят портом.
+//! `yue2-vae-legacy.syn` (декодер протокола бенчмарка). Декодер выбирается в
+//! YuE2 Checkpoint на входе `model` (для другого — второй чекпойнт с
+//! override'ом VAE). Генерация не повторяется — латенты приходят портом.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
@@ -25,9 +25,6 @@ use super::shared::{load_vae, resolve_paths};
 use super::{
     current_input_latent, current_input_model, field_row, make_int_slider_row, status_row,
 };
-use crate::pages::node_editor::controls::file_picker::node_file_picker_placeholder;
-
-const SYN_FILTER: &[(&str, &[&str])] = &[("Syn bundle", &["syn"])];
 
 pub struct VaeDecodeExec;
 
@@ -70,7 +67,6 @@ pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 }
 
 type Snapshot = (
-    RwSignal<Option<PathBuf>>,
     RwSignal<u32>,
     RwSignal<bool>,
     RwSignal<Option<String>>,
@@ -83,7 +79,6 @@ fn snapshot(node: &NodeInstance) -> Option<Snapshot> {
     match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::Yue2VaeDecode {
-                vae_path,
                 vae_core_frames,
                 running,
                 error,
@@ -92,7 +87,6 @@ fn snapshot(node: &NodeInstance) -> Option<Snapshot> {
                 cancel,
                 ..
             } => Some((
-                *vae_path,
                 *vae_core_frames,
                 *running,
                 *error,
@@ -107,8 +101,7 @@ fn snapshot(node: &NodeInstance) -> Option<Snapshot> {
 }
 
 pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
-    let Some((vae_path, core_frames, running, error, loaded_name, progress, cancel)) =
-        snapshot(node)
+    let Some((core_frames, running, error, loaded_name, progress, cancel)) = snapshot(node)
     else {
         return;
     };
@@ -123,7 +116,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         error.set(Some(tr!("node.yue2_vae_decode.error.no_latent")));
         return;
     };
-    let override_path = vae_path.get_untracked();
     let frames = core_frames.get_untracked().max(16) as usize;
 
     cancel.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -146,7 +138,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         .spawn(move || {
             worker(
                 handle,
-                override_path,
                 latents,
                 frames,
                 cancel,
@@ -163,7 +154,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
 #[allow(clippy::too_many_arguments)]
 fn worker(
     handle: Arc<Yue2ModelHandle>,
-    override_path: Option<PathBuf>,
     latents: Tensor,
     core_frames: usize,
     cancel: Arc<std::sync::atomic::AtomicBool>,
@@ -178,17 +168,11 @@ fn worker(
         error.set(Some(msg));
         running.set(false);
     };
-    let path = match override_path {
-        // Голое имя (так их печатает схема ноды) — от каталога моделей.
-        Some(p) if p.is_relative() => match &handle.models_dir {
-            Some(d) => d.join(p),
-            None => p,
-        },
-        Some(p) => p,
-        None => match resolve_paths(&handle) {
-            Ok((_, vae)) => vae,
-            Err(e) => return finish_err(e),
-        },
+    // Декодер — только из чекпойнта: другой декодер = второй YuE2 Checkpoint
+    // с override'ом `vae_path`.
+    let path = match resolve_paths(&handle) {
+        Ok((_, vae)) => vae,
+        Err(e) => return finish_err(e),
     };
     if !path.exists() {
         return finish_err(tr!(
@@ -273,7 +257,7 @@ fn decode(
 }
 
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
-    let Some((vae_path, core_frames, running, error, loaded_name, _, cancel)) = snapshot(node)
+    let Some((core_frames, running, error, loaded_name, _, cancel)) = snapshot(node)
     else {
         return Box::new(
             Text::new(tr!("nodes.common.invalid_runtime", name = "Yue2VaeDecode"))
@@ -281,16 +265,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         );
     };
     let rows: Vec<Box<dyn Widget>> = vec![
-        field_row(
-            &tr!("node.yue2_vae_decode.field.vae"),
-            node_file_picker_placeholder(
-                tr!("node.yue2_vae_decode.tooltip.vae"),
-                vae_path,
-                SYN_FILTER,
-                || tr!("node.yue2_vae_decode.default_vae"),
-                |_| {},
-            ),
-        ),
         field_row(
             &tr!("node.yue2_generate.field.vae_core_frames"),
             make_int_slider_row(core_frames, 64, 4096, 64),

@@ -203,6 +203,9 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
 /// device/точность у себя. Теперь модель приходит только из Syn Checkpoint —
 /// для каждой такой ноды с путём и без входа `model` рядом ставится
 /// чекпойнт с теми же настройками (резидентным: слот держал модель всегда).
+/// Так же семейные ноды: ACE-Step VAE Encode получает вход `model` от
+/// ACE-Step Checkpoint, свой декодер YuE2 VAE Decode уезжает в копию
+/// YuE2 Checkpoint, depth-модель IC-LoRA — в подключённый LTX Checkpoint.
 /// `None` — мигрировать нечего.
 pub fn migrate_inline_models(t: &Template) -> Option<Template> {
     // Индексы предпочтений чекпойнта: device 0=Auto,1=CUDA,2=CPU;
@@ -314,6 +317,109 @@ pub fn migrate_inline_models(t: &Template) -> Option<Template> {
             to_port: "model".into(),
         });
         next_id += 1;
+    }
+
+    // Семейные ноды: VAE/устройство/depth-модель переехали в свой чекпойнт.
+    let node_at = |x: f32, y: f32, id: u64, kind: NodeKind, state: NodeStateData| NodeData {
+        id,
+        kind,
+        pos: PointData { x, y },
+        fields: Default::default(),
+        style: Default::default(),
+        enabled: true,
+        state: Some(state),
+    };
+    for nd in &t.nodes {
+        let model_src = t
+            .connections
+            .iter()
+            .find(|c| c.to_node == nd.id && c.to_port == "model")
+            .map(|c| c.from_node);
+        match &nd.state {
+            // ACE-Step VAE Encode брал VAE из глобальных настроек, device и
+            // compute — свои. Теперь всё из ACE-Step Checkpoint графа.
+            Some(NodeStateData::AceStepVaeEncode(d)) if model_src.is_none() => {
+                let m = out.get_or_insert_with(|| t.clone());
+                let from = match m.nodes.iter().find(|n| n.kind == NodeKind::AceStepCheckpoint) {
+                    Some(ck) => ck.id,
+                    None => {
+                        let ck = node_at(
+                            nd.pos.x - 320.0,
+                            nd.pos.y,
+                            next_id,
+                            NodeKind::AceStepCheckpoint,
+                            NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
+                                device_idx: d.device_idx,
+                                compute_idx: d.compute_idx,
+                                ..Default::default()
+                            }),
+                        );
+                        m.nodes.push(ck);
+                        next_id += 1;
+                        next_id - 1
+                    }
+                };
+                m.connections.push(ConnData {
+                    from_node: from,
+                    from_port: "model".into(),
+                    to_node: nd.id,
+                    to_port: "model".into(),
+                });
+            }
+            // YuE2 VAE Decode с собственным декодером → копия его чекпойнта
+            // с override'ом VAE.
+            Some(NodeStateData::Yue2VaeDecode(d)) if d.vae_path.is_some() => {
+                let m = out.get_or_insert_with(|| t.clone());
+                let base = model_src.and_then(|id| {
+                    m.nodes
+                        .iter()
+                        .find(|n| n.id == id && n.kind == NodeKind::Yue2Checkpoint)
+                        .and_then(|n| match &n.state {
+                            Some(NodeStateData::Yue2Checkpoint(s)) => Some(s.clone()),
+                            _ => None,
+                        })
+                });
+                let state = Yue2CheckpointStateData {
+                    vae_path: d.vae_path.clone(),
+                    ..base.unwrap_or_default()
+                };
+                let ck = node_at(
+                    nd.pos.x - 320.0,
+                    nd.pos.y,
+                    next_id,
+                    NodeKind::Yue2Checkpoint,
+                    NodeStateData::Yue2Checkpoint(state),
+                );
+                m.nodes.push(ck);
+                m.connections.retain(|c| !(c.to_node == nd.id && c.to_port == "model"));
+                m.connections.push(ConnData {
+                    from_node: next_id,
+                    from_port: "model".into(),
+                    to_node: nd.id,
+                    to_port: "model".into(),
+                });
+                next_id += 1;
+            }
+            // IC-LoRA: каталог depth-модели — в подключённый LTX Checkpoint.
+            Some(NodeStateData::LtxIcLora(d)) if d.depth_model_path.is_some() => {
+                let Some(src) = model_src else { continue };
+                let m = out.get_or_insert_with(|| t.clone());
+                let Some(ck) = m.nodes.iter_mut().find(|n| n.id == src && n.kind == NodeKind::LtxCheckpoint)
+                else {
+                    continue;
+                };
+                // Чекпойнт без state (рукописный шаблон) — serde-дефолты полей.
+                let state = ck.state.get_or_insert_with(|| {
+                    NodeStateData::LtxCheckpoint(serde_json::from_str("{}").expect("serde defaults"))
+                });
+                if let NodeStateData::LtxCheckpoint(s) = state {
+                    if s.depth_model_path.is_none() {
+                        s.depth_model_path = d.depth_model_path.clone();
+                    }
+                }
+            }
+            _ => {}
+        }
     }
     out
 }
@@ -704,18 +810,13 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
         // это операционное состояние и тяжёлые тензоры, восстанавливаются
         // лениво на следующий Play.
         NodeRuntime::AceStepVaeEncode {
-            device_idx,
-            storage_idx,
-            compute_idx,
             chunk_seconds,
             overlap_seconds,
             ..
         } => Some(NodeStateData::AceStepVaeEncode(AceStepVaeStateData {
-            device_idx: device_idx.get_untracked(),
-            storage_idx: storage_idx.get_untracked(),
-            compute_idx: compute_idx.get_untracked(),
             chunk_seconds: chunk_seconds.get_untracked(),
             overlap_seconds: overlap_seconds.get_untracked(),
+            ..Default::default()
         })),
         NodeRuntime::SynCheckpoint {
             model_path,
@@ -737,6 +838,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             model_path,
             gemma_dir,
             upscaler_path,
+            depth_model_path,
             lora_path,
             lora_strength,
             device_idx,
@@ -753,6 +855,9 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 .get_untracked()
                 .map(|p| p.to_string_lossy().to_string()),
             upscaler_path: upscaler_path
+                .get_untracked()
+                .map(|p| p.to_string_lossy().to_string()),
+            depth_model_path: depth_model_path
                 .get_untracked()
                 .map(|p| p.to_string_lossy().to_string()),
             lora_path: lora_path
@@ -841,7 +946,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
         })),
         NodeRuntime::LtxIcLora {
             width, height, duration_seconds, fps_idx, downscale, ref_strength,
-            control_idx, canny_low, canny_high, depth_model_path, seed, ..
+            control_idx, canny_low, canny_high, seed, ..
         } => Some(NodeStateData::LtxIcLora(LtxIcLoraStateData {
             width: width.get_untracked(),
             height: height.get_untracked(),
@@ -852,9 +957,7 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             control_idx: control_idx.get_untracked(),
             canny_low: canny_low.get_untracked(),
             canny_high: canny_high.get_untracked(),
-            depth_model_path: depth_model_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
+            depth_model_path: None,
             seed: seed.get_untracked(),
         })),
         NodeRuntime::LtxAudioInput { audio_path } => {
@@ -926,9 +1029,9 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             repetition_penalty: repetition_penalty.get_untracked(),
             vae_core_frames: vae_core_frames.get_untracked(),
         })),
-        NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. } => {
+        NodeRuntime::Yue2VaeDecode { vae_core_frames, .. } => {
             Some(NodeStateData::Yue2VaeDecode(Yue2VaeDecodeStateData {
-                vae_path: vae_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
+                vae_path: None,
                 vae_core_frames: vae_core_frames.get_untracked(),
             }))
         }
@@ -1333,18 +1436,12 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
         // ── ACE-Step семейство ──────────────────────────────────────
         (
             NodeRuntime::AceStepVaeEncode {
-                device_idx,
-                storage_idx,
-                compute_idx,
                 chunk_seconds,
                 overlap_seconds,
                 ..
             },
             NodeStateData::AceStepVaeEncode(data),
         ) => {
-            device_idx.set(data.device_idx);
-            storage_idx.set(data.storage_idx);
-            compute_idx.set(data.compute_idx);
             chunk_seconds.set(data.chunk_seconds);
             overlap_seconds.set(data.overlap_seconds);
         }
@@ -1581,6 +1678,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
                 model_path,
                 gemma_dir,
                 upscaler_path,
+                depth_model_path,
                 lora_path,
                 lora_strength,
                 device_idx,
@@ -1595,6 +1693,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             model_path.set(data.model_path.as_ref().map(PathBuf::from));
             gemma_dir.set(data.gemma_dir.as_ref().map(PathBuf::from));
             upscaler_path.set(data.upscaler_path.as_ref().map(PathBuf::from));
+            depth_model_path.set(data.depth_model_path.as_ref().map(PathBuf::from));
             lora_path.set(data.lora_path.as_ref().map(PathBuf::from));
             lora_strength.set(data.lora_strength);
             device_idx.set(data.device_idx);
@@ -1689,7 +1788,7 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
         (
             NodeRuntime::LtxIcLora {
                 width, height, duration_seconds, fps_idx, downscale, ref_strength,
-                control_idx, canny_low, canny_high, depth_model_path, seed, ..
+                control_idx, canny_low, canny_high, seed, ..
             },
             NodeStateData::LtxIcLora(data),
         ) => {
@@ -1702,7 +1801,6 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             control_idx.set(data.control_idx);
             canny_low.set(data.canny_low);
             canny_high.set(data.canny_high);
-            depth_model_path.set(data.depth_model_path.as_ref().map(PathBuf::from));
             seed.set(data.seed);
         }
         (
@@ -1790,10 +1888,9 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             vae_core_frames.set(data.vae_core_frames);
         }
         (
-            NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. },
+            NodeRuntime::Yue2VaeDecode { vae_core_frames, .. },
             NodeStateData::Yue2VaeDecode(data),
         ) => {
-            vae_path.set(data.vae_path.as_ref().map(PathBuf::from));
             vae_core_frames.set(data.vae_core_frames);
         }
         (NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. }, NodeStateData::Yue2Transcribe(data)) => {
@@ -2232,6 +2329,62 @@ mod tests {
         let t2 = Template { nodes: nodes_data, connections: conns_data, ..t };
         let ctx2 = roundtrip(&t2);
         assert_eq!(ctx2.nodes.get_untracked().len(), 2);
+    }
+
+    /// Семейные ноды старых графов: VAE Encode подключается к чекпойнту
+    /// ACE-Step, декодер YuE2 уезжает в копию чекпойнта, depth-модель
+    /// IC-LoRA — в подключённый LTX Checkpoint.
+    #[test]
+    fn legacy_family_models_migrate_to_checkpoints() {
+        let json = r#"{
+            "name": "old", "kind": "full",
+            "nodes": [
+                { "id": 1, "kind": "ace_step_checkpoint", "pos": { "x": 0.0, "y": 0.0 } },
+                { "id": 2, "kind": "ace_step_vae_encode", "pos": { "x": 400.0, "y": 0.0 },
+                  "state": { "kind": "AceStepVaeEncode", "data": { "device_idx": 1, "compute_idx": 1 } } },
+                { "id": 3, "kind": "yue2_checkpoint", "pos": { "x": 0.0, "y": 300.0 },
+                  "state": { "kind": "Yue2Checkpoint", "data": { "quant_idx": 2 } } },
+                { "id": 4, "kind": "yue2_vae_decode", "pos": { "x": 400.0, "y": 300.0 },
+                  "state": { "kind": "Yue2VaeDecode", "data": { "vae_path": "/m/yue2-vae-legacy.syn" } } },
+                { "id": 5, "kind": "ltx_checkpoint", "pos": { "x": 0.0, "y": 600.0 } },
+                { "id": 6, "kind": "ltx_ic_lora", "pos": { "x": 400.0, "y": 600.0 },
+                  "state": { "kind": "LtxIcLora", "data": { "control_idx": 2, "depth_model_path": "/m/depth" } } }
+            ],
+            "connections": [
+                { "from_node": 3, "from_port": "model", "to_node": 4, "to_port": "model" },
+                { "from_node": 5, "from_port": "model", "to_node": 6, "to_port": "model" }
+            ]
+        }"#;
+        let t: Template = serde_json::from_str(json).unwrap();
+        let m = super::migrate_inline_models(&t).expect("есть что мигрировать");
+
+        // VAE Encode — к существующему ACE-Step Checkpoint, новых чекпойнтов нет.
+        assert!(m.connections.iter().any(|c| c.from_node == 1 && c.to_node == 2 && c.to_port == "model"));
+        assert_eq!(m.nodes.iter().filter(|n| n.kind == NodeKind::AceStepCheckpoint).count(), 1);
+
+        // YuE2: копия чекпойнта 3 с override'ом VAE, декодер переподключён к ней.
+        let ck = m
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Yue2Checkpoint && n.id != 3)
+            .expect("копия чекпойнта");
+        match &ck.state {
+            Some(NodeStateData::Yue2Checkpoint(s)) => {
+                assert_eq!(s.vae_path.as_deref(), Some("/m/yue2-vae-legacy.syn"));
+                assert_eq!(s.quant_idx, 2);
+            }
+            other => panic!("{other:?}"),
+        }
+        let to_decode: Vec<_> = m.connections.iter().filter(|c| c.to_node == 4 && c.to_port == "model").collect();
+        assert_eq!(to_decode.len(), 1);
+        assert_eq!(to_decode[0].from_node, ck.id);
+
+        // IC-LoRA: depth-модель — в LTX Checkpoint 5.
+        let ltx = m.nodes.iter().find(|n| n.id == 5).unwrap();
+        match &ltx.state {
+            Some(NodeStateData::LtxCheckpoint(s)) => assert_eq!(s.depth_model_path.as_deref(), Some("/m/depth")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

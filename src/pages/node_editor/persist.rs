@@ -726,17 +726,11 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
         // любого из них поднимает фингерпринт → workspace.json пере-
         // сохраняется. `output_version` — для bump'а после успешного Play.
         NodeRuntime::AceStepVaeEncode {
-            device_idx,
-            storage_idx,
-            compute_idx,
             chunk_seconds,
             overlap_seconds,
             output_version,
             ..
         } => {
-            let _ = device_idx.get();
-            let _ = storage_idx.get();
-            let _ = compute_idx.get();
             let _ = chunk_seconds.get();
             let _ = overlap_seconds.get();
             let _ = output_version.get();
@@ -783,6 +777,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             model_path,
             gemma_dir,
             upscaler_path,
+            depth_model_path,
             lora_path,
             lora_strength,
             device_idx,
@@ -795,6 +790,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = model_path.get();
             let _ = gemma_dir.get();
             let _ = upscaler_path.get();
+            let _ = depth_model_path.get();
             let _ = lora_path.get();
             let _ = lora_strength.get();
             let _ = device_idx.get();
@@ -886,7 +882,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
         }
         NodeRuntime::LtxIcLora {
             width, height, duration_seconds, fps_idx, downscale, ref_strength,
-            control_idx, canny_low, canny_high, depth_model_path, seed, output_version, ..
+            control_idx, canny_low, canny_high, seed, output_version, ..
         } => {
             let _ = width.get();
             let _ = height.get();
@@ -897,7 +893,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = control_idx.get();
             let _ = canny_low.get();
             let _ = canny_high.get();
-            let _ = depth_model_path.get();
             let _ = seed.get();
             let _ = output_version.get();
         }
@@ -961,8 +956,7 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = repetition_penalty.get();
             let _ = vae_core_frames.get();
         }
-        NodeRuntime::Yue2VaeDecode { vae_path, vae_core_frames, .. } => {
-            let _ = vae_path.get();
+        NodeRuntime::Yue2VaeDecode { vae_core_frames, .. } => {
             let _ = vae_core_frames.get();
         }
         NodeRuntime::Yue2Transcribe { mode_idx, voices_idx, .. } => {

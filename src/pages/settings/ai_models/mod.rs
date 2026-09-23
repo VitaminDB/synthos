@@ -38,7 +38,6 @@ pub fn view() -> impl Widget {
                 models_dir_card(),
                 models_card(),
                 chat_card(),
-                acestep_paths_card(),
             ]);
 
         Padding::all(32.0).child(
@@ -548,67 +547,3 @@ fn chat_card() -> Box<dyn Widget> {
     )
 }
 
-/// Пути к бандлам ACE-Step: их тянут все ноды семейства, поэтому путь один
-/// на приложение, а не на ноду.
-fn acestep_paths_card() -> Box<dyn Widget> {
-    let ctx = use_context::<AppCtx>();
-    let xl_sig = ctx.acestep_xl_bundle_path;
-    let vae_sig = ctx.acestep_vae_bundle_path;
-    section_card(
-        tr!("settings.ai_models.section.acestep"),
-        vec![
-            row_tip(
-                MI_FOLDER_OPEN,
-                tr!("settings.ai_models.acestep_xl"),
-                tr!("settings.ai_models.acestep_xl.desc"),
-                bundle_picker(xl_sig, tr!("settings.ai_models.acestep_xl.dialog_title")),
-            ),
-            row_tip(
-                MI_FOLDER_OPEN,
-                tr!("settings.ai_models.acestep_vae"),
-                tr!("settings.ai_models.acestep_vae.desc"),
-                bundle_picker(vae_sig, tr!("settings.ai_models.acestep_vae.dialog_title")),
-            ),
-        ],
-    )
-}
-
-fn bundle_picker(sig: RwSignal<Option<String>>, title: impl Into<String>) -> Box<dyn Widget> {
-    let title = title.into();
-    let pick_btn: Box<dyn Widget> = Box::new(
-        Button::new(tr!("app.browse"))
-            .icon(MI_FOLDER_OPEN)
-            .on_click(move || {
-                let dlg = rfd::FileDialog::new()
-                    .add_filter(tr!("settings.ai_models.bundle.filter"), &["syn", "gguf"])
-                    .set_title(title.clone());
-                if let Some(p) = dlg.pick_file() {
-                    sig.set(Some(p.to_string_lossy().to_string()));
-                }
-            })
-            .class("ai-models-apply-button"),
-    );
-    let clear_btn: Box<dyn Widget> = Box::new(
-        Button::new(tr!("settings.ai_models.bundle.clear"))
-            .on_click(move || sig.set(None))
-            .class("ai-models-apply-button"),
-    );
-    let filename = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let label: String = sig
-            .get()
-            .map(|s| {
-                std::path::Path::new(&s)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or(s)
-            })
-            .unwrap_or_else(|| tr!("settings.ai_models.bundle.none"));
-        vec![Box::new(Text::new(label).class("settings-row-desc")) as Box<dyn Widget>]
-    });
-    Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![pick_btn, clear_btn, Box::new(filename)]),
-    )
-}

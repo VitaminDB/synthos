@@ -783,17 +783,6 @@ pub struct AppConfig {
     /// Default = `true`.
     #[serde(default = "default_true")]
     pub syn_chat_prefix_kv: bool,
-    /// ACE-Step «общий» bundle с DiT + проектором + lyric_encoder +
-    /// timbre_encoder + null_condition_emb + FSQ + Detokenizer (один из
-    /// `acestep_v15_xl_base.syn` / `acestep_v15_xl_turbo.syn`). Используется
-    /// всеми ACE-Step нодами семейства, кроме Pack. Редактируется на странице
-    /// Settings → AI Models → ACE-Step.
-    #[serde(default)]
-    pub acestep_xl_bundle_path: Option<String>,
-    /// ACE-Step VAE bundle (`acestep_vae.syn`). Используется нодами
-    /// VaeEncode / VaeDecode.
-    #[serde(default)]
-    pub acestep_vae_bundle_path: Option<String>,
 }
 
 fn default_true() -> bool { true }
@@ -1250,8 +1239,6 @@ impl Default for AppConfig {
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             model_profiles: std::collections::BTreeMap::new(),
             syn_chat_prefix_kv: default_true(),
-            acestep_xl_bundle_path: None,
-            acestep_vae_bundle_path: None,
             models_dir: default_models_dir(),
         }
     }

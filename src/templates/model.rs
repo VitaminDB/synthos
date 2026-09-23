@@ -696,7 +696,9 @@ pub struct LtxIcLoraStateData {
     pub canny_low: f32,
     #[serde(default = "default_ltx_canny_high")]
     pub canny_high: f32,
-    #[serde(default)]
+    /// Legacy: каталог depth-модели жил в ноде, теперь — в LTX Checkpoint.
+    /// Читается только для миграции, не пишется.
+    #[serde(default, skip_serializing)]
     pub depth_model_path: Option<String>,
     #[serde(default)]
     pub seed: u64,
@@ -832,6 +834,9 @@ pub struct LtxCheckpointStateData {
     pub gemma_dir: Option<String>,
     #[serde(default)]
     pub upscaler_path: Option<String>,
+    /// Каталог Depth Anything V2 для IC-LoRA (control=depth).
+    #[serde(default)]
+    pub depth_model_path: Option<String>,
     #[serde(default)]
     pub lora_path: Option<String>,
     #[serde(default = "default_ltx_lora_strength")]
@@ -1447,15 +1452,17 @@ pub struct AceStepLyricEncoderStateData {
     pub language: String,
 }
 
-/// State VaeEncode-ноды: chunk/overlap для длинных файлов. Путь к VAE-bundle
-/// глобальный (Settings → AI Models → ACE-Step), per-нодного path-поля нет.
+/// State VaeEncode-ноды: chunk/overlap для длинных файлов. VAE-бандл,
+/// устройство и точность — от ACE-Step Checkpoint на входе `model`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AceStepVaeStateData {
-    #[serde(default)]
+    /// Legacy: устройство/точность жили в ноде, теперь — в ACE-Step
+    /// Checkpoint. Читаются для совместимости, не пишутся.
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub storage_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default = "default_vae_chunk_seconds")]
     pub chunk_seconds: f32,
@@ -1738,10 +1745,13 @@ impl Default for Yue2GenerateStateData {
     }
 }
 
-/// State YuE2 VAE Decode: чем декодировать и каким тайлом.
+/// State YuE2 VAE Decode: каким тайлом декодировать (декодер — из чекпойнта).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Yue2VaeDecodeStateData {
+    /// Legacy: override декодера жил в ноде, теперь — `vae_path` YuE2
+    /// Checkpoint. Читается только для миграции, не пишется.
+    #[serde(skip_serializing)]
     pub vae_path: Option<String>,
     pub vae_core_frames: u32,
 }

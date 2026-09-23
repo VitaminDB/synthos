@@ -8,10 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
-use crate::context::AppCtx;
-use syngui::context_provider::use_context;
 use syngui::core::sync::Mutex;
-use syngui::tr;
 
 use synaptix_bundle::Bundle;
 use synaptix_core::{device::Device, dtype::DType, tensor::Tensor};
@@ -270,30 +267,4 @@ pub fn detect_xl_bundle_kind(path: &Path) -> XlBundleKind {
     } else {
         XlBundleKind::Unknown
     }
-}
-
-pub fn xl_bundle_path() -> Result<PathBuf, String> {
-    let ctx = use_context::<AppCtx>();
-    let raw = ctx
-        .acestep_xl_bundle_path
-        .get_untracked()
-        .ok_or_else(|| tr!("node.acestep_shared.error.no_xl_bundle"))?;
-    let p = PathBuf::from(&raw);
-    if !p.exists() {
-        return Err(tr!("node.acestep_shared.error.xl_bundle_not_found", path = raw));
-    }
-    Ok(p)
-}
-
-pub fn vae_bundle_path() -> Result<PathBuf, String> {
-    let ctx = use_context::<AppCtx>();
-    let raw = ctx
-        .acestep_vae_bundle_path
-        .get_untracked()
-        .ok_or_else(|| tr!("node.acestep_shared.error.no_vae_bundle"))?;
-    let p = PathBuf::from(&raw);
-    if !p.exists() {
-        return Err(tr!("node.acestep_shared.error.vae_bundle_not_found", path = raw));
-    }
-    Ok(p)
 }

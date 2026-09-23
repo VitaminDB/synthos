@@ -236,61 +236,13 @@ fn _phantom_data_blob(_: DataBlob, _: AceStepBlob) {}
 use syngui::layout::CrossAxisAlignment;
 use syngui::prelude::*;
 use syngui::widgets::input::{Slider, TextField, Toggle};
-use syngui::widgets::{Column, DecoratedBox, Dropdown, DropdownItem, Reactive, Row, ToolButton};
+use syngui::widgets::{DecoratedBox, Dropdown, DropdownItem, Reactive, Row, ToolButton};
 
 use crate::icons::MI_FOLDER_OPEN;
 
 /// Стандартный 10-px горизонтальный padding для field-row'ов ноды.
 pub const NODE_PADDING_H: f32 = 10.0;
 pub const ROW_PADDING_V: f32 = 2.0;
-
-/// File picker для `.syn` bundle'а. При выборе вызывает `on_pick(path)`,
-/// затем сбрасывает loaded_name/error. Слева — иконка-кнопка, справа —
-/// текущее имя файла (reactive).
-pub fn syn_picker_row(
-    model_path: RwSignal<Option<std::path::PathBuf>>,
-    loaded_name: RwSignal<Option<String>>,
-    error_sig: RwSignal<Option<String>>,
-    title: impl Into<String>,
-) -> Box<dyn Widget> {
-    let title = title.into();
-    let title_for_dialog = title.clone();
-    let pick_btn = ToolButton::new(MI_FOLDER_OPEN)
-        .tooltip(title)
-        .on_click(move || {
-            let dlg = rfd::FileDialog::new()
-                .add_filter("Syn bundle", &["syn"])
-                .set_title(&title_for_dialog);
-            if let Some(p) = dlg.pick_file() {
-                model_path.set(Some(p));
-                loaded_name.set(None);
-                error_sig.set(None);
-            }
-        })
-        .class("audio-node-open-btn");
-    let filename_text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let widget: Box<dyn Widget> = match model_path.get() {
-            Some(p) => {
-                let name = p
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.to_string_lossy().to_string());
-                Box::new(Text::new(name).class("audio-node-filename"))
-            }
-            None => Box::new(Text::new(tr!("nodes.common.no_file_selected")).class("audio-node-empty")),
-        };
-        vec![widget]
-    });
-    Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                Box::new(pick_btn) as Box<dyn Widget>,
-                Box::new(filename_text),
-            ]),
-    )
-}
 
 /// Picker каталога моделей (как CLI `--models <dir>`). При выборе пишет путь
 /// в сигнал; справа — имя каталога (reactive). Дефолтные имена 4 бандлов
@@ -492,101 +444,4 @@ pub fn status_row(
         }
         vec![Box::new(Text::new("—").class("audio-node-meta")) as Box<dyn Widget>]
     }))
-}
-
-/// Стандартная сборка body для модельной ACE-Step ноды: подсказка по
-/// модели (что именно нужно загрузить) + file picker + device/storage/
-/// compute dropdowns + кастомные extra-rows + status.
-///
-/// `model_hint` — короткая строка вида `«Qwen 0.6B + TextProjector —
-/// acestep_v15_xl_turbo.syn»`, которая всегда видна над picker-row.
-/// Пустая строка отключает подсказку (используется для Pack-ноды без
-/// модели).
-pub fn standard_body(
-    model_path: RwSignal<Option<std::path::PathBuf>>,
-    device_idx: RwSignal<usize>,
-    storage_idx: RwSignal<usize>,
-    compute_idx: RwSignal<usize>,
-    show_quant: bool,
-    running: RwSignal<bool>,
-    error_sig: RwSignal<Option<String>>,
-    loaded_name: RwSignal<Option<String>>,
-    picker_title: impl Into<String>,
-    busy_label: impl Into<String>,
-    model_hint: impl Into<String>,
-    extra_rows: Vec<Box<dyn Widget>>,
-) -> Box<dyn Widget> {
-    let model_hint = model_hint.into();
-    let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(6 + extra_rows.len());
-    if !model_hint.is_empty() {
-        rows.push(Box::new(
-            Padding::symmetric(NODE_PADDING_H, ROW_PADDING_V).child(
-                Text::new(model_hint).class("node-card-hint acestep-model-hint"),
-            ),
-        ));
-    }
-    rows.push(field_row(&tr!("nodes.common.model"), syn_picker_row(model_path, loaded_name, error_sig, picker_title)));
-    rows.push(field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)));
-    // Quant — только на квантуемых нодах (Sampler/ArLm/TextEncoder); на прочих
-    // дропдаун инертен (DiT/LM/text-enc — единственные с dtype-входом), скрываем.
-    if show_quant {
-        rows.push(field_row("Quant", make_dropdown(QUANT_OPTIONS, storage_idx)));
-    }
-    rows.push(field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)));
-    rows.extend(extra_rows);
-    rows.push(field_row(
-        &tr!("nodes.common.status"),
-        status_row(running, error_sig, loaded_name, busy_label, "acestep-node-running"),
-    ));
-    Box::new(
-        Column::new()
-            .gap(3.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .children(rows),
-    )
-}
-
-/// Body для ACE-Step ноды БЕЗ собственного path-picker'а: только подсказка
-/// (откуда тянутся веса) + device/storage/compute dropdowns + extra rows +
-/// status. Используется TimbreEncoder/VaeEncode/VaeDecode/Sampler — путь к
-/// xl-/vae-bundle берётся из глобального Settings → AI Models → ACE-Step
-/// preset'а.
-pub fn standard_body_no_path(
-    device_idx: RwSignal<usize>,
-    storage_idx: RwSignal<usize>,
-    compute_idx: RwSignal<usize>,
-    show_quant: bool,
-    running: RwSignal<bool>,
-    error_sig: RwSignal<Option<String>>,
-    loaded_name: RwSignal<Option<String>>,
-    busy_label: impl Into<String>,
-    model_hint: impl Into<String>,
-    extra_rows: Vec<Box<dyn Widget>>,
-) -> Box<dyn Widget> {
-    let model_hint = model_hint.into();
-    let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(5 + extra_rows.len());
-    if !model_hint.is_empty() {
-        rows.push(Box::new(
-            Padding::symmetric(NODE_PADDING_H, ROW_PADDING_V).child(
-                Text::new(model_hint).class("node-card-hint acestep-model-hint"),
-            ),
-        ));
-    }
-    rows.push(field_row("Device", make_dropdown(DEVICE_OPTIONS, device_idx)));
-    // Quant — только на квантуемой ноде Sampler (DiT); на Timbre/VAE инертен → скрыт.
-    if show_quant {
-        rows.push(field_row("Quant", make_dropdown(QUANT_OPTIONS, storage_idx)));
-    }
-    rows.push(field_row("Compute", make_dropdown(COMPUTE_OPTIONS, compute_idx)));
-    rows.extend(extra_rows);
-    rows.push(field_row(
-        &tr!("nodes.common.status"),
-        status_row(running, error_sig, loaded_name, busy_label, "acestep-node-running"),
-    ));
-    Box::new(
-        Column::new()
-            .gap(3.0)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .children(rows),
-    )
 }

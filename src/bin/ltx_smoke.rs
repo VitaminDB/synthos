@@ -476,10 +476,14 @@ fn run_ic_lora(
     {
         let inst = node(&ctx, n_ckpt);
         let g = inst.runtime.lock().map_err(|_| "lock")?;
-        if let NodeRuntime::LtxCheckpoint { model_path, gemma_dir, lora_path, .. } = &*g {
+        if let NodeRuntime::LtxCheckpoint { model_path, gemma_dir, lora_path, depth_model_path, .. } = &*g {
             model_path.set(Some(ckpt.clone()));
             gemma_dir.set(Some(gemma.clone()));
             lora_path.set(Some(PathBuf::from(lora)));
+            // SYN_SMOKE_DEPTH=<dir> — каталог Depth Anything V2 для control=depth.
+            if let Ok(d) = std::env::var("SYN_SMOKE_DEPTH") {
+                depth_model_path.set(Some(PathBuf::from(d)));
+            }
         }
     }
     {
@@ -499,19 +503,14 @@ fn run_ic_lora(
     {
         let inst = node(&ctx, n_ic);
         let g = inst.runtime.lock().map_err(|_| "lock")?;
-        if let NodeRuntime::LtxIcLora { width: w, height: h, duration_seconds, control_idx, depth_model_path, .. } = &*g {
+        if let NodeRuntime::LtxIcLora { width: w, height: h, duration_seconds, control_idx, .. } = &*g {
             w.set(width);
             h.set(height);
             duration_seconds.set(dur);
-            // SYN_SMOKE_CONTROL=canny|depth + SYN_SMOKE_DEPTH=<dir>.
+            // SYN_SMOKE_CONTROL=canny|depth (depth — с SYN_SMOKE_DEPTH на чекпойнте).
             match std::env::var("SYN_SMOKE_CONTROL").as_deref() {
                 Ok("canny") => control_idx.set(1),
-                Ok("depth") => {
-                    control_idx.set(2);
-                    if let Ok(d) = std::env::var("SYN_SMOKE_DEPTH") {
-                        depth_model_path.set(Some(PathBuf::from(d)));
-                    }
-                }
+                Ok("depth") => control_idx.set(2),
                 _ => {}
             }
         }

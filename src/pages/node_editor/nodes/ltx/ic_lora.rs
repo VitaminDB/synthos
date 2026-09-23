@@ -68,18 +68,18 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Ok(g) => match &*g {
             NodeRuntime::LtxIcLora {
                 width, height, duration_seconds, fps_idx, downscale, ref_strength,
-                control_idx, canny_low, canny_high, depth_model_path, seed,
+                control_idx, canny_low, canny_high, seed,
                 running, error, progress_pct, cancel, ..
             } => Some((
                 *width, *height, *duration_seconds, *fps_idx, *downscale, *ref_strength,
-                *control_idx, *canny_low, *canny_high, *depth_model_path, *seed,
+                *control_idx, *canny_low, *canny_high, *seed,
                 *running, *error, *progress_pct, cancel.clone(),
             )),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((width, height, duration_seconds, fps_idx, downscale, ref_strength, control_idx, canny_low, canny_high, depth_model_path, seed, running, error, progress_pct, cancel)) =
+    let Some((width, height, duration_seconds, fps_idx, downscale, ref_strength, control_idx, canny_low, canny_high, seed, running, error, progress_pct, cancel)) =
         snapshot
     else {
         return Box::new(
@@ -97,10 +97,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         field_row("Control", super::super::acestep::make_dropdown(super::CONTROL_OPTIONS, control_idx)),
         field_row("Canny low", make_slider_row(canny_low, 0.0, 1.0, 0.01, 2)),
         field_row("Canny high", make_slider_row(canny_high, 0.0, 1.0, 0.01, 2)),
-        field_row(
-            &tr!("node.ltx_ic_lora.field.depth_model"),
-            super::dir_picker_row(tr!("node.ltx_ic_lora.field.depth_dir_label"), depth_model_path),
-        ),
         field_row("Seed", make_seed_slider(seed)),
         field_row(&tr!("nodes.common.progress"), progress_row(running, progress_pct)),
         field_row(&tr!("app.cancel"), super::cancel_button(running, cancel)),
@@ -122,18 +118,18 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         Ok(g) => match &*g {
             NodeRuntime::LtxIcLora {
                 width, height, duration_seconds, fps_idx, downscale, ref_strength,
-                control_idx, canny_low, canny_high, depth_model_path, seed,
+                control_idx, canny_low, canny_high, seed,
                 running, error, progress_pct, cancel, v_out, a_out, output_version,
             } => Some((
                 *width, *height, *duration_seconds, *fps_idx, *downscale, *ref_strength,
-                *control_idx, *canny_low, *canny_high, *depth_model_path, *seed,
+                *control_idx, *canny_low, *canny_high, *seed,
                 *running, *error, *progress_pct, cancel.clone(), v_out.clone(), a_out.clone(), *output_version,
             )),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((width, height, duration_seconds, fps_idx, downscale, ref_strength, control_idx, canny_low, canny_high, depth_model_path, seed, running, error, progress_pct, cancel, v_out, a_out, output_version)) =
+    let Some((width, height, duration_seconds, fps_idx, downscale, ref_strength, control_idx, canny_low, canny_high, seed, running, error, progress_pct, cancel, v_out, a_out, output_version)) =
         snapshot
     else {
         return;
@@ -177,7 +173,8 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let ctrl = control_idx.get_untracked();
     let c_low = canny_low.get_untracked();
     let c_high = canny_high.get_untracked();
-    let depth_dir = depth_model_path.get_untracked();
+    // Каталог depth-модели — в LTX Checkpoint, как и остальные подмодели.
+    let depth_dir = handle.depth_model_path.clone();
     if ctrl == 2 && depth_dir.is_none() {
         error.set(Some(tr!("node.ltx_ic_lora.err.requires_depth_dir")));
         running.set(false);

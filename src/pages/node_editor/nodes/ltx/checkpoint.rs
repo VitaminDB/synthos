@@ -29,6 +29,7 @@ impl NodeExecutor for CheckpointExec {
                     model_path,
                     gemma_dir,
                     upscaler_path,
+                    depth_model_path,
                     lora_path,
                     lora_strength,
                     device_idx,
@@ -38,10 +39,14 @@ impl NodeExecutor for CheckpointExec {
                     resident,
                     handle_cache,
                 } => {
-                    let (mp, gd) = if track {
-                        (model_path.get(), gemma_dir.get())
+                    let (mp, gd, dp) = if track {
+                        (model_path.get(), gemma_dir.get(), depth_model_path.get())
                     } else {
-                        (model_path.get_untracked(), gemma_dir.get_untracked())
+                        (
+                            model_path.get_untracked(),
+                            gemma_dir.get_untracked(),
+                            depth_model_path.get_untracked(),
+                        )
                     };
                     let (up, lp, ls, di, qd, qe, ci, res) = if track {
                         (
@@ -72,6 +77,7 @@ impl NodeExecutor for CheckpointExec {
                                 model_path,
                                 gemma_dir,
                                 upscaler_path: up,
+                                depth_model_path: dp,
                                 lora_path: lp,
                                 lora_strength: ls,
                                 device_idx: di,
@@ -135,6 +141,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 model_path,
                 gemma_dir,
                 upscaler_path,
+                depth_model_path,
                 lora_path,
                 lora_strength,
                 device_idx,
@@ -147,6 +154,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 *model_path,
                 *gemma_dir,
                 *upscaler_path,
+                *depth_model_path,
                 *lora_path,
                 *lora_strength,
                 *device_idx,
@@ -163,6 +171,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         model_path,
         gemma_dir,
         upscaler_path,
+        depth_model_path,
         lora_path,
         lora_strength,
         device_idx,
@@ -208,6 +217,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 &[("Syn bundle", &["syn"]), ("Safetensors", &["safetensors"])],
                 |_| {},
             ),
+        ),
+        field_row(
+            &tr!("node.ltx_checkpoint.field.depth_model"),
+            dir_picker_row(tr!("node.ltx_checkpoint.picker.depth_dir"), depth_model_path),
         ),
         field_row(
             "LoRA",

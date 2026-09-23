@@ -440,8 +440,6 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let code_editor_font_size = use_signal(saved.code_editor_font_size);
     let model_profiles = use_signal(saved.model_profiles.clone());
     let syn_chat_max_image_tokens = use_signal(saved.syn_chat_max_image_tokens);
-    let acestep_xl_bundle_path = use_signal(saved.acestep_xl_bundle_path.clone());
-    let acestep_vae_bundle_path = use_signal(saved.acestep_vae_bundle_path.clone());
     let models_dir = use_signal(saved.models_dir.clone());
     let panels = context::PanelsCtx::from_config(&saved.panels);
     let rail_separators = use_signal(saved.rail_separators.clone());
@@ -487,8 +485,6 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         model_profiles,
         syn_chat_max_image_tokens,
         models_dir,
-        acestep_xl_bundle_path,
-        acestep_vae_bundle_path,
         panels,
         rail_separators,
         rail_order,
@@ -584,8 +580,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     let kb_auto_augment = ctx.kb.auto_augment;
     let model_profiles = ctx.model_profiles;
     let syn_chat_max_image_tokens = ctx.syn_chat_max_image_tokens;
-    let acestep_xl_bundle_path = ctx.acestep_xl_bundle_path;
-    let acestep_vae_bundle_path = ctx.acestep_vae_bundle_path;
     let models_dir_sig = ctx.models_dir;
     let panels = ctx.panels;
     let rail_separators = ctx.rail_separators;
@@ -738,8 +732,6 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_token: hf.token.get(),
             model_profiles: model_profiles.get(),
             syn_chat_max_image_tokens: syn_chat_max_image_tokens.get(),
-            acestep_xl_bundle_path: acestep_xl_bundle_path.get(),
-            acestep_vae_bundle_path: acestep_vae_bundle_path.get(),
             models_dir: models_dir_sig.get(),
             // Layout-разделители страницы Syn-чата. `.get()` подписывает
             // effect: drag дивайдера → set() сигнала → autosave пишет новые

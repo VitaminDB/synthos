@@ -1,6 +1,7 @@
 //! `AceStepVaeEncode` — VAE encoder (audio → latent `[B, 64, T_latent]`).
 //!
-//! Input: `audio: Audio` (AudioBuffer, любая sample_rate / mono или stereo).
+//! Inputs: `model` — хэндл ACE-Step Checkpoint (VAE-бандл, device, compute);
+//! `audio: Audio` (AudioBuffer, любая sample_rate / mono или stereo).
 //! Output: `latent: Data(Latent)` — `[1, 64, T_latent]` где T_latent =
 //! ceil(T_audio_48k / 1920).
 //!
@@ -27,9 +28,14 @@ use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{
     AceStepBlob, AceStepLoadedCfg, DataBlob, NodeInstance, NodeRuntime, PortValue,
 };
-use super::shared::{load_vae, vae_bundle_path};
+use syngui::layout::CrossAxisAlignment;
+use syngui::widgets::Column;
+
+use super::generate::resolve_vae;
+use super::shared::load_vae;
 use super::{
-    compute_from_idx, current_input_audio, device_from_idx, standard_body_no_path,
+    compute_from_idx, current_input_audio, current_input_model, device_from_idx, field_row,
+    status_row,
 };
 
 const TARGET_SAMPLE_RATE: u32 = 48_000;
@@ -44,6 +50,7 @@ pub struct VaeEncodeExec;
 
 impl NodeExecutor for VaeEncodeExec {
     fn evaluate(&self, ctx: &mut EvalContext<'_>) {
+        let _model = ctx.read_input("model");
         let _audio = ctx.read_input("audio");
         let track = ctx.track;
         let pv = match ctx.runtime().lock() {
@@ -92,43 +99,29 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::AceStepVaeEncode {
-                device_idx,
-                storage_idx,
-                compute_idx,
                 running,
                 error,
                 loaded_name,
                 ..
-            } => Some((
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
-                *running,
-                *error,
-                *loaded_name,
-            )),
+            } => Some((*running, *error, *loaded_name)),
             _ => None,
         },
         Err(_) => None,
     };
-    let Some((device_idx, storage_idx, compute_idx, running, error, loaded_name)) = snapshot
-    else {
+    let Some((running, error, loaded_name)) = snapshot else {
         return Box::new(
             Text::new(tr!("nodes.common.invalid_runtime", name = "AceStepVaeEncode"))
                 .class("node-card-field-error"),
         );
     };
-    standard_body_no_path(
-        device_idx,
-        storage_idx,
-        compute_idx,
-        false,
-        running,
-        error,
-        loaded_name,
-        "VAE encode…",
-        tr!("node.acestep_vae_encode.model_hint"),
-        Vec::new(),
+    Box::new(
+        Column::new()
+            .gap(3.0)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .children(vec![field_row(
+                &tr!("nodes.common.status"),
+                status_row(running, error, loaded_name, "VAE encode…", "acestep-node-running"),
+            )]),
     )
 }
 
@@ -136,9 +129,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::AceStepVaeEncode {
-                device_idx,
-                storage_idx,
-                compute_idx,
                 chunk_seconds,
                 overlap_seconds,
                 loaded_cfg,
@@ -149,7 +139,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 output_version,
                 cancel,
             } => Some((
-                (*device_idx, *storage_idx, *compute_idx),
                 (*chunk_seconds, *overlap_seconds),
                 loaded_cfg.clone(),
                 *running,
@@ -164,7 +153,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         Err(_) => None,
     };
     let Some((
-        (device_idx, storage_idx, compute_idx),
         (chunk_seconds, overlap_seconds),
         loaded_cfg,
         running,
@@ -178,7 +166,12 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     };
 
-    let bundle_path = match vae_bundle_path() {
+    // VAE, устройство и точность — только от ACE-Step Checkpoint.
+    let Some(handle) = current_input_model(ctx, node.id, "model") else {
+        error.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let bundle_path = match resolve_vae(&handle) {
         Ok(p) => p,
         Err(e) => {
             error.set(Some(e));
@@ -199,9 +192,11 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     error.set(None);
     cancel.store(false, Ordering::SeqCst);
 
-    let device_i = device_idx.get_untracked();
-    let storage_i = storage_idx.get_untracked();
-    let compute_i = compute_idx.get_untracked();
+    // Индексы чекпойнта — те же списки `DEVICE_OPTIONS`/`COMPUTE_OPTIONS`;
+    // квант VAE не нужен.
+    let device_i = handle.device_idx;
+    let storage_i = 0;
+    let compute_i = handle.compute_idx;
     let cfg = AceStepLoadedCfg {
         model_path: bundle_path.clone(),
         device_idx: device_i,

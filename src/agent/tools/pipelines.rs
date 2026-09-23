@@ -405,11 +405,6 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("quant_enc_idx", acestep::QUANT_OPTIONS),
             ("compute_idx", acestep::COMPUTE_OPTIONS),
         ],
-        NodeKind::AceStepVaeEncode => vec![
-            ("device_idx", acestep::DEVICE_OPTIONS),
-            ("storage_idx", acestep::QUANT_OPTIONS),
-            ("compute_idx", acestep::COMPUTE_OPTIONS),
-        ],
         NodeKind::AceStepGenerate => vec![
             ("mode_idx", acestep::generate::MODE_OPTIONS),
             ("keyscale_idx", acestep::generate::KEYSCALE_OPTIONS),
@@ -810,16 +805,16 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
             .iter()
             .any(|c| c.to_node == n.id && c.to_port == "model");
         let Ok(rt) = n.runtime.lock() else { continue };
-        let mut fields: Vec<&str> = rt.missing_model_paths();
-        if n.kind.needs_syn_checkpoint() && !has_model_input {
-            fields.push("model ← SynCheckpoint");
+        let mut fields: Vec<String> = rt.missing_model_paths().into_iter().map(String::from).collect();
+        if let (Some(src), false) = (n.kind.model_input_source(), has_model_input) {
+            fields.push(format!("model ← {src}"));
         }
         // Upscaler требуется только графам со стадией Upscale ×2.
         let needs_upscaler = nodes
             .iter()
             .any(|x| x.enabled.get_untracked() && x.kind == NodeKind::LtxUpscale);
         if needs_upscaler && rt.ltx_upscaler_missing() {
-            fields.push("upscaler_path");
+            fields.push("upscaler_path".into());
         }
         if !fields.is_empty() {
             out.push(format!(
@@ -2012,15 +2007,15 @@ mod tests {
     #[test]
     fn describe_changes_labels_indices_and_warns_on_cpu() {
         use serde_json::json;
-        let cpu = json!({"kind": "AceStepVaeEncode", "data": {"device_idx": 0, "chunk_seconds": 20.0}});
-        let fields = vec!["device_idx".to_string(), "chunk_seconds".to_string()];
-        let (lines, warning) = describe_changes(NodeKind::AceStepVaeEncode, &cpu, &fields);
-        assert_eq!(lines, vec!["device_idx=0 (CPU)", "chunk_seconds"]);
+        let cpu = json!({"kind": "AceStepCheckpoint", "data": {"device_idx": 0, "models_dir": "/m"}});
+        let fields = vec!["device_idx".to_string(), "models_dir".to_string()];
+        let (lines, warning) = describe_changes(NodeKind::AceStepCheckpoint, &cpu, &fields);
+        assert_eq!(lines, vec!["device_idx=0 (CPU)", "models_dir"]);
         assert!(warning.expect("warning").contains("CPU"));
 
-        let gpu = json!({"kind": "AceStepVaeEncode", "data": {"device_idx": 1}});
+        let gpu = json!({"kind": "AceStepCheckpoint", "data": {"device_idx": 1}});
         let (lines, warning) =
-            describe_changes(NodeKind::AceStepVaeEncode, &gpu, &["device_idx".to_string()]);
+            describe_changes(NodeKind::AceStepCheckpoint, &gpu, &["device_idx".to_string()]);
         assert_eq!(lines, vec!["device_idx=1 (GPU (auto))"]);
         assert!(warning.is_none());
     }
@@ -2047,15 +2042,5 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "*_idx fields without decoding: {missing:?}");
-    }
-
-    /// VAE Encode по умолчанию на GPU, как ACE-Step Checkpoint.
-    #[test]
-    fn acestep_vae_encode_defaults_to_gpu() {
-        use crate::pages::node_editor::nodes::acestep;
-        let js = state_example(NodeKind::AceStepVaeEncode).expect("state");
-        let v: serde_json::Value = serde_json::from_str(&js).expect("state json");
-        let idx = v["data"]["device_idx"].as_u64().expect("device_idx") as usize;
-        assert_eq!(acestep::DEVICE_OPTIONS[idx], "GPU (auto)");
     }
 }

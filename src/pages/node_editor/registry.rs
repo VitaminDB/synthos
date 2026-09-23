@@ -2593,13 +2593,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
         NodeKind::AsrGigaam => {
             use crate::pages::node_editor::types::PrevSource;
             NodeRuntime::AsrGigaam {
-                model_path: use_signal(None),
-                // 0 = CPU, 1 = GPU auto. См. nodes::asr_gigaam::DEVICE_OPTIONS.
-                device_idx: use_signal(0_usize),
-                // f16 — оптимум для GigaAM на CUDA. На CPU все равно
-                // fallback'нется в F32 внутри Transcriber::load.
-                storage_idx: use_signal(asr_gigaam::default_storage_idx()),
-                compute_idx: use_signal(asr_gigaam::default_compute_idx()),
                 transcriber: Arc::new(Mutex::new(None)),
                 loaded_cfg: Arc::new(Mutex::new(None)),
                 running: use_signal(false),
@@ -2623,11 +2616,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             }
         }
         NodeKind::OmniVoice => NodeRuntime::OmniVoice {
-            model_path: use_signal(None),
-            // 0 = CPU, 1 = GPU auto. См. nodes::omnivoice::DEVICE_OPTIONS.
-            device_idx: use_signal(0_usize),
-            storage_idx: use_signal(omnivoice::default_storage_idx()),
-            compute_idx: use_signal(omnivoice::default_compute_idx()),
             instruct: use_signal(String::new()),
             ref_text_field: use_signal(String::new()),
             // GigaAM — RU-моноязычная; OmniVoice мультиязычная, но дефолт
@@ -2649,9 +2637,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::VoxCpm2 => NodeRuntime::VoxCpm2 {
-            model_path: use_signal(None),
-            device_idx: use_signal(voxcpm2::default_device_idx()),
-            compute_idx: use_signal(voxcpm2::default_compute_idx()),
             prompt_text_field: use_signal(String::new()),
             cfg_value: use_signal(2.0_f32),
             n_timesteps: use_signal(10_u32),
@@ -2666,9 +2651,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             output_version: use_signal(0_u32),
         },
         NodeKind::VibeVoice => NodeRuntime::VibeVoice {
-            model_path: use_signal(None),
-            device_idx: use_signal(vibevoice::default_device_idx()),
-            compute_idx: use_signal(vibevoice::default_compute_idx()),
             script_field: use_signal(String::new()),
             cfg_value: use_signal(1.3_f32),
             ddpm_steps: use_signal(20_u32),
@@ -2693,10 +2675,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             handle_cache: Arc::new(Mutex::new(None)),
         },
         NodeKind::Llm => NodeRuntime::Llm {
-            model_path: use_signal(None),
-            device_idx: use_signal(llm::default_device_idx()),
-            quant_idx: use_signal(llm::default_quant_idx()),
-            compute_idx: use_signal(llm::default_compute_idx()),
             system_prompt: use_signal(String::new()),
             context: use_signal(4096_u32),
             think: use_signal(false),
@@ -2719,10 +2697,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
         NodeKind::SortformerDiarizer => {
             use crate::pages::node_editor::types::PrevSource;
             NodeRuntime::SortformerDiarizer {
-                model_path: use_signal(None),
-                device_idx: use_signal(0_usize),
-                storage_idx: use_signal(sortformer_diarizer::default_storage_idx()),
-                compute_idx: use_signal(sortformer_diarizer::default_compute_idx()),
                 threshold: use_signal(0.5_f32),
                 allow_overlap: use_signal(true),
                 diarizer: Arc::new(Mutex::new(None)),

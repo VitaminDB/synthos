@@ -38,7 +38,7 @@ use syngui::widgets::input::TextField;
 use syngui::widgets::{Column, Reactive};
 
 use super::super::controls::{
-    node_dropdown_field, node_field_row, node_file_picker, node_int_slider_field, node_slider_field,
+    node_field_row, node_int_slider_field, node_slider_field,
 };
 
 use synaptix::facade::tts::core::{GenerationConfig, GenerationMode, VoiceClonePrompt};
@@ -176,10 +176,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::OmniVoice {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
                 instruct,
                 ref_text_field,
                 language,
@@ -196,10 +192,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 output_buf,
                 output_version,
             } => Some((
-                *model_path,
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
                 *instruct,
                 *ref_text_field,
                 *language,
@@ -221,10 +213,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        storage_idx,
-        compute_idx,
         instruct,
         ref_text_field,
         language,
@@ -249,30 +237,18 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    // 1. Модель: хэндл Syn Checkpoint (вход `model`) переопределяет
-    //    собственные поля; оттуда же — резидентность. Без хэндла —
-    //    legacy-поведение слота.
-    let handle = super::current_input_syn_model(ctx, node.id);
-    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
-    let cfg = match &handle {
-        Some(h) => OmniLoadedCfg {
-            bundle_path: h.model_path.clone(),
-            device_idx: map_handle_device(h.device_idx),
-            storage_idx: map_handle_storage(h.storage_idx),
-            compute_idx: map_handle_compute(h.compute_idx),
-        },
-        None => {
-            let Some(bundle_path) = model_path.get_untracked() else {
-                error_sig.set(Some(tr!("node.omnivoice.err.select_model")));
-                return;
-            };
-            OmniLoadedCfg {
-                bundle_path,
-                device_idx: device_idx.get_untracked(),
-                storage_idx: storage_idx.get_untracked(),
-                compute_idx: compute_idx.get_untracked(),
-            }
-        }
+    // Модель — только из Syn-чекпойнта на входе `model`; оттуда же
+    // предпочтения device/storage/compute и резидентность.
+    let Some(h) = super::current_input_syn_model(ctx, node.id) else {
+        error_sig.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let resident = h.resident;
+    let cfg = OmniLoadedCfg {
+        bundle_path: h.model_path.clone(),
+        device_idx: map_handle_device(h.device_idx),
+        storage_idx: map_handle_storage(h.storage_idx),
+        compute_idx: map_handle_compute(h.compute_idx),
     };
 
     // 2. Target-text — обязателен.
@@ -586,10 +562,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::OmniVoice {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
                 instruct,
                 ref_text_field,
                 language,
@@ -598,17 +570,11 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 t_shift,
                 speed,
                 seed,
-                pipeline,
-                loaded_cfg,
                 running,
                 error,
                 loaded_name,
                 ..
             } => Some((
-                *model_path,
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
                 *instruct,
                 *ref_text_field,
                 *language,
@@ -617,8 +583,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 *t_shift,
                 *speed,
                 *seed,
-                pipeline.clone(),
-                loaded_cfg.clone(),
                 *running,
                 *error,
                 *loaded_name,
@@ -628,10 +592,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        storage_idx,
-        compute_idx,
         instruct,
         ref_text_field,
         language,
@@ -640,8 +600,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         t_shift,
         speed,
         seed,
-        pipeline_handle,
-        loaded_cfg_handle,
         running,
         error_sig,
         loaded_name,
@@ -649,30 +607,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     else {
         return error_widget(tr!("nodes.common.invalid_runtime", name = "OmniVoice"));
     };
-
-    let pipeline_h = pipeline_handle.clone();
-    let loaded_h = loaded_cfg_handle.clone();
-    let on_pick_error = error_sig;
-    let on_pick_loaded_name = loaded_name;
-    let model_control: Box<dyn Widget> = node_file_picker(
-        tr!("node.omnivoice.pick_model_tooltip"),
-        model_path,
-        &[("Syn bundle", &["syn"])],
-        move |_p| {
-            if let Ok(mut g) = pipeline_h.lock() {
-                *g = None;
-            }
-            if let Ok(mut g) = loaded_h.lock() {
-                *g = None;
-            }
-            on_pick_loaded_name.set(None);
-            on_pick_error.set(None);
-        },
-    );
-
-    let device_dd = node_dropdown_field(DEVICE_OPTIONS, device_idx);
-    let storage_dd = node_dropdown_field(STORAGE_OPTIONS, storage_idx);
-    let compute_dd = node_dropdown_field(COMPUTE_OPTIONS, compute_idx);
 
     // ── Row 5: Instruct (textfield) ─────────────────────────────────────
     //
@@ -755,10 +689,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row(&tr!("nodes.common.model"), model_control),
-            node_field_row("Device", device_dd),
-            node_field_row("Storage", storage_dd),
-            node_field_row("Compute", compute_dd),
             node_field_row("Instruct", instruct_field),
             node_field_row("Ref text", ref_text_widget),
             node_field_row("Language", language_widget),

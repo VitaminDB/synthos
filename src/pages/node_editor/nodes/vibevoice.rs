@@ -14,7 +14,7 @@ use synaptix_tts_vibevoice::pipeline::{VibeVoicePipeline, VoiceSample};
 use synaptix_tts_vibevoice::processor::plain_text_to_script;
 
 use super::super::controls::{
-    node_dropdown_field, node_field_row, node_file_picker, node_int_slider_field, node_slider_field,
+    node_field_row, node_int_slider_field, node_slider_field,
 };
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::state::NodeEditorCtx;
@@ -101,9 +101,6 @@ pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 }
 
 struct Snapshot {
-    model_path: RwSignal<Option<std::path::PathBuf>>,
-    device_idx: RwSignal<usize>,
-    compute_idx: RwSignal<usize>,
     script_field: RwSignal<String>,
     cfg_value: RwSignal<f32>,
     ddpm_steps: RwSignal<u32>,
@@ -123,9 +120,6 @@ fn snapshot(node: &NodeInstance) -> Option<Snapshot> {
     match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::VibeVoice {
-                model_path,
-                device_idx,
-                compute_idx,
                 script_field,
                 cfg_value,
                 ddpm_steps,
@@ -140,9 +134,6 @@ fn snapshot(node: &NodeInstance) -> Option<Snapshot> {
                 output_buf,
                 output_version,
             } => Some(Snapshot {
-                model_path: *model_path,
-                device_idx: *device_idx,
-                compute_idx: *compute_idx,
                 script_field: *script_field,
                 cfg_value: *cfg_value,
                 ddpm_steps: *ddpm_steps,
@@ -169,25 +160,16 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    let handle = super::current_input_syn_model(ctx, node.id);
-    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
-    let cfg = match &handle {
-        Some(h) => VibeVoiceLoadedCfg {
-            bundle_path: h.model_path.clone(),
-            device_idx: map_handle_device(h.device_idx),
-            compute_idx: map_handle_compute(h.compute_idx),
-        },
-        None => {
-            let Some(bundle_path) = snap.model_path.get_untracked() else {
-                snap.error.set(Some(tr!("node.vibevoice.error.no_bundle")));
-                return;
-            };
-            VibeVoiceLoadedCfg {
-                bundle_path,
-                device_idx: snap.device_idx.get_untracked(),
-                compute_idx: snap.compute_idx.get_untracked(),
-            }
-        }
+    // Модель — только из Syn-чекпойнта на входе `model`.
+    let Some(h) = super::current_input_syn_model(ctx, node.id) else {
+        snap.error.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let resident = h.resident;
+    let cfg = VibeVoiceLoadedCfg {
+        bundle_path: h.model_path.clone(),
+        device_idx: map_handle_device(h.device_idx),
+        compute_idx: map_handle_compute(h.compute_idx),
     };
 
     let raw_script = current_input_text(ctx, node.id, "script")
@@ -412,26 +394,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         return error_widget(tr!("nodes.common.invalid_runtime", name = "VibeVoice"));
     };
 
-    let pipeline_h = snap.pipeline.clone();
-    let loaded_h = snap.loaded_cfg.clone();
-    let pick_error = snap.error;
-    let pick_name = snap.loaded_name;
-    let model_control: Box<dyn Widget> = node_file_picker(
-        tr!("node.vibevoice.tooltip.pick_bundle"),
-        snap.model_path,
-        &[("Syn bundle", &["syn"])],
-        move |_p| {
-            if let Ok(mut g) = pipeline_h.lock() {
-                *g = None;
-            }
-            if let Ok(mut g) = loaded_h.lock() {
-                *g = None;
-            }
-            pick_name.set(None);
-            pick_error.set(None);
-        },
-    );
-
     let script_field = snap.script_field;
     let script_widget = Box::new(
         MultilineTextEdit::new()
@@ -484,9 +446,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row(&tr!("nodes.common.model"), model_control),
-            node_field_row("Device", node_dropdown_field(DEVICE_OPTIONS, snap.device_idx)),
-            node_field_row("Compute", node_dropdown_field(COMPUTE_OPTIONS, snap.compute_idx)),
             node_field_row(&tr!("node.vibevoice.field.script"), script_widget),
             node_field_row("CFG", node_slider_field(snap.cfg_value, 0.5, 3.0, 0.05, 2)),
             node_field_row("Steps", node_int_slider_field(snap.ddpm_steps, 5, 50, 1)),

@@ -233,6 +233,8 @@ const PIPELINES_RULES: &str =
      (main dir and HF cache) is in pipelines list — the \
      \"Models in directory\" sections; fill empty checkpoint \
      model_path values via apply set_state before run. \
+     LLM/TTS/ASR/diarization nodes have no model fields of \
+     their own — wire a SynCheckpoint into their `model` input. \
      Numeric `*_idx` state fields (quant, device, aspect) are \
      decoded in action=nodes under the state example.\n\
      - Re-running the same graph — with a new run_id.\n\

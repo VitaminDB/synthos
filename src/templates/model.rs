@@ -1108,13 +1108,15 @@ fn default_ffmpeg_size() -> (f32, f32) {
 /// чтобы шаблон удерживал ранее полученный результат до следующего Play.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct SortformerDiarizerStateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub storage_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default = "default_sortformer_threshold")]
     pub threshold: f32,
@@ -1138,13 +1140,15 @@ fn default_sortformer_allow_overlap() -> bool {
 /// удерживал ранее полученный транскрибат до повторного Play.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct AsrGigaamStateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub storage_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default)]
     pub output_text: String,
@@ -1154,13 +1158,15 @@ pub struct AsrGigaamStateData {
 /// `synaptix::facade::tts::core::GenerationConfig::default()` в качестве дефолтов.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct OmniVoiceStateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub storage_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default)]
     pub instruct: String,
@@ -1185,13 +1191,15 @@ pub struct OmniVoiceStateData {
 /// сериализуется — грузится лениво на первый Run.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct LlmStateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub quant_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default)]
     pub system_prompt: String,
@@ -1217,11 +1225,13 @@ pub struct LlmStateData {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct VoxCpm2StateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default)]
     pub prompt_text: String,
@@ -1237,11 +1247,13 @@ pub struct VoxCpm2StateData {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct VibeVoiceStateData {
-    #[serde(default)]
+    /// Legacy: модель жила в самой ноде. Читается только для миграции в
+    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
+    #[serde(default, skip_serializing)]
     pub model_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub device_idx: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub compute_idx: usize,
     #[serde(default)]
     pub script: String,

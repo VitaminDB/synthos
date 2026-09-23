@@ -14,7 +14,7 @@ use syngui::core::sync::Mutex;
 use syngui::prelude::*;
 use syngui::widgets::{Column, Reactive, Slider, Toggle};
 
-use super::super::controls::{node_dropdown_field, node_field_row, node_file_picker};
+use super::super::controls::node_field_row;
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::state::NodeEditorCtx;
 use super::super::types::{
@@ -118,10 +118,6 @@ pub fn busy_signal(node: &NodeInstance) -> Option<RwSignal<bool>> {
 
 pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let (
-        model_path,
-        device_idx,
-        storage_idx,
-        compute_idx,
         threshold,
         allow_overlap,
         running,
@@ -135,10 +131,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     ) = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::SortformerDiarizer {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
                 threshold,
                 allow_overlap,
                 running,
@@ -151,10 +143,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 loaded_cfg,
                 ..
             } => (
-                *model_path,
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
                 *threshold,
                 *allow_overlap,
                 *running,
@@ -175,29 +163,18 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля;
-    // оттуда же — резидентность. Без хэндла — legacy-поведение слота.
-    let handle = super::current_input_syn_model(ctx, node.id);
-    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
-    let cfg = match &handle {
-        Some(h) => SortformerLoadedCfg {
-            model_path: h.model_path.clone(),
-            device_idx: map_handle_device(h.device_idx),
-            storage_idx: map_handle_storage(h.storage_idx),
-            compute_idx: map_handle_compute(h.compute_idx),
-        },
-        None => {
-            let Some(mp) = model_path.get_untracked() else {
-                error_sig.set(Some(tr!("node.sortformer_diarizer.err.select_model")));
-                return;
-            };
-            SortformerLoadedCfg {
-                model_path: mp,
-                device_idx: device_idx.get_untracked(),
-                storage_idx: storage_idx.get_untracked(),
-                compute_idx: compute_idx.get_untracked(),
-            }
-        }
+    // Модель — только из Syn-чекпойнта на входе `model`; оттуда же
+    // предпочтения device/storage/compute и резидентность.
+    let Some(h) = super::current_input_syn_model(ctx, node.id) else {
+        error_sig.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let resident = h.resident;
+    let cfg = SortformerLoadedCfg {
+        model_path: h.model_path.clone(),
+        device_idx: map_handle_device(h.device_idx),
+        storage_idx: map_handle_storage(h.storage_idx),
+        compute_idx: map_handle_compute(h.compute_idx),
     };
     let threshold_v = threshold.get_untracked();
     let allow_overlap_v = allow_overlap.get_untracked();
@@ -265,73 +242,31 @@ fn map_handle_compute(pref: usize) -> usize {
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let runtime = node.runtime.clone();
     let (
-        model_path,
-        device_idx,
-        storage_idx,
-        compute_idx,
         threshold,
         allow_overlap,
         running,
         error_sig,
         loaded_name,
-        diarizer_h,
-        loaded_cfg_h,
     ) = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::SortformerDiarizer {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
                 threshold,
                 allow_overlap,
                 running,
                 error,
                 loaded_name,
-                diarizer,
-                loaded_cfg,
                 ..
             } => (
-                *model_path,
-                *device_idx,
-                *storage_idx,
-                *compute_idx,
                 *threshold,
                 *allow_overlap,
                 *running,
                 *error,
                 *loaded_name,
-                diarizer.clone(),
-                loaded_cfg.clone(),
             ),
             _ => return error_widget(tr!("nodes.common.invalid_runtime", name = "SortformerDiarizer")),
         },
         Err(_) => return error_widget("SortformerDiarizer: lock error"),
     };
-
-    let diarizer_h_pick = diarizer_h.clone();
-    let loaded_h_pick = loaded_cfg_h.clone();
-    let on_pick_error = error_sig;
-    let on_pick_loaded_name = loaded_name;
-    let model_control: Box<dyn Widget> = node_file_picker(
-        tr!("node.sortformer_diarizer.pick_model_tooltip"),
-        model_path,
-        &[("Syn bundle", &["syn"]), ("nodes.filter.all_files", &["*"])],
-        move |_p| {
-            if let Ok(mut g) = diarizer_h_pick.lock() {
-                *g = None;
-            }
-            if let Ok(mut g) = loaded_h_pick.lock() {
-                *g = None;
-            }
-            on_pick_loaded_name.set(None);
-            on_pick_error.set(None);
-        },
-    );
-
-    let device_dd = node_dropdown_field(DEVICE_OPTIONS, device_idx);
-    let storage_dd = node_dropdown_field(STORAGE_OPTIONS, storage_idx);
-    let compute_dd = node_dropdown_field(COMPUTE_OPTIONS, compute_idx);
 
     // Threshold slider 0.1..0.9.
     let threshold_slider: Box<dyn Widget> = Box::new(
@@ -380,10 +315,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(0.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row(&tr!("nodes.common.model"), model_control),
-            node_field_row("Device", device_dd),
-            node_field_row("Storage", storage_dd),
-            node_field_row("Compute", compute_dd),
             node_field_row("Threshold", threshold_slider),
             node_field_row("Overlap", allow_toggle),
             node_field_row(&tr!("nodes.common.status"), status_control),

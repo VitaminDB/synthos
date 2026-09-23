@@ -53,7 +53,6 @@ fn run() -> Result<(), String> {
     if !model.exists() {
         return Err(format!("нет модели: {}", model.display()));
     }
-    let device_idx = if device.eq_ignore_ascii_case("cuda") { 0 } else { 1 };
     eprintln!(
         "llm_smoke: model={} device={device} max_tokens={max_tokens}",
         model.display()
@@ -63,6 +62,7 @@ fn run() -> Result<(), String> {
     let zero = syngui::core::Point::new(0.0, 0.0);
     let n_prompt = ctx.add_node(NodeKind::TextView, zero);
     let n_llm = ctx.add_node(NodeKind::Llm, zero);
+    let n_ckpt = ctx.add_node(NodeKind::SynCheckpoint, zero);
     let n_answer = ctx.add_node(NodeKind::TextView, zero);
 
     // Источник вопроса: TextView с заранее выставленным output_text.
@@ -70,28 +70,36 @@ fn run() -> Result<(), String> {
         output_text.set(prompt.clone());
     }
 
-    // Параметры LLM-ноды.
-    if let NodeRuntime::Llm {
+    // Модель — через Syn Checkpoint на входе `model` (своих полей у LLM нет).
+    // Предпочтения чекпойнта: device 1=CUDA,2=CPU; storage 3=FP8,4=NVFP4;
+    // compute 2=BF16 (для dense; квант форсит F16 внутри).
+    if let NodeRuntime::SynCheckpoint {
         model_path,
         device_idx: dev,
-        quant_idx: quant_idx_sig,
+        storage_idx,
         compute_idx,
+        ..
+    } = &*node(&ctx, n_ckpt).runtime.lock().unwrap()
+    {
+        model_path.set(Some(model.clone()));
+        dev.set(if device.eq_ignore_ascii_case("cuda") { 1 } else { 2 });
+        // SYN_SMOKE_LLM_QUANT=none|nvfp4|mxfp8 (дефолт none).
+        storage_idx.set(match std::env::var("SYN_SMOKE_LLM_QUANT").as_deref() {
+            Ok("nvfp4") => 4,
+            Ok("mxfp8") => 3,
+            _ => 0,
+        });
+        compute_idx.set(2);
+    }
+
+    // Параметры LLM-ноды.
+    if let NodeRuntime::Llm {
         system_prompt,
         max_tokens: mt,
         temperature,
         ..
     } = &*node(&ctx, n_llm).runtime.lock().unwrap()
     {
-        model_path.set(Some(model.clone()));
-        dev.set(device_idx);
-        // SYN_SMOKE_LLM_QUANT=none|nvfp4|mxfp8 (дефолт none).
-        let quant_idx = match std::env::var("SYN_SMOKE_LLM_QUANT").as_deref() {
-            Ok("nvfp4") => 1,
-            Ok("mxfp8") => 2,
-            _ => 0,
-        };
-        quant_idx_sig.set(quant_idx);
-        compute_idx.set(0); // bf16 (для none); квант форсит F16 внутри
         system_prompt.set(system.clone());
         mt.set(max_tokens);
         temperature.set(0.0); // greedy для детерминированного smoke
@@ -105,6 +113,7 @@ fn run() -> Result<(), String> {
     };
     ctx.connections.set(vec![
         conn(n_prompt, "out", n_llm, "prompt"),
+        conn(n_ckpt, "model", n_llm, "model"),
         conn(n_llm, "answer", n_answer, "in"),
     ]);
 

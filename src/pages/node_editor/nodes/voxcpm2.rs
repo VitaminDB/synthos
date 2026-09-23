@@ -14,7 +14,7 @@ use synaptix_core::dtype::DType;
 use synaptix_tts_voxcpm::{GenerateOptions, VoxCpmPipeline, Waveform};
 
 use super::super::controls::{
-    node_dropdown_field, node_field_row, node_file_picker, node_int_slider_field, node_slider_field,
+    node_field_row, node_int_slider_field, node_slider_field,
 };
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::state::NodeEditorCtx;
@@ -102,9 +102,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::VoxCpm2 {
-                model_path,
-                device_idx,
-                compute_idx,
                 prompt_text_field,
                 cfg_value,
                 n_timesteps,
@@ -118,9 +115,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 output_buf,
                 output_version,
             } => Some((
-                *model_path,
-                *device_idx,
-                *compute_idx,
                 *prompt_text_field,
                 *cfg_value,
                 *n_timesteps,
@@ -139,9 +133,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        compute_idx,
         prompt_text_field,
         cfg_value,
         n_timesteps,
@@ -163,27 +154,17 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         return;
     }
 
-    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля;
-    // оттуда же — резидентность. Без хэндла — legacy-поведение слота.
-    let handle = super::current_input_syn_model(ctx, node.id);
-    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
-    let cfg = match &handle {
-        Some(h) => VoxCpm2LoadedCfg {
-            bundle_path: h.model_path.clone(),
-            device_idx: map_handle_device(h.device_idx),
-            compute_idx: map_handle_compute(h.compute_idx),
-        },
-        None => {
-            let Some(bundle_path) = model_path.get_untracked() else {
-                error_sig.set(Some(tr!("node.voxcpm2.error.no_bundle")));
-                return;
-            };
-            VoxCpm2LoadedCfg {
-                bundle_path,
-                device_idx: device_idx.get_untracked(),
-                compute_idx: compute_idx.get_untracked(),
-            }
-        }
+    // Модель — только из Syn-чекпойнта на входе `model`; оттуда же
+    // предпочтения device/storage/compute и резидентность.
+    let Some(h) = super::current_input_syn_model(ctx, node.id) else {
+        error_sig.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let resident = h.resident;
+    let cfg = VoxCpm2LoadedCfg {
+        bundle_path: h.model_path.clone(),
+        device_idx: map_handle_device(h.device_idx),
+        compute_idx: map_handle_compute(h.compute_idx),
     };
 
     let text = match current_input_text(ctx, node.id, "text") {
@@ -484,31 +465,21 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::VoxCpm2 {
-                model_path,
-                device_idx,
-                compute_idx,
                 prompt_text_field,
                 cfg_value,
                 n_timesteps,
                 max_len,
                 seed,
-                pipeline,
-                loaded_cfg,
                 running,
                 error,
                 loaded_name,
                 ..
             } => Some((
-                *model_path,
-                *device_idx,
-                *compute_idx,
                 *prompt_text_field,
                 *cfg_value,
                 *n_timesteps,
                 *max_len,
                 *seed,
-                pipeline.clone(),
-                loaded_cfg.clone(),
                 *running,
                 *error,
                 *loaded_name,
@@ -518,16 +489,11 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        compute_idx,
         prompt_text_field,
         cfg_value,
         n_timesteps,
         max_len,
         seed,
-        pipeline_handle,
-        loaded_cfg_handle,
         running,
         error_sig,
         loaded_name,
@@ -535,29 +501,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     else {
         return error_widget(tr!("nodes.common.invalid_runtime", name = "VoxCpm2"));
     };
-
-    let pipeline_h = pipeline_handle.clone();
-    let loaded_h = loaded_cfg_handle.clone();
-    let on_pick_error = error_sig;
-    let on_pick_loaded_name = loaded_name;
-    let model_control: Box<dyn Widget> = node_file_picker(
-        tr!("node.voxcpm2.tooltip.pick_bundle"),
-        model_path,
-        &[("Syn bundle", &["syn"])],
-        move |_p| {
-            if let Ok(mut g) = pipeline_h.lock() {
-                *g = None;
-            }
-            if let Ok(mut g) = loaded_h.lock() {
-                *g = None;
-            }
-            on_pick_loaded_name.set(None);
-            on_pick_error.set(None);
-        },
-    );
-
-    let device_dd = node_dropdown_field(DEVICE_OPTIONS, device_idx);
-    let compute_dd = node_dropdown_field(COMPUTE_OPTIONS, compute_idx);
 
     let prompt_text_widget = Box::new(
         TextField::new()
@@ -606,9 +549,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row(&tr!("nodes.common.model"), model_control),
-            node_field_row("Device", device_dd),
-            node_field_row("Compute", compute_dd),
             node_field_row("Prompt text", prompt_text_widget),
             node_field_row("CFG", cfg_control),
             node_field_row("Steps", steps_control),

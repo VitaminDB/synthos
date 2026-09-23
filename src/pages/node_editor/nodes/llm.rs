@@ -13,8 +13,9 @@
 //!   `LlmGeneration::generate_streaming` (callback с текстовой дельтой пишет в
 //!   `output_text`). `cancel`-флаг прерывает стрим (callback → false).
 //!
-//! Точность (`PrecisionConfig`) собирается из dropdown'ов quant
-//! (none/nvfp4/mxfp8) + compute (bf16/f16/f32).
+//! Модель и её точность приходят только из Syn-чекпойнта на входе `model`:
+//! предпочтения storage/compute маппятся на quant (none/nvfp4/mxfp8) +
+//! compute (bf16/f16/f32) этого семейства.
 //!
 //! Layout body — Demo-стилистика (`node_field_row`): [label | spacer | control].
 
@@ -34,7 +35,7 @@ use synaptix_core::precision::PrecisionConfig;
 use synaptix::facade::llm::{load_llm, GenerationOptions, Llm, LlmGeneration, LlmTokenizer, Message};
 
 use super::super::controls::{
-    node_dropdown_field, node_field_row, node_file_picker, node_int_slider_field, node_slider_field,
+    node_field_row, node_int_slider_field, node_slider_field,
 };
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::state::NodeEditorCtx;
@@ -226,10 +227,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let snapshot = match node.runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::Llm {
-                model_path,
-                device_idx,
-                quant_idx,
-                compute_idx,
                 system_prompt,
                 max_tokens,
                 temperature,
@@ -244,10 +241,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 cancel,
                 ..
             } => Some((
-                *model_path,
-                *device_idx,
-                *quant_idx,
-                *compute_idx,
                 *system_prompt,
                 *max_tokens,
                 *temperature,
@@ -266,10 +259,6 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        quant_idx,
-        compute_idx,
         system_prompt,
         max_tokens,
         temperature,
@@ -317,30 +306,18 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
             Err(_) => return,
         };
 
-    // Хэндл Syn Checkpoint (вход `model`) переопределяет собственные поля
-    // ноды; оттуда же — резидентность. Без хэндла нода работает от своих
-    // полей и держит слот всегда (legacy-поведение).
-    let handle = super::current_input_syn_model(ctx, node.id);
-    let resident = handle.as_ref().map(|h| h.resident).unwrap_or(true);
-    let cfg = match &handle {
-        Some(h) => LlmLoadedCfg {
-            model_path: h.model_path.clone(),
-            device_idx: map_handle_device(h.device_idx),
-            quant_idx: map_handle_quant(h.storage_idx),
-            compute_idx: map_handle_compute(h.compute_idx),
-        },
-        None => {
-            let Some(model) = model_path.get_untracked() else {
-                error_sig.set(Some(tr!("node.llm.err.select_model")));
-                return;
-            };
-            LlmLoadedCfg {
-                model_path: model,
-                device_idx: device_idx.get_untracked(),
-                quant_idx: quant_idx.get_untracked(),
-                compute_idx: compute_idx.get_untracked(),
-            }
-        }
+    // Модель — только из Syn-чекпойнта на входе `model`; оттуда же
+    // предпочтения device/storage/compute и резидентность.
+    let Some(h) = super::current_input_syn_model(ctx, node.id) else {
+        error_sig.set(Some(tr!("nodes.common.err.connect_checkpoint")));
+        return;
+    };
+    let resident = h.resident;
+    let cfg = LlmLoadedCfg {
+        model_path: h.model_path.clone(),
+        device_idx: map_handle_device(h.device_idx),
+        quant_idx: map_handle_quant(h.storage_idx),
+        compute_idx: map_handle_compute(h.compute_idx),
     };
 
     let question = match current_input_text(ctx, node.id, "prompt") {
@@ -647,32 +624,20 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let snapshot = match runtime.lock() {
         Ok(g) => match &*g {
             NodeRuntime::Llm {
-                model_path,
-                device_idx,
-                quant_idx,
-                compute_idx,
                 system_prompt,
                 max_tokens,
                 temperature,
                 seed,
-                pipeline,
-                loaded_cfg,
                 running,
                 error,
                 loaded_name,
                 cancel,
                 ..
             } => Some((
-                *model_path,
-                *device_idx,
-                *quant_idx,
-                *compute_idx,
                 *system_prompt,
                 *max_tokens,
                 *temperature,
                 *seed,
-                pipeline.clone(),
-                loaded_cfg.clone(),
                 *running,
                 *error,
                 *loaded_name,
@@ -683,16 +648,10 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         Err(_) => None,
     };
     let Some((
-        model_path,
-        device_idx,
-        quant_idx,
-        compute_idx,
         system_prompt,
         max_tokens,
         temperature,
         seed,
-        pipeline_handle,
-        loaded_cfg_handle,
         running,
         error_sig,
         loaded_name,
@@ -718,30 +677,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         },
         Err(_) => return error_widget("Llm: lock error"),
     };
-
-    let pipeline_h = pipeline_handle.clone();
-    let loaded_h = loaded_cfg_handle.clone();
-    let on_pick_error = error_sig;
-    let on_pick_loaded_name = loaded_name;
-    let model_control: Box<dyn Widget> = node_file_picker(
-        tr!("node.llm.pick_model_tooltip"),
-        model_path,
-        &[("nodes.filter.model", &["syn", "gguf", "json"]), ("nodes.filter.all_files", &["*"])],
-        move |_p| {
-            if let Ok(mut g) = pipeline_h.lock() {
-                *g = None;
-            }
-            if let Ok(mut g) = loaded_h.lock() {
-                *g = None;
-            }
-            on_pick_loaded_name.set(None);
-            on_pick_error.set(None);
-        },
-    );
-
-    let device_dd = node_dropdown_field(DEVICE_OPTIONS, device_idx);
-    let quant_dd = node_dropdown_field(QUANT_OPTIONS, quant_idx);
-    let compute_dd = node_dropdown_field(COMPUTE_OPTIONS, compute_idx);
 
     let system_field = Box::new(
         TextField::new()
@@ -829,10 +764,6 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         .gap(3.0)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .children(vec![
-            node_field_row(&tr!("nodes.common.model"), model_control),
-            node_field_row("Device", device_dd),
-            node_field_row("Quant", quant_dd),
-            node_field_row("Compute", compute_dd),
             node_field_row("System", system_field),
             node_field_row("Context", context_widget),
             node_field_row("Think", think_toggle),

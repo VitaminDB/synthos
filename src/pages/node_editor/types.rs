@@ -520,6 +520,20 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    /// Слот-семейства, чья модель приходит только из Syn-чекпойнта на входе
+    /// `model`: своих полей модели/device/точности у этих нод нет.
+    pub fn needs_syn_checkpoint(self) -> bool {
+        matches!(
+            self,
+            NodeKind::Llm
+                | NodeKind::AsrGigaam
+                | NodeKind::OmniVoice
+                | NodeKind::VoxCpm2
+                | NodeKind::VibeVoice
+                | NodeKind::SortformerDiarizer
+        )
+    }
+
     pub const ALL: &'static [NodeKind] = &[
         NodeKind::Number,
         NodeKind::Add,
@@ -2257,14 +2271,6 @@ pub enum NodeRuntime {
         size: RwSignal<Size>,
     },
     AsrGigaam {
-        /// Путь к выбранному `.syn` bundle'у. None = не выбран.
-        model_path: RwSignal<Option<PathBuf>>,
-        /// Индекс в `nodes::asr_gigaam::DEVICE_OPTIONS` (0=CPU, 1=GPU auto).
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::asr_gigaam::STORAGE_OPTIONS`.
-        storage_idx: RwSignal<usize>,
-        /// Индекс в `nodes::asr_gigaam::COMPUTE_OPTIONS`.
-        compute_idx: RwSignal<usize>,
         /// Закэшированный экземпляр модели. Lock короткий: только swap
         /// при load/unload; transcribe держит lock на всё время инференса.
         ///
@@ -2311,19 +2317,6 @@ pub enum NodeRuntime {
     /// - Output порт `audio`: `OmniVoiceExec::evaluate` копирует
     ///   `output_buf` в `PortValue::Audio(Arc<AudioBuffer>)`.
     OmniVoice {
-        /// Путь к выбранному `.syn` bundle (single-file model). `start`
-        /// передаёт его как `bundle_path` для `OmniVoicePipeline::from_syn`.
-        model_path: RwSignal<Option<PathBuf>>,
-        /// Индекс в `nodes::omnivoice::DEVICE_OPTIONS` (0=CPU, 1=GPU auto).
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::omnivoice::STORAGE_OPTIONS`. Пробрасывается в
-        /// `OmniVoicePipeline::from_syn` через `synaptix_core::dtype::DType` —
-        /// влияет на квантизацию LM (NVFP4/MXFP8) и инвалидирует
-        /// кэш через `OmniLoadedCfg`.
-        storage_idx: RwSignal<usize>,
-        /// Индекс в `nodes::omnivoice::COMPUTE_OPTIONS`. Compute-dtype для
-        /// LM/codec forward + квантизованных GEMM dequant'ов.
-        compute_idx: RwSignal<usize>,
         /// Voice-Design instruct (textfield). Используется когда нет
         /// ref_audio: mode становится `Design{instruct}`.
         instruct: RwSignal<String>,
@@ -2364,9 +2357,6 @@ pub enum NodeRuntime {
         output_version: RwSignal<u32>,
     },
     VoxCpm2 {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
         prompt_text_field: RwSignal<String>,
         cfg_value: RwSignal<f32>,
         n_timesteps: RwSignal<u32>,
@@ -2381,9 +2371,6 @@ pub enum NodeRuntime {
         output_version: RwSignal<u32>,
     },
     VibeVoice {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
         script_field: RwSignal<String>,
         cfg_value: RwSignal<f32>,
         ddpm_steps: RwSignal<u32>,
@@ -2424,10 +2411,6 @@ pub enum NodeRuntime {
         handle_cache: Arc<Mutex<Option<Arc<SynModelHandle>>>>,
     },
     SortformerDiarizer {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        storage_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
         /// Порог бинаризации probability → активность (0.1..0.9).
         threshold: RwSignal<f32>,
         /// Разрешать overlap'ы спикеров (Sortformer multi-label).
@@ -2459,14 +2442,6 @@ pub enum NodeRuntime {
     /// - `output_text` отдаётся в порт `answer`; `text_version` бампается для
     ///   Reactive-rebuild статус-строки body.
     Llm {
-        /// Путь к модели: HF-каталог (config.json + safetensors) или `.syn`.
-        model_path: RwSignal<Option<PathBuf>>,
-        /// Индекс в `nodes::llm::DEVICE_OPTIONS` (0=CUDA, 1=CPU).
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::llm::QUANT_OPTIONS` (none/nvfp4/mxfp8).
-        quant_idx: RwSignal<usize>,
-        /// Индекс в `nodes::llm::COMPUTE_OPTIONS` (bf16/f16/f32).
-        compute_idx: RwSignal<usize>,
         /// System-промпт fallback. Порт `system` переопределяет его, если
         /// подключён и непуст.
         system_prompt: RwSignal<String>,
@@ -3349,13 +3324,7 @@ impl NodeRuntime {
             | R::QwenImageCheckpoint { model_path, .. }
             | R::QwenImage21Checkpoint { model_path, .. }
             | R::SdxlCheckpoint { model_path, .. }
-            | R::SynCheckpoint { model_path, .. }
-            | R::Llm { model_path, .. }
-            | R::AsrGigaam { model_path, .. }
-            | R::OmniVoice { model_path, .. }
-            | R::VoxCpm2 { model_path, .. }
-            | R::VibeVoice { model_path, .. }
-            | R::SortformerDiarizer { model_path, .. } => {
+            | R::SynCheckpoint { model_path, .. } => {
                 if empty(model_path) {
                     vec!["model_path"]
                 } else {

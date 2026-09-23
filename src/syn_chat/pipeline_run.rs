@@ -210,9 +210,8 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
     }
 
     // Пустые чекпойнты ловим ДО прогона (и до выгрузки LLM): нода всё равно
-    // упадёт, а агент потеряет ход и цикл unload/reload. Слот-нодам с
-    // подключённым входом `model` (Syn Checkpoint) собственный model_path
-    // не нужен — хэндл его переопределяет.
+    // упадёт, а агент потеряет ход и цикл unload/reload. Слот-нода без
+    // Syn Checkpoint на входе `model` модели не получит вовсе.
     let conns = ctx.connections.get_untracked();
     let mut missing: Vec<String> = Vec::new();
     for n in &nodes {
@@ -222,11 +221,16 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         let has_model_input = conns
             .iter()
             .any(|c| c.to_node == n.id && c.to_port == "model");
+        if n.kind.needs_syn_checkpoint() && !has_model_input {
+            missing.push(tr!(
+                "chat.pipeline.error.missing_field",
+                node_id = n.id.0,
+                node_title = registry::meta(n.kind).title,
+                field = "model ← SynCheckpoint"
+            ));
+        }
         if let Ok(rt) = n.runtime.lock() {
             for field in rt.missing_model_paths() {
-                if field == "model_path" && has_model_input {
-                    continue;
-                }
                 missing.push(tr!(
                     "chat.pipeline.error.missing_field",
                     node_id = n.id.0,

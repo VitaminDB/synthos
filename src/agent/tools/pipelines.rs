@@ -379,42 +379,14 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, asr_gigaam, ffmpeg_player, flux, flux2, llm, ltx, minimax_h3, omnivoice, qwen_image, qwen_image21,
-        sdxl, sortformer_diarizer, syn_checkpoint, vibevoice, voxcpm2, yue2,
+        acestep, ffmpeg_player, flux, flux2, ltx, minimax_h3, qwen_image, qwen_image21, sdxl, syn_checkpoint,
+        yue2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
             ("device_idx", syn_checkpoint::DEVICE_PREF_OPTIONS),
             ("storage_idx", syn_checkpoint::STORAGE_PREF_OPTIONS),
             ("compute_idx", syn_checkpoint::COMPUTE_PREF_OPTIONS),
-        ],
-        NodeKind::SortformerDiarizer => vec![
-            ("device_idx", sortformer_diarizer::DEVICE_OPTIONS),
-            ("storage_idx", sortformer_diarizer::STORAGE_OPTIONS),
-            ("compute_idx", sortformer_diarizer::COMPUTE_OPTIONS),
-        ],
-        NodeKind::AsrGigaam => vec![
-            ("device_idx", asr_gigaam::DEVICE_OPTIONS),
-            ("storage_idx", asr_gigaam::STORAGE_OPTIONS),
-            ("compute_idx", asr_gigaam::COMPUTE_OPTIONS),
-        ],
-        NodeKind::OmniVoice => vec![
-            ("device_idx", omnivoice::DEVICE_OPTIONS),
-            ("storage_idx", omnivoice::STORAGE_OPTIONS),
-            ("compute_idx", omnivoice::COMPUTE_OPTIONS),
-        ],
-        NodeKind::VibeVoice => vec![
-            ("device_idx", vibevoice::DEVICE_OPTIONS),
-            ("compute_idx", vibevoice::COMPUTE_OPTIONS),
-        ],
-        NodeKind::VoxCpm2 => vec![
-            ("device_idx", voxcpm2::DEVICE_OPTIONS),
-            ("compute_idx", voxcpm2::COMPUTE_OPTIONS),
-        ],
-        NodeKind::Llm => vec![
-            ("device_idx", llm::DEVICE_OPTIONS),
-            ("quant_idx", llm::QUANT_OPTIONS),
-            ("compute_idx", llm::COMPUTE_OPTIONS),
         ],
         NodeKind::Yue2Checkpoint => vec![
             ("device_idx", yue2::DEVICE_OPTIONS),
@@ -833,16 +805,15 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
         if !n.enabled.get_untracked() {
             continue;
         }
-        // Слот-ноды с подключённым входом `model` берут путь от чекпойнта.
+        // Слот-нода берёт модель только от SynCheckpoint на входе `model`.
         let has_model_input = conns
             .iter()
             .any(|c| c.to_node == n.id && c.to_port == "model");
         let Ok(rt) = n.runtime.lock() else { continue };
-        let mut fields: Vec<&str> = rt
-            .missing_model_paths()
-            .into_iter()
-            .filter(|f| !(*f == "model_path" && has_model_input))
-            .collect();
+        let mut fields: Vec<&str> = rt.missing_model_paths();
+        if n.kind.needs_syn_checkpoint() && !has_model_input {
+            fields.push("model ← SynCheckpoint");
+        }
         // Upscaler требуется только графам со стадией Upscale ×2.
         let needs_upscaler = nodes
             .iter()

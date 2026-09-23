@@ -580,10 +580,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = resize_mode.get();
         }
         NodeRuntime::AsrGigaam {
-            model_path,
-            device_idx,
-            storage_idx,
-            compute_idx,
             output_text,
             running,
             error,
@@ -591,10 +587,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             text_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = storage_idx.get();
-            let _ = compute_idx.get();
             let _ = output_text.get();
             let _ = running.get();
             let _ = error.get();
@@ -602,10 +594,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = text_version.get();
         }
         NodeRuntime::OmniVoice {
-            model_path,
-            device_idx,
-            storage_idx,
-            compute_idx,
             instruct,
             ref_text_field,
             language,
@@ -620,10 +608,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             output_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = storage_idx.get();
-            let _ = compute_idx.get();
             let _ = instruct.get();
             let _ = ref_text_field.get();
             let _ = language.get();
@@ -638,10 +622,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = output_version.get();
         }
         NodeRuntime::Llm {
-            model_path,
-            device_idx,
-            quant_idx,
-            compute_idx,
             system_prompt,
             context,
             think,
@@ -659,10 +639,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             text_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = quant_idx.get();
-            let _ = compute_idx.get();
             let _ = system_prompt.get();
             let _ = context.get();
             let _ = think.get();
@@ -680,9 +656,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = text_version.get();
         }
         NodeRuntime::VoxCpm2 {
-            model_path,
-            device_idx,
-            compute_idx,
             prompt_text_field,
             cfg_value,
             n_timesteps,
@@ -694,9 +667,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             output_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = compute_idx.get();
             let _ = prompt_text_field.get();
             let _ = cfg_value.get();
             let _ = n_timesteps.get();
@@ -708,9 +678,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = output_version.get();
         }
         NodeRuntime::VibeVoice {
-            model_path,
-            device_idx,
-            compute_idx,
             script_field,
             cfg_value,
             ddpm_steps,
@@ -723,9 +690,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             output_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = compute_idx.get();
             let _ = script_field.get();
             let _ = cfg_value.get();
             let _ = ddpm_steps.get();
@@ -738,10 +702,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             let _ = output_version.get();
         }
         NodeRuntime::SortformerDiarizer {
-            model_path,
-            device_idx,
-            storage_idx,
-            compute_idx,
             threshold,
             allow_overlap,
             running,
@@ -752,10 +712,6 @@ fn subscribe_runtime_signals(rt: &NodeRuntime) {
             text_version,
             ..
         } => {
-            let _ = model_path.get();
-            let _ = device_idx.get();
-            let _ = storage_idx.get();
-            let _ = compute_idx.get();
             let _ = threshold.get();
             let _ = allow_overlap.get();
             let _ = running.get();

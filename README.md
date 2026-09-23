@@ -1,6 +1,5 @@
 # synthos
 
-[![Donate via PayPal](https://img.shields.io/badge/donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/vitamindbnfkz)
 [![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
 
@@ -13,6 +12,15 @@ from `.syn` bundles in the precision you choose (NVFP4, MXFP8, SQ1…SQ8, dense)
 models straight from GGUF. The UI is built with [syngui](https://github.com/VitaminDB/syngui).
 
 ![synthos: a notes workspace built by the agent, with the chat torn off into a floating window](docs/screenshots/notes-dashboard-floating-chat.png)
+
+## Status
+
+Early. One developer, one machine, and — as far as I know — no users other than
+myself. Everything described below works on my hardware (RTX 5090 Laptop, 24 GB,
+Arch Linux); how much of it survives contact with a different GPU, driver or
+distribution is exactly what I don't know yet. Bug reports with your hardware
+details are more useful to me right now than stars — there is an
+[issue form](https://github.com/VitaminDB/synthos/issues/new/choose) for exactly that.
 
 ## What it is
 
@@ -349,6 +357,34 @@ performance analyses quoted above (`qwen4exp_perf_2026.md`, `gemma4_2026.md`,
 One developer, with Claude (Anthropic) as a daily coding assistant. The architecture, the
 engine work and the benchmarks above are mine; the assistant carries a large share of the
 typing, the tests and the refactors.
+
+## FAQ
+
+**Why a custom `.syn` format instead of GGUF or safetensors?**
+The bundle is mmapped zero-copy and carries the config, tokenizer and chat template
+next to the weights, so what is on disk is exactly what gets loaded — nothing is
+resolved at runtime. It also holds quantized weights and multi-part models (a video
+model with its text encoder, a music model with its LM) as one file. GGUF chat models
+load directly, and the Hugging Face browser can convert a GGUF to `.syn`, `mmproj`
+included.
+
+**Why not just use llama.cpp / ComfyUI / LM Studio?**
+For chat alone, use llama.cpp — it is more portable and far better tested. For
+diffusion workflows, ComfyUI has an ecosystem this will never match. synthos exists
+because I wanted one process where the same allocator and the same VRAM budget serve
+an LLM, a diffusion model and TTS at once, with an agent that can unload itself to
+run a video pipeline and load back afterwards. That is hard to build on top of
+several separate tools, so the engine is written from scratch.
+
+**Why Linux and NVIDIA only?**
+The engine is CUDA (sm_80 baseline, native NVFP4 on sm_120), and the app depends on
+Linux-only components. A Windows build is planned. ROCm and Metal are not.
+
+**Do I need a 24 GB card?**
+No. Every model family has been measured on 7 GB of usable VRAM — what does not fit
+streams from host RAM or straight from the mmapped bundle. The limit becomes patience
+rather than capacity: a 27B hybrid answers at 1–2 tok/s with 7 of its 64 blocks
+resident. See [`docs/small_vram_7gb_2026.md`](docs/small_vram_7gb_2026.md).
 
 ## Support
 

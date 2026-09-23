@@ -1,0 +1,50 @@
+name: Bug report
+description: Something crashed, hung or produced wrong output.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to reproduce if you have them — which page, which model, which button.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: synthos version
+      description: "`pacman -Q synthos-bin` / `synthos-git`, or the commit you built from."
+      placeholder: 1:0.2.280-1
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed from
+      options:
+        - AUR synthos-bin
+        - AUR synthos-git
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU, VRAM and driver
+      description: "`nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader`"
+      placeholder: NVIDIA GeForce RTX 3090, 24576 MiB, 580.95
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: File name, format and size (e.g. `qwen3.8-27b.syn`, NVFP4, 16 GB; or a `.gguf` with its quant).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The log of the run is in `~/.local/state/synthos/logs/` (one file per day).
+        For a crash, run `synthos` from a terminal and paste the tail of the output.
+      render: text

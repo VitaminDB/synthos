@@ -1,0 +1,81 @@
+name: Hardware report
+description: Tell me how synthos runs on your machine — it works, it does not, or it is slow.
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        synthos has been tested on one machine. A report from yours — even "it works" —
+        says more than a star. Please fill in every field you can.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works, but slow
+        - Partly works
+        - Does not start / crashes
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+      description: "`nvidia-smi --query-gpu=name,memory.total --format=csv,noheader`"
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: NVIDIA driver version
+      description: "`nvidia-smi --query-gpu=driver_version --format=csv,noheader`"
+    validations:
+      required: true
+  - type: input
+    id: ram
+    attributes:
+      label: System RAM
+      placeholder: 64 GB
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Distribution, kernel, Wayland or X11
+      description: "`uname -r`, `echo $XDG_SESSION_TYPE`"
+      placeholder: Arch Linux, 6.16.8, Wayland (KDE Plasma)
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and quantization
+      description: File name, format (NVFP4 / MXFP8 / SQ4 / GGUF quant) and size of the `.syn` or `.gguf`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed from
+      options:
+        - AUR synthos-bin
+        - AUR synthos-git
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What you did and what happened
+      description: Speed (tokens/s, time per image or clip) is very welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `~/.local/state/synthos/logs/` holds the log of each day. For a crash, run
+        `synthos` from a terminal and paste the tail of the output.
+      render: text

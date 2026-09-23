@@ -199,7 +199,7 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                 }
                 std::thread::spawn(move || {
                     let path = rfd::FileDialog::new()
-                        .add_filter(tr!("chat.right.model.pick.filter_name"), &["syn"])
+                        .add_filter(tr!("chat.right.model.pick.filter_name"), &["syn", "gguf"])
                         .set_title(tr!("chat.right.model.pick.dialog_title"))
                         .pick_file();
                     if let Some(p) = path {

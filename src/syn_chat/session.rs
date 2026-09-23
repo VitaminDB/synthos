@@ -1555,8 +1555,10 @@ impl StreamParser {
             None => Self::ChatML {
                 // Qwen3-VL / Qwen3-Thinking chat-template подаёт открывающий
                 // `<think>` прямо в prompt — модель не пишет open-тег сама,
-                // только закрывающий.
-                think: if enable_thinking {
+                // только закрывающий. Моделям без размышлений в словаре
+                // (Llama-3.x, Gemma-3 из GGUF) неявное открытие не нужно:
+                // иначе весь ответ уезжает в «Размышления».
+                think: if enable_thinking && knows_think_tokens(tokenizer) {
                     ThinkParser::new_implicit_open()
                 } else {
                     ThinkParser::new()
@@ -1621,6 +1623,12 @@ impl StreamParser {
                 .collect(),
         }
     }
+}
+
+/// Размышления у модели «родные»: `</think>` в словаре — один токен (Qwen3.x
+/// и производные). У Llama/Gemma-3 строка режется на куски.
+fn knows_think_tokens(tokenizer: &LlmTokenizer) -> bool {
+    matches!(tokenizer.encode("</think>"), Ok(ids) if ids.len() == 1)
 }
 
 /// Id маркеров протокола Gemma-4 в словаре модели. Признак — каждый маркер

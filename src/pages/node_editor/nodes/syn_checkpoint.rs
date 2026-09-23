@@ -121,7 +121,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             node_file_picker(
                 tr!("node.syn_checkpoint.picker.model_bundle"),
                 model_path,
-                &[("Syn bundle", &["syn"])],
+                &[("Syn / GGUF", &["syn", "gguf"])],
                 |_| {},
             ),
         ),

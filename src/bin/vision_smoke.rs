@@ -26,6 +26,14 @@
 //! разбор `[VRAM …]` показывает reserved/used пула и число живых
 //! аллокаций — если живых столько же, сколько до генерации, значит не
 //! утекло ничего.
+//!
+//! Приблизиться к ходу чата (23.09.2026, «модель не видит картинку» в MyLife):
+//! несколько файлов через запятую — одно сообщение с N вложениями;
+//! `SMOKE_SESSION=1` — путь с префикс-KV (`generate_streaming_cached_media`);
+//! `SMOKE_SYSTEM=1` — системный промпт чата без инструментов;
+//! `SMOKE_SHARE_PATH=1` — галочка «путь к файлу»; `SMOKE_PRINT_PROMPT=1` —
+//! промпт с ужатыми заполнителями; сэмплинг — `SMOKE_TEMP`, `SMOKE_TOP_P`,
+//! `SMOKE_PRESENCE` (сид = номер круга).
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -47,7 +55,13 @@ fn main() -> Result<(), String> {
         args.next()
             .ok_or("usage: vision_smoke <model.syn> <file> [prompt] [max_new] [max_img_tokens]")?,
     );
-    let file = PathBuf::from(args.next().ok_or("не задан файл-вложение")?);
+    // Несколько вложений — через `,` (как одно сообщение с N файлами).
+    let files: Vec<PathBuf> = args
+        .next()
+        .ok_or("не задан файл-вложение")?
+        .split(',')
+        .map(PathBuf::from)
+        .collect();
     let question = args.next().unwrap_or_else(|| "Что изображено на вложении?".into());
     let max_new: usize = args
         .next()
@@ -63,15 +77,22 @@ fn main() -> Result<(), String> {
 
     // 1. Приём файла: CAS, метаданные, конвертация под модель.
     let t0 = Instant::now();
-    let attachment = ingest::ingest(&file)?;
-    println!(
-        "вложение: {:?} {}×{} {} мс, модельный файл {}",
-        attachment.kind,
-        attachment.width,
-        attachment.height,
-        attachment.duration_ms,
-        blobs::model_path(&attachment).display()
-    );
+    // `SMOKE_SHARE_PATH=1` — галочка «передать модели путь к файлу».
+    let share_path = std::env::var("SMOKE_SHARE_PATH").is_ok_and(|v| v != "0");
+    let mut attachments = Vec::new();
+    for file in &files {
+        let mut attachment = ingest::ingest(file)?;
+        attachment.share_path = share_path;
+        println!(
+            "вложение: {:?} {}×{} {} мс, модельный файл {}",
+            attachment.kind,
+            attachment.width,
+            attachment.height,
+            attachment.duration_ms,
+            blobs::model_path(&attachment).display()
+        );
+        attachments.push(attachment);
+    }
     println!("ingest за {:?}", t0.elapsed());
 
     // 2. Загрузка модели.
@@ -113,7 +134,9 @@ fn main() -> Result<(), String> {
                 media_cache::clear();
             }
         }
-        round_once(&model, &tokenizer, &attachment, &question, &caps, max_new)?;
+        // SAFETY: однопоточный смоук, переменная читается только ниже.
+        unsafe { std::env::set_var("SMOKE_SEED", round.to_string()) };
+        round_once(&model, &tokenizer, &attachments, &question, &caps, max_new)?;
     }
     println!("OK");
     Ok(())
@@ -125,7 +148,7 @@ fn main() -> Result<(), String> {
 fn round_once(
     model: &synaptix::facade::llm::Llm,
     tokenizer: &synaptix::facade::llm::LlmTokenizer,
-    attachment: &MsgAttachment,
+    items: &[MsgAttachment],
     question: &str,
     caps: &MediaCaps,
     max_new: usize,
@@ -134,7 +157,6 @@ fn round_once(
     // 3. Vision-башня + кодирование вложения — тем же путём, что и чат:
     // башня поднимается только под вложения, которых ещё нет в кэше
     // эмбеддингов, а её провал деградирует вложение в текстовую строку.
-    let items = std::slice::from_ref(attachment);
     let needs = prompt::needs_tower(items, caps);
     println!("башня нужна: {needs}");
     let t0 = Instant::now();
@@ -170,12 +192,37 @@ fn round_once(
     println!("медиа: {} шт., {media_tokens} vision-токенов", prepared.media.len());
 
     // 4. Промпт по chat-шаблону модели.
-    let messages = vec![Message::user(prepared.text.clone())];
+    // `SMOKE_SYSTEM=1` — системный промпт чата без инструментов, как в
+    // приложении (`system_prompt::build`).
+    let mut messages = Vec::new();
+    if std::env::var("SMOKE_SYSTEM").is_ok_and(|v| v != "0") {
+        let env = synthos::syn_chat::system_prompt::PromptEnv {
+            date: "2026-09-23".into(),
+            os: "linux (x86_64)".into(),
+            cwd: "/home/master".into(),
+            tools: Vec::new(),
+            pool: Vec::new(),
+            max_turns: 30,
+            user_prompt: String::new(),
+            language: "Русский".into(),
+        };
+        messages.push(Message::system(synthos::syn_chat::system_prompt::build(&env)));
+    }
+    messages.push(Message::user(prepared.text.clone()));
     let prompt = tokenizer
         .apply_chat_template_ex_tools(&messages, true, false, None)
         .map_err(|e| format!("template: {e}"))?;
     let prompt_ids = tokenizer.encode(&prompt).map_err(|e| format!("encode: {e}"))?;
     println!("промпт: {} символов / {} токенов", prompt.len(), prompt_ids.len());
+    if std::env::var("SMOKE_PRINT_PROMPT").is_ok() {
+        let mut shown = prompt.clone();
+        for pad in ["<|image_pad|>", "<|video_pad|>", "<|patch|>"] {
+            while shown.contains(&format!("{pad}{pad}")) {
+                shown = shown.replace(&format!("{pad}{pad}"), pad);
+            }
+        }
+        println!("----- промпт -----\n{shown}\n------------------");
+    }
     let pad_ids = media_pad_ids(tokenizer);
 
     // Главная инварианта: заполнителей в промпте ровно столько же, сколько
@@ -193,14 +240,14 @@ fn round_once(
     let opts = GenerationOptions {
         max_new_tokens: max_new,
         max_seq_len: prompt_ids.len() + max_new + 128,
-        temperature: 0.0,
-        top_k: 0,
-        top_p: 1.0,
+        temperature: std::env::var("SMOKE_TEMP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0),
+        top_k: 20,
+        top_p: std::env::var("SMOKE_TOP_P").ok().and_then(|v| v.parse().ok()).unwrap_or(0.95),
         min_p: 0.0,
-        seed: 0,
+        seed: std::env::var("SMOKE_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
         repeat_penalty: 1.0,
-        repeat_last_n: 0,
-        presence_penalty: 0.0,
+        repeat_last_n: 64,
+        presence_penalty: std::env::var("SMOKE_PRESENCE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0),
         frequency_penalty: 0.0,
     };
     let mut runner = LlmGeneration::new(model, opts);
@@ -219,8 +266,17 @@ fn round_once(
     let mut body = String::new();
     let mut thinking = String::new();
     let t0 = Instant::now();
-    runner
-        .generate_streaming_media(&prompt_ids, tokenizer, &media_refs, |id, delta| {
+    // `SMOKE_SESSION=1` — путь чата с префикс-KV: сессия и
+    // `generate_streaming_cached_media`, как в `syn_chat::session`.
+    let mut session = if std::env::var("SMOKE_SESSION").is_ok_and(|v| v != "0") {
+        let ctx = std::env::var("SMOKE_SESSION_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(40_000);
+        let s = model.new_kv_session(ctx, max_new).map_err(|e| format!("session: {e}"))?;
+        println!("сессия префикс-KV: {}", s.is_some());
+        s
+    } else {
+        None
+    };
+    let on_token = |id, delta: &str| {
             print!("{delta}");
             use std::io::Write;
             let _ = std::io::stdout().flush();
@@ -234,8 +290,14 @@ fn round_once(
                 None => body.push_str(delta),
             }
             true
-        })
-        .map_err(|e| format!("generate: {e}"))?;
+        };
+    match session.as_mut() {
+        Some(sess) => runner
+            .generate_streaming_cached_media(sess, &prompt_ids, tokenizer, &media_refs, on_token)
+            .map(|_| ()),
+        None => runner.generate_streaming_media(&prompt_ids, tokenizer, &media_refs, on_token),
+    }
+    .map_err(|e| format!("generate: {e}"))?;
     println!();
     println!("сгенерировано {} символов за {:?}", out.len(), t0.elapsed());
     // KV-ring живёт внутри пайплайна и умирает вместе с вызовом generate —

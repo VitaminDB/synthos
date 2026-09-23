@@ -115,7 +115,7 @@ pub fn attachment_part(a: &MsgAttachment, model: &Llm, caps: &MediaCaps) -> Part
         }
     };
     if a.share_path {
-        part.text.push_str(&path_line(a));
+        part.text.push_str(&path_line(a, part.failure.is_none()));
     }
     part
 }
@@ -193,11 +193,26 @@ pub fn assemble_tool_view(body: &str, items: &[(&MsgAttachment, &str)]) -> Strin
 /// путь к файлу». Картинка уходит модели эмбеддингами, и без пути просьба
 /// «обработай её» превращалась в поиск файла по диску инструментами. Путь —
 /// оригинал в CAS: имя там — хеш, поэтому рядом исходное имя.
-fn path_line(a: &MsgAttachment) -> String {
+///
+/// Если содержимое модели досталось (`delivered`), строка прямо говорит, что
+/// файл уже перед ней, а путь — только для инструментов. Голая строка «путь
+/// к файлу …» рядом с системным «tools are disabled» сбивала Qwen3.8: треть
+/// ответов (23.09.2026, смоук на промпте чата MyLife) была «не могу открыть
+/// файл по пути, инструменты отключены» — при картинке, которую модель
+/// видела.
+fn path_line(a: &MsgAttachment, delivered: bool) -> String {
+    let name = display_name(a);
+    let path = blobs::source_path(a);
+    if !delivered {
+        return format!("[file «{name}» on disk: {}]\n", path.display());
+    }
+    let what = match a.kind {
+        AttachmentKind::Image | AttachmentKind::Video => "is shown above: you already see it",
+        _ => "content is above",
+    };
     format!(
-        "[путь к файлу «{}» на диске: {}]\n",
-        display_name(a),
-        blobs::source_path(a).display()
+        "[«{name}» {what}, no need to open it. Path on disk, only for tools that take a file: {}]\n",
+        path.display()
     )
 }
 
@@ -512,10 +527,16 @@ mod tests {
     #[test]
     fn path_line_names_blob_and_original() {
         let a = att(AttachmentKind::Image, "photo.png");
-        let line = path_line(&a);
-        assert!(line.contains("photo.png"), "{line}");
-        assert!(line.contains(&blobs::source_path(&a).display().to_string()), "{line}");
-        assert!(line.ends_with("]\n"), "{line}");
+        for delivered in [true, false] {
+            let line = path_line(&a, delivered);
+            assert!(line.contains("photo.png"), "{line}");
+            assert!(line.contains(&blobs::source_path(&a).display().to_string()), "{line}");
+            assert!(line.ends_with("]\n"), "{line}");
+        }
+        // Доставленная картинка: модель должна понять, что файл уже перед
+        // ней, а не идти его открывать.
+        assert!(path_line(&a, true).contains("already see it"));
+        assert!(!path_line(&a, false).contains("already see it"));
     }
 
     /// Результат `view_media`: у каждого файла своя подпись перед блоком,

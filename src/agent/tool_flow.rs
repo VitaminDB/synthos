@@ -115,13 +115,15 @@ pub(crate) fn build_autotools_chat_tool(settings: &ChatSettings) -> Option<ChatT
 // Подтверждение tool-вызова
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Запрашивает решение по tool-call’у: если `allow_all` — сразу `Allow`,
+/// Запрашивает решение по tool-call’у: если в чате `chat_id` нажато
+/// «Разрешить все» (или включён глобальный `allow_all`) — сразу `Allow`,
 /// иначе открывает диалог через `ctx.tools.pending_approval` и ждёт ответ.
 ///
 /// Model-agnostic: используется из нативного `syn_chat::session` agent-loop
 /// и из `subagent`. Источники политики — общие в `AppCtx.general`.
 pub(crate) async fn await_decision_on_tool_call(
     call: &ChatToolCall,
+    chat_id: &str,
     abort: &Arc<AtomicU64>,
     snapshot: u64,
 ) -> ToolDecision {
@@ -137,15 +139,18 @@ pub(crate) async fn await_decision_on_tool_call(
 
     // Быстрый путь: один main-hop читает три источника и решает,
     // нужно ли вообще показывать диалог.
-    //   1) per-chat `allow_all` (legacy, in-memory, переживает только сессию чата);
+    //   1) «Разрешить все» в этом чате (`allow_all_chats`, in-memory);
     //   2) per-tool override из persistent-настроек;
     //   3) глобальный `tool_approval_default` из persistent-настроек.
     // Приоритет: chat-flag > per-tool override > global default.
     let key_for_fast = tool_key.clone();
+    let chat_for_fast = chat_id.to_string();
     let (tx_fast, rx_fast) = tokio::sync::oneshot::channel::<bool>();
     run_on_main_thread(move || {
         let ctx = use_context::<AppCtx>();
-        if ctx.tools.allow_all.get_untracked() {
+        if ctx.tools.allow_all.get_untracked()
+            || ctx.tools.allow_all_chats.with_untracked(|s| s.contains(&chat_for_fast))
+        {
             let _ = tx_fast.send(true);
             return;
         }

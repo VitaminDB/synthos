@@ -259,8 +259,13 @@ impl PanelsCtx {
 /// - `auto` — пул `autotools`: инструменты, чьи схемы модели не объявляются,
 ///   она подгружает их по запросу. Сериализуется в `AppConfig.tools_auto`;
 ///   с `active` не пересекается — см. [`ToolsCtx::toggle_active`].
-/// - `allow_all` — флаг «пропускать диалог подтверждения». Per-chat:
-///   сбрасывается при переключении/создании чата, НЕ persist’ится.
+/// - `allow_all_chats` — чаты, где нажато «Разрешить все»: в них диалог
+///   подтверждения пропускается до конца сессии приложения, НЕ persist’ится.
+///   По id чата, а не общим флагом: иначе разрешение из одного чата
+///   действовало во всех (в том числе на `bash` в новом чате), а фоновый
+///   ход чата A сверялся бы с тем, что нажали в открытом B.
+/// - `allow_all` — глобальный обход подтверждений для headless-раннеров
+///   (`agent_smoke`); UI его не выставляет.
 /// - `pending_approval` — если `Some`, на экране висит Portal-диалог
 ///   с кнопками «Отмена / Разрешить / Разрешить все». Оркестратор
 ///   в `chat::session` блокирован в `await` на одноразовом канале,
@@ -270,6 +275,7 @@ pub struct ToolsCtx {
     pub active: RwSignal<Vec<String>>,
     pub auto: RwSignal<Vec<String>>,
     pub allow_all: RwSignal<bool>,
+    pub allow_all_chats: RwSignal<std::collections::HashSet<String>>,
     pub pending_approval: RwSignal<Option<Arc<PendingApproval>>>,
 }
 
@@ -279,6 +285,7 @@ impl ToolsCtx {
             active: use_signal(active),
             auto: use_signal(auto),
             allow_all: use_signal(false),
+            allow_all_chats: use_signal(std::collections::HashSet::new()),
             pending_approval: use_signal(None),
         }
     }

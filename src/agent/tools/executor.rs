@@ -312,16 +312,33 @@ pub async fn run_bash(args_json: &str) -> Result<String, ToolError> {
         .and_then(|x| x.as_str())
         .ok_or(ToolError::MissingField("command"))?;
 
-    let output = Command::new("bash")
-        .arg("-lc")
+    let mut cmd = Command::new("bash");
+    cmd.arg("-lc")
         .arg(command)
-        .output()
-        .await
-        .map_err(|e| ToolError::Spawn(e.to_string()))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let exit_code = output.status.code().unwrap_or(-1);
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // Stop бросает этот future — процесс должен умереть вместе с ним,
+        // а не остаться сиротой (`yes`, `tail -f`, сервер).
+        .kill_on_drop(true);
+    // Своя группа процессов: при отмене гасим и то, что bash запустил
+    // (иначе потомок держит pipe, и чтение не кончается).
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().map_err(|e| ToolError::Spawn(e.to_string()))?;
+    let mut group = ProcessGroupGuard(child.id());
+    let (stdout, stdout_cut) = read_capped(child.stdout.take(), MAX_READ_OUTPUT_BYTES);
+    let (stderr, stderr_cut) = read_capped(child.stderr.take(), MAX_READ_OUTPUT_BYTES);
+    // Оба потока — одновременно: иначе процесс, заполнивший pipe stderr,
+    // встанет, пока мы ждём конца stdout.
+    let (stdout, stderr) = tokio::join!(stdout, stderr);
+    let status = child.wait().await.map_err(|e| ToolError::Spawn(e.to_string()))?;
+    // Команда завершилась сама — её фоновые потомки (`cmd &`) живут дальше,
+    // как раньше; группу гасим только при отмене.
+    group.0 = None;
+    let stdout = with_cut_note(String::from_utf8_lossy(&stdout).into_owned(), &stdout_cut);
+    let stderr = with_cut_note(String::from_utf8_lossy(&stderr).into_owned(), &stderr_cut);
+    let exit_code = status.code().unwrap_or(-1);
 
     let mut out = String::new();
     out.push_str(&format!("$ {}\n", command));
@@ -346,6 +363,67 @@ pub async fn run_bash(args_json: &str) -> Result<String, ToolError> {
     Ok(out)
 }
 
+/// При drop (отмена хода посреди команды) убивает группу процессов команды
+/// `bash` вместе с потомками. После нормального завершения разоружается.
+struct ProcessGroupGuard(Option<u32>);
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            // SAFETY: killpg — обычный syscall; pgid = pid лидера группы,
+            // созданной `process_group(0)`.
+            unsafe {
+                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+/// Читает поток до конца, храня не больше `cap` байт: остальное вычитывается
+/// и выбрасывается (иначе процесс встанет на полном pipe), а счётчик
+/// выброшенного лежит во втором значении. Без потолка `yes` или бесконечный
+/// лог копились в памяти целиком до конца процесса.
+fn read_capped<R>(
+    stream: Option<R>,
+    cap: usize,
+) -> (impl std::future::Future<Output = Vec<u8>>, std::sync::Arc<std::sync::atomic::AtomicU64>)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counter = dropped.clone();
+    let fut = async move {
+        let mut kept = Vec::new();
+        let Some(mut stream) = stream else { return kept };
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match stream.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let room = cap.saturating_sub(kept.len()).min(n);
+                    kept.extend_from_slice(&buf[..room]);
+                    counter.fetch_add((n - room) as u64, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        kept
+    };
+    (fut, dropped)
+}
+
+fn with_cut_note(mut text: String, dropped: &std::sync::atomic::AtomicU64) -> String {
+    let n = dropped.load(std::sync::atomic::Ordering::Relaxed);
+    if n > 0 {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&format!("…(truncated {n} bytes)\n"));
+    }
+    text
+}
+
 /// Обрезает строку до `limit` по char-boundary. Если укладывается —
 /// возвращает как есть. Если нет — усечение + `…(truncated N bytes)`.
 fn truncate_output(s: &str, limit: usize) -> String {
@@ -366,6 +444,29 @@ fn truncate_output(s: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Вывод сверх потолка вычитывается и отбрасывается, а не копится.
+    #[tokio::test]
+    async fn bash_output_is_capped() {
+        let args = serde_json::json!({"command": "head -c 3000000 /dev/zero | tr '\\0' a"}).to_string();
+        let out = run_bash(&args).await.unwrap();
+        assert!(out.len() < MAX_READ_OUTPUT_BYTES + 1024, "len={}", out.len());
+        assert!(out.contains("…(truncated"));
+        assert!(out.contains("exit: 0"));
+    }
+
+    /// Отмена (drop future) убивает команду и её потомков.
+    #[tokio::test]
+    async fn bash_is_killed_on_drop() {
+        let marker = std::env::temp_dir().join(format!("synthos-bash-kill-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let cmd = format!("sleep 1.5 && touch {}", marker.display());
+        let args = serde_json::json!({"command": cmd}).to_string();
+        let r = tokio::time::timeout(std::time::Duration::from_millis(300), run_bash(&args)).await;
+        assert!(r.is_err(), "команда должна была прерваться по таймауту");
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        assert!(!marker.exists(), "потомок пережил отмену");
+    }
 
     #[test]
     fn qualified_tool_name_resolves_to_catalog_key() {

@@ -105,11 +105,44 @@ pub fn remove_pending(sha: &str) {
         .update(|list| list.retain(|a| a.sha256 != sha));
 }
 
+/// Сколько `*.json` в каталоге чатов не попало в список (не разобрались).
+fn unreadable_chats(dir: &std::path::Path, listed: usize) -> usize {
+    let files = std::fs::read_dir(dir)
+        .map(|it| {
+            it.flatten()
+                .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
+                .count()
+        })
+        .unwrap_or(0);
+    files.saturating_sub(listed)
+}
+
 /// Собирает хеши всех вложений во всех сохранённых чатах и подчищает CAS.
 /// Вызывается после удаления чата.
 pub fn gc_after_delete() {
-    std::thread::spawn(|| {
-        let mut referenced = std::collections::HashSet::new();
+    // Ссылки, которых ещё нет на диске: черновик вложений, очередь отправки,
+    // лента открытого чата (автосейв мог не успеть). Сигналы — только тут,
+    // на главном потоке.
+    let ctx = use_context::<SynChatCtx>();
+    let mut in_memory: std::collections::HashSet<String> = std::collections::HashSet::new();
+    ctx.pending_attachments
+        .with_untracked(|v| in_memory.extend(v.iter().map(|a| a.sha256.clone())));
+    ctx.queue.with_untracked(|q| {
+        in_memory.extend(q.iter().flat_map(|m| m.attachments.iter().map(|a| a.sha256.clone())))
+    });
+    ctx.messages.with_untracked(|v| {
+        in_memory.extend(v.iter().flat_map(|m| m.attachments.iter().map(|a| a.sha256.clone())))
+    });
+    std::thread::spawn(move || {
+        // Чат, который не разобрался, тоже может ссылаться на blob'ы — не
+        // зная его ссылок, лучше ничего не удалять.
+        let unreadable = unreadable_chats(&super::storage::syn_chats_dir(), super::storage::list_meta().len())
+            + unreadable_chats(&crate::agent::storage::chats_dir(), crate::agent::storage::list_meta().len());
+        if unreadable > 0 {
+            log::warn!("[attach] gc пропущен: {unreadable} файл(ов) чатов не разобрались");
+            return;
+        }
+        let mut referenced = in_memory;
         for meta in super::storage::list_meta() {
             let Some(chat) = super::storage::load(&meta.id) else {
                 continue;
@@ -133,7 +166,7 @@ pub fn gc_after_delete() {
         }
         // Заметки ссылаются на тот же CAS схемой `blob:<sha>` в markdown.
         crate::pages::notes::media::collect_blob_refs(&mut referenced);
-        blobs::gc_unreferenced(&referenced);
+        blobs::gc_unreferenced(&referenced, blobs::GC_GRACE);
     });
 }
 

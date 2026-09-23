@@ -90,9 +90,9 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn active_chat_id() -> Result<String, String> {
-    let chat = use_context::<SynChatCtx>();
-    chat.active_chat_id
-        .get_untracked()
+    // Чат хода, а не открытый: фоновый ход правит и запускает свою вкладку.
+    use_context::<SynChatCtx>()
+        .turn_chat_id()
         .ok_or_else(|| "no active chat".to_string())
 }
 
@@ -323,12 +323,7 @@ fn attachment_kind_label(k: AttachmentKind) -> &'static str {
 
 /// Все вложения user-сообщений активного чата, свежие в конце.
 fn chat_attachments() -> Vec<MsgAttachment> {
-    let chat = use_context::<SynChatCtx>();
-    chat.messages.with_untracked(|msgs| {
-        msgs.iter()
-            .flat_map(|m| m.attachments.iter().cloned())
-            .collect()
-    })
+    use_context::<SynChatCtx>().turn_chat_attachments()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

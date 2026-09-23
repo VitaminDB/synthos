@@ -167,8 +167,7 @@ fn graph_warnings(nodes: &[crate::pages::node_editor::types::NodeInstance]) -> V
 fn agent_tab_ctx() -> Result<NodeEditorCtx, String> {
     let chat = use_context::<SynChatCtx>();
     let chat_id = chat
-        .active_chat_id
-        .get_untracked()
+        .turn_chat_id()
         .ok_or_else(|| tr!("chat.pipeline.error.no_active_chat"))?;
     let ws = use_context::<EditorWorkspace>();
     let tab_id = ws
@@ -196,8 +195,7 @@ pub async fn prepare(run_label: &str) -> Result<Prepared, String> {
 fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
     let chat = use_context::<SynChatCtx>();
     let chat_id = chat
-        .active_chat_id
-        .get_untracked()
+        .turn_chat_id()
         .ok_or_else(|| tr!("chat.pipeline.error.no_active_chat"))?;
     let ctx = agent_tab_ctx()?;
     let nodes = ctx.nodes.get_untracked();
@@ -397,7 +395,7 @@ fn planned_viewers(
     skip_audio: bool,
     skip_image: bool,
 ) -> (Option<String>, Vec<PlannedViewer>) {
-    let chat_id = use_context::<SynChatCtx>().active_chat_id.get_untracked();
+    let chat_id = use_context::<SynChatCtx>().turn_chat_id();
     let Ok(ctx) = agent_tab_ctx() else {
         return (chat_id, Vec::new());
     };

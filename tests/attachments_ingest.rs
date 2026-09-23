@@ -147,7 +147,7 @@ fn ingests_image_video_audio_and_document() {
     assert_eq!(blobs::preview_path(&d), None, "у документа превью-картинки нет");
 
     // ── GC: пока ни один чат не ссылается на blob'ы, они удаляются.
-    blobs::gc_unreferenced(&std::collections::HashSet::new());
+    blobs::gc_unreferenced(&std::collections::HashSet::new(), std::time::Duration::ZERO);
     assert!(
         !blobs::source_path(&a).exists(),
         "неиспользуемый blob должен быть подчищен"

@@ -442,6 +442,29 @@ impl SynChatCtx {
     /// Финализирует assistant-bubble: переливает streaming-сигналы в
     /// последнее сообщение ленты и очищает их. Вызывать только на main
     /// thread (через `run_on_main_thread`).
+    /// Чат, от имени которого работают инструменты хода: владелец идущего
+    /// хода (он мог уйти в фон), иначе открытый. Инструменты не должны
+    /// брать `active_chat_id` — посреди фонового хода это чужой чат.
+    pub fn turn_chat_id(&self) -> Option<String> {
+        self.generating_chat
+            .get_untracked()
+            .or_else(|| self.active_chat_id.get_untracked())
+    }
+
+    /// Вложения ленты чата хода: открытого — из сигнала, фонового — с диска.
+    pub fn turn_chat_attachments(&self) -> Vec<MsgAttachment> {
+        let collect = |msgs: &[ChatMsg]| {
+            msgs.iter().flat_map(|m| m.attachments.iter().cloned()).collect()
+        };
+        let turn = self.turn_chat_id();
+        if turn.is_none() || turn == self.active_chat_id.get_untracked() {
+            return self.messages.with_untracked(|m| collect(m));
+        }
+        turn.and_then(|id| crate::syn_chat::storage::load(&id))
+            .map(|c| collect(&c.messages))
+            .unwrap_or_default()
+    }
+
     pub fn commit_streaming_tail(&self) {
         // Live-превью tool-вызова в ленту не переливается: его либо заменил
         // настоящий tool_call-бабл, либо стрим оборвался посреди вызова.

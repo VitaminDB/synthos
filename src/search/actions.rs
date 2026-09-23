@@ -135,10 +135,14 @@ fn run_command(command: SearchCommand) {
             navigate("syn_chat");
         }
         SearchCommand::ClearChat => {
+            // Как кнопка в шапке: диалог подтверждения, а очистка — через
+            // `session::clear_chat` (no-op во время генерации, сброс очереди,
+            // черновиков визарда и KV). Прямая очистка ленты здесь обходила
+            // всё это: генерирующий ход писал в пустую ленту.
             let ctx = use_context::<SynChatCtx>();
-            ctx.messages.set(Vec::new());
-            ctx.streaming_body.set(String::new());
-            ctx.streaming_thinking.set(String::new());
+            if !ctx.pending.get_untracked() && ctx.active_chat_id.get_untracked().is_some() {
+                ctx.pending_clear.set(true);
+            }
             navigate("syn_chat");
         }
         SearchCommand::CompactNow => {
@@ -162,7 +166,8 @@ fn run_command(command: SearchCommand) {
         }
         SearchCommand::UnloadModel => {
             let ctx = use_context::<SynChatCtx>();
-            if ctx.pending.get_untracked() {
+            // Ход может идти и в фоне (открыт другой чат) — его тоже стопим.
+            if ctx.pending.get_untracked() || ctx.generating_chat.get_untracked().is_some() {
                 ctx.abort
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }

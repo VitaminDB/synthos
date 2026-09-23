@@ -181,7 +181,11 @@ fn hex(bytes: &[u8]) -> String {
 /// Вызывается после удаления чата: сами файлы чатов маленькие, полный обход
 /// стоит миллисекунды, зато CAS не растёт бесконечно. Ошибки не фатальны —
 /// логируем и идём дальше.
-pub fn gc_unreferenced(referenced: &HashSet<String>) {
+/// Возраст, моложе которого файл CAS сборщик не удаляет (см. `gc_unreferenced`).
+pub const GC_GRACE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// `grace` — файлы моложе этого не трогаются (в приложении [`GC_GRACE`]).
+pub fn gc_unreferenced(referenced: &HashSet<String>, grace: std::time::Duration) {
     let mut removed = 0usize;
     let mut freed = 0u64;
     for (dir, strip_ext) in [
@@ -210,6 +214,16 @@ pub fn gc_unreferenced(referenced: &HashSet<String>) {
                 continue;
             }
             if referenced.contains(sha) {
+                continue;
+            }
+            // Свежие файлы не трогаем: идущий ingest уже положил blob, но в
+            // черновик/заметку ссылка ещё не попала.
+            let fresh = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age < grace);
+            if fresh {
                 continue;
             }
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);

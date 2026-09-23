@@ -357,6 +357,15 @@ pub fn compact_now() {
     if ctx.pending.get_untracked() {
         return;
     }
+    // Ход другого чата в фоне: сводка считалась бы на той же модели
+    // параллельно с ним.
+    if ctx.generating_chat.get_untracked().is_some() {
+        return;
+    }
+    let chat_id = ctx.active_chat_id.get_untracked();
+    if chat_id.is_none() {
+        return;
+    }
     let registry = use_context::<crate::syn_chat::SynModelRegistry>();
     let Some(model) = registry.current.get_untracked() else {
         ctx.error.set(Some(tr!("chat.model.not_loaded")));
@@ -364,8 +373,11 @@ pub fn compact_now() {
     };
     let abort = ctx.abort.clone();
     let snapshot = abort.load(Ordering::Relaxed);
+    // Сжатие занимает чат как ход: пока оно идёт, другие чаты ставят
+    // сообщения в очередь, а перегенерация недоступна.
     ctx.pending.set(true);
-    let ctx_done = ctx.clone();
+    ctx.generating_chat.set(chat_id.clone());
+    let owner = chat_id.clone();
     std::thread::spawn(move || {
         match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -376,12 +388,22 @@ pub fn compact_now() {
                 abort,
                 snapshot,
                 CompactionTrigger::Manual,
+                chat_id,
             )),
             Err(e) => {
                 log::error!("[syn_chat] compact: не удалось создать tokio runtime: {e:#}");
             }
         }
-        run_on_main_thread(move || ctx_done.pending.set(false));
+        run_on_main_thread(move || {
+            let ctx = use_context::<SynChatCtx>();
+            if ctx.generating_chat.get_untracked() == owner {
+                ctx.generating_chat.set(None);
+            }
+            // `pending` отражает открытый чат: снимаем, только если это он.
+            if ctx.active_chat_id.get_untracked() == owner {
+                ctx.pending.set(false);
+            }
+        });
     });
 }
 
@@ -394,8 +416,9 @@ pub async fn maybe_autocompact(
     abort: &Arc<AtomicU64>,
     snapshot: u64,
     threshold_percent: u32,
+    chat_id: Option<String>,
 ) {
-    let Some((prompt_tokens, budget, max_seq_len)) = read_ctx_usage_on_main().await else {
+    let Some((prompt_tokens, budget, max_seq_len)) = read_ctx_usage_on_main(chat_id.clone()).await else {
         return;
     };
     if prompt_tokens == 0 {
@@ -444,6 +467,7 @@ pub async fn maybe_autocompact(
         CompactionTrigger::Auto {
             tokens_before: prompt_tokens as i64,
         },
+        chat_id,
     )
     .await;
 }
@@ -483,6 +507,7 @@ pub async fn maybe_compact_in_turn(
     keep_tail: usize,
     prompt_tokens: u32,
     budget_tokens: u32,
+    chat_id: Option<String>,
 ) -> bool {
     if prompt_tokens == 0 || budget_tokens == 0 {
         return false;
@@ -502,6 +527,7 @@ pub async fn maybe_compact_in_turn(
         snapshot,
         CompactionTrigger::Auto { tokens_before: prompt_tokens as i64 },
         CompactScope::InTurn { keep_tail },
+        chat_id,
     )
     .await
 }
@@ -514,8 +540,9 @@ pub async fn run_compaction(
     abort: Arc<AtomicU64>,
     snapshot: u64,
     trigger: CompactionTrigger,
+    chat_id: Option<String>,
 ) {
-    run_compaction_scoped(model, abort, snapshot, trigger, CompactScope::BetweenTurns).await;
+    run_compaction_scoped(model, abort, snapshot, trigger, CompactScope::BetweenTurns, chat_id).await;
 }
 
 /// Тело оркестратора, параметризованное областью сжатия. `true` — сжатие
@@ -526,13 +553,16 @@ async fn run_compaction_scoped(
     snapshot: u64,
     trigger: CompactionTrigger,
     scope: CompactScope,
+    chat_id: Option<String>,
 ) -> bool {
     if abort.load(Ordering::Relaxed) != snapshot {
         return false;
     }
 
     // 1. Снимаем snapshot ленты на main и считаем диапазон.
-    let Some((msgs_snapshot, range, iteration)) = read_compact_plan_on_main(scope).await else {
+    let Some((msgs_snapshot, range, iteration)) =
+        read_compact_plan_on_main(scope, chat_id.clone()).await
+    else {
         log::debug!("[syn_chat] autocompact: кандидатов нет, пропуск");
         return false;
     };
@@ -600,6 +630,13 @@ async fn run_compaction_scoped(
             return;
         }
         let ctx = use_context::<SynChatCtx>();
+        // Пока считалась сводка, пользователь мог открыть другой чат:
+        // `ctx.messages` теперь его лента — сводку туда не кладём.
+        if ctx.active_chat_id.get_untracked() != chat_id {
+            log::info!("[syn_chat] сжатие: чат ушёл в фон, сводка не применена");
+            let _ = tx.send(false);
+            return;
+        }
         let mut applied_ok = false;
         ctx.messages.update(|v| {
             if let Some(fresh_range) = scope.range(v) {
@@ -635,10 +672,18 @@ async fn run_compaction_scoped(
 /// номер итерации. `None` если кандидатов нет.
 async fn read_compact_plan_on_main(
     scope: CompactScope,
+    chat_id: Option<String>,
 ) -> Option<(Vec<ChatMsg>, Range<usize>, u32)> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
+        // `ctx.messages` — лента открытого чата. Сжимается чат хода; если он
+        // ушёл в фон, его ленты здесь нет — пропускаем (иначе сжимался бы
+        // чужой чат, а ход продолжал на его истории).
+        if chat_id.is_none() || ctx.active_chat_id.get_untracked() != chat_id {
+            let _ = tx.send(None);
+            return;
+        }
         // Ленту клонируем, только если есть что сжимать.
         let plan = ctx.messages.with_untracked(|msgs| {
             scope.range(msgs).map(|range| {
@@ -654,10 +699,15 @@ async fn read_compact_plan_on_main(
 /// Читает на main-потоке промпт последнего хода и VRAM-бюджет контекста
 /// (сигналы таба «Детали», обновляются `TurnStats::apply` на каждом ходу).
 /// `(промпт последнего хода, бюджет VRAM в токенах, max_seq_len из настроек)`.
-async fn read_ctx_usage_on_main() -> Option<(u32, u32, u32)> {
+async fn read_ctx_usage_on_main(chat_id: Option<String>) -> Option<(u32, u32, u32)> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
+        // Счётчики «Деталей» обновляются только у открытого чата: у фонового
+        // хода здесь числа другого чата.
+        if chat_id.is_none() || ctx.active_chat_id.get_untracked() != chat_id {
+            return;
+        }
         let _ = tx.send((
             ctx.last_prompt_tokens.get_untracked(),
             ctx.ctx_budget_tokens.get_untracked(),

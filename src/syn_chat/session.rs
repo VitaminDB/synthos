@@ -1169,6 +1169,21 @@ pub(crate) fn commit_turn_text(chat_id: &Option<String>, body: String, thinking:
     run_on_main_thread(move || {
         let ctx = use_context::<SynChatCtx>();
         if ctx.active_chat_id.get_untracked() == owner {
+            // Живой стрим открытого чата — хвост полного текста хода: если
+            // пользователь уходил в другой чат и вернулся посреди ответа,
+            // в нём только то, что пришло после возврата (выбор чата
+            // обнуляет стрим, а в файл начало не попадало). Недостающее
+            // начало берём из текста воркера.
+            let lost_body = missing_prefix(&body, &ctx.streaming_body.get_untracked());
+            let lost_think = missing_prefix(&thinking, &ctx.streaming_thinking.get_untracked());
+            if !lost_body.is_empty() || !lost_think.is_empty() {
+                ctx.messages.update(|list| {
+                    if let Some(last) = list.iter_mut().rev().find(|m| m.role == ChatMsgRole::Assistant) {
+                        last.body.push_str(lost_body);
+                        last.thinking.push_str(lost_think);
+                    }
+                });
+            }
             ctx.commit_streaming_tail();
             return;
         }
@@ -1188,6 +1203,25 @@ pub(crate) fn commit_turn_text(chat_id: &Option<String>, body: String, thinking:
             }
         });
     });
+}
+
+/// Вызовы, до которых ход не дошёл (Stop/Cancel посреди пачки), получают в
+/// ленте результат «отменено». Иначе в ленте остаётся tool_call без
+/// tool_result: такую пару `build_history` отдаёт модели на следующем
+/// сообщении, а сжатие рвёт её на границе диапазона.
+fn cancel_unanswered(chat_id: &Option<String>, calls: &[ChatToolCall]) {
+    for call in calls {
+        push_tool_result(chat_id, call, tr!("chat.session.tool.cancelled"), true);
+    }
+}
+
+/// Часть `full`, которой нет в живом стриме `streamed` (его хвосте). Стрим —
+/// не хвост (расхождение) — ничего не досыпаем, чтобы не задвоить текст.
+fn missing_prefix<'a>(full: &'a str, streamed: &str) -> &'a str {
+    match full.strip_suffix(streamed) {
+        Some(prefix) => prefix,
+        None => "",
+    }
 }
 
 /// Выполнить действие над контекстом, только если чат генерации открыт.
@@ -1218,10 +1252,26 @@ pub fn abort_current() {
 /// (либо с body, либо placeholder), он удаляется из ленты и стартует свежая
 /// генерация с тем же user-сообщением. Если хвост — user, просто добавляем
 /// пустой placeholder и стартуем.
+/// «Идёт генерация в другом чате (название)» — для действий, которые
+/// запустили бы второй параллельный ход.
+fn busy_other_chat_error(ctx: &SynChatCtx, chat_id: &str) -> String {
+    let chat = ctx
+        .chats
+        .with_untracked(|v| v.iter().find(|m| m.id == chat_id).map(|m| m.title.clone()))
+        .unwrap_or_else(|| chat_id.to_string());
+    tr!("chat.session.error.busy_other_chat", chat = chat)
+}
+
 pub fn regenerate_last() {
     let ctx = use_context::<SynChatCtx>();
     if ctx.pending.get_untracked() {
         ctx.abort.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    // Ход другого чата идёт в фоне: второй параллельный ход перезаписал бы
+    // `generating_chat`/`turn_settings`, делил бы с ним `abort` и модель.
+    if let Some(busy) = ctx.generating_chat.get_untracked() {
+        ctx.error.set(Some(busy_other_chat_error(&ctx, &busy)));
         return;
     }
     let registry = use_context::<SynModelRegistry>();
@@ -1276,6 +1326,11 @@ pub fn regenerate_last() {
 pub fn continue_last() {
     let ctx = use_context::<SynChatCtx>();
     if ctx.pending.get_untracked() {
+        return;
+    }
+    // См. `regenerate_last`: один ход на приложение.
+    if let Some(busy) = ctx.generating_chat.get_untracked() {
+        ctx.error.set(Some(busy_other_chat_error(&ctx, &busy)));
         return;
     }
     let registry = use_context::<SynModelRegistry>();
@@ -1387,6 +1442,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             }
         };
         let abort_for_compact = abort.clone();
+        let chat_for_compact = chat_for_worker.clone();
         let result = rt.block_on(async {
             let r = run_agent_loop(
                 model,
@@ -1429,6 +1485,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
                         &abort_for_compact,
                         abort_snapshot,
                         autocompact_threshold,
+                        chat_for_compact,
                     )
                     .await;
                 }
@@ -1726,7 +1783,7 @@ const LOOP_NOTE: &str = "[System note: your previous turn was cut off because it
      mappings by hand; keep code and text concise, and finish the turn with a \
      valid tool call or a text answer.]";
 
-const EMPTY_TURN_NOTE: &str = "[System note: your previous turn produced      neither a tool call nor a text answer — the whole budget went into      reasoning. If you meant to call a tool, send the call again as valid      JSON: arguments as a real structure, every bracket closed in the right      order. Otherwise answer with text.]";
+const EMPTY_TURN_NOTE: &str = "[System note: your previous turn produced neither a tool call nor a text answer — the whole budget went into reasoning. If you meant to call a tool, send the call again as valid JSON: arguments as a real structure, every bracket closed in the right order. Otherwise answer with text.]";
 
 /// Главный цикл агента: prompt → generate → parse tool_calls → execute →
 /// append history → next turn. Прерывается по abort, EOS-only ответу (no
@@ -1896,12 +1953,18 @@ async fn rebuild_history(
     system_prompt: &str,
     model: &Arc<LoadedSynModel>,
     caps: &MediaCaps,
+    chat_id: &Option<String>,
 ) -> Option<Vec<Message>> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<HistoryItem>>();
     let ctx_main = ctx.clone();
     let sp = system_prompt.to_string();
     let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let chat_id = chat_id.clone();
     run_on_main_thread(move || {
+        // История собирается из открытой ленты — только если это чат хода.
+        if ctx_main.active_chat_id.get_untracked() != chat_id {
+            return;
+        }
         let _ = tx.send(build_history(&ctx_main, &sp, channel));
     });
     let items = rx.await.ok()?;
@@ -2587,11 +2650,18 @@ async fn run_agent_loop(
         tool_calls_made += raw_calls.len();
 
         // Конвертируем RawToolCall → ChatToolCall (для UI и executor'а).
+        // Id уникален на всю жизнь ленты: `turn` начинается с нуля на каждом
+        // сообщении, и id `syn_call_0_0_…` повторялись между сообщениями —
+        // сжатие сопоставляло результат с чужим вызовом того же id.
+        let call_stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         let chat_calls: Vec<ChatToolCall> = raw_calls
             .iter()
             .enumerate()
             .map(|(i, c)| ChatToolCall {
-                id: format!("syn_call_{}_{}_{}", turn, i, abort_snapshot),
+                id: format!("syn_call_{}_{}_{:x}", turn, i, call_stamp),
                 kind: "function".to_string(),
                 function: ChatToolCallFunction {
                     name: Some(c.name.clone()),
@@ -2637,8 +2707,9 @@ async fn run_agent_loop(
         );
 
         // Выполняем каждый tool: guard повторов → confirm → execute → push.
-        for chat_call in chat_calls.iter() {
+        for (ci, chat_call) in chat_calls.iter().enumerate() {
             if abort.load(Ordering::Relaxed) != abort_snapshot {
+                cancel_unanswered(&chat_id, &chat_calls[ci..]);
                 return Ok(());
             }
 
@@ -2801,6 +2872,7 @@ async fn run_agent_loop(
 
             let decision = crate::agent::tool_flow::await_decision_on_tool_call(
                 chat_call,
+                chat_id.as_deref().unwrap_or_default(),
                 &abort,
                 abort_snapshot,
             )
@@ -2819,12 +2891,17 @@ async fn run_agent_loop(
                     ));
                     // После Cancel прерываем весь loop — пользователь явно
                     // отказал, нет смысла продолжать.
+                    cancel_unanswered(&chat_id, &chat_calls[ci + 1..]);
                     return Ok(());
                 }
                 ToolDecision::AllowAll => {
-                    run_on_main_thread(|| {
-                        use_context::<AppCtx>().tools.allow_all.set_always(true);
-                    });
+                    if let Some(chat) = chat_id.clone() {
+                        run_on_main_thread(move || {
+                            use_context::<AppCtx>().tools.allow_all_chats.update(|s| {
+                                s.insert(chat);
+                            });
+                        });
+                    }
                     // Падаем в Allow-ветку.
                 }
                 ToolDecision::Allow => {}
@@ -2863,6 +2940,7 @@ async fn run_agent_loop(
                     note.clone(),
                 );
                 if res.aborted {
+                    cancel_unanswered(&chat_id, &chat_calls[ci + 1..]);
                     return Ok(());
                 }
                 match res.model {
@@ -2917,6 +2995,7 @@ async fn run_agent_loop(
                         if parked {
                             unpark_kv_session(&mut kv_slot, &model);
                         }
+                        cancel_unanswered(&chat_id, &chat_calls[ci..]);
                         return Ok(());
                     }
                 };
@@ -3049,10 +3128,11 @@ async fn run_agent_loop(
                     IN_TURN_KEEP_TAIL,
                     prompt_tokens,
                     turn_ctx_budget as u32,
+                    chat_id.clone(),
                 )
                 .await;
                 if compacted {
-                    match rebuild_history(&ctx, &sys_prompt, &model, &caps).await {
+                    match rebuild_history(&ctx, &sys_prompt, &model, &caps, &chat_id).await {
                         Some(h) => {
                             log::info!(
                                 "[syn_chat] история хода пересобрана после сжатия: \
@@ -4259,6 +4339,16 @@ fn prepare_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Вернулись в чат посреди ответа: в стриме только хвост, начало —
+    /// из текста воркера. Без переключения недостающего нет.
+    #[test]
+    fn missing_prefix_restores_text_before_return() {
+        assert_eq!(missing_prefix("Привет, мир", "мир"), "Привет, ");
+        assert_eq!(missing_prefix("Привет, мир", "Привет, мир"), "");
+        assert_eq!(missing_prefix("Привет", ""), "Привет");
+        assert_eq!(missing_prefix("Привет", "чужое"), "");
+    }
 
     /// Строка «available tools» называет только объявленные схемой
     /// инструменты: ни ключей вне каталога, ни неявного `autotools`.

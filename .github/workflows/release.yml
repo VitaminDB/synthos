@@ -78,14 +78,15 @@ jobs:
         run: |
           set -euo pipefail
           ref="${{ github.event.inputs.ref || github.ref_name }}"
-          # Версия — сквозной номер сборки (268). В Cargo.toml он записан как
-          # semver «268.0.0» (Cargo другого формата не принимает), в PKGBUILD и
-          # в теге — просто «268»; сверяем мажор с pkgver.
+          # Версия — 0.2.<номер сборки> (0.2.278): одна и та же строка в
+          # Cargo.toml, в pkgver и в теге (с префиксом v). epoch в PKGBUILD
+          # нужен только pacman'у, но попадает в имя файла пакета.
           cargo_ver="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
           pkgver="$(grep -m1 '^pkgver=' packaging/PKGBUILD | cut -d= -f2)"
           pkgrel="$(grep -m1 '^pkgrel=' packaging/PKGBUILD | cut -d= -f2)"
+          epoch="$(grep -m1 '^epoch=' packaging/PKGBUILD | cut -d= -f2 || true)"
 
-          if [ "${cargo_ver%%.*}" != "$pkgver" ]; then
+          if [ "$cargo_ver" != "$pkgver" ]; then
             echo "::error::Cargo.toml version=$cargo_ver, PKGBUILD pkgver=$pkgver — разошлись"
             exit 1
           fi
@@ -106,6 +107,7 @@ jobs:
           echo "tag=$tag"         >> "$GITHUB_OUTPUT"
           echo "pkgver=$pkgver"   >> "$GITHUB_OUTPUT"
           echo "pkgrel=$pkgrel"   >> "$GITHUB_OUTPUT"
+          echo "epoch=$epoch"     >> "$GITHUB_OUTPUT"
 
       - name: Окружение сборки
         run: |
@@ -169,7 +171,11 @@ jobs:
 
           tar --zstd -C "$(dirname "$stage")" -cf \
             "$out/synthos-$ver-x86_64-linux.tar.zst" "synthos-$ver"
-          cp packaging/synthos-"$ver"-"$rel"-x86_64.pkg.tar.zst "$out/"
+          # makepkg пишет epoch в имя файла («synthos-1:0.2.278-1-…»), а
+          # двоеточие в имени ассета релиза GitHub заменяет — кладём без него.
+          epoch="${{ steps.version.outputs.epoch }}"
+          cp packaging/synthos-"${epoch:+$epoch:}$ver"-"$rel"-x86_64.pkg.tar.zst \
+            "$out/synthos-$ver-$rel-x86_64.pkg.tar.zst"
 
           ( cd "$out" && sha256sum ./* > SHA256SUMS )
           ls -lh "$out"

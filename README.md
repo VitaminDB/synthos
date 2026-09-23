@@ -7,15 +7,17 @@
 A local AI desktop studio for Rust — an agentic chat client, a block-based notes workspace,
 a node editor for generating video, music and speech, a code editor and a document knowledge
 base. Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
-engine: no Python, no torch, no cloud. The UI is built with
-[syngui](https://github.com/VitaminDB/syngui).
+engine: no Python, no torch, no cloud. It runs on any NVIDIA GPU from sm_80 (Ampere) up —
+natively on Blackwell (sm_120+), through portable kernels on older cards — and loads models
+from `.syn` bundles in the precision you choose (NVFP4, MXFP8, SQ1…SQ8, dense) or chat
+models straight from GGUF. The UI is built with [syngui](https://github.com/VitaminDB/syngui).
 
 ![synthos: a notes workspace built by the agent, with the chat torn off into a floating window](docs/screenshots/notes-dashboard-floating-chat.png)
 
 ## What it is
 
 synthos is one desktop app around a local GPU. A chat client runs 27B–125B models from
-single-file `.syn` bundles and drives the rest of the app through tools; a notes mode holds
+single-file `.syn` bundles or GGUF files and drives the rest of the app through tools; a notes mode holds
 your documents, kanban boards, mind maps and calendar in a single project file; a node editor
 wires generative models into runnable graphs — prompt → image, image + instruction →
 edited image, text or image → video with sound, lyrics → music, script → multi-voice
@@ -37,19 +39,25 @@ paru -S synthos-git      # build from source (needs CUDA toolkit, ~2 h, ~15 GB d
 [Build](#build)). The binary is built against Arch's library versions; on other
 distributions building from source is the reliable path.
 
-**Then pack your models** — synthos only loads `.syn` bundles, see
-[the next section](#models-pack-them-into-syn-first).
+**Then pack your models** — synthos loads `.syn` bundles (chat models can also be opened
+straight from `.gguf`), see [the next section](#models-pack-them-into-syn-first).
 
 ## Models: pack them into `.syn` first
 
-**synthos loads models only from `.syn` bundles.** A model downloaded from Hugging Face — a
-folder of safetensors shards with `config.json` and tokenizer files, or a GGUF file — has to
-be packed into a single `.syn` file before the chat, the node editor or the agent can use it.
-It is a one-time step per model.
+**synthos loads models from `.syn` bundles.** A model downloaded from Hugging Face as a
+folder of safetensors shards with `config.json` and tokenizer files has to be packed into a
+single `.syn` file before the chat, the node editor or the agent can use it. It is a
+one-time step per model. The one exception is **GGUF**: a llama.cpp `.gguf` chat model
+(Llama, Qwen2/Qwen3 dense and MoE, the Qwen3.6/3.8 hybrids, Gemma-3, Gemma-4) opens
+directly in the chat model picker and in **Syn Checkpoint**, with its ggml quantization
+executed as is — packing it into `.syn` is optional.
 
 Why one file: the bundle is read zero-copy through mmap, carries the config, tokenizer and
-chat template together with the weights, and can hold quantized weights — so the file on disk
-is exactly what gets loaded, with nothing to resolve at runtime.
+chat template together with the weights, and can hold quantized weights in several formats —
+NVFP4 and MXFP8 (native on Blackwell), SQ1…SQ8 (a portable block format for any sm_80+
+card), ggml blocks kept byte for byte from a GGUF, or dense BF16/F16 — mixed per layer group.
+The file on disk is exactly what gets loaded, with nothing to resolve at runtime; a quantized
+bundle can also be transcoded on load into the format that suits the card.
 
 | | |
 |---|---|
@@ -69,15 +77,18 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 
 **Other routes:**
 
-- **GGUF** — the Hugging Face browser converts a downloaded GGUF to `.syn`; the `mmproj`
-  vision projector is picked up automatically.
+- **GGUF** — load it directly, or let the Hugging Face browser convert a downloaded GGUF to
+  `.syn` (ggml blocks are copied without re-quantizing); the `mmproj` vision projector is
+  picked up automatically.
 - **CLI** — `synaptix convert <source> <model.syn>` from
   [synaptix](https://github.com/VitaminDB/synaptix) does the same from a terminal.
 
 **Before you press Build:**
 
-- **Quantization (NVFP4 / MXFP8) needs an NVIDIA GPU and is lossy.** Keep the original
-  weights if you quantize — the dialog will not combine quantization with "delete sources
+- **Quantization (NVFP4 / MXFP8 / SQ1…SQ8) needs an NVIDIA GPU and is lossy.** Without a
+  Blackwell card prefer SQ (SQ4–SQ8): NVFP4 / MXFP8 still run there, but through slower
+  dequantizing kernels. Keep the original weights if you quantize — the dialog will not
+  combine quantization with "delete sources
   after packing".
 - Large multi-part models have packing notes of their own: LTX-2.3 with its Gemma text
   encoder, MiniMax-H3, Muse Glimmer, Qwen3.8 and YuE2 — see `docs/*_syn_bundle_2026.md`
@@ -87,7 +98,8 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 
 ### Chat and agent
 
-- **Native inference from `.syn` bundles** — NVFP4 / MXFP8 quantization, CUDA-graph decode,
+- **Native inference from `.syn` bundles and GGUF** — NVFP4 / MXFP8 / SQ1…SQ8 and all ggml
+  quantization types, on any sm_80+ card (native block-scale MMA on Blackwell), CUDA-graph decode,
   MTP and DFlash speculative decoding, prefix-KV reuse across turns (including prompts that
   carry images), a VRAM-aware context budget with automatic compaction, and partial block
   offload that streams layers from host RAM when the model does not fit.
@@ -234,14 +246,16 @@ is exactly what gets loaded, with nothing to resolve at runtime.
 
 ### Models
 
-- A Hugging Face browser for fetching models, with GGUF import converted in-app to `.syn`;
+- A Hugging Face browser for fetching models; GGUF files load as they are or convert in-app
+  to `.syn`;
   downloads run in a dock at the bottom of the window (list or icon view, per-file progress,
   a progress chip in the title bar) and survive navigating away.
 - A model catalogue in Settings — one `.syn` file per model, read zero-copy via mmap, with
   "optimal" and "custom" profiles per model.
 - **Syn packages** — pack models into `.syn` (see
   [above](#models-pack-them-into-syn-first)), inspect, edit and re-pack bundles, with
-  quantization applied at packing time.
+  quantization applied at packing time (NVFP4, MXFP8, SQ8…SQ2, per layer group) and an
+  optional transcode of an already quantized bundle on load.
 
 ### Desktop
 
@@ -305,8 +319,9 @@ then `makepkg` against the existing binary.
 - Linux x86_64. Runtime: gtk3, wayland, libxkbcommon, fontconfig, a Vulkan driver, alsa,
   ffmpeg.
 - GPU (optional, strongly recommended): NVIDIA driver + CUDA runtime, loaded at runtime. The
-  compile baseline is sm_80 (Ampere); native NVFP4 needs sm_120 (Blackwell). 7 GB of VRAM is
-  enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
+  kernels are JIT-compiled for the card: any sm_80+ GPU (Ampere, Ada, Hopper) is supported
+  through portable kernels, while Blackwell (sm_120+) keeps native NVFP4 / MXFP8 tensor-core
+  paths. 7 GB of VRAM is enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
   to CPU for smoke tests and debugging.
 - A Windows build is planned — the app currently depends on Linux-only components.
 
@@ -315,7 +330,7 @@ then `makepkg` against the existing binary.
 No model weights are shipped. Download them yourself from Hugging Face — the same files used
 by ComfyUI / LM Studio — and you accept each model's licence. Some models (e.g. FLUX.1-dev,
 LTX-2.3, Gemma-3) are non-commercial or otherwise restricted; check the licence before use.
-Every model must be packed into a `.syn` bundle before use — see
+Every model except a GGUF chat model must be packed into a `.syn` bundle before use — see
 [Models: pack them into `.syn` first](#models-pack-them-into-syn-first).
 
 ## Documentation

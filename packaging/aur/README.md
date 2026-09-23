@@ -26,22 +26,24 @@
 
 ## Выпуск новой версии
 
-Версия — сквозной номер сборки (`268`, `269`, …): он же `pkgver`, он же тег
-`v268`, он же версия в AUR. Подробнее — [`docs/release_2026.md`](../../docs/release_2026.md).
+Версия — `0.2.<номер сборки>` (`0.2.278`, `0.2.279`, …): она же `pkgver`, она же
+тег `v0.2.278`, она же версия в AUR. `epoch=1` во всех PKGBUILD не трогать: с
+20.09 по 23.09 версией был голый номер сборки, и без epoch `0.2.x` для pacman —
+откат. Подробнее — [`docs/release_2026.md`](../../docs/release_2026.md).
 
 ```sh
 # 1. пины зависимостей и версия
 packaging/pin-deps.sh
-$EDITOR packaging/PKGBUILD          # pkgver=268, pkgrel=1
-$EDITOR Cargo.toml                  # version = "268.0.0" — мажор равен pkgver
+$EDITOR packaging/PKGBUILD          # pkgver=0.2.279, pkgrel=1
+$EDITOR Cargo.toml                  # version = "0.2.279" — та же строка
 
-git commit -am "релиз v268"
-git tag v268 && git push origin master v268    # --follow-tags легковесный тег не пушит
+git commit -am "релиз v0.2.279"
+git tag v0.2.279 && git push origin master v0.2.279    # --follow-tags легковесный тег не пушит
 
 # 2. дождаться, пока workflow release соберёт пакет и выложит артефакты
 
 # 3. обновить версию в AUR-пакетах и запушить
-$EDITOR packaging/aur/synthos-bin/PKGBUILD     # pkgver=268, pkgrel=1
+$EDITOR packaging/aur/synthos-bin/PKGBUILD     # pkgver=0.2.279, pkgrel=1
 packaging/aur/publish.sh synthos-bin           # sha256 tarball посчитает updpkgsums
 packaging/aur/publish.sh synthos-git           # pkgver считается из git автоматически
 ```

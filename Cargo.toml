@@ -3,10 +3,10 @@ resolver = "2"
 members = ["."]
 
 [workspace.package]
-# Версия — сквозной номер сборки (тот же, что pkgver в packaging/PKGBUILD и
-# тег релиза v268). Cargo требует semver, поэтому номер живёт в мажоре, а
-# приложение показывает только его — см. build.rs (SYNTHOS_VERSION).
-version = "276.0.0"
+# Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
+# релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
+# приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
+version = "0.2.278"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]

@@ -1,7 +1,7 @@
 //! Custom title bar for the frameless window.
 //!
-//! Left: app name + version (`Synthos v<SYNTHOS_VERSION>` — сквозной номер
-//! сборки, `pkgver` из `packaging/PKGBUILD`, который пробрасывает `build.rs`;
+//! Left: app name + version (`Synthos v<SYNTHOS_VERSION>` — `0.2.<номер
+//! сборки>`, `pkgver` из `packaging/PKGBUILD`, который пробрасывает `build.rs`;
 //! по нему сразу видно, какая сборка запущена), пилюля стадии («beta») и —
 //! только если пакет пересобирали под новые библиотеки — ревизия пакета.
 //! Right: прогресс загрузок HuggingFace (пока они есть), затем чипы Donate и

@@ -632,10 +632,13 @@ fn install_config_autosave(ctx: &AppCtx) {
                 // подписывает effect — каждое изменение в editor'е (через
                 // `state_signal` → запись в `editor_states`) триггерит
                 // повторный save конфига.
+                // Только по открытым файлам: иначе позиция каждого когда-либо
+                // открытого файла жила в config.json вечно.
                 editor_states: s
                     .editor_states
                     .get()
                     .iter()
+                    .filter(|(path, _)| s.open_files.with_untracked(|open| open.contains(path)))
                     .map(|(path, st)| {
                         (
                             path.display().to_string(),

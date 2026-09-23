@@ -343,13 +343,16 @@ pub fn load_video_frames(
     dev: Device,
 ) -> Result<synaptix_core::tensor::Tensor, String> {
     use std::process::Command;
-    let dir = std::env::temp_dir().join("synthos_ltx_vin");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("temp dir: {e}"))?;
+    // Свой каталог (параллельные ноды не смешивают кадры), удаляется при
+    // выходе; ffmpeg декодирует только нужные `n` кадров — /tmp часто tmpfs,
+    // и полное видео в PNG съедало бы RAM.
+    let tmp = crate::fsutil::TempDir::new("synthos_ltx_vin").map_err(|e| format!("temp dir: {e}"))?;
+    let dir = tmp.path();
     let status = Command::new("ffmpeg")
         .args(["-y", "-i"])
         .arg(path)
         .args(["-vf", &format!("scale={pw}:{ph}")])
+        .args(["-frames:v", &n.to_string()])
         .arg(dir.join("f%05d.png"))
         .status()
         .map_err(|e| tr!("node.ltx.shared.err_ffmpeg_run", error = e))?;

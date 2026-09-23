@@ -810,13 +810,28 @@ fn audio_stage(
     })
 }
 
+/// Первые `DOC_PREVIEW_CHARS` символов документа и признак обрезки. Читается
+/// только голова файла (до 4 байт на символ + запас): вложение-лог на
+/// гигабайты раньше читалось целиком прямо при отрисовке.
+fn read_doc_preview(path: &std::path::Path) -> std::io::Result<(String, bool)> {
+    use std::io::Read;
+    let cap = (DOC_PREVIEW_CHARS * 4 + 4) as u64;
+    let mut head = Vec::new();
+    let file = std::fs::File::open(path)?;
+    let total = file.metadata().map(|m| m.len()).unwrap_or(0);
+    file.take(cap).read_to_end(&mut head)?;
+    let s = String::from_utf8_lossy(&head);
+    let mut chars = s.chars();
+    let out: String = chars.by_ref().take(DOC_PREVIEW_CHARS).collect();
+    let truncated = chars.next().is_some() || total > head.len() as u64;
+    Ok((out, truncated))
+}
+
 fn document_stage(a: &MsgAttachment) -> impl Widget {
     let path = blobs::source_path(a);
-    let text = match std::fs::read(&path) {
-        Ok(bytes) => {
-            let s = String::from_utf8_lossy(&bytes).into_owned();
-            let mut out: String = s.chars().take(DOC_PREVIEW_CHARS).collect();
-            if s.chars().count() > DOC_PREVIEW_CHARS {
+    let text = match read_doc_preview(&path) {
+        Ok((mut out, truncated)) => {
+            if truncated {
                 out.push_str("\n\n");
                 out.push_str(&tr!("chat.media_viewer.doc_truncated"));
             }
@@ -901,14 +916,7 @@ fn copy_image(a: &MsgAttachment) {
 }
 
 fn open_externally(path: &std::path::Path) {
-    let cmd = if cfg!(target_os = "macos") {
-        "open"
-    } else if cfg!(target_os = "windows") {
-        "explorer"
-    } else {
-        "xdg-open"
-    };
-    if let Err(e) = std::process::Command::new(cmd).arg(path).spawn() {
+    if let Err(e) = crate::paths::open_with_system(path) {
         log::warn!("[media-viewer] не удалось открыть {}: {e}", path.display());
     }
 }

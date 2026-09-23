@@ -261,7 +261,7 @@ pub fn open_card_file(ctx: NotesCtx, file: &super::kanban::model::CardFile) {
 pub fn open_external(path: &Path) {
     #[cfg(target_os = "linux")]
     {
-        if std::process::Command::new("xdg-open").arg(path).spawn().is_ok() {
+        if crate::paths::open_with_system(path).is_ok() {
             return;
         }
     }

@@ -901,7 +901,7 @@ mod tests {
                 start_byte: 36,
                 end_byte: 62,
                 token_count: 3,
-                embedding: vec![0.7071, 0.7071, 0.0, 0.0],
+                embedding: vec![std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2, 0.0, 0.0],
             },
         ]
     }

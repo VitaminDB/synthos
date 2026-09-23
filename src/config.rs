@@ -531,6 +531,11 @@ pub struct AppConfig {
     /// активные один раз, дальше выбор пользователя не трогается.
     #[serde(default)]
     pub tools_notes_introduced: bool,
+    /// Миграция дефолтов сэмплинга (`migrate_sampling_defaults`) уже
+    /// выполнена. Без флага она срабатывала на каждой загрузке, и выбранный
+    /// пользователем потолок 131072 сбрасывался.
+    #[serde(default)]
+    pub sampling_defaults_migrated: bool,
     /// То же для `wizard` (08.09.2026): один раз дописывается в активные.
     #[serde(default)]
     pub tools_wizard_introduced: bool,
@@ -1185,6 +1190,7 @@ impl Default for AppConfig {
             tools_active: default_tools_active(),
             tools_auto: Vec::new(),
             tools_notes_introduced: true,
+            sampling_defaults_migrated: true,
             tools_wizard_introduced: true,
             tools_view_media_introduced: true,
             skills_active: Vec::new(),
@@ -1419,7 +1425,7 @@ pub fn now_millis() -> u64 {
 /// создаётся лениво в [`crate::pages::huggingface::download::start_download`].
 pub fn resolve_hf_cache_dir(stored: &str) -> PathBuf {
     if !stored.trim().is_empty() {
-        return PathBuf::from(stored);
+        return crate::paths::expand_home(stored);
     }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -1496,6 +1502,10 @@ impl AppConfig {
     /// ровно старый дефолт, — значения, изменённые пользователем, остаются.
     /// Параметры уже существующих чатов (per-chat override) не трогаем.
     pub fn migrate_sampling_defaults(&mut self) {
+        if self.sampling_defaults_migrated {
+            return;
+        }
+        self.sampling_defaults_migrated = true;
         // Потолок ответа до 07.09.2026 — 131072 (= `max_seq_len`): он уходил
         // в план KV каждого хода и занимал память под ринг впустую.
         // Нетронутый дефолт переводим на новый, изменённое пользователем
@@ -1611,6 +1621,19 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Миграция сэмплинга — один раз: потолок 131072, выставленный
+    /// пользователем после неё, не сбрасывается.
+    #[test]
+    fn sampling_migration_runs_once() {
+        let mut cfg = AppConfig { sampling_defaults_migrated: false, ..AppConfig::default() };
+        cfg.syn_chat_defaults.max_new_tokens = SamplingParams::LEGACY_MAX_NEW_TOKENS;
+        cfg.migrate_sampling_defaults();
+        assert_eq!(cfg.syn_chat_defaults.max_new_tokens, SamplingParams::default().max_new_tokens);
+        cfg.syn_chat_defaults.max_new_tokens = SamplingParams::LEGACY_MAX_NEW_TOKENS;
+        cfg.migrate_sampling_defaults();
+        assert_eq!(cfg.syn_chat_defaults.max_new_tokens, SamplingParams::LEGACY_MAX_NEW_TOKENS);
+    }
 
     /// Старый конфиг со своим списком инструментов получает `notes` один
     /// раз; выключенный пользователем после этого — не возвращается.
@@ -1847,7 +1870,8 @@ mod tests {
 
     #[test]
     fn legacy_sampling_defaults_migrate_to_current() {
-        let mut cfg = AppConfig::default();
+        // Конфиг до миграции: флага в файле нет → `false`.
+        let mut cfg = AppConfig { sampling_defaults_migrated: false, ..AppConfig::default() };
         cfg.syn_chat_defaults = SamplingParams::legacy_v1();
         cfg.migrate_sampling_defaults();
         assert_eq!(cfg.syn_chat_defaults, SamplingParams::default());
@@ -1855,7 +1879,7 @@ mod tests {
 
     #[test]
     fn customized_sampling_defaults_survive_migration() {
-        let mut cfg = AppConfig::default();
+        let mut cfg = AppConfig { sampling_defaults_migrated: false, ..AppConfig::default() };
         cfg.syn_chat_defaults = SamplingParams { temperature: 0.2, ..SamplingParams::legacy_v1() };
         cfg.migrate_sampling_defaults();
         assert_eq!(cfg.syn_chat_defaults.temperature, 0.2);

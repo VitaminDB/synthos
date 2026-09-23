@@ -370,9 +370,9 @@ pub fn save_as(a: &MsgAttachment) {
 
 fn open_externally(a: &MsgAttachment) {
     let path = blobs::source_path(a);
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-    });
+    if let Err(e) = crate::paths::open_with_system(&path) {
+        log::warn!("[media-inline] не удалось открыть {}: {e}", path.display());
+    }
 }
 
 /// Headless-проверка аудио-карточки на `TestHarness`. Запуск:

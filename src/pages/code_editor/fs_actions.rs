@@ -159,14 +159,7 @@ pub fn reveal_in_files(path: &Path) {
     } else {
         path
     };
-    let cmd = if cfg!(target_os = "macos") {
-        "open"
-    } else if cfg!(target_os = "windows") {
-        "explorer"
-    } else {
-        "xdg-open"
-    };
-    match std::process::Command::new(cmd).arg(target).spawn() {
+    match crate::paths::open_with_system(target) {
         Ok(_) => {}
         Err(e) => {
             eprintln!("[code-editor] reveal_in_files {:?}: {e}", target);

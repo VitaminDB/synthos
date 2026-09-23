@@ -169,7 +169,7 @@ pub fn start(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = thread::Builder::new()
         .name("synthos-ltx-video-save".into())
         .spawn(move || {
-            let out = PathBuf::from(out_path.trim());
+            let out = crate::paths::expand_home(&out_path);
             match encode_mp4(&frames, audio.as_deref(), &out, Some(progress_pct)) {
                 Ok(()) => {
                     status.set(SaveStatus::Saved(out));

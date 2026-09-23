@@ -133,9 +133,11 @@ fn write_mp4(
     audio: Option<&AudioBuffer>,
     out: &PathBuf,
 ) -> std::result::Result<(), String> {
-    let dir = std::env::temp_dir().join("synthos_h3_frames");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| tr!("node.minimax_h3_save.tmp_dir_failed", error = e))?;
+    // Свой каталог на прогон: параллельные Save-ноды иначе стирали кадры
+    // друг друга. Удаляется при выходе из функции, в том числе по ошибке.
+    let tmp = crate::fsutil::TempDir::new("synthos_h3_frames")
+        .map_err(|e| tr!("node.minimax_h3_save.tmp_dir_failed", error = e))?;
+    let dir = tmp.path();
 
     let (w, h) = (frames.width as usize, frames.height as usize);
     for (i, fr) in frames.frames.iter().enumerate() {
@@ -174,7 +176,6 @@ fn write_mp4(
         .arg(out)
         .status()
         .map_err(|e| format!("ffmpeg: {e}"))?;
-    let _ = std::fs::remove_dir_all(&dir);
     if !status.success() {
         return Err(tr!("node.minimax_h3_save.ffmpeg_failed"));
     }

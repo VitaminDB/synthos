@@ -357,7 +357,7 @@ fn start_writing(
         (rx, sr, ch, cancel.clone())
     };
 
-    let path = PathBuf::from(path_sig.get_untracked());
+    let path = crate::paths::expand_home(&path_sig.get_untracked());
 
     // Сбрасываем счётчики.
     written_secs.set(0.0);

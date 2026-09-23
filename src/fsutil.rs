@@ -86,6 +86,35 @@ pub fn write_user_file(path: &Path, data: impl AsRef<[u8]>) -> std::io::Result<(
     }
 }
 
+/// Уникальный временный каталог, удаляемый при drop. Фиксированное имя
+/// (`/tmp/synthos_x`) делили бы параллельные прогоны: `remove_dir_all`
+/// одного стирал бы кадры другого, а кадры двух видео смешивались.
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new(prefix: &str) -> std::io::Result<Self> {
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir()
+            .join(format!("{prefix}-{}-{seq}-{nanos:x}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Копирует `src` в `dst` атомарно (копия во временный файл рядом с `dst`
 /// и `rename`). Для файлов, чьё имя — хеш содержимого: обрезанная копия под
 /// таким именем иначе считалась бы готовой навсегда.
@@ -199,6 +228,18 @@ mod tests {
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "via link");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn temp_dirs_are_unique_and_removed() {
+        let a = TempDir::new("synthos-test").unwrap();
+        let b = TempDir::new("synthos-test").unwrap();
+        assert_ne!(a.path(), b.path());
+        let pa = a.path().to_path_buf();
+        std::fs::write(pa.join("f"), "x").unwrap();
+        drop(a);
+        assert!(!pa.exists());
+        assert!(b.path().exists());
     }
 
     #[test]

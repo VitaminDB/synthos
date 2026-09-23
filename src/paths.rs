@@ -14,6 +14,36 @@ fn home() -> Option<String> {
         .filter(|h| !h.is_empty())
 }
 
+/// Открыть файл или каталог системным приложением (`xdg-open`, `open`,
+/// `explorer`). Процесс дожидается фоновый поток: без `wait` каждый вызов
+/// оставлял зомби до выхода приложения.
+pub fn open_with_system(target: &Path) -> std::io::Result<()> {
+    let cmd = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let mut child = std::process::Command::new(cmd).arg(target).spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// Путь, введённый руками: `~` и `~/…` раскрываются в домашний каталог
+/// (подсказки полей показывают `~/Downloads/…`, а `File::create` понимает
+/// `~` буквально — получался каталог `./~`). Пробелы по краям срезаются.
+pub fn expand_home(raw: &str) -> std::path::PathBuf {
+    let raw = raw.trim();
+    match (home(), raw) {
+        (Some(h), "~") => std::path::PathBuf::from(h),
+        (Some(h), r) if r.starts_with("~/") => std::path::PathBuf::from(h).join(&r[2..]),
+        _ => std::path::PathBuf::from(raw),
+    }
+}
+
 /// Заменяет домашний каталог на `~`: `/home/master/Projects` → `~/Projects`.
 /// Путь вне `$HOME` возвращается как есть.
 pub fn pretty(path: &Path) -> String {
@@ -38,6 +68,15 @@ pub fn pretty_str(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expand_home_resolves_tilde() {
+        let Some(h) = home() else { return };
+        assert_eq!(expand_home("~/Downloads/a.wav"), Path::new(&h).join("Downloads/a.wav"));
+        assert_eq!(expand_home(" ~ "), Path::new(&h));
+        assert_eq!(expand_home("/tmp/x"), Path::new("/tmp/x"));
+        assert_eq!(expand_home("~user/x"), Path::new("~user/x"));
+    }
 
     fn with_home<T>(value: &str, f: impl FnOnce() -> T) -> T {
         let prev = std::env::var("HOME").ok();

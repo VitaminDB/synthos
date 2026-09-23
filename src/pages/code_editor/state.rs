@@ -1129,6 +1129,9 @@ pub fn save_active(session: CodeSession) {
     drafts::snapshot_history(&path, &text);
     drafts::clear_draft(&path);
     session.conflicts.update(|v| v.retain(|p| p != &path));
+    session.editor_states.update(|m| {
+        m.remove(&path);
+    });
     session.disk_contents.update(|m| {
         m.insert(path, text);
     });

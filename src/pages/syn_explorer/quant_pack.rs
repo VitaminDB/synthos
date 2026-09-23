@@ -527,7 +527,7 @@ mod tests {
     /// Веса — единицы в F16, чтобы масштабы получились осмысленными.
     fn write_test_safetensors(path: &std::path::Path, name: &str, shape: &[usize]) {
         let numel: usize = shape.iter().product();
-        let data = vec![0x3Cu8, 0x00].repeat(numel); // 1.0 в F16, little-endian → 00 3C
+        let data = [0x3Cu8, 0x00].repeat(numel); // 1.0 в F16, little-endian → 00 3C
         let data: Vec<u8> = data.chunks(2).flat_map(|c| [c[1], c[0]]).collect();
         let header = format!(
             r#"{{"{name}":{{"dtype":"F16","shape":{shape:?},"data_offsets":[0,{}]}}}}"#,

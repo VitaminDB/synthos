@@ -30,7 +30,7 @@ fn refresh(ctx: &NodeEditorCtx) {
     ctx.values.set(map);
 }
 
-fn node<'a>(ctx: &'a NodeEditorCtx, id: NodeId) -> NodeInstance {
+fn node(ctx: &NodeEditorCtx, id: NodeId) -> NodeInstance {
     ctx.nodes
         .get_untracked()
         .iter()

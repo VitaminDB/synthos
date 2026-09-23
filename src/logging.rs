@@ -319,10 +319,7 @@ mod tests {
             p,
             PathBuf::from("/tmp/synthos-test-home/.local/state/synthos/logs")
         );
-        match prev_xdg {
-            Some(v) => std::env::set_var("XDG_STATE_HOME", v),
-            None => {}
-        }
+        if let Some(v) = prev_xdg { std::env::set_var("XDG_STATE_HOME", v) }
         match prev_home {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),

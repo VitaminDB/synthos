@@ -93,7 +93,7 @@ fn set_changed<T: Clone + PartialEq + Send + Sync + 'static>(signal: RwSignal<T>
 pub fn offered_skills(all: &[crate::skills::Skill], active: &[String]) -> Vec<crate::skills::Skill> {
     let picked: Vec<crate::skills::Skill> = all
         .iter()
-        .filter(|s| active.iter().any(|k| *k == s.id))
+        .filter(|s| active.contains(&s.id))
         .cloned()
         .collect();
     if picked.is_empty() {

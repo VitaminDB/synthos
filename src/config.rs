@@ -253,7 +253,9 @@ pub struct ActiveParam {
 /// (без него у synthos не должно быть compile-error).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AsrEngineKind {
+    #[default]
     Whisper,
     GigaAm,
 }
@@ -271,11 +273,6 @@ impl AsrEngineKind {
     }
 }
 
-impl Default for AsrEngineKind {
-    fn default() -> Self {
-        AsrEngineKind::Whisper
-    }
-}
 
 /// Пресет ASR-модели — путь к `.syn` bundle'у + язык + устройство + storage/compute dtype.
 ///

@@ -241,7 +241,7 @@ pub fn ingest_card_file(ctx: NotesCtx, file: &Path) -> Option<super::kanban::mod
 
 /// Диалог выбора файла для вложения карточки.
 pub fn pick_card_file(ctx: NotesCtx) -> Option<super::kanban::model::CardFile> {
-    let path = rfd::FileDialog::new().set_title(&tr!("notes.kanban.attach_file")).pick_file()?;
+    let path = rfd::FileDialog::new().set_title(tr!("notes.kanban.attach_file")).pick_file()?;
     ingest_card_file(ctx, &path)
 }
 
@@ -521,7 +521,7 @@ pub fn pick_and_insert(ctx: NotesCtx, kind: PickKind) {
     let mut dlg = rfd::FileDialog::new().set_title(&title);
     dlg = match kind {
         PickKind::Image => dlg.add_filter(
-            &tr!("notes.media.filter.image"),
+            tr!("notes.media.filter.image"),
             &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
         ),
         PickKind::Svg => dlg.add_filter("SVG", &["svg"]),

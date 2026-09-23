@@ -74,7 +74,7 @@ fn create_card() -> impl Widget {
                 let new_id = skill.id.clone();
                 ctx.skills.update(|list| {
                     list.push(skill);
-                    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    list.sort_by_key(|a| a.name.to_lowercase());
                 });
                 ctx.skills_selected_id.set(Some(new_id));
                 ctx.skills_dialog.set(None);
@@ -144,7 +144,7 @@ fn edit_card(id: String, current_name: String, current_description: String) -> i
                         if let Some(pos) = list.iter().position(|s| s.id == old_id) {
                             list[pos] = updated.clone();
                         }
-                        list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                        list.sort_by_key(|a| a.name.to_lowercase());
                     });
                     if ctx.skills_selected_id.get_untracked().as_deref() == Some(old_id.as_str()) {
                         ctx.skills_selected_id.set(Some(new_id.clone()));

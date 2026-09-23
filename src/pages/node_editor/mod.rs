@@ -420,7 +420,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
                 let icon = metas.first().map(|m| m.icon).unwrap_or("");
                 let children: Vec<MenuItem> = metas
                     .iter()
-                    .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(*m)).icon(m.icon))
+                    .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(m)).icon(m.icon))
                     .collect();
                 top.push(
                     MenuItem::new(format!("sub:{}:{}", cat.key(), sub_key), crate::i18n::node_subcategory_label(sub_key))
@@ -456,7 +456,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
         })
         .collect();
 
-    let ctx_select = ctx.clone();
+    let ctx_select = ctx;
     Box::new(
         PopupMenu::new()
             .is_open(ctx.menu_open)

@@ -66,7 +66,7 @@ pub fn load_all() -> Vec<Template> {
             None => tracing::warn!(file = %path.display(), "битый template-файл, пропускаю"),
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 

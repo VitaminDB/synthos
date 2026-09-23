@@ -44,7 +44,7 @@ pub fn node_transport_buttons(
 
     let stop_btn = ToolButton::new(MI_STOP)
         .tooltip(tr!("nodes.transport.stop"))
-        .on_click(move || on_stop())
+        .on_click(on_stop)
         .class("node-transport-btn node-transport-stop");
 
     Box::new(

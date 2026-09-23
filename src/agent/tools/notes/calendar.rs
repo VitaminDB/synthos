@@ -61,7 +61,7 @@ fn resolve_event(store: &CalendarStore, s: &str, on: Option<i64>) -> Result<Stri
 fn no_occurrence(e: &CalEvent, day: i64) -> String {
     let mut near = Vec::new();
     e.expand(day - 62, day + 62, &mut near);
-    let prev = near.iter().filter(|o| o.first && o.start < day).last().map(|o| days_to_iso(o.start));
+    let prev = near.iter().rfind(|o| o.first && o.start < day).map(|o| days_to_iso(o.start));
     let next = near.iter().find(|o| o.first && o.start > day).map(|o| days_to_iso(o.start));
     let around: Vec<String> = [prev, next].into_iter().flatten().collect();
     format!(

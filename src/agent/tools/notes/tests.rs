@@ -1323,7 +1323,7 @@ fn board_cards_become_calendar_bars_and_gantt_rows() {
     assert!(out.contains(&format!("boards: {board}")), "{out}");
     let genv = embeds::gantt_env(ctx);
     assert!((genv.cards)(&[]).is_empty(), "без выбранных досок диаграмма показывает только свои задачи");
-    let rows = (genv.cards)(&[board.clone()]);
+    let rows = (genv.cards)(std::slice::from_ref(&board));
     assert_eq!(rows.len(), 1);
     assert_eq!((rows[0].start, rows[0].end, rows[0].name.as_str()), (today + 3, today + 3, "Импорт"));
     (genv.set_card_span)(&board, &rows[0].card, today, today + 1);

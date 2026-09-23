@@ -518,7 +518,7 @@ impl Element for TimeElement {
             // Час — по абсолютному времени, а не по счёту слотов: окно
             // может начинаться в 06:30, и линии часов остаются на часах.
             let minute = (win_from + i * style.slot_min) % (24 * 60);
-            let hour_line = minute % 60 == 0;
+            let hour_line = minute.is_multiple_of(60);
             c.set_color(if hour_line { pal.grid } else { pal.grid.with_alpha(pal.grid.a * 0.45) });
             c.draw_line(b.origin.x + GUTTER_W, y, b.origin.x + b.size.width, y);
             if hour_line && i < slots_n {

@@ -61,7 +61,7 @@ pub fn placement_of(idx: usize) -> Placement {
 
 fn current_input(ctx: &NodeEditorCtx, node_id: NodeId, port: &'static str) -> Option<PortValue> {
     let conns = ctx.connections.get_untracked();
-    let src = conns.iter().find(|c| c.to_node == node_id && c.to_port == port)?.clone();
+    let src = *conns.iter().find(|c| c.to_node == node_id && c.to_port == port)?;
     ctx.values.get_untracked().get(&(src.from_node, src.from_port)).cloned()
 }
 

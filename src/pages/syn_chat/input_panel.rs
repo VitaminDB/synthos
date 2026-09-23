@@ -229,7 +229,7 @@ fn send_or_stop_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             let stop: Box<dyn Widget> = Box::new(
                 ToolButton::new(MI_CLOSE)
                     .tooltip(tr!("chat.input.stop.tooltip"))
-                    .on_click(|| session::abort_current())
+                    .on_click(session::abort_current)
                     .class("input-send input-send-stop"),
             );
             Box::new(

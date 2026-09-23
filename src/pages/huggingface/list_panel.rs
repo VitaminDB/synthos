@@ -145,7 +145,7 @@ fn error_view() -> impl Widget {
                         .class("hf-list-error-title"),
                     Text::new(msg).class("hf-list-error-msg"),
                     Button::new(tr!("hf.list.retry"))
-                        .on_click(|| actions::trigger_list_reload())
+                        .on_click(actions::trigger_list_reload)
                         .class("hf-retry-btn"),
                 ]
         };

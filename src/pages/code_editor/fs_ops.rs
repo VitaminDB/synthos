@@ -59,8 +59,8 @@ fn read_level(path: &Path) -> std::io::Result<Vec<TreeNode>> {
             files.push((name, p));
         }
     }
-    dirs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-    files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    dirs.sort_by_key(|a| a.0.to_lowercase());
+    files.sort_by_key(|a| a.0.to_lowercase());
 
     let mut nodes: Vec<TreeNode> = Vec::with_capacity(dirs.len() + files.len());
     for (name, p) in dirs {

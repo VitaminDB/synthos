@@ -64,6 +64,12 @@ pub struct ImageSignals {
     pub blur_ready: RwSignal<u64>,
 }
 
+impl Default for ImageSignals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImageSignals {
     pub fn new() -> Self {
         Self {

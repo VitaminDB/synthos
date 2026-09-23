@@ -319,7 +319,7 @@ where
     Box::new(
         GestureDetector::new()
             .cursor(syngui::input::CursorIcon::Pointer)
-            .on_click(move || on_open())
+            .on_click(on_open)
             .child(
                 DecoratedBox::new()
                     .class("chat-media-stage")

@@ -712,7 +712,7 @@ pub fn repeat_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> i
 /// смена единицы переносит само число (2 часа → 2 дня).
 pub fn duration_control(handle: &KanbanHandle, card: &KanbanCard, width: f32) -> impl Widget {
     let min = card.duration.unwrap_or(0);
-    let in_days = min > 0 && min % DAY_MIN == 0;
+    let in_days = min > 0 && min.is_multiple_of(DAY_MIN);
     let unit = if in_days { DAY_MIN } else { 60 };
     let value = if min == 0 { 0.0 } else { (min as f64 / unit as f64 * 10.0).round() / 10.0 };
     let h = handle.clone();

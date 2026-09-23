@@ -2291,7 +2291,7 @@ fn switch_row(
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .class("notes-props-row")
         .child(Text::new(label).class("notes-props-row-label"))
-        .child(Toggle::with_state(on).on_change(move |v| change(v)))
+        .child(Toggle::with_state(on).on_change(change))
 }
 
 /// Строка «подпись — поле».

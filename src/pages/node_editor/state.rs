@@ -53,6 +53,12 @@ pub struct NodeEditorCtx {
     pub tint_dialog: RwSignal<Option<NodeId>>,
 }
 
+impl Default for NodeEditorCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeEditorCtx {
     pub fn new() -> Self {
         let ctx = Self {
@@ -304,7 +310,7 @@ impl NodeEditorCtx {
                     to_port,
                 };
                 let mut v = self.connections.get_untracked();
-                if !v.iter().any(|c| *c == conn) {
+                if !v.contains(&conn) {
                     v.push(conn);
                     self.connections.set(v);
                 }

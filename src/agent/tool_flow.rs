@@ -40,7 +40,7 @@ pub(crate) fn today_utc_iso(unix_secs: i64) -> String {
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = y + (m <= 2) as i64;
     format!("{y:04}-{m:02}-{d:02}")

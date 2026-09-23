@@ -17,7 +17,7 @@ pub fn node_dropdown_field(
         Dropdown::with_items(items)
             .selected(current)
             .on_change(move |s| {
-                if let Some(i) = idx_in(options, &s) {
+                if let Some(i) = idx_in(options, s) {
                     idx.set(i);
                 }
             })

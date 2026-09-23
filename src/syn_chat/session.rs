@@ -1218,10 +1218,7 @@ fn cancel_unanswered(chat_id: &Option<String>, calls: &[ChatToolCall]) {
 /// Часть `full`, которой нет в живом стриме `streamed` (его хвосте). Стрим —
 /// не хвост (расхождение) — ничего не досыпаем, чтобы не задвоить текст.
 fn missing_prefix<'a>(full: &'a str, streamed: &str) -> &'a str {
-    match full.strip_suffix(streamed) {
-        Some(prefix) => prefix,
-        None => "",
-    }
+    full.strip_suffix(streamed).unwrap_or_default()
 }
 
 /// Выполнить действие над контекстом, только если чат генерации открыт.
@@ -2282,7 +2279,7 @@ async fn run_agent_loop(
                     let extra = turn_tail.len() - LOOP_WINDOW_CHARS;
                     turn_tail.drain(..extra);
                 }
-                if tokens_this_turn as usize % LOOP_CHECK_EVERY == 0 {
+                if (tokens_this_turn as usize).is_multiple_of(LOOP_CHECK_EVERY) {
                     if let Some(p) = periodic_tail(&turn_tail, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS) {
                         looped = Some(p);
                         flush_streaming(&chat_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
@@ -4913,7 +4910,7 @@ mod tests {
         assert_eq!(periodic_tail(&looped, 1024, 128), Some(4));
         // Один и тот же токен — период 1.
         let mut same = ids.clone();
-        same.extend(std::iter::repeat(7).take(1100));
+        same.extend(std::iter::repeat_n(7, 1100));
         assert_eq!(periodic_tail(&same, 1024, 128), Some(1));
         // Период длиннее допустимого — не петля для guard'а.
         let mut long = ids.clone();

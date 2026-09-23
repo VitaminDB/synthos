@@ -304,7 +304,7 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
     let active_idx = saved
         .active_code_session
         .filter(|&i| i < sessions_cfg.len())
-        .or_else(|| if sessions_cfg.is_empty() { None } else { Some(0) });
+        .or(if sessions_cfg.is_empty() { None } else { Some(0) });
     pages::code_editor::state::CodeEditorCtx::new(sessions_cfg, active_idx)
 }
 

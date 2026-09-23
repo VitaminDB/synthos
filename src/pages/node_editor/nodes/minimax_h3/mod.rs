@@ -82,10 +82,9 @@ fn current_input(
     port: &'static str,
 ) -> Option<PortValue> {
     let conns = ctx.connections.get_untracked();
-    let src = conns
+    let src = *conns
         .iter()
-        .find(|c| c.to_node == node_id && c.to_port == port)?
-        .clone();
+        .find(|c| c.to_node == node_id && c.to_port == port)?;
     let values = ctx.values.get_untracked();
     values.get(&(src.from_node, src.from_port)).cloned()
 }

@@ -46,7 +46,7 @@ pub fn view(t: Template) -> impl Widget {
 
     let has_badge = t.builtin;
 
-    let title_widget = editable_label(edit_state.clone(), t.id.clone(), t.builtin);
+    let title_widget = editable_label(edit_state, t.id.clone(), t.builtin);
 
     let title_row_factory = {
         let kind_class = kind_class.to_string();
@@ -102,7 +102,7 @@ pub fn view(t: Template) -> impl Widget {
     };
 
     let t_for_menu = t.clone();
-    let edit_state_for_menu = edit_state.clone();
+    let edit_state_for_menu = edit_state;
     let menu = ContextMenu::new()
         .child(
             GestureDetector::new()

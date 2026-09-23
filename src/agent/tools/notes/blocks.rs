@@ -316,7 +316,7 @@ pub(super) fn blocks_impl(ctx: NotesCtx, v: &Json) -> Result<String, String> {
                     return Err(format!("block #{i} holds {count} blocks — #{i}.{k} does not exist"))
                 }
                 Some(k) => vec![children.remove(k)],
-                None => children.drain(..).collect(),
+                None => std::mem::take(children),
             };
             let n = taken.len();
             for (k, b) in taken.into_iter().enumerate() {

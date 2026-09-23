@@ -38,7 +38,7 @@ impl WeightSource for BundleSource {
     }
 
     fn contains(&self, key: &str) -> bool {
-        self.0.names().iter().any(|n| *n == key)
+        self.0.names().contains(&key)
     }
 
     fn quant(&self, key: &str, device: Device) -> Option<Result<QuantWeight, ModelError>> {
@@ -73,7 +73,7 @@ impl WeightSource for DenseSource {
     }
 
     fn contains(&self, key: &str) -> bool {
-        self.0.names().iter().any(|n| *n == key)
+        self.0.names().contains(&key)
     }
 }
 

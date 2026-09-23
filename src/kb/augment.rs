@@ -304,7 +304,7 @@ mod tests {
         // Должен быть как минимум один чанк и не больше двух (с учётом
         // того, что MAX_CHARS_PER_CHUNK=800 — нижняя граница budget'а).
         let count = s.matches("] [Test KB]").count();
-        assert!(count >= 1 && count <= 2, "expected 1-2 chunks, got {count}");
+        assert!((1..=2).contains(&count), "expected 1-2 chunks, got {count}");
         assert!(s.contains("Конец контекста"));
     }
 

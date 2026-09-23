@@ -551,7 +551,7 @@ fn gen_worker(
                     presence_penalty: 0.0,
                     frequency_penalty: 0.0,
                 };
-                fit_residency(&pl.model, prompt_ids.len() + gen.max_new_tokens as usize);
+                fit_residency(&pl.model, prompt_ids.len() + gen.max_new_tokens);
                 let mut runner = LlmGeneration::new(&pl.model, opts);
                 runner.set_stop_tokens(pl.tokenizer.eos_ids().to_vec());
 

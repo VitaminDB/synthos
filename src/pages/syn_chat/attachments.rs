@@ -193,7 +193,7 @@ where
 
     GestureDetector::new()
         .cursor(syngui::input::CursorIcon::Pointer)
-        .on_click(move || on_open())
+        .on_click(on_open)
         .child(inner)
 }
 

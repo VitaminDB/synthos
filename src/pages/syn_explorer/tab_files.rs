@@ -31,7 +31,7 @@ pub fn view(active: OpenBundle) -> impl Widget {
 
             let rows: Vec<Vec<String>> = files
                 .iter()
-                .map(|f| row_for_entry(f))
+                .map(row_for_entry)
                 .collect();
 
             // Сохраним alive-карту + имена для on_row_click → selected_path.

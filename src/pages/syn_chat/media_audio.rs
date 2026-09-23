@@ -31,6 +31,12 @@ pub struct AudioSignals {
     pub playing: RwSignal<bool>,
 }
 
+impl Default for AudioSignals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AudioSignals {
     pub fn new() -> Self {
         Self {

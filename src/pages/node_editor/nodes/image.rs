@@ -45,7 +45,7 @@ pub fn image_preview(img: Option<Arc<ImageData>>) -> Box<dyn Widget> {
 /// Картинка со входа `port` (для LTX Image / H3 Keyframe / Image Save).
 pub fn current_input_image(ctx: &NodeEditorCtx, node_id: super::super::types::NodeId, port: &'static str) -> Option<Arc<ImageData>> {
     let conns = ctx.connections.get_untracked();
-    let src = conns.iter().find(|c| c.to_node == node_id && c.to_port == port)?.clone();
+    let src = *conns.iter().find(|c| c.to_node == node_id && c.to_port == port)?;
     ctx.values.get_untracked().get(&(src.from_node, src.from_port)).and_then(|v| v.as_image())
 }
 

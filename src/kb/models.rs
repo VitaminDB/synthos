@@ -232,7 +232,7 @@ mod tests {
         let found = find(
             ModelKind::Embedder,
             &cfg("/nonexistent/models/bge-m3", ""),
-            &[dir.clone()],
+            std::slice::from_ref(&dir),
         )
         .expect("бандл из каталога моделей");
         assert_eq!(found.path, dir.join("bge-m3.syn"));
@@ -262,7 +262,7 @@ mod tests {
         write_bundle(&dir.join("b-my-reranker.syn"), "reranker", ARCH);
         // Эмбеддер чужой архитектуры BGE-стек не загрузит — не берём.
         write_bundle(&dir.join("0-qwen3-embedding.syn"), "embed", "qwen3");
-        let paths = discover(&cfg("", ""), &[dir.clone()]);
+        let paths = discover(&cfg("", ""), std::slice::from_ref(&dir));
         assert_eq!(paths.embedder.unwrap().path, dir.join("a-my-embedder.syn"));
         assert_eq!(paths.reranker.unwrap().path, dir.join("b-my-reranker.syn"));
     }
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn nothing_found_reports_searched_dirs() {
         let dir = temp_dir("empty");
-        let paths = discover(&cfg("", ""), &[dir.clone()]);
+        let paths = discover(&cfg("", ""), std::slice::from_ref(&dir));
         assert!(paths.embedder.is_none() && paths.reranker.is_none());
         assert_eq!(paths.searched, vec![dir]);
     }

@@ -151,7 +151,7 @@ fn trim_dead_placeholders(messages: &mut Vec<crate::agent::state::ChatMsg>) {
             && matches!(m.kind, ChatMsgKind::Text)
             && m.body.trim().is_empty()
             && m.thinking.trim().is_empty()
-            && m.tool_calls.as_ref().map_or(true, |c| c.is_empty())
+            && m.tool_calls.as_ref().is_none_or(|c| c.is_empty())
             && m.attachments.is_empty()
     }) {
         messages.pop();

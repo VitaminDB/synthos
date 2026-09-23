@@ -136,7 +136,7 @@ pub fn evaluate_graph(
         incoming.insert((c.to_node, c.to_port), (c.from_node, c.from_port));
         if counted_pairs.insert((c.from_node, c.to_node)) {
             *in_deg.entry(c.to_node).or_insert(0) += 1;
-            out_edges.entry(c.from_node).or_insert_with(Vec::new).push(c.to_node);
+            out_edges.entry(c.from_node).or_default().push(c.to_node);
         }
     }
 
@@ -241,7 +241,7 @@ mod tests {
                 buffer.set(Some(buf.clone()));
             }
         }
-        let map = evaluate_graph(&[f.clone()], &[], false);
+        let map = evaluate_graph(std::slice::from_ref(&f), &[], false);
         let pv = map.get(&(NodeId(1), "out")).cloned().unwrap();
         match pv {
             PortValue::Audio(b) => assert!(Arc::ptr_eq(&b, &buf)),

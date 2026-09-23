@@ -424,7 +424,7 @@ fn default_duration(m: Moment) -> u32 {
 
 /// Число суток, в которые укладывается оценка (минимум одни).
 fn duration_days(min: u32) -> i64 {
-    ((min.max(1) + DAY_MIN - 1) / DAY_MIN) as i64
+    min.max(1).div_ceil(DAY_MIN) as i64
 }
 
 fn span_forward(s: Moment, duration: Option<u32>) -> CardSpan {

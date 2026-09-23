@@ -140,11 +140,10 @@ fn verdict(msgs: &[ChatMsg], from: usize) -> Verdict {
                     v.guard += 1;
                 }
             }
-            ChatMsgKind::Text if m.role == ChatMsgRole::Assistant => {
-                if !m.body.trim().is_empty() {
+            ChatMsgKind::Text if m.role == ChatMsgRole::Assistant
+                && !m.body.trim().is_empty() => {
                     v.answered = true;
                 }
-            }
             _ => {}
         }
     }

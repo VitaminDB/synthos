@@ -93,7 +93,7 @@ fn actions_reactive() -> impl Fn() -> Stack + Send + Sync + 'static {
                 ToolButton::new(MI_COMPRESS)
                     .tooltip(tr!("chat.header.compact.tooltip"))
                     .disabled(!can_compact)
-                    .on_click(|| crate::syn_chat::compact::compact_now())
+                    .on_click(crate::syn_chat::compact::compact_now)
                     .class("panel-header-action"),
                 // Очистка ленты — через подтверждение (`clear_dialog`): сам
                 // чат, его название и параметры остаются, уходят только

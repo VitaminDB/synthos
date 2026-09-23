@@ -192,7 +192,7 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
             to_node: to,
             to_port,
         };
-        if !conns_vec.iter().any(|c| *c == conn) {
+        if !conns_vec.contains(&conn) {
             conns_vec.push(conn);
         }
     }

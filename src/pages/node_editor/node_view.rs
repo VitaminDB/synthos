@@ -674,7 +674,7 @@ fn field_row(schema: FieldSchema, fields: Arc<Mutex<std::collections::HashMap<&'
         }
         (FieldType::Choice(opts), Some(FieldValue::Choice(sig))) => {
             let initial_idx = sig.get_untracked();
-            let opts_vec: Vec<&'static str> = opts.iter().copied().collect();
+            let opts_vec: Vec<&'static str> = opts.to_vec();
             let initial_label = opts_vec.get(initial_idx).copied().unwrap_or("");
             let items: Vec<DropdownItem> = opts_vec.iter().map(|o| DropdownItem::simple(*o)).collect();
             let opts_for_cb = opts_vec.clone();

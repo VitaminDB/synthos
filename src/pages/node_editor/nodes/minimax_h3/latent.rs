@@ -342,6 +342,24 @@ pub fn fit_keyframe(
         .map_err(|e| e.to_string())
 }
 
+pub fn keyframe_body(node: &NodeInstance) -> Box<dyn Widget> {
+    let snapshot = match node.runtime.lock() {
+        Ok(g) => match &*g {
+            NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, error, .. } => {
+                Some((*path, *frame_slot_idx, *resize_idx, *error))
+            }
+            _ => None,
+        },
+        Err(_) => None,
+    };
+    let Some((path, frame_slot_idx, resize_idx, error)) = snapshot else {
+        return Box::new(Column::new());
+    };
+    KeyframeSlot::new(path, frame_slot_idx, resize_idx)
+        .error(error)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,22 +423,4 @@ mod tests {
             assert!((H_MIN..=H_MAX).contains(&h), "{name}: {w} → {h}");
         }
     }
-}
-
-pub fn keyframe_body(node: &NodeInstance) -> Box<dyn Widget> {
-    let snapshot = match node.runtime.lock() {
-        Ok(g) => match &*g {
-            NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, error, .. } => {
-                Some((*path, *frame_slot_idx, *resize_idx, *error))
-            }
-            _ => None,
-        },
-        Err(_) => None,
-    };
-    let Some((path, frame_slot_idx, resize_idx, error)) = snapshot else {
-        return Box::new(Column::new());
-    };
-    KeyframeSlot::new(path, frame_slot_idx, resize_idx)
-        .error(error)
-        .build()
 }

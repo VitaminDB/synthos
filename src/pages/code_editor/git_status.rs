@@ -414,7 +414,7 @@ fn inject_ghost_deleted(
     if ghosts.is_empty() {
         return;
     }
-    ghosts.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    ghosts.sort_by_key(|a| a.label.to_lowercase());
     children.extend(ghosts);
 }
 

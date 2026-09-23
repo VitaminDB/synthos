@@ -148,7 +148,7 @@ pub fn visible(placed: &[Placed], ncols: usize, capacity: usize) -> (Vec<Run>, V
         while c <= p.col1 {
             if p.lane < limit[c] {
                 let start = c;
-                while c + 1 <= p.col1 && p.lane < limit[c + 1] {
+                while c < p.col1 && p.lane < limit[c + 1] {
                     c += 1;
                 }
                 runs.push(Run { placed: i, col0: start, col1: c });

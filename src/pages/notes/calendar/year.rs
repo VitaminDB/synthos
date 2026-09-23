@@ -70,7 +70,7 @@ impl YearElement {
 
     fn mini_rect(&self, month: u32) -> Rect {
         let cols = self.columns();
-        let rows = (12 + cols - 1) / cols;
+        let rows = 12_u32.div_ceil(cols);
         let b = self.base.bounds;
         let (mw, mh) = (b.size.width / cols as f32, b.size.height / rows as f32);
         let idx = month - 1;

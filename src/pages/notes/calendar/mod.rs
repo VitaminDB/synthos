@@ -17,6 +17,12 @@ pub struct ElementBase {
     pub mss: syngui::mss::MssFields,
 }
 
+impl Default for ElementBase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ElementBase {
     pub fn new() -> Self {
         Self {

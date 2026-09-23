@@ -60,8 +60,10 @@ pub struct PortKey {
 /// dropdown'а в UI подменяет infer_steps/cfg_scale/flow_match_shift на
 /// заводские значения из reference `_BASE_DEFAULTS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum SamplerPreset {
     /// По имени bundle'а через `detect_xl_bundle_kind`.
+    #[default]
     Auto,
     /// `acestep_v15_xl_turbo` — 8 шагов, shift=3.0, cfg=1.0 (запечён).
     Turbo,
@@ -71,27 +73,19 @@ pub enum SamplerPreset {
     Sft,
 }
 
-impl Default for SamplerPreset {
-    fn default() -> Self {
-        SamplerPreset::Auto
-    }
-}
 
 /// Режим DCW (Differential Correction in Wavelet domain).
 /// Соответствует `acestep_pipeline::dcw::DcwMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum DcwModeOption {
     Low,
     High,
+    #[default]
     Double,
     Pix,
 }
 
-impl Default for DcwModeOption {
-    fn default() -> Self {
-        DcwModeOption::Double
-    }
-}
 
 impl DcwModeOption {
     pub fn as_str(self) -> &'static str {
@@ -116,17 +110,14 @@ impl DcwModeOption {
 /// Wavelet basis для DCW. Сейчас порт поддерживает только Haar; остальные
 /// — UI-only (включить когда добавим pytorch_wavelets-эквивалент).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum DcwWaveletOption {
+    #[default]
     Haar,
     Db4,
     Sym8,
 }
 
-impl Default for DcwWaveletOption {
-    fn default() -> Self {
-        DcwWaveletOption::Haar
-    }
-}
 
 impl DcwWaveletOption {
     pub fn as_str(self) -> &'static str {
@@ -145,17 +136,14 @@ impl DcwWaveletOption {
 /// * `Custom`:  значения вручную через слайдеры; смена слайдера
 ///   переключает preset на Custom.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum DcwPresetOption {
     NoThink,
+    #[default]
     Think,
     Custom,
 }
 
-impl Default for DcwPresetOption {
-    fn default() -> Self {
-        DcwPresetOption::Think
-    }
-}
 
 impl DcwPresetOption {
     pub fn scalers(self) -> Option<(f32, f32)> {
@@ -2062,8 +2050,10 @@ pub enum PrevSource {
 /// 1. NodeInstance остался Clone (Arc дёшев),
 /// 2. UI и eval могли читать состояние без race с background-thread'ами
 ///    cpal-стримов (lock'и короткие, RwSignal-обвязка реактивна).
+#[derive(Default)]
 pub enum NodeRuntime {
     /// Нода без runtime-состояния (Number/Add/Output/etc.).
+    #[default]
     None,
     /// Источник аудио из файла. PCM грузится async (std::thread + signal).
     AudioFile {
@@ -3478,11 +3468,6 @@ pub struct AceStepLoadedCfg {
 }
 
 
-impl Default for NodeRuntime {
-    fn default() -> Self {
-        NodeRuntime::None
-    }
-}
 
 impl std::fmt::Debug for NodeRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

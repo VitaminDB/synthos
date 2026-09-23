@@ -228,7 +228,7 @@ pub fn save_to(state: &WorkspaceState, path: &std::path::Path) -> Result<(), Wor
     let pretty = serde_json::to_string_pretty(state)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, pretty)?;
-    fs::rename(&tmp, &path)?;
+    fs::rename(&tmp, path)?;
     Ok(())
 }
 

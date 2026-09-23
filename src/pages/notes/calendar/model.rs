@@ -606,7 +606,7 @@ impl CalendarStore {
     pub fn occurrences(&self, from: i64, to: i64, filter: &[String]) -> Vec<Occurrence> {
         let mut out = Vec::new();
         for e in &self.events {
-            if !filter.is_empty() && !filter.iter().any(|c| *c == e.calendar) {
+            if !filter.is_empty() && !filter.contains(&e.calendar) {
                 continue;
             }
             e.expand(from, to, &mut out);
@@ -944,7 +944,7 @@ pub fn range_of(view: CalView, anchor: i64, first_weekday: u32) -> (i64, i64) {
 
 /// Первый день недели, содержащей `day` (0 = понедельник).
 pub fn week_start(day: i64, first_weekday: u32) -> i64 {
-    let wd = weekday_of(day) as i64;
+    let wd = weekday_of(day);
     let shift = (wd - first_weekday as i64).rem_euclid(7);
     day - shift
 }

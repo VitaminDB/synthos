@@ -4,6 +4,11 @@
 @english = "German"
 
 app.close = "Schließen"
+app.file.quarantined = "{file} konnte nicht gelesen werden — leer gestartet. Die alte Datei liegt unter {backup}"
+code.save.error = "{path} konnte nicht gespeichert werden: {error}"
+notes.project.error.vanished_unsaved = "Die Projektdatei {path} fehlt, enthält aber ungespeicherte Änderungen. Mit „Speichern unter“ sichern oder erneut schließen, um sie zu verwerfen."
+app.quit.reason.notes_unsaved = "Änderungen an Notizen sind nicht gespeichert: {error}"
+notes.autosave.error = "Das Notizprojekt konnte nicht gespeichert werden: {error}. Wird im Hintergrund erneut versucht; falls es weiter scheitert, „Speichern unter“ verwenden."
 nav.syn_chat = "Chat"
 nav.nodes = "Nodes"
 nav.syn_explorer = "Syn-Pakete"

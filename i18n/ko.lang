@@ -4,6 +4,11 @@
 @english = "Korean"
 
 app.close = "닫기"
+app.file.quarantined = "{file}을(를) 읽을 수 없어 빈 상태로 시작했습니다. 이전 파일 위치: {backup}"
+code.save.error = "{path}을(를) 저장하지 못했습니다: {error}"
+notes.project.error.vanished_unsaved = "프로젝트 파일 {path}이(가) 사라졌지만 저장되지 않은 변경 사항이 있습니다. “다른 이름으로 저장”으로 보존하거나 다시 닫아 버리세요."
+app.quit.reason.notes_unsaved = "노트 변경 사항이 저장되지 않았습니다: {error}"
+notes.autosave.error = "노트 프로젝트를 저장하지 못했습니다: {error}. 백그라운드에서 다시 시도합니다. 계속 실패하면 “다른 이름으로 저장”을 사용하세요."
 nav.syn_chat = "채팅"
 nav.nodes = "노드"
 nav.syn_explorer = "Syn 패키지"

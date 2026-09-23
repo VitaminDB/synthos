@@ -4,6 +4,11 @@
 @english = "Polish"
 
 app.close = "Zamknij"
+app.file.quarantined = "Nie udało się odczytać {file} — uruchomiono pusty. Poprzedni plik zachowano: {backup}"
+code.save.error = "Nie udało się zapisać {path}: {error}"
+notes.project.error.vanished_unsaved = "Plik projektu {path} zniknął, a są w nim niezapisane zmiany. Użyj „Zapisz jako”, aby je zachować, lub zamknij ponownie, aby je odrzucić."
+app.quit.reason.notes_unsaved = "Zmiany w notatkach nie są zapisane: {error}"
+notes.autosave.error = "Nie udało się zapisać projektu notatek: {error}. Ponawiam w tle; jeśli nadal się nie uda, użyj „Zapisz jako”."
 nav.syn_chat = "Czat"
 nav.nodes = "Nody"
 nav.syn_explorer = "Pakiety Syn"

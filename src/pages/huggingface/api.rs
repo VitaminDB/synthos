@@ -306,7 +306,7 @@ fn split_url_title(inner: &str) -> (&str, &str) {
     let lead = inner.len() - inner.trim_start().len();
     let s = &inner[lead..];
     match s.find(char::is_whitespace) {
-        Some(p) => (&s[..p], &s[lead + p..]),
+        Some(p) => (&s[..p], &s[p..]),
         None => (s, ""),
     }
 }
@@ -883,6 +883,15 @@ pub fn remove_partial(dest: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пробелы перед URL не сдвигают хвост: раньше отступ вычитался дважды,
+    /// и `![x](   a b)` паниковал срезом за концом строки.
+    #[test]
+    fn split_url_title_with_leading_spaces() {
+        assert_eq!(split_url_title("   a.png \"t\""), ("a.png", " \"t\""));
+        assert_eq!(split_url_title("   a b"), ("a", " b"));
+        assert_eq!(split_url_title("a.png"), ("a.png", ""));
+    }
 
     const RID: &str = "org/model";
     const BASE: &str = "https://huggingface.co/org/model/resolve/main";

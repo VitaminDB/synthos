@@ -4,6 +4,11 @@
 @english = "Russian"
 
 app.close = "Закрыть"
+app.file.quarantined = "Не удалось прочитать {file} — открыто с пустыми данными. Прежний файл сохранён: {backup}"
+code.save.error = "Не удалось сохранить {path}: {error}"
+notes.project.error.vanished_unsaved = "Файл проекта {path} пропал, а в нём есть незаписанные правки. Сохраните проект через «Сохранить как» или закройте ещё раз, чтобы их отбросить."
+app.quit.reason.notes_unsaved = "Правки заметок не записаны: {error}"
+notes.autosave.error = "Проект заметок не записан: {error}. Повторяю в фоне; если не пройдёт — сохраните проект через «Сохранить как»."
 nav.syn_chat = "Чат"
 nav.nodes = "Ноды"
 nav.syn_explorer = "Syn-пакеты"

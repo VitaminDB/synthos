@@ -4,6 +4,11 @@
 @english = "Italian"
 
 app.close = "Chiudi"
+app.file.quarantined = "Impossibile leggere {file}: avviato vuoto. Il file precedente è in {backup}"
+code.save.error = "Impossibile salvare {path}: {error}"
+notes.project.error.vanished_unsaved = "Il file del progetto {path} non esiste più e ci sono modifiche non salvate. Usa «Salva con nome» per conservarle o chiudi di nuovo per scartarle."
+app.quit.reason.notes_unsaved = "Le modifiche alle note non sono salvate: {error}"
+notes.autosave.error = "Impossibile salvare il progetto di note: {error}. Nuovo tentativo in background; se continua a fallire, usa «Salva con nome»."
 nav.syn_chat = "Chat"
 nav.nodes = "Nodi"
 nav.syn_explorer = "Pacchetti Syn"

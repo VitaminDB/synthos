@@ -790,7 +790,24 @@ impl NotesCtx {
             return s;
         }
         let path = self.project_path.get_untracked();
-        let store = match project::read_text(&path, project::CALENDAR_PATH).and_then(|t| CalendarStore::parse(&t).ok()) {
+        let raw = project::read_bytes(&path, project::CALENDAR_PATH);
+        let parsed = raw.as_deref().and_then(|b| {
+            let parsed = std::str::from_utf8(b)
+                .map_err(|e| e.to_string())
+                .and_then(|t| CalendarStore::parse(t).map_err(|e| e.to_string()));
+            match parsed {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    // Ниже на его место встанет пустой шаблон — события
+                    // пропали бы насовсем. Сырой файл откладываем рядом с
+                    // проектом, UI покажет уведомление.
+                    log::warn!("notes: календарь проекта не распарсился: {e}");
+                    project::keep_bad_copy(&path, project::CALENDAR_PATH, "calendar", b);
+                    None
+                }
+            }
+        });
+        let store = match parsed {
             Some(s) => {
                 autosave::mark_saved(project::CALENDAR_PATH, 0);
                 s

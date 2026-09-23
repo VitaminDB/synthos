@@ -195,7 +195,7 @@ fn write_file(s: &Skill) -> Result<(), SkillError> {
     }
     buf.push_str("+++\n\n");
     buf.push_str(&s.content);
-    fs::write(s.path(), buf)?;
+    crate::fsutil::write_atomic(&s.path(), buf)?;
     Ok(())
 }
 

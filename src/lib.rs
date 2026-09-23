@@ -17,6 +17,7 @@ pub mod agent;
 pub mod components;
 pub mod config;
 pub mod context;
+pub mod fsutil;
 pub mod i18n;
 pub mod icons;
 pub mod kb;
@@ -651,6 +652,9 @@ fn install_config_autosave(ctx: &AppCtx) {
             .collect();
         let active_idx = active_id.and_then(|id| sessions.iter().position(|s| s.id == id));
 
+        // Сборка из `..AppConfig::load()` и запись — одним куском: иначе
+        // правка конфига из другого места между чтением и записью теряется.
+        let _cfg_lock = AppConfig::lock();
         let cfg = AppConfig {
             theme: theme_key.get(),
             follow_system_theme: a.follow_system.get(),
@@ -963,6 +967,24 @@ fn build_app() -> impl Widget {
     // overlay-слоем самим Portal'ом — обходя layout shell'а, нам достаточно
     // просто включить `voice_fab::view()` в общий Stack-уровень.
     let notification_view = components::notification::view(ctx.notifications.clone());
+    // Файлы, которые при старте не разобрались и отложены в сторону
+    // (`fsutil::quarantine`: конфиг, графы нод), — иначе пользователь увидел
+    // бы только «пропавшие» данные без объяснения.
+    fn notify_quarantined(file: &std::path::Path, backup: &std::path::Path) {
+        use_context::<AppCtx>().notifications.error(syngui::tr!(
+            "app.file.quarantined",
+            file = crate::paths::pretty(file),
+            backup = crate::paths::pretty(backup)
+        ));
+    }
+    for (file, backup) in fsutil::take_quarantined() {
+        notify_quarantined(&file, &backup);
+    }
+    // Всё, что отложится позже (проект заметок, открытый после старта), —
+    // сразу тостом; вызов может прийти из фонового потока.
+    fsutil::set_notifier(|file, backup| {
+        syngui::async_runtime::run_on_main_thread(move || notify_quarantined(&file, &backup));
+    });
     // Оболочка обёрнута хоткей-скоупом поиска: Ctrl+K / Ctrl+F работают на
     // любой странице, а сама панель живёт отдельным overlay-слоем.
     let shell = search::hotkey_scope(pages::notes::project_ui::hotkey_scope(mgui! {

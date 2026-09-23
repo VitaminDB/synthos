@@ -100,7 +100,9 @@ fn render_preview(name: &str, bytes: &[u8]) -> Box<dyn Widget> {
         let text_str = if text.len() > PREVIEW_CAP {
             format!(
                 "{}\n\n{}",
-                &text[..PREVIEW_CAP],
+                // Граница — по символу: в tokenizer.json на отметку 2 МБ
+                // почти наверняка попадает середина многобайтового «Ġ».
+                &text[..text.floor_char_boundary(PREVIEW_CAP)],
                 tr!("explorer.preview.truncated", shown = PREVIEW_CAP, total = text.len())
             )
         } else {

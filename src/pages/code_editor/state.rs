@@ -1113,8 +1113,17 @@ pub fn save_active(session: CodeSession) {
         Some(t) => t,
         None => return,
     };
-    if let Err(e) = std::fs::write(&path, &text) {
+    if let Err(e) = crate::fsutil::write_user_file(&path, &text) {
+        // Черновик остаётся (текст не потерян), но пользователь должен
+        // знать, что Ctrl+S не сработал.
         eprintln!("[code-editor] save {:?}: {e}", path);
+        syngui::context_provider::use_context::<crate::context::AppCtx>()
+            .notifications
+            .error(tr!(
+                "code.save.error",
+                path = crate::paths::pretty(&path),
+                error = e.to_string()
+            ));
         return;
     }
     drafts::snapshot_history(&path, &text);

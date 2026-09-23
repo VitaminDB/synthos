@@ -658,16 +658,103 @@ pub fn has_file(path: &Path, bundle_path: &str) -> bool {
 }
 
 pub fn read_tree(path: &Path) -> ProjectTree {
-    match read_text(path, TREE_PATH) {
-        Some(json) => match ProjectTree::parse(&json) {
-            Ok(t) => t,
-            Err(e) => {
-                log::warn!("notes: дерево проекта не распарсилось: {e}");
-                ProjectTree::new()
-            }
-        },
-        None => ProjectTree::new(),
+    let Some(bytes) = read_bytes(path, TREE_PATH) else {
+        return ProjectTree::new();
+    };
+    let parsed = std::str::from_utf8(&bytes)
+        .map_err(|e| e.to_string())
+        .and_then(|json| ProjectTree::parse(json).map_err(|e| e.to_string()));
+    match parsed {
+        Ok(t) => t,
+        Err(e) => {
+            // Пустое дерево здесь — потеря навигации по всем страницам:
+            // первая же правка дерева записала бы его в бандл. Сырой файл
+            // откладываем рядом с проектом, дерево собираем из того, что
+            // разбирается, и из страниц бандла.
+            log::warn!("notes: дерево проекта не распарсилось: {e}; восстанавливаю");
+            keep_bad_copy(path, TREE_PATH, "tree", &bytes);
+            salvage_tree(path, &bytes)
+        }
     }
+}
+
+/// Сохранить рядом с проектом копию записи бандла, которая не разобралась
+/// (`<проект>.syn.<tag>.bad-<время>`), и сообщить в UI. Одно и то же
+/// содержимое откладывается один раз за запуск — `read_tree` зовут часто.
+pub fn keep_bad_copy(path: &Path, bundle_path: &str, tag: &str, bytes: &[u8]) {
+    use std::hash::{Hash, Hasher};
+    static SEEN: OnceLock<Mutex<HashSet<(PathBuf, String, u64)>>> = OnceLock::new();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    let key = (path.to_path_buf(), bundle_path.to_string(), h.finish());
+    let seen = SEEN.get_or_init(Default::default);
+    if !seen.lock().unwrap_or_else(|e| e.into_inner()).insert(key) {
+        return;
+    }
+    if let Err(e) = crate::fsutil::save_aside(path, tag, path.join(bundle_path), bytes) {
+        log::warn!("notes: не удалось отложить копию {bundle_path}: {e}");
+    }
+}
+
+/// Дерево из неразобравшегося `tree.json`: узлы, у которых есть `id`,
+/// сохраняют иерархию, название и иконку (раскладка — если разбирается,
+/// иначе по умолчанию); страницы бандла, не попавшие в дерево, добавляются
+/// в корень с названием из первого заголовка.
+fn salvage_tree(path: &Path, bytes: &[u8]) -> ProjectTree {
+    fn node(v: &serde_json::Value, seen: &mut HashSet<String>) -> Option<PageNode> {
+        let id = v.get("id")?.as_str()?.to_string();
+        if !seen.insert(id.clone()) {
+            return None;
+        }
+        let str_of = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+        Some(PageNode {
+            title: str_of("title").unwrap_or_else(|| id.clone()),
+            icon: str_of("icon"),
+            layout: v
+                .get("layout")
+                .and_then(|l| serde_json::from_value(l.clone()).ok())
+                .unwrap_or_default(),
+            children: v
+                .get("children")
+                .and_then(|c| c.as_array())
+                .map(|c| c.iter().filter_map(|x| node(x, seen)).collect())
+                .unwrap_or_default(),
+            id,
+        })
+    }
+    let mut seen = HashSet::new();
+    let mut tree = ProjectTree::new();
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        if let Some(roots) = v.get("roots").and_then(|r| r.as_array()) {
+            tree.roots = roots.iter().filter_map(|x| node(x, &mut seen)).collect();
+        }
+    }
+    let mut orphans: Vec<String> = bundle(path)
+        .map(|b| {
+            b.list_dir(PAGES_DIR)
+                .filter_map(|e| {
+                    e.name
+                        .strip_prefix(PAGES_DIR)?
+                        .trim_start_matches('/')
+                        .strip_suffix(".md")
+                        .map(str::to_string)
+                })
+                .filter(|id| !id.is_empty() && !id.contains('/') && !seen.contains(id))
+                .collect()
+        })
+        .unwrap_or_default();
+    orphans.sort();
+    for id in orphans {
+        let title = read_text(path, &page_path(&id))
+            .and_then(|md| {
+                md.lines()
+                    .find_map(|l| l.strip_prefix("# ").map(|t| t.trim().to_string()))
+            })
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| id.clone());
+        tree.roots.push(PageNode { id, title, ..PageNode::default() });
+    }
+    tree
 }
 
 /// Файлы журнала изменений (`notes/log/<yyyy-mm>.jsonl`) по порядку месяцев.
@@ -894,6 +981,54 @@ mod tests {
         let t = sample_tree();
         let json = t.serialize();
         assert_eq!(ProjectTree::parse(&json).unwrap(), t);
+    }
+
+    /// Битый `tree.json` (например, значение enum из более новой версии):
+    /// иерархия и названия сохраняются, недостающие страницы — в корень,
+    /// сырой файл откладывается рядом с проектом.
+    #[test]
+    fn broken_tree_is_salvaged_and_kept_aside() {
+        let dir = std::env::temp_dir().join(format!("synthos-notes-test-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.syn");
+        let broken = r#"{"version":1,"roots":[
+            {"id":"a","title":"Дом","icon":"🏠","layout":{"grid":"hexagons"},
+             "children":[{"id":"b","title":"Кухня"}]},
+            {"title":"без id"}
+        ]}"#;
+        create(
+            &path,
+            &ProjectTree::new(),
+            vec![
+                (page_path("a"), b"# A".to_vec()),
+                (page_path("b"), b"x".to_vec()),
+                (page_path("z"), b"text\n# \xd0\x97\xd0\xb0\xd0\xbc\xd0\xb5\xd1\x82\xd0\xba\xd0\xb8\n".to_vec()),
+            ],
+        )
+        .unwrap();
+        apply_ops(&path, &[WriteOp::Put { path: TREE_PATH.into(), bytes: broken.as_bytes().to_vec() }])
+            .unwrap();
+        let tree = read_tree(&path);
+        assert_eq!(tree.title_of("a").as_deref(), Some("Дом"));
+        assert_eq!(tree.icon_of("a").as_deref(), Some("🏠"));
+        assert_eq!(tree.parent_of("b").as_deref(), Some("a"));
+        assert_eq!(tree.title_of("z").as_deref(), Some("Заметки"));
+        assert_eq!(tree.roots.len(), 2);
+        let aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("p.syn.tree.bad-"))
+            .collect();
+        assert_eq!(aside.len(), 1, "копия откладывается один раз: {aside:?}");
+        let _ = read_tree(&path);
+        let again = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("p.syn.tree.bad-"))
+            .count();
+        assert_eq!(again, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

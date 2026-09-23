@@ -85,7 +85,12 @@ pub fn load() -> PersistedDownloads {
         Ok(s) => match serde_json::from_str::<PersistedDownloads>(&s) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("[synthos hf] Не удалось распарсить {p:?}: {e}");
+                // Автосейв записал бы поверх пустой список — очередь и
+                // загрузки пропали бы. Файл откладываем, UI покажет тост.
+                match crate::fsutil::quarantine(&p) {
+                    Ok(b) => eprintln!("[synthos hf] Не удалось распарсить {p:?}: {e}; отложен в {b:?}"),
+                    Err(re) => eprintln!("[synthos hf] Не удалось распарсить {p:?}: {e}; отложить не вышло: {re}"),
+                }
                 PersistedDownloads::default()
             }
         },
@@ -107,7 +112,7 @@ pub fn save(p: &PersistedDownloads) {
     }
     match serde_json::to_string_pretty(p) {
         Ok(content) => {
-            if let Err(e) = std::fs::write(&path, content) {
+            if let Err(e) = crate::fsutil::write_atomic(&path, content) {
                 eprintln!("[synthos hf] Не удалось записать {path:?}: {e}");
             }
         }
@@ -215,25 +220,43 @@ pub fn into_map(p: PersistedDownloads) -> (HashMap<String, DownloadState>, Vec<S
 /// по длине + первым байтам). Запись на диск только при реальной разнице.
 pub fn install_autosave(ctx: HuggingFaceCtx) {
     let last_fp = use_signal(0u64);
+    let last_shape = use_signal(0u64);
+    let last_write = use_signal(std::time::Instant::now());
     create_effect(move || {
         // Подписки — `.get()` обоих сигналов.
         let _ = ctx.downloads.get();
         let _ = ctx.download_queue.get();
 
         let snapshot = snapshot_from_ctx(&ctx);
-        let fp = fingerprint(&snapshot);
+        let fp = fingerprint(&snapshot, true);
         if last_fp.get_untracked() == fp {
+            return;
+        }
+        // Состав, статусы и очередь — сразу; один прогресс (тики ~8/с) — не
+        // чаще PROGRESS_SAVE_EVERY: докачка берёт позицию из `.meta`/`.part`,
+        // байты здесь только для показа до старта.
+        let shape = fingerprint(&snapshot, false);
+        if last_shape.get_untracked() == shape
+            && last_write.get_untracked().elapsed() < PROGRESS_SAVE_EVERY
+        {
             return;
         }
         save(&snapshot);
         last_fp.set(fp);
+        last_shape.set(shape);
+        last_write.set(std::time::Instant::now());
     });
 }
 
 /// Дёшево считаем fingerprint по статусам + bytes_done + queue, чтобы
 /// прогрессовые тики, дающие одинаковый сериализованный blob, не выливались
 /// в I/O. Идея — XOR + FNV-like rolling hash без сериализации.
-fn fingerprint(p: &PersistedDownloads) -> u64 {
+/// Как часто сохранять изменения одного прогресса (см. `install_autosave`).
+const PROGRESS_SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `with_progress = false` — отпечаток без байтов: меняется только от
+/// состава, статусов и очереди.
+fn fingerprint(p: &PersistedDownloads, with_progress: bool) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     fn mix(h: &mut u64, b: &[u8]) {
         for &x in b {
@@ -244,7 +267,9 @@ fn fingerprint(p: &PersistedDownloads) -> u64 {
     for it in &p.items {
         mix(&mut h, it.repo_id.as_bytes());
         mix(&mut h, it.filename.as_bytes());
-        mix(&mut h, &it.bytes_done.to_le_bytes());
+        if with_progress {
+            mix(&mut h, &it.bytes_done.to_le_bytes());
+        }
         mix(&mut h, &it.total.to_le_bytes());
         let s_tag: u8 = match &it.status {
             PersistedStatus::Pending => 1,
@@ -255,8 +280,10 @@ fn fingerprint(p: &PersistedDownloads) -> u64 {
             PersistedStatus::Stopped => 6,
         };
         mix(&mut h, &[s_tag]);
-        for s in &it.segments {
-            mix(&mut h, &s.bytes_done.to_le_bytes());
+        if with_progress {
+            for s in &it.segments {
+                mix(&mut h, &s.bytes_done.to_le_bytes());
+            }
         }
         if let Some(sha) = &it.verified_sha256 {
             mix(&mut h, sha.as_bytes());
@@ -266,4 +293,39 @@ fn fingerprint(p: &PersistedDownloads) -> u64 {
         mix(&mut h, k.as_bytes());
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(bytes_done: u64, status: PersistedStatus) -> PersistedDownload {
+        PersistedDownload {
+            repo_id: "org/model".into(),
+            filename: "model.safetensors".into(),
+            dest_path: "/tmp/model.safetensors".into(),
+            bytes_done,
+            total: 1000,
+            status,
+            segments: vec![PersistedSegment { from: 0, to: 999, bytes_done }],
+            expected_sha256: None,
+            verified_sha256: None,
+        }
+    }
+
+    fn list(it: PersistedDownload) -> PersistedDownloads {
+        PersistedDownloads { items: vec![it], queue: Vec::new() }
+    }
+
+    /// Прогресс меняет только полный отпечаток — по нему автосейв и
+    /// отличает «один прогресс» (реже) от смены статуса (сразу).
+    #[test]
+    fn shape_fingerprint_ignores_progress_only() {
+        let a = list(item(10, PersistedStatus::Active));
+        let b = list(item(500, PersistedStatus::Active));
+        let c = list(item(500, PersistedStatus::Paused));
+        assert_ne!(fingerprint(&a, true), fingerprint(&b, true));
+        assert_eq!(fingerprint(&a, false), fingerprint(&b, false));
+        assert_ne!(fingerprint(&b, false), fingerprint(&c, false));
+    }
 }

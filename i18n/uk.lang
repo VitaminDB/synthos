@@ -4,6 +4,11 @@
 @english = "Ukrainian"
 
 app.close = "Закрити"
+app.file.quarantined = "Не вдалося прочитати {file} — відкрито порожнім. Попередній файл збережено: {backup}"
+code.save.error = "Не вдалося зберегти {path}: {error}"
+notes.project.error.vanished_unsaved = "Файл проєкту {path} зник, а в ньому є незаписані зміни. Збережіть проєкт через «Зберегти як» або закрийте ще раз, щоб їх відкинути."
+app.quit.reason.notes_unsaved = "Зміни нотаток не записано: {error}"
+notes.autosave.error = "Проєкт нотаток не записано: {error}. Повторюю у фоні; якщо не вийде — збережіть проєкт через «Зберегти як»."
 nav.syn_chat = "Чат"
 nav.nodes = "Ноди"
 nav.syn_explorer = "Syn-пакети"

@@ -4,6 +4,11 @@
 @english = "English"
 
 app.close = "Close"
+app.file.quarantined = "Could not read {file} — started empty. The previous file was kept at {backup}"
+code.save.error = "Could not save {path}: {error}"
+notes.project.error.vanished_unsaved = "The project file {path} is gone, and it has unsaved changes. Use “Save as” to keep them, or close again to discard them."
+app.quit.reason.notes_unsaved = "Notes changes are not saved: {error}"
+notes.autosave.error = "The notes project could not be saved: {error}. Retrying in the background; if it keeps failing, use “Save as”."
 nav.syn_chat = "Chat"
 nav.nodes = "Nodes"
 nav.syn_explorer = "Syn packages"

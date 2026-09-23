@@ -471,7 +471,7 @@ pub fn ingest_dropped_file(ctx: NotesCtx, page_id: String, file: PathBuf, token:
         // Сразу в кэш — плеер увидит файл до commit'а бандла.
         let dir = assets_cache_dir(&project_path);
         if std::fs::create_dir_all(&dir).is_ok() {
-            let _ = std::fs::write(dir.join(&name), &bytes);
+            let _ = crate::fsutil::write_atomic(&dir.join(&name), &bytes);
         }
         autosave::queue_bytes_to(&project_path, &project::asset_path(&name), bytes);
         let url = format!("asset:{name}");
@@ -503,7 +503,8 @@ pub fn ingest_bytes(project_path: &Path, bytes: Vec<u8>, ext: &str) -> String {
     // Сразу в кэш — картинка отрисуется до commit'а бандла.
     let dir = assets_cache_dir(project_path);
     if std::fs::create_dir_all(&dir).is_ok() {
-        let _ = std::fs::write(dir.join(&name), &bytes);
+        // Атомарно: кэш верит любому файлу с этим именем (sha).
+        let _ = crate::fsutil::write_atomic(&dir.join(&name), &bytes);
     }
     autosave::queue_bytes_to(project_path, &project::asset_path(&name), bytes);
     format!("asset:{name}")

@@ -4,6 +4,11 @@
 @english = "French"
 
 app.close = "Fermer"
+app.file.quarantined = "Impossible de lire {file} — démarrage à vide. L’ancien fichier est conservé : {backup}"
+code.save.error = "Impossible d’enregistrer {path} : {error}"
+notes.project.error.vanished_unsaved = "Le fichier du projet {path} a disparu et contient des modifications non enregistrées. Utilisez « Enregistrer sous » pour les garder, ou fermez à nouveau pour les abandonner."
+app.quit.reason.notes_unsaved = "Les modifications des notes ne sont pas enregistrées : {error}"
+notes.autosave.error = "Le projet de notes n’a pas pu être enregistré : {error}. Nouvelle tentative en arrière-plan ; si l’échec persiste, utilisez « Enregistrer sous »."
 nav.syn_chat = "Chat"
 nav.nodes = "Nœuds"
 nav.syn_explorer = "Paquets Syn"

@@ -4,6 +4,11 @@
 @english = "Chinese (Simplified)"
 
 app.close = "关闭"
+app.file.quarantined = "无法读取 {file}，已以空白状态启动。原文件已保留：{backup}"
+code.save.error = "无法保存 {path}：{error}"
+notes.project.error.vanished_unsaved = "项目文件 {path} 已不存在，但有未保存的更改。请使用“另存为”保留，或再次关闭以放弃更改。"
+app.quit.reason.notes_unsaved = "笔记更改未保存：{error}"
+notes.autosave.error = "笔记项目未能保存：{error}。正在后台重试；如仍失败，请使用“另存为”。"
 nav.syn_chat = "聊天"
 nav.nodes = "节点"
 nav.syn_explorer = "Syn 软件包"

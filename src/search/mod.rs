@@ -223,11 +223,7 @@ impl SearchCtx {
         recent.insert(0, key.to_string());
         recent.truncate(RECENT_LIMIT);
         self.recent.set(recent.clone());
-        let mut cfg = config::AppConfig::load();
-        if cfg.search_recent != recent {
-            cfg.search_recent = recent;
-            cfg.save();
-        }
+        config::AppConfig::update(|cfg| cfg.search_recent = recent);
     }
 
     /// Перечитать диск: сообщения всех чатов, `.syn`-пакеты и шаблоны.

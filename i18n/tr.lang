@@ -4,6 +4,11 @@
 @english = "Turkish"
 
 app.close = "Kapat"
+app.file.quarantined = "{file} okunamadı — boş başlatıldı. Önceki dosya şurada saklandı: {backup}"
+code.save.error = "{path} kaydedilemedi: {error}"
+notes.project.error.vanished_unsaved = "{path} proje dosyası kayboldu ve kaydedilmemiş değişiklikler var. Korumak için “Farklı kaydet”i kullanın ya da atmak için yeniden kapatın."
+app.quit.reason.notes_unsaved = "Not değişiklikleri kaydedilmedi: {error}"
+notes.autosave.error = "Not projesi kaydedilemedi: {error}. Arka planda yeniden deneniyor; başarısız olmaya devam ederse “Farklı kaydet”i kullanın."
 nav.syn_chat = "Sohbet"
 nav.nodes = "Düğümler"
 nav.syn_explorer = "Syn paketleri"

@@ -11,8 +11,6 @@ use super::state::CodeSession;
 const HISTORY_LIMIT: usize = 30;
 const AUTOSAVE_DEBOUNCE: Duration = Duration::from_secs(1);
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DraftRecord {
     pub path: PathBuf,
@@ -75,14 +73,6 @@ fn now_nanos() -> u128 {
         .unwrap_or(0)
 }
 
-fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let tmp = path.with_extension(format!("{pid}.{seq}.tmp"));
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
-}
-
 pub fn save_draft(path: &Path, text: &str) {
     let Some(dir) = drafts_dir() else {
         return;
@@ -100,7 +90,7 @@ pub fn save_draft(path: &Path, text: &str) {
         }
     };
     let file = dir.join(format!("{}.draft", file_key(path)));
-    if let Err(e) = write_atomic(&file, &json) {
+    if let Err(e) = crate::fsutil::write_atomic(&file, &json) {
         eprintln!("[code-editor] drafts: write {:?}: {e}", file);
     }
 }
@@ -192,7 +182,7 @@ pub fn snapshot_history(path: &Path, text: &str) {
         }
     };
     let file = dir.join(format!("{:039}.snap", now_nanos()));
-    if let Err(e) = write_atomic(&file, &json) {
+    if let Err(e) = crate::fsutil::write_atomic(&file, &json) {
         eprintln!("[code-editor] drafts: history write {:?}: {e}", file);
         return;
     }

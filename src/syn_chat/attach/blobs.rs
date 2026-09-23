@@ -131,7 +131,9 @@ pub fn store_file(src: &Path) -> Result<(String, u64, String), String> {
     let dst = blob_path(&sha, &ext);
     if !dst.exists() {
         std::fs::create_dir_all(blobs_dir()).map_err(|e| format!("blobs dir: {e}"))?;
-        std::fs::copy(src, &dst).map_err(|e| format!("copy {}: {e}", src.display()))?;
+        // Атомарно: имя — хеш, и обрезанная копия (сбой, ENOSPC) иначе
+        // навсегда сошла бы за готовый blob — `exists()` выше её пропустит.
+        crate::fsutil::copy_atomic(src, &dst).map_err(|e| format!("copy {}: {e}", src.display()))?;
     }
     Ok((sha, size, ext))
 }
@@ -140,7 +142,7 @@ pub fn store_file(src: &Path) -> Result<(String, u64, String), String> {
 pub fn write_derived(sha: &str, ext: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     std::fs::create_dir_all(derived_dir()).map_err(|e| format!("derived dir: {e}"))?;
     let p = derived_path(sha, ext);
-    std::fs::write(&p, bytes).map_err(|e| format!("write {}: {e}", p.display()))?;
+    crate::fsutil::write_atomic(&p, bytes).map_err(|e| format!("write {}: {e}", p.display()))?;
     Ok(p)
 }
 

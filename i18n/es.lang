@@ -5,6 +5,11 @@
 
 
 app.close = "Cerrar"
+app.file.quarantined = "No se pudo leer {file}: se inició vacío. El archivo anterior se guardó en {backup}"
+code.save.error = "No se pudo guardar {path}: {error}"
+notes.project.error.vanished_unsaved = "El archivo del proyecto {path} ha desaparecido y tiene cambios sin guardar. Usa «Guardar como» para conservarlos o vuelve a cerrar para descartarlos."
+app.quit.reason.notes_unsaved = "Los cambios de notas no se guardaron: {error}"
+notes.autosave.error = "No se pudo guardar el proyecto de notas: {error}. Reintentando en segundo plano; si sigue fallando, usa «Guardar como»."
 nav.syn_chat = "Chat"
 nav.nodes = "Nodos"
 nav.syn_explorer = "Paquetes Syn"

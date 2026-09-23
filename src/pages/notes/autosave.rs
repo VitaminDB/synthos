@@ -66,6 +66,47 @@ struct PendingSave {
 /// Столько тишины должно пройти после последней правки.
 const DEBOUNCE: Duration = Duration::from_millis(700);
 
+/// Пауза перед повтором после неудачной записи: 2 с, 4 с, … до минуты.
+/// Без неё неудача (файл пропал, диск полон) повторялась каждые 250 мс.
+fn retry_delay(failures: u32) -> Duration {
+    Duration::from_secs(2u64.saturating_mul(1 << failures.saturating_sub(1).min(5)).min(60))
+}
+
+/// Подряд неудачных фоновых записей и когда пробовать снова.
+struct Backoff {
+    failures: u32,
+    next_try: Option<Instant>,
+}
+
+fn backoff() -> &'static Mutex<Backoff> {
+    static B: OnceLock<Mutex<Backoff>> = OnceLock::new();
+    B.get_or_init(|| Mutex::new(Backoff { failures: 0, next_try: None }))
+}
+
+/// Учесть итог фоновой записи. Первая неудача серии — уведомление в UI
+/// (дальше молча, до первой удачной записи).
+fn note_write_result(result: &std::result::Result<(), String>) {
+    let mut b = lock(backoff());
+    match result {
+        Ok(()) => {
+            b.failures = 0;
+            b.next_try = None;
+        }
+        Err(e) => {
+            b.failures += 1;
+            b.next_try = Some(Instant::now() + retry_delay(b.failures));
+            if b.failures == 1 {
+                let e = e.clone();
+                syngui::async_runtime::run_on_main_thread(move || {
+                    use_context::<crate::context::AppCtx>()
+                        .notifications
+                        .error(tr!("notes.autosave.error", error = e));
+                });
+            }
+        }
+    }
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -359,6 +400,9 @@ pub fn install_notes_autosave() {
             .name("synthos-notes-autosave".to_string())
             .spawn(|| loop {
                 std::thread::sleep(Duration::from_millis(250));
+                if lock(backoff()).next_try.is_some_and(|t| Instant::now() < t) {
+                    continue;
+                }
                 let _w = lock(write_lock());
                 let due: Vec<(Key, PendingSave)> = {
                     let mut map = lock(pending());
@@ -372,8 +416,22 @@ pub fn install_notes_autosave() {
                         map.drain().collect()
                     }
                 };
-                let _ = write_batch(due);
+                if due.is_empty() {
+                    continue;
+                }
+                note_write_result(&write_batch(due));
             })
             .ok();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_delay_grows_to_a_minute() {
+        let secs: Vec<u64> = (1..=8).map(|n| retry_delay(n).as_secs()).collect();
+        assert_eq!(secs, [2, 4, 8, 16, 32, 60, 60, 60]);
+    }
 }

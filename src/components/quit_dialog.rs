@@ -56,9 +56,15 @@ pub fn allow_close() -> bool {
         flush_pending_writes();
         return true;
     }
-    let reasons = pending_work();
+    let mut reasons = pending_work();
+    // Заметки дописываются до решения: если запись не прошла (файл пропал,
+    // диск полон), молча закрыть окно — потерять правки. Причина уходит в
+    // диалог; «Отмена» даёт сохранить проект в другое место.
+    if let Err(e) = flush_notes() {
+        reasons.push(tr!("app.quit.reason.notes_unsaved", error = e));
+    }
     if reasons.is_empty() {
-        flush_pending_writes();
+        crate::syn_chat::autosave::flush_for_exit();
         return true;
     }
     quit.reasons.set(reasons);
@@ -66,14 +72,20 @@ pub fn allow_close() -> bool {
     false
 }
 
-/// Дописать на диск то, что ждало автосейва по дебаунсу.
+/// Дописать на диск то, что ждало автосейва по дебаунсу (выход уже
+/// подтверждён — ошибка заметок только в лог).
 fn flush_pending_writes() {
-    let notes = use_context::<crate::pages::notes::NotesCtx>();
-    crate::pages::notes::autosave::enqueue_dirty(notes);
-    if let Err(e) = crate::pages::notes::autosave::flush_all() {
+    if let Err(e) = flush_notes() {
         log::error!("notes: при выходе проект не записан: {e}");
     }
     crate::syn_chat::autosave::flush_for_exit();
+}
+
+/// Дописать очередь заметок. Ошибка — правки остаются в очереди.
+fn flush_notes() -> std::result::Result<(), String> {
+    let notes = use_context::<crate::pages::notes::NotesCtx>();
+    crate::pages::notes::autosave::enqueue_dirty(notes);
+    crate::pages::notes::autosave::flush_all()
 }
 
 /// Причины, по которым закрытие стоит подтвердить. Пустой список — можно

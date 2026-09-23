@@ -234,9 +234,7 @@ fn load(kind: ModelKind) {
 
 /// Записать правку KbConfig на диск и в снимок карточки.
 fn update_cfg(cfg: RwSignal<KbConfig>, edit: impl FnOnce(&mut KbConfig)) {
-    let mut app_cfg = AppConfig::load();
-    edit(&mut app_cfg.kb);
-    app_cfg.save();
+    let app_cfg = AppConfig::update(|c| edit(&mut c.kb));
     cfg.set(app_cfg.kb);
 }
 

@@ -4,6 +4,11 @@
 @english = "Japanese"
 
 app.close = "閉じる"
+app.file.quarantined = "{file} を読み込めなかったため、空の状態で起動しました。以前のファイルの保存先: {backup}"
+code.save.error = "{path} を保存できませんでした: {error}"
+notes.project.error.vanished_unsaved = "プロジェクトファイル {path} が見つかりませんが、未保存の変更があります。「名前を付けて保存」で保存するか、もう一度閉じて破棄してください。"
+app.quit.reason.notes_unsaved = "ノートの変更が保存されていません: {error}"
+notes.autosave.error = "ノートプロジェクトを保存できませんでした: {error}。バックグラウンドで再試行します。失敗が続く場合は「名前を付けて保存」を使ってください。"
 nav.syn_chat = "チャット"
 nav.nodes = "ノード"
 nav.syn_explorer = "Syn パッケージ"

@@ -100,6 +100,22 @@ pub enum ProjectError {
     BadName(String),
     NoProject,
     Io(String),
+    /// Закрытие: файл проекта пропал, а незаписанные правки есть.
+    VanishedUnsaved(PathBuf),
+}
+
+/// Второе закрытие того же пропавшего проекта подряд — пользователь уже
+/// прочитал предупреждение и согласен выбросить правки.
+fn discard_confirmed(path: &Path) -> bool {
+    static WARNED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    if warned.as_deref() == Some(path) {
+        *warned = None;
+        true
+    } else {
+        *warned = Some(path.to_path_buf());
+        false
+    }
 }
 
 impl ProjectError {
@@ -113,6 +129,7 @@ impl ProjectError {
             ProjectError::BadName(n) => tr!("notes.project.error.bad_name", name = n.clone()),
             ProjectError::NoProject => tr!("notes.project.error.no_project"),
             ProjectError::Io(e) => tr!("notes.project.error.io", error = e.clone()),
+            ProjectError::VanishedUnsaved(p) => tr!("notes.project.error.vanished_unsaved", path = name(p)),
         }
     }
 
@@ -130,7 +147,9 @@ pub type ProjectOpResult = std::result::Result<(), ProjectError>;
 /// Состояние проекта, прочитанное с диска: дерево, активная страница
 /// (сохранённая либо первая), раскрытые узлы и её предки.
 pub fn load_stash(path: &Path, active_page: Option<String>, expanded: Vec<String>) -> ProjectStash {
-    project::compact_if_needed(path);
+    // Уплотнение подменяет файл новым: коммит фонового писателя, попавший
+    // между чтением и подменой, ушёл бы в старую версию и потерялся.
+    autosave::with_write_lock(|| project::compact_if_needed(path));
     let tree = project::read_tree(path);
     let active = active_page.filter(|id| tree.find(id).is_some()).or_else(|| tree.first_id());
     let mut expanded: HashSet<String> = expanded.into_iter().filter(|id| tree.find(id).is_some()).collect();
@@ -374,8 +393,12 @@ impl NotesCtx {
         }
         if path.is_file() {
             autosave::flush_project(path).map_err(ProjectError::Io)?;
+        } else if autosave::has_pending(path) && !discard_confirmed(path) {
+            // Файл удалили снаружи, а правки не записаны. Молча выбросить —
+            // потерять их; первое закрытие отказывает с объяснением («Сохранить
+            // как» спасает правки), повторное — выбрасывает.
+            return Err(ProjectError::VanishedUnsaved(path.to_path_buf()));
         } else {
-            // Файл удалили снаружи — писать некуда.
             log::warn!("notes: файл проекта {} пропал, хвост очереди выброшен", path.display());
         }
         autosave::forget_project(path);

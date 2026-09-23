@@ -4,6 +4,11 @@
 @english = "Portuguese (Brazil)"
 
 app.close = "Fechar"
+app.file.quarantined = "Não foi possível ler {file} — iniciado vazio. O arquivo anterior foi mantido em {backup}"
+code.save.error = "Não foi possível salvar {path}: {error}"
+notes.project.error.vanished_unsaved = "O arquivo do projeto {path} sumiu e há alterações não salvas. Use “Salvar como” para mantê-las ou feche de novo para descartá-las."
+app.quit.reason.notes_unsaved = "As alterações das notas não foram salvas: {error}"
+notes.autosave.error = "Não foi possível salvar o projeto de notas: {error}. Tentando novamente em segundo plano; se continuar falhando, use “Salvar como”."
 nav.syn_chat = "Chat"
 nav.nodes = "Nós"
 nav.syn_explorer = "Pacotes Syn"

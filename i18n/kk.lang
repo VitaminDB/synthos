@@ -4,6 +4,11 @@
 @english = "Kazakh"
 
 app.close = "Жабу"
+app.file.quarantined = "{file} оқылмады — бос күйде ашылды. Бұрынғы файл сақталды: {backup}"
+code.save.error = "{path} сақталмады: {error}"
+notes.project.error.vanished_unsaved = "{path} жоба файлы жоғалды, ал онда сақталмаған өзгерістер бар. «Басқаша сақтау» арқылы сақтаңыз немесе оларды тастау үшін қайта жабыңыз."
+app.quit.reason.notes_unsaved = "Жазбалардағы өзгерістер сақталмады: {error}"
+notes.autosave.error = "Жазбалар жобасы сақталмады: {error}. Фонда қайталаймын; болмаса, «Басқаша сақтау» арқылы сақтаңыз."
 nav.syn_chat = "Чат"
 nav.nodes = "Түйіндер"
 nav.syn_explorer = "Syn пакеттері"

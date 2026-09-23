@@ -241,11 +241,13 @@ impl SynModelRegistry {
                         ctx_ceiling,
                         model.config().max_seq_len
                     );
-                    let mut cfg = crate::config::AppConfig::load();
                     let new_path_str = path.display().to_string();
-                    if cfg.last_syn_model.as_deref() != Some(&new_path_str) {
-                        cfg.last_syn_model = Some(new_path_str);
-                        cfg.save();
+                    if crate::config::AppConfig::load().last_syn_model.as_deref()
+                        != Some(&new_path_str)
+                    {
+                        crate::config::AppConfig::update(|cfg| {
+                            cfg.last_syn_model = Some(new_path_str)
+                        });
                     }
                     registry.last_path.set_always(Some(path.clone()));
                     let supports_media = model.supports_media();

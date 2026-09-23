@@ -134,17 +134,32 @@ pub fn load_from(path: &std::path::Path) -> Option<WorkspaceState> {
             return None;
         }
     };
-    let raw = strip_legacy_kinds(&raw);
+    let raw = strip_unknown_nodes(&raw);
     match serde_json::from_str::<WorkspaceState>(&raw) {
         Ok(s) => Some(s),
         Err(e) => {
-            tracing::warn!(path = %path.display(), error = %e, "битый workspace.json, использую дефолт");
+            // Автосейв запишет поверх пустой workspace — все графы пропали бы.
+            // Файл откладываем в сторону, UI покажет уведомление.
+            match crate::fsutil::quarantine(path) {
+                Ok(backup) => tracing::warn!(
+                    path = %path.display(), backup = %backup.display(), error = %e,
+                    "битый workspace.json отложен, начинаю с пустого"
+                ),
+                Err(re) => tracing::warn!(
+                    path = %path.display(), error = %e, rename_error = %re,
+                    "битый workspace.json, отложить не удалось"
+                ),
+            }
             None
         }
     }
 }
 
-fn strip_legacy_kinds(raw: &str) -> String {
+/// Выбрасывает ноды, которые эта версия не разбирает (тип удалён или
+/// переименован, файл от более новой версии, поле другого формата), и
+/// соединения к ним. Без этого одна такая нода валила разбор всего файла, и
+/// пропадали все графы.
+fn strip_unknown_nodes(raw: &str) -> String {
     const LEGACY: &[&str] = &[
         "demo",
         // Старые ACE-Step ноды (заменены на checkpoint + generate). Узлы этих
@@ -169,10 +184,31 @@ fn strip_legacy_kinds(raw: &str) -> String {
         let before = nodes.len();
         nodes.retain(|node| {
             let kind = node.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-            !LEGACY.contains(&kind)
+            if LEGACY.contains(&kind) {
+                return false;
+            }
+            match serde_json::from_value::<NodeData>(node.clone()) {
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::warn!(kind, error = %e, "workspace: нода не разбирается, пропущена");
+                    false
+                }
+            }
         });
-        if nodes.len() != before {
-            tracing::info!(removed = before - nodes.len(), "workspace: пропущены ноды устаревших типов");
+        if nodes.len() == before {
+            continue;
+        }
+        tracing::info!(removed = before - nodes.len(), "workspace: пропущены неразбираемые ноды");
+        let ids: std::collections::HashSet<u64> = nodes
+            .iter()
+            .filter_map(|n| n.get("id").and_then(|id| id.as_u64()))
+            .collect();
+        if let Some(conns) = tab.get_mut("connections").and_then(|c| c.as_array_mut()) {
+            conns.retain(|c| {
+                let end = |k: &str| c.get(k).and_then(|v| v.as_u64());
+                matches!((end("from_node"), end("to_node")),
+                    (Some(a), Some(b)) if ids.contains(&a) && ids.contains(&b))
+            });
         }
     }
     serde_json::to_string(&v).unwrap_or_else(|_| raw.to_string())
@@ -1104,6 +1140,87 @@ mod tests {
         let restored: WorkspaceState = serde_json::from_str(&json).unwrap();
         assert_eq!(state, restored);
         assert_eq!(restored.tabs[0].nodes[0].kind, NodeKind::Gain);
+    }
+
+    fn tmp_ws_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "synthos-ws-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Нода неизвестного типа (удалённого или из более новой версии) не
+    /// валит разбор: выпадает она и её соединения, остальное на месте.
+    #[test]
+    fn unknown_node_kind_is_dropped_not_whole_workspace() {
+        let dir = tmp_ws_dir("unknown");
+        let path = dir.join("workspace.json");
+        let mut v = serde_json::to_value(WorkspaceState {
+            tabs: vec![TabState {
+                id: 1,
+                title: "g".into(),
+                source: None,
+                agent_chat: None,
+                hidden: false,
+                nodes: vec![NodeData {
+                    id: 7,
+                    kind: NodeKind::Gain,
+                    pos: PointData { x: 0.0, y: 0.0 },
+                    fields: Default::default(),
+                    style: NodeStyleData { tint: None, shadow: true },
+                    enabled: true,
+                    state: None,
+                }],
+                connections: Vec::new(),
+                viewport: None,
+                created_at: 0,
+            }],
+            active: Some(1),
+            next_tab_id: 2,
+        })
+        .unwrap();
+        let tab = &mut v["tabs"][0];
+        let mut alien = tab["nodes"][0].clone();
+        alien["id"] = 8.into();
+        alien["kind"] = "node_from_the_future".into();
+        tab["nodes"].as_array_mut().unwrap().push(alien);
+        tab["connections"] = serde_json::json!([
+            {"from_node": 7, "from_port": "out", "to_node": 8, "to_port": "in"}
+        ]);
+        fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+
+        let loaded = load_from(&path).expect("workspace должен разобраться");
+        assert_eq!(loaded.tabs.len(), 1);
+        assert_eq!(loaded.tabs[0].nodes.len(), 1);
+        assert_eq!(loaded.tabs[0].nodes[0].id, 7);
+        assert!(loaded.tabs[0].connections.is_empty());
+        assert!(path.exists(), "разобравшийся файл не откладывается");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Файл, который не разобрался целиком, откладывается, а не остаётся
+    /// под автосейв — тот записал бы поверх пустой workspace.
+    #[test]
+    fn broken_workspace_is_quarantined() {
+        let dir = tmp_ws_dir("broken");
+        let path = dir.join("workspace.json");
+        fs::write(&path, "{\"tabs\": [").unwrap();
+        assert!(load_from(&path).is_none());
+        assert!(!path.exists());
+        let backups: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].starts_with("workspace.json.bad-"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Полный flow: save state на диск → load → from_state. Проверяет, что

@@ -2214,6 +2214,9 @@ async fn run_agent_loop(
                 );
             }
             let mut runner = LlmGeneration::new(&model.model, opts);
+            // Stop во время префилла: движок опрашивает флаг между чанками.
+            let abort_for_prefill = abort.clone();
+            runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
             let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
             if StreamParser::has_native_stops(&model.tokenizer) {
                 // Канальный протокол завершает ход `<|eot|>`, Gemma-4 —
@@ -2391,6 +2394,11 @@ async fn run_agent_loop(
             );
 
             if let Err(e) = stream_res {
+                // Остановлено пользователем (в том числе посреди префилла —
+                // тогда движок отвечает ошибкой): это не сбой хода.
+                if abort.load(Ordering::Relaxed) != abort_snapshot {
+                    return Ok(());
+                }
                 let oom = is_oom_error(&e);
                 // Сессия как резерв считается только если ход ею пользовался:
                 // после первого OOM префикс-KV на этом ходу уже выключен.
@@ -3266,6 +3274,8 @@ pub(crate) fn generate_summary(
     opts.max_new_tokens = plan.max_new;
 
     let mut runner = LlmGeneration::new(&model.model, opts);
+    let abort_for_prefill = abort.clone();
+    runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
     if StreamParser::has_native_stops(&model.tokenizer) {
         runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
     } else {

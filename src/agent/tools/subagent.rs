@@ -669,6 +669,8 @@ fn generate_subagent_turn(
         });
 
         let mut runner = LlmGeneration::new(&model.model, opts);
+        let abort_for_prefill = abort.clone();
+        runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
         // Протокол хода — как в основном цикле: у канальных моделей (Muse
         // Glimmer) стоп по EOS словаря и ATEM-закрытие, у ChatML — стопы
         // Qwen3 и `</tool_call>`. До 03.09.2026 субагент знал только

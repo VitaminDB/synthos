@@ -7,7 +7,7 @@ pkgname=synthos
 # ревизия пакета: растёт, только если тот же код пересобирается под новые
 # библиотеки (мажорный ffmpeg), и сбрасывается в 1 вместе с новым pkgver.
 epoch=1
-pkgver=0.2.278
+pkgver=0.2.279
 pkgrel=1
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода; NVIDIA sm_80+, модели .syn и GGUF"
 license=("MIT" "Apache-2.0")

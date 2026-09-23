@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.278"
+version = "0.2.279"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]

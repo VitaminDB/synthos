@@ -755,6 +755,7 @@ impl TurnStats {
         ctx.ctx_budget_tokens.set_always(self.ctx_budget);
         ctx.last_vram_free_mb.set_always(self.vram_free_mb);
         ctx.last_blocks_resident.set_always(self.blocks_resident);
+        ctx.last_turn_open.set_always(false);
     }
 }
 
@@ -2213,6 +2214,32 @@ async fn run_agent_loop(
                     plan.ring_tokens
                 );
             }
+            // «Детали» с первой секунды хода — про этот ход: промпт и ринг
+            // известны уже сейчас, префилл придёт с первым токеном, а
+            // переиспользование префикса движок называет только в конце.
+            // Без этого новый чат до конца первого ответа показывал числа
+            // предыдущего (и «из кэша» чужого промпта).
+            {
+                let prompt_tokens = prompt_ids.len() as u32;
+                let ring_tokens = plan.ring_tokens as u32;
+                let ring_bytes = plan.ring_bytes();
+                let budget = plan.by_mem.min(plan.cap) as u32;
+                let first_turn = turn == 0;
+                if_active(&chat_id, move |c| {
+                    c.last_prompt_tokens.set_always(prompt_tokens);
+                    c.last_ring_tokens.set_always(ring_tokens);
+                    c.kv_cache_bytes.set_always(ring_bytes);
+                    c.ctx_budget_tokens.set_always(budget);
+                    c.last_prefill_ms.set_always(0);
+                    c.last_reused_tokens.set_always(0);
+                    if first_turn {
+                        c.last_gen_tokens.set_always(0);
+                        c.last_decode_tps.set_always(0.0);
+                        c.last_turns.set_always(1);
+                    }
+                    c.last_turn_open.set_always(true);
+                });
+            }
             let mut runner = LlmGeneration::new(&model.model, opts);
             // Stop во время префилла: движок опрашивает флаг между чанками.
             let abort_for_prefill = abort.clone();
@@ -2274,7 +2301,9 @@ async fn run_agent_loop(
                     return false;
                 }
                 if ttft_ms.is_none() {
-                    ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
+                    let ms = t_turn.elapsed().as_millis() as u32;
+                    ttft_ms = Some(ms);
+                    if_active(&chat_for_cb, move |c| c.last_prefill_ms.set_always(ms));
                 }
                 tokens_this_turn += 1;
                 turn_tail.extend(delta.chars());
@@ -2574,7 +2603,9 @@ async fn run_agent_loop(
                 turns: turn as u32 + 1,
                 ring_tokens: plan.ring_tokens as u32,
                 ring_bytes: plan.ring_bytes(),
-                ctx_budget: plan.by_mem as u32,
+                // Потолок — меньшее из «влезает в VRAM» и контекста модели:
+                // память под миллион токенов у модели на 262k ничего не значит.
+                ctx_budget: plan.by_mem.min(plan.cap) as u32,
                 vram_free_mb: vram_after as u32,
                 blocks_resident: blocks_resident_of(&model),
             };

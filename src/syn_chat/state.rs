@@ -280,6 +280,9 @@ pub struct SynChatCtx {
     /// `(на карте, всего)` блоков модели после хода — только при частичном
     /// оффлоаде; `None`, когда все блоки резидентны или архитектура своя.
     pub last_blocks_resident: RwSignal<Option<(u32, u32)>>,
+    /// Ход идёт, и его итоговые числа ещё не пришли: префилл (до первого
+    /// токена) и «из кэша» (до конца хода) панель показывает как «…».
+    pub last_turn_open: RwSignal<bool>,
 
     /// Живые (и только что завершённые) вложенные агент-циклы — субагенты.
     /// Пишется из worker-потоков через `syn_chat::telemetry`, читается
@@ -427,6 +430,7 @@ impl SynChatCtx {
             last_vram_free_mb: use_signal(0),
             last_reused_tokens: use_signal(0),
             last_blocks_resident: use_signal(None),
+            last_turn_open: use_signal(false),
             agent_runs: use_signal(Vec::new()),
             details_open: use_signal(HashMap::new()),
             cards: CardsOpen::from_config(&cfg.syn_chat_cards),

@@ -805,6 +805,9 @@ fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             ctx_budget: ctx.ctx_budget_tokens.get(),
             vram_free_mb: ctx.last_vram_free_mb.get(),
             blocks_resident: ctx.last_blocks_resident.get(),
+            // Stop и ошибка снимают `pending`, но не всегда доходят до
+            // `TurnStats::apply` — флаг без живого хода не в счёт.
+            turn_open: live && ctx.last_turn_open.get(),
         };
         // Подпись — имя бандла: числа карточки принадлежат именно ему, а в
         // табе «Детали» модель больше нигде не видна.
@@ -1031,7 +1034,14 @@ fn ring_usage(s: &RunStats) -> impl Widget {
 /// Десять плиток «значение + подпись» — тот же набор чисел, что панель
 /// показывала строками, но вдвое плотнее и читается по вертикали.
 fn stat_tiles(s: &RunStats, turns: u32) -> Vec<Box<dyn Widget>> {
-    let (prefill_value, prefill_label) = if s.prefill_ms >= 1000 {
+    // Незавершённый ход: неизвестное — «…», а не число прошлого хода.
+    const PENDING: &str = "…";
+    let (prefill_value, prefill_label) = if s.turn_open && s.prefill_ms == 0 {
+        (
+            PENDING.to_string(),
+            tr!("chat.right.details.tile.prefill_ms"),
+        )
+    } else if s.prefill_ms >= 1000 {
         (
             format!("{:.1}", s.prefill_ms as f32 / 1000.0),
             tr!("chat.right.details.tile.prefill_s"),
@@ -1055,7 +1065,11 @@ fn stat_tiles(s: &RunStats, turns: u32) -> Vec<Box<dyn Widget>> {
             false,
         ),
         (
-            group(s.reused_tokens as u64),
+            if s.turn_open {
+                PENDING.to_string()
+            } else {
+                group(s.reused_tokens as u64)
+            },
             tr!("chat.right.details.tile.cached"),
             false,
         ),

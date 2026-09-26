@@ -32,6 +32,21 @@ use super::vector_index::{VectorIndex, VectorIndexKind};
 /// vector_search автоматически использует vec0 KNN.
 pub const DEFAULT_VECTOR_INDEX_THRESHOLD: usize = 100_000;
 
+/// Режим и порог векторного индекса из `KbConfig` (`vector_index_kind`,
+/// `vector_index_threshold`) для [`Store::open`]. Ставится при старте из
+/// конфига; `Store::open` зовут и рабочие потоки, где контекста приложения нет.
+static VECTOR_INDEX_DEFAULTS: std::sync::RwLock<(VectorIndexKind, usize)> =
+    std::sync::RwLock::new((VectorIndexKind::Auto, DEFAULT_VECTOR_INDEX_THRESHOLD));
+
+pub fn set_vector_index_defaults(kind: VectorIndexKind, threshold: usize) {
+    let threshold = if threshold == 0 { DEFAULT_VECTOR_INDEX_THRESHOLD } else { threshold };
+    *VECTOR_INDEX_DEFAULTS.write().unwrap_or_else(|e| e.into_inner()) = (kind, threshold);
+}
+
+fn vector_index_defaults() -> (VectorIndexKind, usize) {
+    *VECTOR_INDEX_DEFAULTS.read().unwrap_or_else(|e| e.into_inner())
+}
+
 static SQLITE_VEC_REGISTERED: AtomicBool = AtomicBool::new(false);
 static SQLITE_VEC_INIT: OnceLock<()> = OnceLock::new();
 
@@ -108,7 +123,8 @@ pub struct Store {
 impl Store {
     /// Открыть/создать БД. Не пишет схему — это `ensure_schema`.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::open_with_config(path, VectorIndexKind::Auto, DEFAULT_VECTOR_INDEX_THRESHOLD)
+        let (kind, threshold) = vector_index_defaults();
+        Self::open_with_config(path, kind, threshold)
     }
 
     /// Открыть с явным выбором режима векторного индекса. Если БД уже

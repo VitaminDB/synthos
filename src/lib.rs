@@ -432,6 +432,10 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     };
     let kb = kb::KbCtx::new(kb_dir_path);
     kb.auto_augment.set(saved.kb.auto_augment_default);
+    kb::store::set_vector_index_defaults(
+        kb::vector_index::VectorIndexKind::parse(&saved.kb.vector_index_kind),
+        saved.kb.vector_index_threshold,
+    );
 
     // Notification ctx: 15s default duration по требованию TASK.md.
     let notifications = syngui::widgets::feedback::NotificationCtx::with_default_duration(15_000);
@@ -688,10 +692,10 @@ fn install_config_autosave(ctx: &AppCtx) {
             // Загруженный конфиг уже прошёл `introduce_notes_tool`.
             tools_notes_introduced: true,
             tools_wizard_introduced: true,
+            kb_search_approval_introduced: true,
             skills_active: skills_active.get(),
             audio_models: audio_models.get(),
             selected_audio_model: selected_audio_model.get(),
-            audio_autostart: false,
             code_sessions: sessions_cfg,
             active_code_session: active_idx,
             // Что показывать на следующем старте: страница + активный чат

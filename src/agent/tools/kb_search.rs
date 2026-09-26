@@ -19,7 +19,7 @@ use syngui::context_provider::use_context;
 use syngui::async_runtime::run_on_main_thread;
 
 use crate::context::AppCtx;
-use crate::kb::search::{hybrid_search_with_rerank, SearchHit, DEFAULT_RERANK_MULTIPLIER};
+use crate::kb::search::{hybrid_search_with_rerank, SearchHit};
 
 use super::executor::{ToolError, MAX_OUTPUT_BYTES};
 
@@ -27,7 +27,8 @@ use super::executor::{ToolError, MAX_OUTPUT_BYTES};
 #[derive(Debug)]
 struct Args {
     query: String,
-    top_k: usize,
+    /// `None` — не задан моделью: берётся `KbConfig::default_top_k`.
+    top_k: Option<usize>,
 }
 
 fn parse_args(args_json: &str) -> Result<Args, ToolError> {
@@ -45,9 +46,7 @@ fn parse_args(args_json: &str) -> Result<Args, ToolError> {
     let top_k = v
         .get("top_k")
         .and_then(|x| x.as_u64())
-        .map(|x| x as usize)
-        .unwrap_or(5)
-        .clamp(1, 20);
+        .map(|x| (x as usize).clamp(1, 20));
     Ok(Args { query, top_k })
 }
 
@@ -131,7 +130,8 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
 
     let kb_dir = snapshot.kb_dir;
     let query_for_worker = args.query.clone();
-    let top_k = args.top_k;
+    let top_k = args.top_k.unwrap_or(snapshot.plan.cfg.default_top_k).clamp(1, 20);
+    let rerank_multiplier = snapshot.plan.cfg.reranker_top_k_multiplier.max(1);
 
     let result = tokio::task::spawn_blocking(move || -> Result<Vec<SearchHit>, String> {
         let mut all_hits: Vec<SearchHit> = Vec::new();
@@ -150,7 +150,7 @@ pub async fn run(args_json: &str) -> Result<String, ToolError> {
                 reranker.as_deref(),
                 &query_for_worker,
                 top_k,
-                DEFAULT_RERANK_MULTIPLIER,
+                rerank_multiplier,
             ) {
                 Ok(mut h) => all_hits.append(&mut h),
                 Err(e) => {
@@ -256,13 +256,13 @@ mod tests {
     fn parse_args_validates_query() {
         let a = parse_args(r#"{"query":"hello","top_k":3}"#).unwrap();
         assert_eq!(a.query, "hello");
-        assert_eq!(a.top_k, 3);
+        assert_eq!(a.top_k, Some(3));
 
         let a = parse_args(r#"{"query":"hello"}"#).unwrap();
-        assert_eq!(a.top_k, 5, "default top_k");
+        assert_eq!(a.top_k, None, "default top_k — из KbConfig");
 
         let a = parse_args(r#"{"query":"hi","top_k":99}"#).unwrap();
-        assert_eq!(a.top_k, 20, "clamped to 20");
+        assert_eq!(a.top_k, Some(20), "clamped to 20");
 
         assert!(parse_args(r#"{}"#).is_err());
         assert!(parse_args(r#"{"query":"  "}"#).is_err());

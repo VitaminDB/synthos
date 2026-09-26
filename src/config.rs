@@ -539,6 +539,11 @@ pub struct AppConfig {
     /// То же для `view_media` (11.09.2026).
     #[serde(default)]
     pub tools_view_media_introduced: bool,
+    /// `kb.auto_approve_kb_search` уже применён (26.09.2026): разрешение
+    /// `kb_search` без вопроса кладётся в `tool_approval_overrides` один раз,
+    /// дальше выбор пользователя в настройках не трогается.
+    #[serde(default)]
+    pub kb_search_approval_introduced: bool,
     /// Slug-id скилов, активных в правой панели (отображаются как
     /// «Активные» чипы рядом с tools_section). Сами скилы хранятся в
     /// `~/.config/synthos/skills/*.md` — здесь только подсветка.
@@ -551,9 +556,6 @@ pub struct AppConfig {
     /// Имя выбранной ASR-модели (стабильный id).
     #[serde(default)]
     pub selected_audio_model: Option<String>,
-    /// Авто-запуск ASR-сервера при старте приложения, если выбрана модель.
-    #[serde(default)]
-    pub audio_autostart: bool,
     /// Список сессий редактора кода. Каждая сессия — отдельная вкладка
     /// в боковой панели; одна сессия = один независимый проект (своя папка,
     /// своё дерево, свои терминалы). Открытые файлы и активный файл не
@@ -998,8 +1000,8 @@ pub struct KbConfig {
     /// Пусто (дефолт) = найти самим в каталоге из «AI модели»
     /// (`bge-m3.syn`), см. `kb::models`. Несуществующий путь поиску не мешает.
     pub embedder_model_path: String,
-    /// Устройство инференса: `"cpu"`, `"cuda"`, `"metal"`. Для CUDA/Metal
-    /// нужен соответствующий feature-флаг билда (`kb-cuda`, `kb-metal`).
+    /// Устройство инференса: `"cpu"`, `"cuda"`, `"metal"`. Нет такого
+    /// устройства — CPU с предупреждением (`kb::loader::parse_device`).
     pub embedder_device: String,
     /// Тип данных вычислений: `"f32"`, `"f16"`, `"bf16"`. F32 — самый
     /// совместимый, F16 быстрее на GPU.
@@ -1021,11 +1023,13 @@ pub struct KbConfig {
     /// безопасно для контекстного окна 32k+.
     pub augment_token_budget: usize,
     /// Авто-разрешение tool `kb_search` (read-only). Применяется один раз
-    /// при первом старте — добавляет override в `tool_approval_overrides`.
+    /// (`introduce_kb_search_approval`) — добавляет override в
+    /// `tool_approval_overrides`.
     pub auto_approve_kb_search: bool,
     /// Режим векторного индекса: `"auto"` (по умолчанию — sqlite-vec при
     /// большом размере коллекции, иначе full-scan), `"scan"` (всегда scan),
-    /// `"sqlite-vec"` (всегда vec0). Влияет на новые `Store::open`.
+    /// `"sqlite-vec"` (всегда vec0). Читается при старте
+    /// (`kb::store::set_vector_index_defaults`) и действует на все `Store::open`.
     pub vector_index_kind: String,
     /// Порог для `auto`-режима: количество чанков, начиная с которого
     /// автоматически включается sqlite-vec. Меньшие коллекции остаются
@@ -1190,10 +1194,10 @@ impl Default for AppConfig {
             sampling_defaults_migrated: true,
             tools_wizard_introduced: true,
             tools_view_media_introduced: true,
+            kb_search_approval_introduced: false,
             skills_active: Vec::new(),
             audio_models: Vec::new(),
             selected_audio_model: None,
-            audio_autostart: false,
             code_sessions: Vec::new(),
             active_code_session: None,
             last_route: None,
@@ -1454,6 +1458,21 @@ impl AppConfig {
         }
     }
 
+    /// Один раз разрешить `kb_search` без вопроса, если так велит
+    /// `kb.auto_approve_kb_search` и пользователь ещё не выбрал режим сам.
+    pub fn introduce_kb_search_approval(&mut self) {
+        if self.kb_search_approval_introduced {
+            return;
+        }
+        self.kb_search_approval_introduced = true;
+        if self.kb.auto_approve_kb_search {
+            self.general
+                .tool_approval_overrides
+                .entry("kb_search".to_string())
+                .or_insert_with(|| TOOL_APPROVAL_ALWAYS.to_string());
+        }
+    }
+
     /// Один раз включить инструмент `wizard` (см. `tools_wizard_introduced`).
     pub fn introduce_wizard_tool(&mut self) {
         if self.tools_wizard_introduced {
@@ -1545,6 +1564,7 @@ impl AppConfig {
                     cfg.introduce_notes_tool();
                     cfg.introduce_wizard_tool();
                     cfg.introduce_view_media_tool();
+                    cfg.introduce_kb_search_approval();
                     cfg.migrate_legacy_web_tool_keys();
                     cfg.migrate_sampling_defaults();
                     cfg
@@ -1573,7 +1593,11 @@ impl AppConfig {
                 }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let cfg = Self::default();
+                let mut cfg = Self::default();
+                // Новая установка: `kb_search` без вопроса, как велит KbConfig.
+                // Не в `Default`: `#[serde(default)]` взял бы оттуда `general`
+                // с уже вписанным override для старых конфигов без секции.
+                cfg.introduce_kb_search_approval();
                 cfg.save();
                 cfg
             }
@@ -1661,6 +1685,30 @@ mod tests {
         cfg.introduce_wizard_tool();
         assert_eq!(cfg.tools_active, ["bash"], "выбор пользователя не трогается");
         assert!(AppConfig::default().tools_active.iter().any(|k| k == "wizard"));
+    }
+
+    #[test]
+    fn kb_search_approval_introduced_once() {
+        let mut cfg: AppConfig = serde_json::from_str(r#"{"tools_active":["bash"]}"#).unwrap();
+        assert!(!cfg.kb_search_approval_introduced);
+        cfg.introduce_kb_search_approval();
+        assert_eq!(
+            cfg.general.tool_approval_overrides.get("kb_search").map(String::as_str),
+            Some(TOOL_APPROVAL_ALWAYS)
+        );
+        // Пользователь вернул «спрашивать» — повторная загрузка не трогает.
+        cfg.general.tool_approval_overrides.insert("kb_search".into(), TOOL_APPROVAL_ASK.into());
+        cfg.introduce_kb_search_approval();
+        assert_eq!(
+            cfg.general.tool_approval_overrides.get("kb_search").map(String::as_str),
+            Some(TOOL_APPROVAL_ASK)
+        );
+        // Флаг выключен — override не появляется.
+        let mut off: AppConfig =
+            serde_json::from_str(r#"{"kb":{"auto_approve_kb_search":false}}"#).unwrap();
+        off.introduce_kb_search_approval();
+        assert!(!off.general.tool_approval_overrides.contains_key("kb_search"));
+        assert!(AppConfig::default().general.tool_approval_overrides.is_empty());
     }
 
     #[test]

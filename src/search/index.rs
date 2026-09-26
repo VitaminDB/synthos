@@ -685,3 +685,67 @@ fn push_templates(items: &mut Vec<SearchItem>, scan: &ScanData) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::state::ChatMsg;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("synthos-search-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn truncate_flattens_lines_and_marks_cut() {
+        assert_eq!(truncate("  a\nb\r\nc  ", 100), "a b  c");
+        assert_eq!(truncate("абвгд", 3), "абв…");
+        assert_eq!(truncate("abc", 3), "abc");
+    }
+
+    #[test]
+    fn models_are_found_deduped_and_sorted() {
+        let d = tmp("models");
+        for f in ["zeta.syn", "Alpha.GGUF", "notes.txt", "beta.syn"] {
+            std::fs::write(d.join(f), b"x").unwrap();
+        }
+        // Один каталог дважды (общий каталог и закладка) — без дублей.
+        let found = scan_models(&[d.clone(), d.clone()]);
+        let names: Vec<&str> = found.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["Alpha", "beta", "zeta"]);
+        assert!(found.iter().all(|m| m.bytes == 1));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn messages_skip_archived_empty_and_newest_chat_first() {
+        let d = tmp("chats");
+        let chat = |id: &str, updated: u64, archived: bool, bodies: &[&str]| StoredChat {
+            id: id.into(),
+            title: format!("title-{id}"),
+            created_at: 0,
+            updated_at: updated,
+            model_name: None,
+            messages: bodies.iter().map(|b| ChatMsg::user(*b)).collect(),
+            syn_params: None,
+            settings: None,
+            archived,
+        };
+        for c in [
+            chat("old", 1, false, &["старое"]),
+            chat("new", 2, false, &["свежее", "   "]),
+            chat("arch", 3, true, &["в архиве"]),
+        ] {
+            std::fs::write(d.join(format!("{}.json", c.id)), serde_json::to_string(&c).unwrap()).unwrap();
+        }
+        std::fs::write(d.join("broken.json"), b"{").unwrap();
+        let msgs = scan_messages(&d);
+        let got: Vec<(&str, usize, &str)> =
+            msgs.iter().map(|m| (m.chat_id.as_str(), m.index, m.text.as_str())).collect();
+        assert_eq!(got, [("new", 0, "свежее"), ("old", 0, "старое")]);
+        assert_eq!(msgs[0].chat_title, "title-new");
+        let _ = std::fs::remove_dir_all(d);
+    }
+}

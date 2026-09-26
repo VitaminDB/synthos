@@ -218,23 +218,23 @@ fn run_queue() -> &'static Mutex<Option<RunQueue>> {
 /// BFS от каждой on_run-ноды `a` через `out_edges`: пассивные звенья
 /// прозрачно пробрасываются, on_run-ноды-потомки добавляются в
 /// `downstream[a]` и инкрементируют `remaining`.
-fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
-    let on_run_set: HashSet<NodeId> = nodes
-        .iter()
-        .filter(|n| n.enabled.get_untracked() && registry::meta(n.kind).on_run.is_some())
-        .map(|n| n.id)
-        .collect();
-
+/// Зависимости прогона: для каждой on_run-ноды — сколько on_run-предков она
+/// ждёт и какие ближайшие on_run-преемники (сквозь пассивные ноды без
+/// `on_run`) разблокируются её финишем.
+fn run_dependencies(
+    on_run_set: &HashSet<NodeId>,
+    edges: impl IntoIterator<Item = (NodeId, NodeId)>,
+) -> (HashMap<NodeId, usize>, HashMap<NodeId, Vec<NodeId>>) {
     let mut out_edges: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    for c in conns {
-        out_edges.entry(c.from_node).or_default().push(c.to_node);
+    for (from, to) in edges {
+        out_edges.entry(from).or_default().push(to);
     }
 
     let mut remaining: HashMap<NodeId, usize> =
         on_run_set.iter().map(|id| (*id, 0_usize)).collect();
     let mut downstream: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
 
-    for &a in &on_run_set {
+    for &a in on_run_set {
         let mut visited: HashSet<NodeId> = HashSet::new();
         let mut q: VecDeque<NodeId> = VecDeque::new();
         if let Some(succ) = out_edges.get(&a) {
@@ -265,6 +265,21 @@ fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection])
             downstream.insert(a, downs);
         }
     }
+
+    (remaining, downstream)
+}
+
+fn build_queue(ctx: NodeEditorCtx, nodes: &[NodeInstance], conns: &[Connection]) -> RunQueue {
+    let on_run_set: HashSet<NodeId> = nodes
+        .iter()
+        .filter(|n| n.enabled.get_untracked() && registry::meta(n.kind).on_run.is_some())
+        .map(|n| n.id)
+        .collect();
+
+    let (remaining, downstream) = run_dependencies(
+        &on_run_set,
+        conns.iter().map(|c| (c.from_node, c.to_node)),
+    );
 
     RunQueue {
         ctx,
@@ -833,5 +848,55 @@ fn button_class(base: &str, current: RunState, target: RunState) -> String {
         format!("{base} ne-run-btn--active")
     } else {
         base.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deps(on_run: &[u64], edges: &[(u64, u64)]) -> (HashMap<NodeId, usize>, HashMap<NodeId, Vec<NodeId>>) {
+        let set: HashSet<NodeId> = on_run.iter().map(|&i| NodeId(i)).collect();
+        run_dependencies(&set, edges.iter().map(|&(a, b)| (NodeId(a), NodeId(b))))
+    }
+
+    #[test]
+    fn chain_through_passive_node_waits_for_upstream() {
+        // ASR(1) → TextView(2, пассивная) → OmniVoice(3).
+        let (rem, down) = deps(&[1, 3], &[(1, 2), (2, 3)]);
+        assert_eq!(rem[&NodeId(1)], 0);
+        assert_eq!(rem[&NodeId(3)], 1);
+        assert_eq!(down[&NodeId(1)], vec![NodeId(3)]);
+        assert!(!rem.contains_key(&NodeId(2)), "пассивная нода не в очереди");
+    }
+
+    #[test]
+    fn branches_run_in_parallel_and_join_waits_for_both() {
+        // 1 → 2, 1 → 3, 2 → 4, 3 → 4.
+        let (rem, down) = deps(&[1, 2, 3, 4], &[(1, 2), (1, 3), (2, 4), (3, 4)]);
+        assert_eq!((rem[&NodeId(2)], rem[&NodeId(3)], rem[&NodeId(4)]), (1, 1, 2));
+        let mut d1 = down[&NodeId(1)].clone();
+        d1.sort_by_key(|n| n.0);
+        assert_eq!(d1, vec![NodeId(2), NodeId(3)]);
+    }
+
+    #[test]
+    fn stops_at_nearest_on_run_descendant() {
+        // 1 → 2 → 3: 3 ждёт только 2, не 1.
+        let (rem, down) = deps(&[1, 2, 3], &[(1, 2), (2, 3)]);
+        assert_eq!(rem[&NodeId(3)], 1);
+        assert_eq!(down[&NodeId(1)], vec![NodeId(2)]);
+    }
+
+    #[test]
+    fn cycle_leaves_no_ready_node() {
+        let (rem, _) = deps(&[1, 2], &[(1, 2), (2, 1)]);
+        assert!(rem.values().all(|&r| r > 0), "в цикле никто не готов — start_run вернёт CycleInGraph");
+    }
+
+    #[test]
+    fn active_button_gets_pulse_class() {
+        assert_eq!(button_class("b", RunState::Running, RunState::Running), "b ne-run-btn--active");
+        assert_eq!(button_class("b", RunState::Paused, RunState::Running), "b");
     }
 }

@@ -29,7 +29,8 @@ pub(super) fn view() -> Box<dyn Widget> {
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .child(Reactive::new(move || vec![model_row(ModelKind::Embedder, cfg)]))
         .child(Reactive::new(move || vec![model_row(ModelKind::Reranker, cfg)]))
-        .child(device_row(cfg));
+        .child(device_row(cfg))
+        .child(augment_row());
     super::section(tr!("settings.knowledge_base.models"), None, Box::new(body))
 }
 
@@ -178,6 +179,21 @@ fn chip(text: String, class: &str) -> Box<dyn Widget> {
         DecoratedBox::new()
             .class(class.to_string())
             .child(Text::new(text).class("kb-state-chip-text")),
+    )
+}
+
+/// Подмешивать найденное в запрос: перед отправкой хода чат сам ищет по
+/// активным базам и кладёт фрагменты в текущее сообщение. Флаг живёт в
+/// `kb.auto_augment` — его и сохраняет автосейв (`auto_augment_default`).
+fn augment_row() -> Box<dyn Widget> {
+    let kb = use_context::<AppCtx>().kb;
+    let control = Toggle::with_state(kb.auto_augment.get_untracked())
+        .on_change(move |on| kb.auto_augment.set(on));
+    crate::pages::settings::widgets::row_frame(
+        MI_AUTO_AWESOME,
+        tr!("settings.knowledge_base.augment"),
+        tr!("settings.knowledge_base.augment.desc"),
+        Box::new(control),
     )
 }
 

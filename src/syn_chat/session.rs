@@ -1972,7 +1972,7 @@ async fn rebuild_history(
 
 async fn run_agent_loop(
     mut model: Arc<LoadedSynModel>,
-    items: Vec<HistoryItem>,
+    mut items: Vec<HistoryItem>,
     caps: MediaCaps,
     tool_schemas: Vec<serde_json::Value>,
     params: SamplingParams,
@@ -2027,6 +2027,18 @@ async fn run_agent_loop(
     // `media` растёт и посреди хода: `view_media` дописывает эмбеддинги
     // файлов, которые модель попросила посмотреть (порядок — порядок
     // заполнителей в промпте, новые всегда в хвосте).
+    // Найденное в базах знаний — в копию текущего сообщения пользователя, не
+    // в системный промпт: префикс истории не меняется, префикс-KV цел; лента
+    // чата тоже (следующий ход переиспользует кэш до этого сообщения).
+    if let Some(block) = kb_augment_block(&items).await {
+        if let Some(last) = items
+            .iter_mut()
+            .rev()
+            .find(|i| i.role == ChatMsgRole::User && i.tool_name.is_none())
+        {
+            last.body = format!("{block}\n\n{}", last.body);
+        }
+    }
     let (mut history, mut media) = prepare_history(&items, &model, &caps, &ctx);
     if parked {
         unpark_kv_session(&mut kv_slot, &model);
@@ -4055,6 +4067,37 @@ pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTok
 
 /// Реплика ленты в форме, пригодной для сборки промпта на worker-потоке:
 /// сигналы уже прочитаны, вложения — по значению.
+/// Блок фрагментов из активных баз знаний под последнее сообщение
+/// пользователя, если включено «Подмешивать найденное» (`kb.auto_augment`) и
+/// в чате выбрана хоть одна коллекция. Ошибка поиска хода не валит — ход
+/// идёт без блока, модель может сама вызвать `kb_search`.
+async fn kb_augment_block(items: &[HistoryItem]) -> Option<String> {
+    let query = items
+        .iter()
+        .rev()
+        .find(|i| i.role == ChatMsgRole::User && i.tool_name.is_none())
+        .map(|i| i.body.trim().to_string())
+        .filter(|q| !q.is_empty())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    run_on_main_thread(move || {
+        let kb = use_context::<AppCtx>().kb;
+        let on = kb.auto_augment.get_untracked() && !kb.active_collection_ids().is_empty();
+        let _ = tx.send(on);
+    });
+    if !rx.await.unwrap_or(false) {
+        return None;
+    }
+    let cfg = crate::config::AppConfig::load().kb;
+    match crate::kb::augment::compute(&query, cfg.default_top_k.max(1), cfg.augment_token_budget.max(64)).await {
+        Ok(text) if !text.trim().is_empty() => Some(text),
+        Ok(_) => None,
+        Err(e) => {
+            log::warn!("kb augment: {e}");
+            None
+        }
+    }
+}
+
 struct HistoryItem {
     role: ChatMsgRole,
     body: String,

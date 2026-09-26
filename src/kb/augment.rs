@@ -192,12 +192,12 @@ fn merge_hits_across_collections(
 
 /// Формат augment-блока, который вставляется в system prompt:
 /// ```text
-/// === Контекст из базы знаний (источник для ответа, не пересказывай дословно) ===
+/// === Knowledge base context (a source for the answer; do not quote it verbatim) ===
 ///
 /// [1] [Имя коллекции] Заголовок документа:
 /// <snippet>
 ///
-/// === Конец контекста ===
+/// === End of context ===
 /// ```
 /// Каждый chunk обрезается до `MAX_CHARS_PER_CHUNK`; общая длина
 /// ограничивается `token_budget * 4` (грубая оценка 4 char/token).
@@ -208,8 +208,8 @@ fn format_augment_text(hits: &[(String, SearchHit)], token_budget: usize) -> Str
     }
     const MAX_CHARS_PER_CHUNK: usize = 800;
     let total_budget = token_budget.saturating_mul(4).max(MAX_CHARS_PER_CHUNK);
-    let header = "=== Контекст из базы знаний (источник для ответа, не пересказывай дословно) ===";
-    let footer = "=== Конец контекста ===";
+    let header = "=== Knowledge base context (a source for the answer; do not quote it verbatim) ===";
+    let footer = "=== End of context ===";
 
     let mut out = String::new();
     out.push_str(header);
@@ -274,8 +274,8 @@ mod tests {
     fn format_contains_header_footer_and_snippet() {
         let hits = vec![mk_hit(1, "doc-A", "квантовая запутанность связывает частицы", 0.9)];
         let s = format_augment_text(&hits, 1500);
-        assert!(s.contains("Контекст из базы знаний"));
-        assert!(s.contains("Конец контекста"));
+        assert!(s.contains("Knowledge base context"));
+        assert!(s.contains("End of context"));
         assert!(s.contains("doc-A"));
         assert!(s.contains("Test KB"));
         assert!(s.contains("квантовая запутанность"));
@@ -283,11 +283,12 @@ mod tests {
 
     #[test]
     fn snippet_is_truncated_to_max_chars_per_chunk() {
-        let long: String = "x".repeat(2000);
+        // «z» нет ни в заголовке, ни в подвале блока.
+        let long: String = "z".repeat(2000);
         let hits = vec![mk_hit(1, "long", &long, 1.0)];
         let s = format_augment_text(&hits, 1500);
-        // 2000 char'ов «x» должны быть обрезаны до 800.
-        let xs = s.chars().filter(|c| *c == 'x').count();
+        // 2000 символов должны быть обрезаны до 800.
+        let xs = s.chars().filter(|c| *c == 'z').count();
         assert!(xs <= 800, "snippet not truncated: {xs} xs");
         assert!(xs >= 700, "snippet too short: {xs} xs");
     }
@@ -305,7 +306,7 @@ mod tests {
         // того, что MAX_CHARS_PER_CHUNK=800 — нижняя граница budget'а).
         let count = s.matches("] [Test KB]").count();
         assert!((1..=2).contains(&count), "expected 1-2 chunks, got {count}");
-        assert!(s.contains("Конец контекста"));
+        assert!(s.contains("End of context"));
     }
 
     #[test]

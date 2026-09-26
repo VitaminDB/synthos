@@ -898,13 +898,6 @@ fn install_workspace_autosave() {
     });
 }
 
-/// Маппинг строки из `AppConfig.qwen36_attn_mode` в [`synaptix::facade::llm::FlashAttnMode`].
-/// Невалидные/legacy-значения (включая старые bool `"true"`/`"false"`) трактуются
-/// как `Fa4` — наибыстрейший путь.
-
-/// Парсит строковый layer-sync режим из конфига (`"auto"`/`"on"`/`"off"`).
-/// Невалидные значения → `Auto` (безопасный default).
-
 fn workspace_fingerprint(s: &str) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

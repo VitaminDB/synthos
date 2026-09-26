@@ -7554,7 +7554,6 @@ dependencies = [
  "resvg",
  "ropey",
  "rubato",
- "rustybuzz",
  "smallvec",
  "smithay-client-toolkit",
  "swash",

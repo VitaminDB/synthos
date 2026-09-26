@@ -21,10 +21,12 @@
 //! receiver'а очередной chunk → перевзвешивает по `live_gains[i]` → суммирует
 //! в общий out chunk → push.
 //!
-//! Несовпадающие sample_rate / channel-count: берём параметры первого
-//! ненулевого источника, остальные используем как есть (chunk-by-chunk
-//! mix). Если источник остановился (RecvError) — он молча пропускается до
-//! полного завершения worker'а.
+//! Несовпадающие sample_rate / channel-count: формат задаёт первый
+//! источник, остальные приводятся к нему — каналы (моно ↔ N), частота
+//! (офлайн — windowed-sinc, поток — линейная интерполяция с состоянием между
+//! чанками). Поток сводится через очереди по входам, а не «чанк на чанк»:
+//! чанки разной частоты разной длительности, иначе входы расходятся во
+//! времени. Если источник остановился (RecvError) — дальше он даёт тишину.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
@@ -200,8 +202,7 @@ impl NodeExecutor for MixerExec {
 
                     if any_stream {
                         // Соберём (rx, sample_rate, channels) активных стримов.
-                        let mut sources: Vec<mpsc::Receiver<Vec<f32>>> = Vec::new();
-                        let mut indices: Vec<usize> = Vec::new();
+                        let mut sources: Vec<StreamSource> = Vec::new();
                         let mut sr_opt: Option<u32> = None;
                         let mut ch_opt: Option<u16> = None;
                         for i in 0..n {
@@ -209,22 +210,14 @@ impl NodeExecutor for MixerExec {
                                 if let Some(rx) = s.take_receiver() {
                                     if sr_opt.is_none() {
                                         sr_opt = Some(s.sample_rate);
-                                        ch_opt = Some(s.channels);
-                                    } else if sr_opt != Some(s.sample_rate)
-                                        || ch_opt != Some(s.channels)
-                                    {
-                                        log::warn!(
-                                            "[mixer] sr/channels mismatch on in_{}: \
-                                             expected sr={:?}/ch={:?}, got sr={}/ch={}",
-                                            i + 1,
-                                            sr_opt,
-                                            ch_opt,
-                                            s.sample_rate,
-                                            s.channels
-                                        );
+                                        ch_opt = Some(s.channels.max(1));
                                     }
-                                    sources.push(rx);
-                                    indices.push(i);
+                                    let (sr, ch) = (sr_opt.unwrap_or(s.sample_rate), ch_opt.unwrap_or(1));
+                                    sources.push(StreamSource {
+                                        rx,
+                                        gain_idx: i,
+                                        conv: StreamConverter::new(s.sample_rate, s.channels, sr, ch),
+                                    });
                                 }
                             }
                         }
@@ -236,7 +229,7 @@ impl NodeExecutor for MixerExec {
                                 let live = live_gains.clone();
                                 let h = thread::Builder::new()
                                     .name("synthos-mixer-worker".into())
-                                    .spawn(move || worker_loop(sources, indices, tx, live))
+                                    .spawn(move || worker_loop(sources, ch as usize, tx, live))
                                     .ok();
                                 *worker = h;
                             }
@@ -287,8 +280,8 @@ impl NodeExecutor for MixerExec {
 }
 
 /// Offline-сумма буферов: первый buf задаёт sr/ch/length, остальные
-/// добиваются нулями или обрезаются. Каждый buf умножается на свой
-/// linear-gain.
+/// приводятся к его формату ([`convert_buffer`]), добиваются нулями или
+/// обрезаются. Каждый buf умножается на свой linear-gain.
 fn mix_buffers(bufs: &[(usize, Arc<AudioBuffer>, f32)]) -> Arc<AudioBuffer> {
     let (_, first, _) = &bufs[0];
     let sr = first.sample_rate;
@@ -296,21 +289,16 @@ fn mix_buffers(bufs: &[(usize, Arc<AudioBuffer>, f32)]) -> Arc<AudioBuffer> {
     let len = first.pcm.len();
     let mut out = vec![0.0_f32; len];
     for (_, b, gain) in bufs {
-        // Если sr/ch не совпадают — log + пропуск (в тех тестовых сценариях,
-        // где все буферы пришли от одного декодера, такого не бывает).
-        if b.sample_rate != sr || b.channels != ch {
-            log::warn!(
-                "[mixer] offline mix: dropping buf with sr={}/ch={} (expected {}/{})",
-                b.sample_rate,
-                b.channels,
-                sr,
-                ch
-            );
-            continue;
-        }
-        let n = out.len().min(b.pcm.len());
+        let converted;
+        let pcm: &[f32] = if b.sample_rate == sr && b.channels.max(1) == ch {
+            &b.pcm
+        } else {
+            converted = convert_buffer(&b.pcm, b.sample_rate, b.channels, sr, ch);
+            &converted
+        };
+        let n = out.len().min(pcm.len());
         for i in 0..n {
-            out[i] += b.pcm[i] * *gain;
+            out[i] += pcm[i] * *gain;
         }
     }
     Arc::new(AudioBuffer::new(
@@ -320,67 +308,238 @@ fn mix_buffers(bufs: &[(usize, Arc<AudioBuffer>, f32)]) -> Arc<AudioBuffer> {
     ))
 }
 
-/// Worker-поток: на каждом тике тянет один chunk с КАЖДОГО активного
-/// receiver'а (в порядке `indices`), применяет per-input gain и
-/// суммирует в общий out chunk → push в downstream tx. Завершается, когда
-/// все sources вернули RecvError.
+/// Каналы кадра `frame` (src_ch) → `dst_ch`: моно размножается, в моно —
+/// среднее, иначе общие каналы как есть, лишние — тишина.
+fn map_channels(frame: &[f32], dst_ch: usize, out: &mut Vec<f32>) {
+    let src_ch = frame.len();
+    if src_ch == dst_ch {
+        out.extend_from_slice(frame);
+    } else if src_ch == 1 {
+        out.extend(std::iter::repeat_n(frame[0], dst_ch));
+    } else if dst_ch == 1 {
+        out.push(frame.iter().sum::<f32>() / src_ch as f32);
+    } else {
+        out.extend((0..dst_ch).map(|c| frame.get(c).copied().unwrap_or(0.0)));
+    }
+}
+
+/// Буфер целиком в формат (`dst_sr`, `dst_ch`): каналы, затем sinc-ресемплинг
+/// по каждому каналу.
+fn convert_buffer(pcm: &[f32], src_sr: u32, src_ch: u16, dst_sr: u32, dst_ch: u16) -> Vec<f32> {
+    let (sc, dc) = (src_ch.max(1) as usize, dst_ch.max(1) as usize);
+    let mut mapped = Vec::with_capacity(pcm.len() / sc * dc);
+    for frame in pcm.chunks_exact(sc) {
+        map_channels(frame, dc, &mut mapped);
+    }
+    if src_sr == dst_sr || src_sr == 0 || dst_sr == 0 {
+        return mapped;
+    }
+    let planes: Vec<Vec<f32>> = (0..dc)
+        .map(|c| {
+            let plane: Vec<f32> = mapped.iter().skip(c).step_by(dc).copied().collect();
+            synaptix_audio::resample::resample(&plane, src_sr, dst_sr).unwrap_or_default()
+        })
+        .collect();
+    let frames = planes.iter().map(Vec::len).min().unwrap_or(0);
+    let mut out = Vec::with_capacity(frames * dc);
+    for f in 0..frames {
+        for plane in &planes {
+            out.push(plane[f]);
+        }
+    }
+    out
+}
+
+/// Потоковое приведение чанков к формату выхода: каналы и частота. Частота —
+/// линейная интерполяция; последний кадр и дробная позиция переживают
+/// границу чанка, поэтому стыков нет.
+struct StreamConverter {
+    src_ch: usize,
+    dst_ch: usize,
+    /// Шаг по входу на один выходной кадр (`src_sr / dst_sr`).
+    step: f64,
+    /// Позиция следующего выходного кадра относительно `prev` (0 — сам `prev`).
+    pos: f64,
+    /// Последний кадр предыдущего чанка (уже в `dst_ch`).
+    prev: Option<Vec<f32>>,
+}
+
+impl StreamConverter {
+    fn new(src_sr: u32, src_ch: u16, dst_sr: u32, dst_ch: u16) -> Self {
+        let step = if src_sr == 0 || dst_sr == 0 { 1.0 } else { src_sr as f64 / dst_sr as f64 };
+        Self {
+            src_ch: src_ch.max(1) as usize,
+            dst_ch: dst_ch.max(1) as usize,
+            step,
+            pos: 0.0,
+            prev: None,
+        }
+    }
+
+    fn push(&mut self, chunk: &[f32], out: &mut std::collections::VecDeque<f32>) {
+        let mut frames = Vec::with_capacity(chunk.len() / self.src_ch * self.dst_ch);
+        for frame in chunk.chunks_exact(self.src_ch) {
+            map_channels(frame, self.dst_ch, &mut frames);
+        }
+        let dc = self.dst_ch;
+        if self.step == 1.0 {
+            out.extend(frames);
+            return;
+        }
+        // Кадры: [prev?] + frames; индекс 0 — prev, если он есть.
+        let prev = self.prev.take();
+        let offset = usize::from(prev.is_some());
+        let total = offset + frames.len() / dc;
+        if total == 0 {
+            return;
+        }
+        let frame = |k: usize| -> &[f32] {
+            match (&prev, k) {
+                (Some(p), 0) => p,
+                _ => &frames[(k - offset) * dc..(k - offset + 1) * dc],
+            }
+        };
+        while self.pos + 1.0 < total as f64 {
+            let k = self.pos.floor() as usize;
+            let t = (self.pos - k as f64) as f32;
+            let (a, b) = (frame(k), frame(k + 1));
+            for c in 0..dc {
+                out.push_back(a[c] + (b[c] - a[c]) * t);
+            }
+            self.pos += self.step;
+        }
+        // Последний кадр — опора следующего чанка.
+        self.prev = Some(frame(total - 1).to_vec());
+        self.pos -= (total - 1) as f64;
+    }
+}
+
+struct StreamSource {
+    rx: mpsc::Receiver<Vec<f32>>,
+    /// Индекс входа — какой `live_gains` к нему относится.
+    gain_idx: usize,
+    conv: StreamConverter,
+}
+
+/// Worker-поток: у каждого источника своя очередь сэмплов в формате выхода.
+/// Тик: дочитать чанк у тех живых, чья очередь короче всех, и выдать столько
+/// кадров, сколько есть у всех живых (у закончившихся — тишина). Так входы с
+/// разной частотой/длиной чанка не расходятся во времени. Завершается, когда
+/// все источники вернули RecvError и очереди выбраны.
 fn worker_loop(
-    mut sources: Vec<mpsc::Receiver<Vec<f32>>>,
-    indices: Vec<usize>,
+    mut sources: Vec<StreamSource>,
+    channels: usize,
     tx: mpsc::Sender<Vec<f32>>,
     live_gains: Vec<Arc<AtomicU32>>,
 ) {
-    // По умолчанию все источники активны. Если в какой-то итерации источник
-    // вернёт RecvError — выкидываем его из дальнейшей обработки, продолжаем
-    // микшировать остальные.
+    use std::collections::VecDeque;
+    let ch = channels.max(1);
+    let mut queues: Vec<VecDeque<f32>> = (0..sources.len()).map(|_| VecDeque::new()).collect();
     let mut alive: Vec<bool> = vec![true; sources.len()];
     loop {
-        let mut chunks: Vec<Option<Vec<f32>>> = (0..sources.len()).map(|_| None).collect();
-        let mut any_alive = false;
-        for (i, rx) in sources.iter_mut().enumerate() {
-            if !alive[i] {
-                continue;
+        let min_alive = (0..sources.len())
+            .filter(|&i| alive[i])
+            .map(|i| queues[i].len())
+            .min();
+        if let Some(min_len) = min_alive {
+            for i in 0..sources.len() {
+                if !alive[i] || queues[i].len() != min_len {
+                    continue;
+                }
+                match sources[i].rx.recv() {
+                    Ok(c) => {
+                        let src = &mut sources[i];
+                        src.conv.push(&c, &mut queues[i]);
+                    }
+                    Err(_) => alive[i] = false,
+                }
             }
-            match rx.recv() {
-                Ok(c) => {
-                    chunks[i] = Some(c);
-                    any_alive = true;
+        }
+        let any_alive = alive.iter().any(|a| *a);
+        // Сколько кадров готово: минимум по живым; когда живых нет — всё,
+        // что осталось в очередях.
+        let ready = if any_alive {
+            (0..sources.len()).filter(|&i| alive[i]).map(|i| queues[i].len()).min().unwrap_or(0)
+        } else {
+            queues.iter().map(VecDeque::len).max().unwrap_or(0)
+        };
+        let ready = ready / ch * ch;
+        if ready > 0 {
+            let mut out = vec![0.0_f32; ready];
+            for (i, q) in queues.iter_mut().enumerate() {
+                let gain = LinearGain::new(f32::from_bits(
+                    live_gains[sources[i].gain_idx].load(Ordering::Relaxed),
+                ));
+                let take = ready.min(q.len());
+                for (o, x) in out.iter_mut().zip(q.drain(..take)) {
+                    *o += x * gain.linear;
                 }
-                Err(_) => {
-                    alive[i] = false;
-                }
+            }
+            if tx.send(out).is_err() {
+                break;
             }
         }
         if !any_alive {
             break;
         }
+    }
+}
 
-        // Длина итогового chunk'а — максимум по всем входным (короткие
-        // добиваются нулями неявно, через `for i in 0..len_i`).
-        let max_len = chunks
-            .iter()
-            .filter_map(|c| c.as_ref().map(Vec::len))
-            .max()
-            .unwrap_or(0);
-        if max_len == 0 {
-            continue;
-        }
+#[cfg(test)]
+mod resample_tests {
+    use super::*;
 
-        let mut out = vec![0.0_f32; max_len];
-        for (slot_idx, chunk_opt) in chunks.iter().enumerate() {
-            let Some(chunk) = chunk_opt else { continue };
-            let live_idx = indices[slot_idx];
-            let gain = LinearGain::new(f32::from_bits(
-                live_gains[live_idx].load(Ordering::Relaxed),
-            ));
-            let n = chunk.len().min(max_len);
-            for i in 0..n {
-                out[i] += chunk[i] * gain.linear;
-            }
+    #[test]
+    fn offline_mix_resamples_and_upmixes() {
+        // Стерео 48 кГц (1 с тишины) + моно 24 кГц константа 0.5.
+        let a = Arc::new(AudioBuffer::new(Arc::from(vec![0.0f32; 96_000]), 48_000, 2));
+        let b = Arc::new(AudioBuffer::new(Arc::from(vec![0.5f32; 24_000]), 24_000, 1));
+        let out = mix_buffers(&[(0, a, 1.0), (1, b, 1.0)]);
+        assert_eq!((out.sample_rate, out.channels, out.pcm.len()), (48_000, 2, 96_000));
+        // Середина — 0.5 в обоих каналах (раньше буфер выбрасывался → 0).
+        assert!((out.pcm[48_000] - 0.5).abs() < 1e-3);
+        assert!((out.pcm[48_001] - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn stream_converter_keeps_duration_across_chunks() {
+        let mut conv = StreamConverter::new(44_100, 1, 48_000, 2);
+        let mut q = std::collections::VecDeque::new();
+        // 1 с моно 44.1 кГц чанками по 441 → ≈ 48 000 стерео-кадров.
+        for _ in 0..100 {
+            conv.push(&[0.25f32; 441], &mut q);
         }
-        if tx.send(out).is_err() {
-            break;
+        let frames = q.len() / 2;
+        assert!((47_990..=48_000).contains(&frames), "{frames}");
+        assert!(q.iter().all(|x| (x - 0.25).abs() < 1e-6));
+    }
+
+    #[test]
+    fn worker_aligns_sources_with_different_rates() {
+        let (tx_a, rx_a) = mpsc::channel();
+        let (tx_b, rx_b) = mpsc::channel();
+        // A: 48 кГц моно чанки по 480 (10 мс) × 10; B: 24 кГц чанки по 480 (20 мс) × 5.
+        for _ in 0..10 {
+            tx_a.send(vec![0.1f32; 480]).unwrap();
         }
+        for _ in 0..5 {
+            tx_b.send(vec![0.2f32; 480]).unwrap();
+        }
+        drop((tx_a, tx_b));
+        let sources = vec![
+            StreamSource { rx: rx_a, gain_idx: 0, conv: StreamConverter::new(48_000, 1, 48_000, 1) },
+            StreamSource { rx: rx_b, gain_idx: 1, conv: StreamConverter::new(24_000, 1, 48_000, 1) },
+        ];
+        let gains = vec![
+            Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            Arc::new(AtomicU32::new(1.0f32.to_bits())),
+        ];
+        let (tx, rx) = mpsc::channel();
+        worker_loop(sources, 1, tx, gains);
+        let out: Vec<f32> = rx.iter().flatten().collect();
+        // Оба длятся 100 мс = 4800 кадров; в середине сумма 0.3.
+        assert!((4790..=4800).contains(&out.len()), "{}", out.len());
+        assert!((out[2400] - 0.3).abs() < 1e-5);
     }
 }
 

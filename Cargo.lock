@@ -7155,6 +7155,7 @@ name = "synaptix-llm-common"
 version = "0.1.1"
 dependencies = [
  "rayon",
+ "serde",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-nn",
@@ -7654,6 +7655,7 @@ dependencies = [
  "sqlite-vec",
  "symphonia",
  "synaptix",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-depth-anything",

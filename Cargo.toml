@@ -132,6 +132,8 @@ synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
 # synaptix-io (feature image) — load_image/resize_bilinear для LTX Image ноды
 # (image→video conditioning), canny_rgb для IC-LoRA control.
 synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = false, features = ["image"] }
+# synaptix-audio — sinc-ресемплинг в Mixer-ноде (несовпадающие частоты входов).
+synaptix-audio = { path = "../synaptix/crates/synaptix-audio" }
 # Depth Anything V2 — depth-map control-сигнал для LTX IC-LoRA ноды.
 synaptix-depth-anything = { path = "../synaptix/crates/synaptix-models/image/depth_anything", default-features = false }
 # Нативный synaptix-порт VoxCPM2 для TTS-ноды (node_editor/nodes/voxcpm2).

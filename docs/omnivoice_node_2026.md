@@ -139,9 +139,10 @@ Mount: `src/styles.rs` — `include_str!("../styles/components/omnivoice_node.ms
   требует поддержки от worker'а.
 - AudioStream live ref не поддержан — только snapshot `Arc<AudioBuffer>` с
   порта `ref_audio`.
-- Сериализация настроек ноды в шаблон/JSON отложена (`model_path: PathBuf`
-  + lazy-load handle'ы несериализуемы по умолчанию).
-- `storage_idx` / `compute_idx` сейчас декоративные, см. выше.
+- ~~Сериализация настроек ноды в шаблон/JSON отложена.~~ Есть
+  (`OmniVoiceStateData`, `templates/convert.rs`).
+- ~~`storage_idx` / `compute_idx` декоративные.~~ Идут в загрузку
+  (`map_handle_storage`/`map_handle_compute`).
 - Прогресс diffusion-шагов не виден (`IterativeSampler::run` без callback'а).
 
 ## Иконка

@@ -11,7 +11,7 @@ use syngui::prelude::*;
 use syngui::widgets::feedback::Tooltip;
 
 use crate::icons::{
-    MI_ADD_CIRCLE, MI_AUTORENEW, MI_CLOSE, MI_DELETE, MI_DOWNLOAD, MI_FOLDER_OPEN, MI_NOTE_ADD,
+    MI_ADD_CIRCLE, MI_AUTORENEW, MI_CLOSE, MI_DELETE, MI_DOWNLOAD, MI_DRIVE_FILE_RENAME_OUTLINE, MI_FOLDER_OPEN, MI_NOTE_ADD,
     MI_SAVE,
 };
 
@@ -103,6 +103,15 @@ pub fn header_actions() -> impl Widget {
                     actions::pick_and_extract_file(ctx);
                 })
                 .class(plain_class);
+            let btn_rename = ToolButton::new(MI_DRIVE_FILE_RENAME_OUTLINE)
+                .on_click(move || {
+                    if !on_active_enabled {
+                        return;
+                    }
+                    let ctx = use_context::<SynExplorerCtx>();
+                    actions::request_rename_selected(ctx);
+                })
+                .class(plain_class);
             let btn_delete = ToolButton::new(MI_DELETE)
                 .on_click(move || {
                     if !on_active_enabled {
@@ -126,6 +135,7 @@ pub fn header_actions() -> impl Widget {
                         DecoratedBox::new().class("syn-toolbar-divider"),
                         Tooltip::new(btn_import, tr!("explorer.toolbar.import.tooltip")),
                         Tooltip::new(btn_extract, tr!("explorer.toolbar.extract.tooltip")),
+                        Tooltip::new(btn_rename, tr!("explorer.toolbar.rename.tooltip")),
                         Tooltip::new(btn_delete, tr!("explorer.toolbar.delete.tooltip")),
                     ]
             };

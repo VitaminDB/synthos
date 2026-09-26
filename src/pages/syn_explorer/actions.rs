@@ -203,6 +203,19 @@ pub fn request_delete_selected(ctx: SynExplorerCtx) {
     ctx.open_dialog(DialogKind::ConfirmDeleteFile { name });
 }
 
+/// Переименовать выбранный файл: диалог `RenameFile`, подтверждение кладёт
+/// `PendingOp::Rename` (применяется при сохранении пакета).
+pub fn request_rename_selected(ctx: SynExplorerCtx) {
+    let Some(active) = ctx.active_untracked() else {
+        return;
+    };
+    let Some(old) = active.selected_path.get_untracked() else {
+        ctx.show_error(tr!("explorer.error.rename.title"), tr!("explorer.error.delete.no_selection"));
+        return;
+    };
+    ctx.open_dialog(DialogKind::RenameFile { old });
+}
+
 /// Подтверждённое удаление — добавляет PendingOp::RemoveFile.
 pub fn confirm_delete_file(active: OpenBundle, name: String) {
     active.pending_ops.update(|v| {

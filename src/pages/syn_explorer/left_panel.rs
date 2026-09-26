@@ -122,7 +122,8 @@ fn bookmark_item(
             let ctx = use_context::<SynExplorerCtx>();
             bookmarks::select_folder(ctx, path_for_click.clone());
         });
-    let _ = tooltip; // tooltip пока не используется (Material Tooltip требует ToolButton-обёртки)
+    // Полный путь — подпись обрезается до имени папки.
+    let clickable = Tooltip::new(clickable, tooltip);
 
     ContextMenu::new()
         .items(vec![MenuItem::new("remove", tr!("explorer.left.bookmarks.remove")).icon(MI_DELETE)])

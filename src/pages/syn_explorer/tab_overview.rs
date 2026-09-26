@@ -172,14 +172,26 @@ fn humanize_bytes(n: u64) -> String {
     }
 }
 
+/// Unix seconds (`BundleBuilder::write`) → «YYYY-MM-DD HH:MM» в локальной
+/// зоне, как метки в ленте чата (`agent::time`).
 fn format_timestamp(ts: u64) -> String {
-    // Простой формат: ISO-8601 UTC без зависимости от chrono. На большую
-    // точность даты пользователю в этом UI смотреть не нужно (`syn-pack` пишет
-    // unix seconds на момент `BundleBuilder::write`).
-    let secs = ts as i64;
-    // Зависит от libc localtime — упрощённо отдаём unix ts; при необходимости
-    // позже подключим chrono. Пока — формат «N сек unix» с парсингом для
-    // удобочитаемости.
-    let _ = secs;
-    format!("{ts}")
+    format_timestamp_at(ts, crate::agent::time::local_offset_secs())
+}
+
+fn format_timestamp_at(ts: u64, offset_secs: i64) -> String {
+    let secs = ts as i64 + offset_secs;
+    let (y, m, d) = crate::agent::time::civil_from_days(secs.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02} {}", crate::agent::time::format_hm(secs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_timestamp_at;
+
+    #[test]
+    fn timestamp_is_human_date() {
+        assert_eq!(format_timestamp_at(0, 0), "1970-01-01 00:00");
+        // 2026-09-26 12:34 UTC, +05:00.
+        assert_eq!(format_timestamp_at(1_790_426_040, 5 * 3600), "2026-09-26 17:34");
+    }
 }

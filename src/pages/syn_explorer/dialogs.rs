@@ -134,8 +134,6 @@ fn confirm_close_card() -> impl Widget {
 }
 
 fn rename_card(old: String) -> impl Widget {
-    // RenameFile в SynExplorer не вызывается из toolbar — оставляем
-    // диалог как заглушку для будущего; UI и handler есть.
     let ctx = use_context::<SynExplorerCtx>();
     ctx.rename_buffer.set(old.clone());
     let old_for_action = old.clone();

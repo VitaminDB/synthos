@@ -109,7 +109,7 @@ pub fn format_date_today() -> String {
 
 /// Обратная проекция `days_from_civil` Хинанта: число дней с 1970-01-01
 /// → (year, month, day). Корректно для всего диапазона i64.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as u32;

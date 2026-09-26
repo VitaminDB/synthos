@@ -64,7 +64,7 @@ fn tab_row(t: Tab, is_active: bool) -> impl Widget {
             if ctx.selected_settings_tab.get_untracked() == key {
                 return;
             }
-            ctx.settings_router.lock().unwrap().navigate(key);
+            ctx.settings_router.lock().unwrap_or_else(|e| e.into_inner()).navigate(key);
             ctx.selected_settings_tab.set(key.to_string());
         })
         .child(DecoratedBox::new().class(class).child(mgui! {

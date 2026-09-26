@@ -42,19 +42,19 @@ fn reg() -> &'static Mutex<HashMap<String, DlControl>> {
 /// в `spawn_one` перед спавном задачи.
 pub fn arm(key: &str) -> DlControl {
     let c = DlControl(Arc::new(AtomicU8::new(RUN)));
-    reg().lock().unwrap().insert(key.to_string(), c.clone());
+    reg().lock().unwrap_or_else(|e| e.into_inner()).insert(key.to_string(), c.clone());
     c
 }
 
 /// Выставить сигнал прерывания для активной задачи (main thread). No-op, если
 /// ключ не зарегистрирован (задача не активна).
 pub fn request(key: &str, sig: u8) {
-    if let Some(c) = reg().lock().unwrap().get(key) {
+    if let Some(c) = reg().lock().unwrap_or_else(|e| e.into_inner()).get(key) {
         c.set(sig);
     }
 }
 
 /// Снять управление из реестра (после завершения/прерывания задачи).
 pub fn clear(key: &str) {
-    reg().lock().unwrap().remove(key);
+    reg().lock().unwrap_or_else(|e| e.into_inner()).remove(key);
 }

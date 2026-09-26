@@ -62,7 +62,7 @@ fn canvas_for_handle(handle: Option<VisHandle>) -> Canvas {
         };
 
         // Сглаживание (lerp prev → target).
-        let mut prev = prev_bars.lock().expect("aura bars lock");
+        let mut prev = prev_bars.lock().unwrap_or_else(|e| e.into_inner());
         if prev.len() != target.len() {
             prev.clear();
             prev.resize(target.len(), 0.0);
@@ -70,7 +70,7 @@ fn canvas_for_handle(handle: Option<VisHandle>) -> Canvas {
         for (i, v) in target.iter().enumerate() {
             prev[i] += (v - prev[i]) * 0.35;
         }
-        let mut pl = prev_level.lock().expect("aura level lock");
+        let mut pl = prev_level.lock().unwrap_or_else(|e| e.into_inner());
         *pl += (level - *pl) * 0.20;
 
         let cx = ctx.width() * 0.5;

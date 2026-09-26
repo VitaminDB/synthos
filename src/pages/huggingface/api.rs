@@ -820,7 +820,7 @@ async fn download_segmented(
                     // только если гейт открыт. Лок держим микросекунды, НИКОГДА
                     // через await (run_on_main_thread лишь ставит задачу в очередь).
                     let snapshot = {
-                        let mut g = flush.lock().unwrap();
+                        let mut g = flush.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some(slot) = g.1.get_mut(idx) {
                             *slot = done_in_seg;
                         }
@@ -843,7 +843,7 @@ async fn download_segmented(
                 // Финальный флаш сегмента: гарантирует точный done даже если
                 // последний чанк не попал в окно гейта.
                 let dones = {
-                    let mut g = flush.lock().unwrap();
+                    let mut g = flush.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(slot) = g.1.get_mut(idx) {
                         *slot = done_in_seg;
                     }

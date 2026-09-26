@@ -293,10 +293,10 @@ fn navigate_to_skills_btn() -> impl Widget {
         .on_click(|| {
             let ctx = use_context::<AppCtx>();
             if ctx.current_route.get_untracked() != "settings" {
-                ctx.router.lock().unwrap().navigate("settings");
+                ctx.router.lock().unwrap_or_else(|e| e.into_inner()).navigate("settings");
                 ctx.current_route.set("settings".into());
             }
-            ctx.settings_router.lock().unwrap().navigate("skills");
+            ctx.settings_router.lock().unwrap_or_else(|e| e.into_inner()).navigate("skills");
             ctx.selected_settings_tab.set("skills".into());
         })
         .class("llama-btn-console")

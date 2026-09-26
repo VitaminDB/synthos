@@ -172,14 +172,14 @@ pub fn create_collection() {
             cfg.chunk_overlap_tokens as i32,
         ) {
             Ok(m) => {
-                *slot2.lock().unwrap() = Some(m);
+                *slot2.lock().unwrap_or_else(|e| e.into_inner()) = Some(m);
             }
             Err(e) => {
                 log::error!("kb create: {e}");
             }
         }
     });
-    let created = slot.lock().unwrap().take();
+    let created = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
     match created {
         Some(meta) => {
             app.kb.active_collection_id.set(Some(meta.id.clone()));

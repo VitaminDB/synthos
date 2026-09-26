@@ -29,7 +29,7 @@ impl NodeExecutor for MarkdownViewExec {
 
 /// Переключить режим Preview ↔ Edit. Вызывается из ContextMenu.
 pub fn toggle_edit_mode(node: &NodeInstance) {
-    let rt = node.runtime.lock().unwrap();
+    let rt = node.runtime.lock().unwrap_or_else(|e| e.into_inner());
     if let NodeRuntime::MarkdownView { edit_mode, .. } = &*rt {
         let cur = edit_mode.get_untracked();
         edit_mode.set(!cur);
@@ -38,7 +38,7 @@ pub fn toggle_edit_mode(node: &NodeInstance) {
 
 /// Переключить видимость resize-handle'ов `TransformBox`'а.
 pub fn toggle_resize_mode(node: &NodeInstance) {
-    let rt = node.runtime.lock().unwrap();
+    let rt = node.runtime.lock().unwrap_or_else(|e| e.into_inner());
     if let NodeRuntime::MarkdownView { resize_mode, .. } = &*rt {
         let cur = resize_mode.get_untracked();
         resize_mode.set(!cur);
@@ -48,7 +48,7 @@ pub fn toggle_resize_mode(node: &NodeInstance) {
 /// Body builder, регистрируемый в `NodeKindMeta::body`.
 pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let (content, edit_mode, resize_mode, size) = {
-        let rt = node.runtime.lock().unwrap();
+        let rt = node.runtime.lock().unwrap_or_else(|e| e.into_inner());
         match &*rt {
             NodeRuntime::MarkdownView { content, edit_mode, resize_mode, size } => {
                 (*content, *edit_mode, *resize_mode, *size)

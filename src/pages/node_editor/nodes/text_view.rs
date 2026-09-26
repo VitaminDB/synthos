@@ -137,7 +137,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
 /// Переключить видимость resize-handle'ов `TransformBox`'а.
 /// Вызывается из ContextMenu по правому клику.
 pub fn toggle_resize_mode(node: &NodeInstance) {
-    let rt = node.runtime.lock().unwrap();
+    let rt = node.runtime.lock().unwrap_or_else(|e| e.into_inner());
     if let NodeRuntime::TextView { resize_mode, .. } = &*rt {
         let cur = resize_mode.get_untracked();
         resize_mode.set(!cur);

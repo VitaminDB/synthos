@@ -602,7 +602,7 @@ fn port_row(node_id: NodeId, in_port: Option<PortSchema>, out_port: Option<PortS
 fn field_row(schema: FieldSchema, fields: Arc<Mutex<std::collections::HashMap<&'static str, FieldValue>>>) -> Box<dyn Widget> {
     let label = schema.label.to_string();
     let name = schema.name;
-    let map = fields.lock().unwrap();
+    let map = fields.lock().unwrap_or_else(|e| e.into_inner());
     let value = map.get(name).cloned();
     drop(map);
 

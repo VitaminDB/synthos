@@ -46,7 +46,7 @@ pub async fn throttle(n: u64) {
     }
     let limit_f = limit as f64;
     let sleep_secs = {
-        let mut b = bucket().lock().unwrap();
+        let mut b = bucket().lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let elapsed = now.duration_since(b.last).as_secs_f64();
         b.last = now;

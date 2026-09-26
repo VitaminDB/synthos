@@ -65,14 +65,14 @@ pub fn snapshot(ctx: &NodeEditorCtx) -> (Vec<NodeData>, Vec<ConnData>, Option<Vi
 
 fn node_to_data(node: &NodeInstance) -> NodeData {
     let mut fields: std::collections::BTreeMap<String, FieldValueData> = Default::default();
-    let map = node.fields.lock().unwrap();
+    let map = node.fields.lock().unwrap_or_else(|e| e.into_inner());
     for (key, value) in map.iter() {
         fields.insert((*key).to_string(), field_value_to_data(value));
     }
     drop(map);
     let style = node.style.get_untracked();
     let state = {
-        let rt = node.runtime.lock().unwrap();
+        let rt = node.runtime.lock().unwrap_or_else(|e| e.into_inner());
         runtime_to_state(&rt)
     };
     NodeData {
@@ -2043,7 +2043,7 @@ fn build_fields(
 ) -> Arc<Mutex<HashMap<&'static str, FieldValue>>> {
     let arc = default_fields(kind);
     {
-        let map = arc.lock().unwrap();
+        let map = arc.lock().unwrap_or_else(|e| e.into_inner());
         for (raw_name, raw_val) in data {
             let Some(name_static) = resolve_field_name(kind, raw_name) else {
                 continue;

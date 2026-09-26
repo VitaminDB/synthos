@@ -197,10 +197,10 @@ fn delete(id: &str) {
     let id_reg = id.clone();
     app.kb.registry.update(move |reg| {
         if let Err(e) = reg.delete(&id_reg) {
-            *failed_in.lock().unwrap() = Some(e.to_string());
+            *failed_in.lock().unwrap_or_else(|e| e.into_inner()) = Some(e.to_string());
         }
     });
-    if let Some(e) = failed.lock().unwrap().take() {
+    if let Some(e) = failed.lock().unwrap_or_else(|e| e.into_inner()).take() {
         app.notifications.error(tr!("settings.knowledge_base.delete.failed", error = e));
         return;
     }

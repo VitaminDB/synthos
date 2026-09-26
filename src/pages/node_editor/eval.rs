@@ -102,7 +102,7 @@ impl<'a> EvalContext<'a> {
     /// Прочитать `Float`-поле ноды по имени. Не-Float / отсутствующее → 0.0.
     /// Чтение учитывает `self.track` (для reactivity).
     pub fn read_float_field(&self, name: &str) -> f32 {
-        let map = self.node.fields.lock().unwrap();
+        let map = self.node.fields.lock().unwrap_or_else(|e| e.into_inner());
         match map.get(name) {
             Some(FieldValue::Float(sig)) => {
                 if self.track { sig.get() } else { sig.get_untracked() }

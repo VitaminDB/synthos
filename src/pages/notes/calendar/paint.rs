@@ -81,16 +81,29 @@ pub fn text_on(color: Color) -> Color {
     if lum > 0.62 { Color::from_hex("#1F2937") } else { Color::from_hex("#FFFFFF") }
 }
 
-/// Ширина строки: измеритель дерева, без него — оценка по кеглю.
-pub fn text_width(tm: Option<&Arc<dyn TextMeasure>>, s: &str, font: f32, bold: bool) -> f32 {
+/// Ширина строки тем весом, каким она рисуется (500/600 — свои начертания):
+/// измеритель дерева, без него — оценка по кеглю.
+pub fn text_width(
+    tm: Option<&Arc<dyn TextMeasure>>,
+    s: &str,
+    font: f32,
+    weight: impl Into<syngui::text::FontWeight>,
+) -> f32 {
     match tm {
-        Some(tm) => tm.measure_text_width_styled(s, font, s.chars().count(), bold, None),
+        Some(tm) => tm.measure_text_width_weight(s, font, s.chars().count(), weight.into().0, None),
         None => s.chars().count() as f32 * font * 0.56,
     }
 }
 
 /// Обрезать строку по ширине `max_w` с многоточием.
-pub fn ellipsize(tm: Option<&Arc<dyn TextMeasure>>, s: &str, font: f32, bold: bool, max_w: f32) -> String {
+pub fn ellipsize(
+    tm: Option<&Arc<dyn TextMeasure>>,
+    s: &str,
+    font: f32,
+    weight: impl Into<syngui::text::FontWeight>,
+    max_w: f32,
+) -> String {
+    let bold: u16 = weight.into().0;
     if max_w <= 0.0 {
         return String::new();
     }
@@ -200,14 +213,14 @@ pub fn draw_bar(list: &mut DisplayList, tm: Option<&Arc<dyn TextMeasure>>, b: &B
     let decoration = if b.done { TextDecoration::LineThrough } else { TextDecoration::None };
     if let Some(min) = b.time {
         let label = fmt_hm(min);
-        let w = text_width(tm, &label, font, false);
+        let w = text_width(tm, &label, font, 500u16);
         if right - text_x > w + 12.0 {
             let muted = text_color.with_alpha(text_color.a * 0.7);
             list.push_text_styled_singleline(&label, Rect::new(Point::new(text_x, ty), Size::new(w + 2.0, th)), muted, font, TextAlign::DEFAULT, TextDecoration::None, 500, None);
             text_x += w + 4.0;
         }
     }
-    let title = ellipsize(tm, b.title, font, false, right - text_x);
+    let title = ellipsize(tm, b.title, font, 500u16, right - text_x);
     list.push_text_styled_singleline(&title, Rect::new(Point::new(text_x, ty), Size::new(right - text_x, th)), text_color, font, TextAlign::DEFAULT, decoration, 500, None);
     list.pop_clip();
     if b.selected {

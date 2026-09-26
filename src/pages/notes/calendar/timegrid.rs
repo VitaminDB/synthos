@@ -606,7 +606,7 @@ impl Element for TimeElement {
             let tx = rect.origin.x + if slot.look == Look::Tinted { 8.0 } else { 5.0 };
             let tw = rect.origin.x + rect.size.width - 4.0 - tx;
             list.push_clip(rect);
-            let line = paint::ellipsize(self.tm.as_ref(), &title, font - 1.0, true, tw);
+            let line = paint::ellipsize(self.tm.as_ref(), &title, font - 1.0, 600u16, tw);
             list.push_text_styled_singleline(
                 &line,
                 Rect::new(Point::new(tx, rect.origin.y + 2.0), Size::new(tw.max(4.0), font + 3.0)),

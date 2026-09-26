@@ -6998,7 +6998,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io",
@@ -7052,16 +7051,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-config"
-version = "0.1.1"
-dependencies = [
- "serde",
- "serde_json",
- "synaptix-core",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "synaptix-core"
 version = "0.1.1"
 dependencies = [
@@ -7097,7 +7086,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-nn",
@@ -7124,7 +7112,6 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-nn",
@@ -7156,7 +7143,6 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-diffusion",
  "synaptix-io",
@@ -7226,7 +7212,6 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-diffusion",
  "synaptix-io",
@@ -7321,7 +7306,6 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-llm-common",
@@ -7355,7 +7339,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "synaptix-config",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io",
@@ -7389,7 +7372,6 @@ dependencies = [
  "serde",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io",
@@ -7440,7 +7422,6 @@ dependencies = [
  "safetensors",
  "serde_json",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io",
@@ -7562,7 +7543,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-nn",
@@ -7580,7 +7560,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io",
@@ -7598,7 +7577,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-nn",
@@ -7616,7 +7594,6 @@ dependencies = [
  "serde_json",
  "synaptix-audio",
  "synaptix-bundle",
- "synaptix-config",
  "synaptix-core",
  "synaptix-io",
  "synaptix-nn",
@@ -7707,6 +7684,7 @@ dependencies = [
  "resvg",
  "ropey",
  "rubato",
+ "rustybuzz",
  "smallvec",
  "smithay-client-toolkit",
  "swash",
@@ -7779,7 +7757,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.282"
+version = "0.2.283"
 dependencies = [
  "android_logger",
  "anyhow",

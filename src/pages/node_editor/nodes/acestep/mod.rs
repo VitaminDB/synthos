@@ -110,7 +110,7 @@ pub fn idx_in(arr: &[&str], s: &str) -> Option<usize> {
 
 use super::super::state::NodeEditorCtx;
 use super::super::types::{
-    AceStepBlob, AceStepModelHandle, Connection, DataBlob, NodeId, PortValue,
+    AceStepModelHandle, Connection, NodeId, PortValue,
 };
 
 /// Прочитать хэндл ACE-Step чекпойнта (выход Checkpoint-ноды) из
@@ -227,9 +227,6 @@ pub fn current_input_phase1_metas(
     pv.as_acestep_phase1_metas()
 }
 
-// Помечаем что использование AceStepBlob/DataBlob в imports не для warning'а.
-#[allow(dead_code)]
-fn _phantom_data_blob(_: DataBlob, _: AceStepBlob) {}
 
 // ── UI helpers (общие для всех ACE-Step нод) ──────────────────────────────
 

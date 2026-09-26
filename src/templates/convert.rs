@@ -37,7 +37,7 @@ use super::model::{
     OmniVoiceStateData, PointData, ReverbStateData, SaveToFileStateData, Template,
     TextViewStateData, VibeVoiceStateData, ViewportData, VoxCpm2StateData,
 };
-use crate::pages::node_editor::registry::{self, default_fields, meta};
+use crate::pages::node_editor::registry::{default_fields, meta};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::types::{
     Connection, FieldValue, NodeId, NodeInstance, NodeKind, NodeRuntime, PortSide, MIXER_MAX_INPUTS,
@@ -2134,9 +2134,6 @@ impl Template {
     }
 }
 
-// silence unused-import warning when this module compiles standalone.
-#[allow(dead_code)]
-fn _use_registry(_: &registry::NodeKindMeta) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Roundtrip-тесты сохранения per-kind state ноды.

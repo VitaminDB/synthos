@@ -24,7 +24,7 @@ use crate::icons::{
 use super::download;
 use super::progress::{human_bytes, human_speed};
 use super::state::{
-    DlStatus, DownloadState, FilesViewMode, HfModelDetails, HfSibling, HuggingFaceCtx,
+    DlStatus, DownloadState, FilesViewMode, HfSibling, HuggingFaceCtx,
     VerifyStatus,
 };
 
@@ -1122,6 +1122,3 @@ pub(super) fn progress_bar(state: Option<&DownloadState>) -> impl Widget {
     })
 }
 
-// silence unused import (HfModelDetails reachable via `Reactive` closure types)
-#[allow(dead_code)]
-fn _ref_details(_: HfModelDetails) {}

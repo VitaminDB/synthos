@@ -3361,7 +3361,3 @@ fn default_save_path() -> String {
     name
 }
 
-/// Иконка-логотип для иконки-кнопки иконки. (workaround чтобы импорт MI_AUDIOTRACK
-/// не помечался как unused: используется в иконе вкладки превью).
-#[allow(dead_code)]
-pub const AUDIO_BADGE_ICON: &str = MI_AUDIOTRACK;

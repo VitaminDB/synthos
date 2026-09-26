@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use syngui::tr;
-use synaptix_rag::doc::{chunk, parse, ChunkConfig, ParsedDoc, SourceKind};
+use synaptix_rag::doc::{chunk, parse, ChunkConfig, SourceKind};
 use synaptix::facade::embedding::Embedder;
 
 use super::source::DocSource;
@@ -408,12 +408,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     s
 }
 
-// Используем let _ = ParsedDoc; чтобы shut up warning'и про unused import,
-// если parsed выпадает в no-op ветке. Сам тип нужен из публичного API.
-#[allow(dead_code)]
-fn _type_anchor() -> Option<ParsedDoc> {
-    None
-}
 
 #[cfg(test)]
 mod tests {

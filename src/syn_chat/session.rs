@@ -4068,12 +4068,6 @@ struct HistoryItem {
     calls: Vec<RawToolCall>,
 }
 
-impl HistoryItem {
-    fn has_media(&self) -> bool {
-        !self.attachments.is_empty()
-    }
-}
-
 /// Снимок возможностей модели и окружения по части вложений. Читает
 /// сигналы, поэтому вызывается только с main thread.
 ///

@@ -1097,8 +1097,3 @@ pub fn file_row(handle: &KanbanHandle, card: &KanbanCard, f: &CardFile, width: f
         .style("width", StyleValue::px(width))
 }
 
-/// ISO-дата по дням от эпохи (для тестов панели).
-#[allow(dead_code)]
-pub fn iso_from_ymd(y: i64, m: u32, d: u32) -> String {
-    super::super::gantt::calendar::days_to_iso(days_from_civil(y, m, d))
-}

@@ -6,7 +6,6 @@
 //! запись в хранилище — по «Сохранить» (новое событие — `add_event`,
 //! существующее — `update_event`).
 
-use syngui::core::Rect;
 use syngui::prelude::*;
 use syngui::widgets::input::{DatePicker, Date, TimePicker, Toggle};
 use syngui::widgets::input::document_editor::{DocumentEditor, DocumentEditorHandle};
@@ -390,10 +389,6 @@ fn row(label: String, field: impl Widget + 'static) -> impl Widget {
         .child(field)
 }
 
-#[allow(dead_code)]
-fn anchor_default() -> Rect {
-    Rect::zero()
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Список дня

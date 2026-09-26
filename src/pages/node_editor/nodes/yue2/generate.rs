@@ -33,7 +33,7 @@ use super::shared::{
     release_resident, resolve_paths,
 };
 use super::{
-    cot_from_idx, current_input_latent, current_input_model, current_input_text, field_row,
+    cot_from_idx, current_input_model, current_input_text, field_row,
     make_dropdown, make_int_slider_row, make_seed_slider, make_slider_row, status_row, COT_OPTIONS,
 };
 
@@ -513,9 +513,3 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-/// Латенты с входа `latent` — ими Generate не пользуется, но порт читают
-/// downstream-ноды; функция нужна для симметрии с `vae_decode`.
-#[allow(dead_code)]
-fn _unused_latent(ctx: &NodeEditorCtx, id: super::super::super::types::NodeId) -> Option<Tensor> {
-    current_input_latent(ctx, id, "latent")
-}

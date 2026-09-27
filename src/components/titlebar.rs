@@ -9,7 +9,8 @@
 //! «Настройки → О программе»), затем window controls — either the built-in
 //! Windows-style trio or, when «системные кнопки окна» is on, the buttons of
 //! the desktop's decoration theme (on KDE with an Aurorae theme they are drawn
-//! from its own SVGs, so they match every other window on screen).
+//! from its own SVGs, so they match every other window on screen; in a
+//! syndesktop session they follow its `[decorations]` and its button style).
 //! The whole strip is a WindowDragRegion so the window follows a left-mouse
 //! drag over empty areas; the controls sit on top of the drag region and
 //! capture their own clicks.
@@ -45,6 +46,9 @@ pub fn view() -> impl Widget {
         DecoratedBox::new().class("titlebar").child(move || {
             let ctx = use_context::<AppCtx>();
             if ctx.appearance.system_window_controls.get() {
+                // Подписка на системное оформление: рабочий стол сменил тему
+                // на лету — шапка пересобирается и перечитывает декорации.
+                let _ = ctx.appearance.system.get();
                 system_bar(ctx.appearance.window_state.get())
             } else {
                 builtin_bar()
@@ -266,10 +270,7 @@ fn builtin_bar() -> Row {
 /// Кнопки из системной темы декораций: раскладка, размеры и внешний вид —
 /// как у остальных окон рабочего стола.
 fn system_bar(window_state: WindowState) -> Row {
-    // Настройки декораций читаются с диска, а титлбар пересобирается на каждый
-    // тик реактивного блока — держим один снимок на процесс.
-    static DECORATIONS: std::sync::OnceLock<SystemDecorations> = std::sync::OnceLock::new();
-    let decorations = DECORATIONS.get_or_init(read_system_decorations).clone();
+    let decorations = decorations();
     let centered = decorations.metrics.title_alignment == TitleAlignment::Center;
     let edge_left = decorations.metrics.edge_left;
     let edge_right = decorations.metrics.edge_right;
@@ -278,6 +279,7 @@ fn system_bar(window_state: WindowState) -> Row {
         side.decorations(decorations.clone())
             .maximized(window_state.maximized)
             .active(window_state.focused)
+            .class("titlebar-system-controls")
     };
 
     Row::new()
@@ -293,6 +295,25 @@ fn system_bar(window_state: WindowState) -> Row {
             Padding::only(0.0, 0.0, edge_right, 0.0)
                 .child(controls(SystemWindowControls::right())),
         )
+}
+
+/// Снимок настроек декораций. Они читаются с диска (у GNOME — запуском
+/// `gsettings`), а шапка пересобирается при каждой смене состояния окна, —
+/// поэтому перечитываем не чаще раза в пару секунд: syndesktop и KDE меняют
+/// раскладку кнопок на лету.
+fn decorations() -> SystemDecorations {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, SystemDecorations)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    match cache.as_ref() {
+        Some((at, d)) if at.elapsed() < Duration::from_secs(2) => d.clone(),
+        _ => {
+            let d = read_system_decorations();
+            *cache = Some((Instant::now(), d.clone()));
+            d
+        }
+    }
 }
 
 fn control_button(variant: &'static str, icon: &'static str, control: WindowControl) -> impl Widget {

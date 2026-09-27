@@ -189,6 +189,13 @@
 }
 
 .window-control:hover           { background-color: var(--surface-hover); }
+
+/* Системные кнопки без SVG-темы (syndesktop, Breeze, GNOME) рисуются
+ * вектором: глиф — `color`, подложка под курсором — `background-color`. */
+.titlebar-system-controls {
+    color: var(--text);
+    background-color: var(--surface-hover);
+}
 .window-control.close:hover     { background-color: #E81123; }
 .window-control.close:hover .window-control-icon { color: #FFFFFF; }
 

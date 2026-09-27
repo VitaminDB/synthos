@@ -214,6 +214,7 @@ fn apply_base_theme(dark: bool) {
     if a.follow_system.get_untracked() {
         a.follow_system.set(false);
     }
+    a.use_system_colors.set(false);
     let paired = if dark {
         a.theme_dark.get_untracked()
     } else {

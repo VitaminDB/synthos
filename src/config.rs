@@ -497,6 +497,10 @@ pub struct AppConfig {
     /// Подмешивать акцентный цвет рабочего стола вместо акцента темы.
     #[serde(default)]
     pub use_system_accent: bool,
+    /// Брать все цвета у рабочего стола (палитра, которую получают GTK и
+    /// Qt), когда он её сообщает. Перекрывает выбор темы.
+    #[serde(default = "default_true")]
+    pub use_system_colors: bool,
     /// Рисовать кнопки окна так, как их рисует тема декораций рабочего стола.
     #[serde(default)]
     pub system_window_controls: bool,
@@ -1184,6 +1188,7 @@ impl Default for AppConfig {
             theme_light: String::new(),
             theme_dark: String::new(),
             use_system_accent: false,
+            use_system_colors: true,
             system_window_controls: false,
             window_blur: false,
             window_opacity: default_window_opacity(),

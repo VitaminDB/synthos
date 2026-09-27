@@ -14,8 +14,10 @@
 
 use std::fmt::Write;
 
+use syngui::appearance::SystemPalette;
 use syngui::core::Color;
 
+#[derive(Clone)]
 pub struct SynthosTheme {
     pub id: &'static str,
     pub name: &'static str,
@@ -211,7 +213,24 @@ fn srgb_toward_white(c: Color, t: f32) -> Color {
 /// разница ~4% яркости, и на полупрозрачных поверхностях hover визуально
 /// пропадал совсем. Акцентный оттенок и заметен, и согласован с выделением.
 pub fn accent_override_mss(accent: Color, is_dark: bool) -> String {
-    let (hover, soft, selected, surface_hover) = if is_dark {
+    let (hover, soft, selected, surface_hover) = accent_shades(accent, is_dark);
+
+    let mut s = String::with_capacity(320);
+    let _ = writeln!(s, ":root {{");
+    let _ = writeln!(s, "    --primary:          {};", accent.to_hex());
+    let _ = writeln!(s, "    --primary-hover:    {};", hover.to_hex());
+    let _ = writeln!(s, "    --primary-soft:     {};", soft.to_hex());
+    let _ = writeln!(s, "    --surface-selected: {};", selected.to_hex());
+    let _ = writeln!(s, "    --surface-hover:    {};", surface_hover.to_hex());
+    let _ = writeln!(s, "    --on-primary:       {};", accent.readable_on().to_hex());
+    let _ = writeln!(s, "}}");
+    s
+}
+
+/// Производные акцента: hover, мягкая заливка, подложка выделения и hover
+/// поверхностей.
+fn accent_shades(accent: Color, is_dark: bool) -> (Color, Color, Color, Color) {
+    if is_dark {
         (
             srgb_toward_white(accent, 0.16),
             srgb_scale(accent, 0.26),
@@ -225,18 +244,104 @@ pub fn accent_override_mss(accent: Color, is_dark: bool) -> String {
             srgb_toward_white(accent, 0.82),
             srgb_toward_white(accent, 0.90),
         )
+    }
+}
+
+/// Смесь в sRGB: `t = 0` — `a`, `t = 1` — `b`.
+fn srgb_mix(a: Color, b: Color, t: f32) -> Color {
+    let [ar, ag, ab] = a.to_srgb_u8();
+    let [br, bg, bb] = b.to_srgb_u8();
+    let m = |x: u8, y: u8| ((x as f32 + (y as f32 - x as f32) * t) / 255.0).clamp(0.0, 1.0);
+    Color::from_srgb_f32(m(ar, br), m(ag, bg), m(ab, bb))
+}
+
+/// Тема из палитры рабочего стола — те же цвета, что у программ GTK и Qt
+/// в этом сеансе.
+///
+/// Раскладка ролей как у них: боковые панели, рейл и шапки — фон окна,
+/// лента чата, редактор и поля — фон содержимого. Подсветку синтаксиса и
+/// тени палитра не описывает — они от встроенной темы той же светлоты.
+///
+/// Поля темы — `&'static str`, поэтому строки уходят в утечку; тема
+/// кэшируется по палитре, так что новая утечка бывает только при смене
+/// оформления рабочего стола.
+pub fn system_theme(p: &SystemPalette) -> SynthosTheme {
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<(SystemPalette, SynthosTheme)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    if let Some(t) = CACHE.with(|c| {
+        c.borrow().as_ref().filter(|(cached, _)| cached == p).map(|(_, t)| t.clone())
+    }) {
+        return t;
+    }
+    let theme = build_system_theme(p);
+    CACHE.with(|c| *c.borrow_mut() = Some((*p, theme.clone())));
+    theme
+}
+
+fn build_system_theme(p: &SystemPalette) -> SynthosTheme {
+    fn leak(s: String) -> &'static str {
+        Box::leak(s.into_boxed_str())
+    }
+    let hex = |c: Color| leak(c.to_hex());
+    let rgba = |c: Color, a: f32| {
+        let [r, g, b] = c.to_srgb_u8();
+        leak(format!("rgba({r}, {g}, {b}, {a:.2})"))
     };
 
-    let mut s = String::with_capacity(320);
-    let _ = writeln!(s, ":root {{");
-    let _ = writeln!(s, "    --primary:          {};", accent.to_hex());
-    let _ = writeln!(s, "    --primary-hover:    {};", hover.to_hex());
-    let _ = writeln!(s, "    --primary-soft:     {};", soft.to_hex());
-    let _ = writeln!(s, "    --surface-selected: {};", selected.to_hex());
-    let _ = writeln!(s, "    --surface-hover:    {};", surface_hover.to_hex());
-    let _ = writeln!(s, "    --on-primary:       {};", accent.readable_on().to_hex());
-    let _ = writeln!(s, "}}");
-    s
+    let dark = p.is_dark();
+    let base = if dark { default_dark_theme() } else { default_theme() };
+    let (hover, soft, selected, surface_hover) = accent_shades(p.accent, dark);
+    let subtle = srgb_mix(p.muted, p.view, 0.35);
+    let border = srgb_mix(p.window, p.fg, 0.14);
+
+    SynthosTheme {
+        id: if dark { "system_dark" } else { "system_light" },
+        name: "System",
+        is_dark: dark,
+
+        bg_window: hex(p.window),
+        bg_shell: hex(p.view),
+        bg_rail: hex(p.window),
+        bg_chats: hex(p.window),
+        bg_chat: hex(p.view),
+        bg_chat_dots: hex(srgb_mix(p.view, p.fg, 0.10)),
+        bg_panel: hex(p.window),
+        bg_search: hex(srgb_mix(p.window, p.fg, 0.06)),
+
+        primary: hex(p.accent),
+        primary_hover: hex(hover),
+        primary_soft: hex(soft),
+        on_primary: hex(p.accent_fg),
+
+        text: hex(p.fg),
+        text_muted: hex(p.muted),
+        text_subtle: hex(subtle),
+        text_inverse: hex(p.view),
+
+        surface_hover: hex(surface_hover),
+        surface_selected: hex(selected),
+        border: hex(border),
+        border_soft: hex(srgb_mix(p.window, p.fg, 0.08)),
+        border_strong: hex(p.border),
+
+        glass_card_bg: rgba(p.view, 0.62),
+        glass_field_bg: rgba(p.button, 0.55),
+        glass_border: rgba(p.fg, if dark { 0.08 } else { 0.10 }),
+
+        editor_bg: hex(p.view),
+        editor_fg: hex(p.fg),
+        editor_gutter_bg: hex(p.window),
+        editor_gutter_fg: hex(subtle),
+        editor_cursor: hex(p.accent),
+        editor_selection: hex(srgb_mix(p.view, p.accent, 0.30)),
+        editor_current_line: hex(p.view_alt),
+        editor_bracket_match: hex(srgb_mix(p.view, p.fg, 0.22)),
+        editor_whitespace: hex(border),
+
+        ..base
+    }
 }
 
 /// Блок `:root`, делающий фоновые поверхности полупрозрачными — нужен, чтобы
@@ -681,6 +786,39 @@ fn monokai_dark() -> SynthosTheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_theme_follows_palette() {
+        let c = Color::from_hex;
+        let p = SystemPalette {
+            window: c("#0F2033"),
+            view: c("#0A141E"),
+            view_alt: c("#101A24"),
+            button: c("#14304A"),
+            header: c("#0F2033"),
+            tooltip: c("#14304A"),
+            fg: c("#EAF6FF"),
+            muted: c("#A7C0D6"),
+            border: c("#3E4F5F"),
+            accent: c("#5EEAD4"),
+            accent_fg: c("#000000"),
+            link: c("#5EEAD4"),
+            danger: c("#FB7185"),
+            success: c("#4ADE80"),
+            warning: c("#FCD34D"),
+        };
+        let t = system_theme(&p);
+        assert!(t.is_dark);
+        assert_eq!(t.id, "system_dark");
+        assert_eq!(t.bg_chat, "#0A141E");
+        assert_eq!(t.bg_rail, "#0F2033");
+        assert_eq!(t.primary, "#5EEAD4");
+        assert_eq!(t.text, "#EAF6FF");
+        // Подсветка синтаксиса — от встроенной тёмной темы.
+        assert_eq!(t.token_keyword, default_dark_theme().token_keyword);
+        // Повторный вызов с той же палитрой — из кэша, те же строки.
+        assert!(std::ptr::eq(system_theme(&p).bg_chat, t.bg_chat));
+    }
 
     #[test]
     fn find_or_default_keeps_lightness() {

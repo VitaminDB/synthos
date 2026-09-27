@@ -79,6 +79,9 @@ pub fn run_desktop() {
 
     App::new()
         .title(concat!("Synthos v", env!("SYNTHOS_VERSION")))
+        // Совпадает с именем `synthos.desktop`: по нему док и панель задач
+        // находят иконку и сопоставляют окно с закреплённым значком.
+        .app_id("synthos")
         .frameless()
         .transparent(true)
         .background(Color::from_srgb(0, 0, 0, 0.0))
@@ -308,12 +311,16 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
     pages::code_editor::state::CodeEditorCtx::new(sessions_cfg, active_idx)
 }
 
-/// Активная тема: в режиме «следовать системе» её выбирает светлота системной
-/// схемы, иначе — ручной выбор пользователя.
+/// Активная тема: цвета рабочего стола, если они включены и система их
+/// сообщает; в режиме «следовать системе» — тема по светлоте системной
+/// схемы; иначе — ручной выбор пользователя.
 pub(crate) fn active_theme(
     appearance: context::AppearanceCtx,
     theme_key: RwSignal<String>,
 ) -> theme_data::SynthosTheme {
+    if let Some(palette) = system_palette(appearance) {
+        return theme_data::system_theme(&palette);
+    }
     if appearance.follow_system.get() {
         let dark = appearance.system.get().is_dark();
         let key = if dark { appearance.theme_dark.get() } else { appearance.theme_light.get() };
@@ -321,6 +328,16 @@ pub(crate) fn active_theme(
     } else {
         theme_data::find(&theme_key.get()).unwrap_or_else(theme_data::default_theme)
     }
+}
+
+/// Палитра рабочего стола, если тема приложения берётся из неё.
+pub(crate) fn system_palette(
+    appearance: context::AppearanceCtx,
+) -> Option<syngui::appearance::SystemPalette> {
+    if !appearance.use_system_colors.get() {
+        return None;
+    }
+    appearance.system.get().palette
 }
 
 /// Настройка «стекла» для фреймворка. Контраст просим вместе с размытием —
@@ -365,6 +382,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         theme_light: use_signal(saved.theme_light.clone()),
         theme_dark: use_signal(saved.theme_dark.clone()),
         use_system_accent: use_signal(saved.use_system_accent),
+        use_system_colors: use_signal(saved.use_system_colors),
         system_window_controls: use_signal(saved.system_window_controls),
         window_blur: use_signal(saved.window_blur),
         window_opacity: use_signal(saved.window_opacity),
@@ -522,7 +540,8 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
             // Порядок блоков = приоритет: переменные из последнего `:root`
             // перекрывают предыдущие (StyleSheet держит их в HashMap).
             let mut extra = String::new();
-            if appearance.use_system_accent.get() {
+            // У палитры рабочего стола акцент уже свой.
+            if appearance.use_system_accent.get() && system_palette(appearance).is_none() {
                 if let Some(accent) = appearance.system.get().accent {
                     extra.push_str(&theme_data::accent_override_mss(accent, theme.is_dark));
                 }
@@ -668,6 +687,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             theme_light: a.theme_light.get(),
             theme_dark: a.theme_dark.get(),
             use_system_accent: a.use_system_accent.get(),
+            use_system_colors: a.use_system_colors.get(),
             system_window_controls: a.system_window_controls.get(),
             window_blur: a.window_blur.get(),
             window_opacity: a.window_opacity.get(),

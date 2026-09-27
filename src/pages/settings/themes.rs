@@ -10,7 +10,7 @@ use syngui::mgui;
 use syngui::prelude::*;
 
 use crate::context::AppCtx;
-use crate::icons::{MI_BLUR_ON, MI_DESKTOP_WINDOWS, MI_PALETTE, MI_TUNE};
+use crate::icons::{MI_BLUR_ON, MI_BRUSH, MI_DESKTOP_WINDOWS, MI_PALETTE, MI_TUNE};
 
 use super::general::{row_frame, switch_row};
 use super::theme_data::{self, SynthosTheme};
@@ -50,6 +50,12 @@ fn system_section() -> impl Widget {
     let a = ctx.appearance;
 
     let rows: Vec<Box<dyn Widget>> = vec![
+        switch_row(
+            MI_BRUSH,
+            tr!("settings.themes.system_colors"),
+            tr!("settings.themes.system_colors.desc"),
+            a.use_system_colors,
+        ),
         switch_row(
             MI_PALETTE,
             tr!("settings.themes.follow_system"),
@@ -137,7 +143,10 @@ fn section(title: impl Into<String>, themes: &[SynthosTheme], dark: bool) -> imp
             let a = ctx.appearance;
             // В системном режиме карточки задают пару: светлая тема — для
             // светлой схемы, тёмная — для тёмной.
-            let is_active = if a.follow_system.get() {
+            let is_active = if crate::system_palette(a).is_some() {
+                // Цвета рабочего стола перекрывают любую карточку.
+                false
+            } else if a.follow_system.get() {
                 let key = if dark { a.theme_dark.get() } else { a.theme_light.get() };
                 theme_data::find_or_default(&key, dark).id == id
             } else {
@@ -172,6 +181,8 @@ fn section(title: impl Into<String>, themes: &[SynthosTheme], dark: bool) -> imp
                         .on_click(move || {
                             let ctx = use_context::<AppCtx>();
                             let a = ctx.appearance;
+                            // Явный выбор темы — отказ от цветов рабочего стола.
+                            a.use_system_colors.set(false);
                             if a.follow_system.get() {
                                 // Эффект в build_context сам пересоберёт MSS,
                                 // когда сменится ключ нужной половины пары.

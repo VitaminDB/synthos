@@ -349,6 +349,8 @@ pub struct AppearanceCtx {
     pub theme_dark: RwSignal<String>,
     /// Подмешивать системный акцент поверх палитры темы.
     pub use_system_accent: RwSignal<bool>,
+    /// Все цвета — из палитры рабочего стола (`SystemAppearance::palette`).
+    pub use_system_colors: RwSignal<bool>,
     /// Рисовать кнопки окна темой декораций рабочего стола.
     pub system_window_controls: RwSignal<bool>,
     /// Просить композитор размывать фон за окном.

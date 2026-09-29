@@ -280,12 +280,14 @@ fn empty_placeholder() -> impl Widget {
 }
 
 /// Portal-popover с панелью настроек шрифта. Открывается gear-кнопкой,
-/// закрывается кликом мимо backdrop'а. Якорь — top-end (правый верхний)
-/// со смещением, чтобы попадать примерно под gear-иконку в tab-bar'е.
+/// закрывается кликом мимо панели или Escape. Якорь — top-end (правый
+/// верхний) со смещением, чтобы попадать примерно под gear-иконку в tab-bar'е.
+/// Модальный без подложки: немодальный Portal по клику мимо не закрывается,
+/// а сама панель перекрывает gear-кнопку — закрыть её было нечем.
 fn gear_popover(gear_open: RwSignal<bool>) -> impl Widget {
     Portal::new()
         .is_open(gear_open)
-        .modal(false)
+        .modal(true)
         .backdrop(false)
         .anchor(PortalAnchor::TopEnd {
             margin_top: 56.0,

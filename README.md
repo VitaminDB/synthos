@@ -2,8 +2,9 @@
 
 [![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
+[![Vibe-coded with Claude Code](https://img.shields.io/badge/vibe--coded-Claude%20Code-d97757)](#how-it-is-built)
 
-A local AI desktop studio for Rust — an agentic chat client, a block-based notes workspace,
+A local AI desktop studio written in Rust — an agentic chat client, a block-based notes workspace,
 a node editor for generating video, music and speech, a code editor and a document knowledge
 base. Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
 engine: no Python, no torch, no cloud. It runs on any NVIDIA GPU from sm_80 (Ampere) up —
@@ -354,9 +355,12 @@ performance analyses quoted above (`qwen4exp_perf_2026.md`, `gemma4_2026.md`,
 
 ## How it is built
 
-One developer, with Claude (Anthropic) as a daily coding assistant. The architecture, the
-engine work and the benchmarks above are mine; the assistant carries a large share of the
-typing, the tests and the refactors.
+This project is vibe-coded. Since spring 2026 I write all of my projects with [Claude
+Code](https://claude.com/claude-code): I decide what to build and how it fits together,
+describe each task, and review, run and measure the result on my own hardware — the model
+writes the code, the tests and most of the documentation. Every number in this README was
+measured on my machine, with the losses reported next to the wins. It is my own daily
+code editor and chat.
 
 ## FAQ
 

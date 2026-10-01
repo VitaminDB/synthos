@@ -207,7 +207,7 @@
     border-top-right-radius: 16px;
     border-bottom-right-radius: 16px;
     box-shadow: 14px 6px 18px rgba(0, 0, 0, 0.18);
-    padding: 10px 14px 12px 10px;
+    padding: 10px 4px 12px 4px;
     transition: size 360ms spring(420, 34);
 }
 
@@ -217,7 +217,13 @@
     font-weight: 600;
     letter-spacing: 0.4px;
     text-transform: uppercase;
+    text-align: center;
     padding: 0px 4px 0px 4px;
+}
+
+/* Подпись плитки в панели: панель на 8px шире рейла — подписи тоже. */
+.nav-rail-session-label.in-flyout {
+    max-width: 60px;
 }
 
 .nav-rail-flyout-empty {

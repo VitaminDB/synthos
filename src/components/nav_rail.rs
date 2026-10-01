@@ -598,6 +598,9 @@ fn group_tile(group: &RailGroupConfig, members: &[RailEntry], entry: RailEntry) 
         .child(dnd)
 }
 
+/// Ширина панели группы: рейл (72) + 8.
+const FLYOUT_WIDTH: f32 = 80.0;
+
 /// Выезжающая панель открытой группы: справа от её плитки, по центру её
 /// высоты; уезжает обратно по клику мимо, Escape или выбору плитки.
 /// Смонтирована в корне приложения — поверх страниц.
@@ -613,14 +616,15 @@ pub fn group_flyout() -> impl Widget {
             return vec![Box::new(DecoratedBox::new())];
         };
         let mut code_idx = 0usize;
-        let mut row = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Start);
+        // Столбиком, как сам рейл: плитки с подписями друг под другом.
+        let mut col = Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center);
         for m in &members {
-            row = row.child(entry_tile(m, &mut code_idx, true));
+            col = col.child(entry_tile(m, &mut code_idx, true));
         }
         let body: Box<dyn Widget> = if members.is_empty() {
             Box::new(Text::new(tr!("nav.group.empty")).class("nav-rail-flyout-empty"))
         } else {
-            Box::new(row)
+            Box::new(col)
         };
         // Сброс в свободное место панели — в конец группы.
         let drop = DropArea::new()
@@ -630,7 +634,7 @@ pub fn group_flyout() -> impl Widget {
         vec![Box::new(mgui! {
             Column::new()
                 .gap(6.0)
-                .cross_axis_alignment(CrossAxisAlignment::Start) => [
+                .cross_axis_alignment(CrossAxisAlignment::Center) => [
                     Text::new(group.name.clone()).max_lines(1).class("nav-rail-flyout-title"),
                     drop,
                 ]
@@ -640,9 +644,12 @@ pub fn group_flyout() -> impl Widget {
         .is_open(fly.open)
         .anchor_rect(fly.anchor)
         .anchor(PopupAnchor::EndCenter)
-        .min_width(0.0)
-        .max_width(640.0)
-        .max_height(480.0)
+        // Колонка шириной с рейл и чуть шире (72 + 8): подписи плиток
+        // обрезаются многоточием, как в самом рейле. Без жёсткой ширины
+        // Text подписи брал всю ширину попапа и уезжал за его обрезку.
+        .min_width(FLYOUT_WIDTH)
+        .max_width(FLYOUT_WIDTH)
+        .max_height(640.0)
         .reveal(AnimationAxis::Width)
         .class("nav-rail-flyout")
         .child(content)

@@ -24,7 +24,7 @@ use crate::context::AppCtx;
 use crate::icons::{
     MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
     MI_EDIT_NOTE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_HOURGLASS_TOP, MI_PSYCHOLOGY, MI_REPORT,
-    MI_TERMINAL,
+    MI_TERMINAL, MI_TIMER,
 };
 use crate::pages::notes::NotesCtx;
 use crate::pages::node_editor::run_controls;
@@ -879,6 +879,11 @@ pub(super) fn tool_call_card_only(
     header_children.push(Box::new(Icon::new(tool_icon).class("tool-call-icon")));
     header_children.push(Box::new(Text::new(tool_label).class("tool-call-name")));
     header_children.push(Box::new(DecoratedBox::new().class("grow")));
+    // Вызов ещё идёт (хвост ленты) — обратный отсчёт до его `timeout_sec`.
+    let chat = use_context::<SynChatCtx>();
+    if !is_typing && chat.messages.with_untracked(Vec::len).saturating_sub(1) == msg_idx {
+        header_children.push(tool_countdown());
+    }
     header_children.push(Box::new(Text::new(msg.time.clone()).class("msg-time")));
     if compact {
         header_children.push(body_chevron(msg_idx, "tool-call-chevron"));
@@ -925,6 +930,47 @@ pub(super) fn tool_call_card_only(
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(card_children),
+    )
+}
+
+/// «⏱ 4:32» в шапке идущего вызова: сколько осталось до предела времени
+/// (`timeout_sec` модели или умолчание инструмента). Последние 10 % и
+/// последние 10 с — красным. Без предела, после результата и в чужом чате
+/// пусто.
+fn tool_countdown() -> Box<dyn Widget> {
+    let chat = use_context::<SynChatCtx>();
+    let text = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some((owner, secs)) = chat.tool_limit.get() else { return vec![] };
+        if owner != chat.active_chat_id.get() {
+            return vec![];
+        }
+        let elapsed = chat.tool_timer.display_ms().unwrap_or(0);
+        let total = secs * 1000;
+        let left = total.saturating_sub(elapsed);
+        let left_s = left.div_ceil(1000);
+        let txt = if left_s >= 3600 {
+            format!("{}:{:02}:{:02}", left_s / 3600, (left_s % 3600) / 60, left_s % 60)
+        } else {
+            format!("{}:{:02}", left_s / 60, left_s % 60)
+        };
+        let urgent = left <= 10_000 || left * 10 <= total;
+        let class = if urgent { "tool-countdown urgent" } else { "tool-countdown" };
+        vec![Box::new(
+            DecoratedBox::new()
+                .class(class)
+                .child(mgui! {
+                    Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                        Icon::new(MI_TIMER).class("tool-countdown-icon"),
+                        Text::new(txt).class("tool-countdown-text"),
+                    ]
+                }),
+        )]
+    });
+    Box::new(
+        Row::new()
+            .gap(0.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .children(vec![Box::new(text) as Box<dyn Widget>, timing::ticker(chat.tool_timer)]),
     )
 }
 

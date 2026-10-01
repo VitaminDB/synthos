@@ -1222,6 +1222,40 @@ fn missing_prefix<'a>(full: &'a str, streamed: &str) -> &'a str {
     full.strip_suffix(streamed).unwrap_or_default()
 }
 
+/// Идущий вызов инструмента для UI: статус «Выполняется инструмент …»
+/// (`SynChatCtx::tool_running`) и, если у вызова есть предел времени,
+/// обратный отсчёт на его карточке (`tool_limit` + секундомер). При drop
+/// всё гасится — и при результате, и при Stop посреди вызова.
+struct ToolCountdown;
+
+impl ToolCountdown {
+    fn start(chat_id: &Option<String>, tool: String, limit: Option<u64>) -> Self {
+        let owner = chat_id.clone();
+        run_on_main_thread(move || {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.tool_running.set(Some((owner.clone(), tool)));
+            if let Some(secs) = limit {
+                ctx.tool_limit.set(Some((owner, secs)));
+                ctx.tool_timer.start();
+            }
+        });
+        Self
+    }
+}
+
+impl Drop for ToolCountdown {
+    fn drop(&mut self) {
+        run_on_main_thread(|| {
+            let ctx = use_context::<SynChatCtx>();
+            ctx.tool_running.set(None);
+            if ctx.tool_limit.get_untracked().is_some() {
+                ctx.tool_timer.finish();
+                ctx.tool_limit.set(None);
+            }
+        });
+    }
+}
+
 /// Выполнить действие над контекстом, только если чат генерации открыт.
 ///
 /// Живой стрим, плашки ошибок и `pending` принадлежат открытому чату: пока
@@ -3035,6 +3069,16 @@ async fn run_agent_loop(
                 let parked = tool_name(chat_call) == KEY_SUBAGENT
                     && park_kv_session(&mut kv_slot, &model);
 
+                // Предел времени вызова — карточке на обратный отсчёт;
+                // гасится, как бы вызов ни кончился (guard).
+                let _countdown = ToolCountdown::start(
+                    &chat_id,
+                    tool_name(chat_call),
+                    tools::executor::timeout_for(
+                        &tool_name(chat_call),
+                        chat_call.function.arguments.as_deref().unwrap_or(""),
+                    ),
+                );
                 // Исполнение с возможностью прерывания на длинных tool'ах
                 // (web fetch может висеть 30+ сек).
                 let outcome = tokio::select! {

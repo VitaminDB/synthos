@@ -543,3 +543,25 @@
     font-size: 12px;
     color: var(--primary);
 }
+
+/* Обратный отсчёт идущего вызова до `timeout_sec` (шапка карточки). */
+.tool-countdown {
+    padding: 2px 8px 2px 6px;
+    border-radius: 10px;
+    background-color: var(--surface-hover);
+}
+.tool-countdown-icon {
+    icon-size: 13px;
+    icon-color: var(--text-muted);
+}
+.tool-countdown-text {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+}
+.tool-countdown.urgent .tool-countdown-icon {
+    icon-color: var(--error);
+}
+.tool-countdown.urgent .tool-countdown-text {
+    color: var(--error);
+}

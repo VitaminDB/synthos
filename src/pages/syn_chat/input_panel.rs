@@ -282,6 +282,8 @@ fn pending_hint_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 tr!("chat.input.hint.pick_model"),
                 "input-hint info",
             )
+        } else if let Some(tool) = ctx.running_tool().filter(|_| pending) {
+            (tr!("chat.input.hint.tool_running", tool = tool), "input-hint info")
         } else if pending {
             (tr!("chat.input.hint.generating"), "input-hint info")
         } else {

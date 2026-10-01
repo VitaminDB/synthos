@@ -365,6 +365,30 @@ pub struct AppearanceCtx {
     pub window_state: RwSignal<WindowState>,
 }
 
+/// Состояние выезжающей панели группы рейла (`components::nav_rail`).
+#[derive(Clone, Copy)]
+pub struct RailFlyout {
+    /// Панель открыта. При закрытии `group` не сбрасывается — панель
+    /// уезжает со своим содержимым.
+    pub open: RwSignal<bool>,
+    /// Группа, чья панель открыта (или последней открывалась).
+    pub group: RwSignal<Option<u64>>,
+    /// Прямоугольник плитки группы в координатах окна: панель встаёт
+    /// справа от него, по центру его высоты.
+    pub anchor: RwSignal<Rect>,
+    /// Открыт диалог группы: создать новую (`id: None`) или изменить.
+    pub edit: RwSignal<Option<RailGroupEdit>>,
+}
+
+/// Что правит диалог группы.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RailGroupEdit {
+    /// `None` — новая группа.
+    pub id: Option<u64>,
+    /// Плитка, из меню которой создают группу: станет её первой плиткой.
+    pub seed: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct AppCtx {
     /// Ключ темы — стабильный id для persistence (имя темы из `theme_data`).
@@ -464,6 +488,10 @@ pub struct AppCtx {
     /// Ручной порядок плиток рейла (ключи `rail::RailEntry::key`). Persist:
     /// `AppConfig.rail_order`.
     pub rail_order: RwSignal<Vec<String>>,
+    /// Группы плиток рейла. Persist: `AppConfig.rail_groups`.
+    pub rail_groups: RwSignal<Vec<crate::config::RailGroupConfig>>,
+    /// Выезжающая панель открытой группы и диалог группы (не persist).
+    pub rail_flyout: RailFlyout,
     /// Недавние эмодзи панели ввода чата, свежие первыми. Persist:
     /// `AppConfig.chat_recent_emoji`.
     pub chat_recent_emoji: RwSignal<Vec<String>>,

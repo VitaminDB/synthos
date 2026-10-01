@@ -105,6 +105,67 @@ pub enum ToolError {
     /// поверх OOM'а уводил её чинить аргументы вместо задачи.
     #[error("{0}")]
     Runtime(String),
+    /// Вызов не уложился в `timeout_sec` (или в предел по умолчанию):
+    /// исполнение брошено, процессы `bash` убиты вместе с группой.
+    #[error("Timed out after {0} s: the call was stopped (bash: the process group was killed). If it legitimately needs longer, call again with a larger \"timeout_sec\"; for long jobs run them in the background (`cmd > /tmp/log 2>&1 &`) and poll the log.")]
+    Timeout(u64),
+}
+
+/// Инструменты с необязательным аргументом `timeout_sec` — пределом
+/// времени вызова, который выставляет модель. У `wizard` поле с тем же
+/// именем значит другое (когда свернуть вопрос), `autoskill`/`autotools`
+/// мгновенны, `view_media` исполняет цикл чата.
+pub(crate) const TIMEOUT_TOOLS: [&str; 7] =
+    [KEY_BASH, KEY_WEB, KEY_KB_SEARCH, KEY_PIPELINES, KEY_SUBAGENT, KEY_SYSTEM, KEY_NOTES];
+
+/// Предел по умолчанию, когда модель `timeout_sec` не задала. Только у
+/// `bash`: команда, ждущая ввода или держащая pipe фоновым потомком,
+/// висела бесконечно — ход стоял на «Генерация ответа» при пустой GPU.
+const BASH_DEFAULT_TIMEOUT_SECS: u64 = 600;
+/// Потолок, который может попросить модель: сутки.
+const MAX_TIMEOUT_SECS: u64 = 24 * 3600;
+
+/// Предел времени вызова: `timeout_sec` из аргументов, иначе умолчание
+/// инструмента. `None` — без предела.
+pub fn timeout_for(tool: &str, args: &str) -> Option<u64> {
+    let tool = canonical_tool_name(tool);
+    if !TIMEOUT_TOOLS.contains(&tool) {
+        return None;
+    }
+    let asked = serde_json::from_str::<serde_json::Value>(args).ok().and_then(|v| {
+        let t = v.get("timeout_sec")?;
+        t.as_f64().or_else(|| t.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+    });
+    match asked {
+        Some(t) if t > 0.0 => Some((t.ceil() as u64).clamp(1, MAX_TIMEOUT_SECS)),
+        _ if tool == KEY_BASH => Some(BASH_DEFAULT_TIMEOUT_SECS),
+        _ => None,
+    }
+}
+
+/// Добавить `timeout_sec` в схемы [`TIMEOUT_TOOLS`]. Зовётся один раз при
+/// сборке каталога (`Tool::all`).
+pub(crate) fn add_timeout_params(tools: &mut [super::descriptor::Tool]) {
+    for t in tools.iter_mut().filter(|t| TIMEOUT_TOOLS.contains(&t.key)) {
+        let default = if t.key == KEY_BASH {
+            format!(" Default {BASH_DEFAULT_TIMEOUT_SECS}.")
+        } else {
+            " Default: no limit.".to_string()
+        };
+        if let Some(props) = t.schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
+            props.insert(
+                "timeout_sec".to_string(),
+                serde_json::json!({
+                    "type": "integer",
+                    "description": format!(
+                        "Optional time limit for this call in seconds; when it runs out the call is \
+                         stopped and you get a timeout error. Set it when you expect the call may hang \
+                         or take long.{default}"
+                    )
+                }),
+            );
+        }
+    }
 }
 
 /// Структурированный результат исполнения.
@@ -262,20 +323,14 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     let normalized = coerce_args(&name, &normalize_args(raw_args));
     let args = normalized.as_str();
 
-    let result = match name.as_str() {
-        KEY_BASH => run_bash(args).await,
-        KEY_KB_SEARCH => super::kb_search::run(args).await,
-        KEY_WEB => super::web::run(args).await,
-        KEY_AUTOSKILL => super::autoskill::run(args).await,
-        KEY_AUTOTOOLS => super::autotools::run(args).await,
-        KEY_SUBAGENT => super::subagent::run(args).await,
-        KEY_SYSTEM => super::system::run(args).await,
-        KEY_PIPELINES => super::pipelines::run(args).await,
-        KEY_NOTES => super::notes::run(args).await,
-        super::catalog::KEY_WIZARD => super::wizard::run(args).await,
-        // Основной чат исполняет его сам (`syn_chat::session`): нужна модель.
-        super::catalog::KEY_VIEW_MEDIA => super::view_media::run(args).await,
-        other => Err(ToolError::Unknown(other.to_string())),
+    let limit = timeout_for(&name, args);
+    let run = run_tool(&name, args);
+    let result = match limit {
+        Some(secs) => match tokio::time::timeout(std::time::Duration::from_secs(secs), run).await {
+            Ok(r) => r,
+            Err(_) => Err(ToolError::Timeout(secs)),
+        },
+        None => run.await,
     };
 
     match result {
@@ -296,6 +351,26 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
             content: e.to_string(),
             error: true,
         },
+    }
+}
+
+/// Исполнить инструмент по ключу (без предела времени — его ставит
+/// [`execute`]).
+async fn run_tool(name: &str, args: &str) -> Result<String, ToolError> {
+    match name {
+        KEY_BASH => run_bash(args).await,
+        KEY_KB_SEARCH => super::kb_search::run(args).await,
+        KEY_WEB => super::web::run(args).await,
+        KEY_AUTOSKILL => super::autoskill::run(args).await,
+        KEY_AUTOTOOLS => super::autotools::run(args).await,
+        KEY_SUBAGENT => super::subagent::run(args).await,
+        KEY_SYSTEM => super::system::run(args).await,
+        KEY_PIPELINES => super::pipelines::run(args).await,
+        KEY_NOTES => super::notes::run(args).await,
+        super::catalog::KEY_WIZARD => super::wizard::run(args).await,
+        // Основной чат исполняет его сам (`syn_chat::session`): нужна модель.
+        super::catalog::KEY_VIEW_MEDIA => super::view_media::run(args).await,
+        other => Err(ToolError::Unknown(other.to_string())),
     }
 }
 
@@ -444,6 +519,41 @@ fn truncate_output(s: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Предел времени: свой у модели (и строкой), умолчание у bash, у
+    /// wizard `timeout_sec` — не предел вызова.
+    #[test]
+    fn timeout_for_reads_model_value_and_defaults() {
+        assert_eq!(timeout_for("bash", r#"{"command":"ls"}"#), Some(BASH_DEFAULT_TIMEOUT_SECS));
+        assert_eq!(timeout_for("bash", r#"{"command":"ls","timeout_sec":5}"#), Some(5));
+        assert_eq!(timeout_for("bash.run", r#"{"command":"ls","timeout_sec":"7"}"#), Some(7));
+        assert_eq!(timeout_for("web", r#"{"action":"read"}"#), None);
+        assert_eq!(timeout_for("web", r#"{"timeout_sec":30}"#), Some(30));
+        assert_eq!(timeout_for("wizard", r#"{"timeout_sec":30}"#), None);
+        let bash = super::super::descriptor::Tool::by_key("bash").unwrap();
+        assert!(bash.schema["properties"]["timeout_sec"].is_object());
+        let notes = super::super::descriptor::Tool::by_key("notes").unwrap();
+        assert!(notes.schema["properties"]["timeout_sec"].is_object());
+    }
+
+    /// Зависшая команда обрывается по `timeout_sec`, ошибка говорит модели,
+    /// что делать дальше.
+    #[tokio::test]
+    async fn bash_call_stops_at_timeout() {
+        let call = ChatToolCall {
+            id: "t1".to_string(),
+            kind: "function".to_string(),
+            function: crate::agent::schema::ChatToolCallFunction {
+                name: Some("bash".to_string()),
+                arguments: Some(r#"{"command":"sleep 30","timeout_sec":1}"#.to_string()),
+            },
+        };
+        let t0 = std::time::Instant::now();
+        let out = execute(&call).await;
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+        assert!(out.error);
+        assert!(out.content.contains("Timed out after 1 s"), "{}", out.content);
+    }
 
     /// Вывод сверх потолка вычитывается и отбрасывается, а не копится.
     #[tokio::test]

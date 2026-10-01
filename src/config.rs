@@ -478,6 +478,21 @@ pub struct EditorStateConfig {
 // Корневой конфиг
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Группа плиток нав-рейла (`crate::rail`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RailGroupConfig {
+    /// Unix-миллисекунды создания — он же ключ (`group:<id>`).
+    pub id: u64,
+    pub name: String,
+    /// Имя иконки из `rail::GROUP_ICONS` (`workspaces`, `code`, …).
+    #[serde(default)]
+    pub icon: String,
+    /// Ключи плиток группы (`RailEntry::key`) в порядке показа. Ключи
+    /// исчезнувших плиток (закрытая сессия) отбрасываются при правке группы.
+    #[serde(default)]
+    pub members: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -765,6 +780,11 @@ pub struct AppConfig {
     /// перетаскивании. Пусто — порядок только по `created_at`.
     #[serde(default)]
     pub rail_order: Vec<String>,
+    /// Группы плиток рейла: в рейле группа — одна плитка со своей иконкой,
+    /// по клику рядом выезжает панель с плитками группы. Ключ группы в
+    /// `rail_order` — `group:<id>`.
+    #[serde(default)]
+    pub rail_groups: Vec<RailGroupConfig>,
     /// Недавние эмодзи панели ввода чата, свежие первыми (до 16).
     #[serde(default)]
     pub chat_recent_emoji: Vec<String>,
@@ -1254,6 +1274,7 @@ impl Default for AppConfig {
             notes_recent: Vec::new(),
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
+            rail_groups: Vec::new(),
             chat_recent_emoji: Vec::new(),
             syn_chat_system_prompt: String::new(),
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),

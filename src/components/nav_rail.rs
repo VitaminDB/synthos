@@ -25,6 +25,11 @@
 //! Плитки (и разделители) перетаскиваются: `Draggable` с ключом плитки в
 //! payload, `DropArea` на каждой плитке (`rail::move_before`) и на «+»
 //! (`rail::move_to_end`) — так плитки группируются разделителями.
+//!
+//! Группа — одна плитка со своей иконкой. Клик выдвигает справа от неё
+//! панель с плитками группы (`group_flyout`): плитка становится вкладкой,
+//! которая перетекает в панель (`flow-edge` вкладки + `PopupPanel::reveal`
+//! с якорем `EndCenter`). Сброс плитки на группу кладёт её в группу.
 
 use syngui::mgui;
 use syngui::prelude::*;
@@ -35,10 +40,15 @@ use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
 use syngui::widgets::overlay::{Draggable, DropArea};
 use syngui::widgets::visual::{Badge, Image, ImageFit};
 
+use syngui::widgets::containers::AnimationAxis;
+use syngui::widgets::overlay::menu::PopupAnchor;
+use syngui::widgets::overlay::{Portal, PortalAnchor, PopupPanel};
+
 use crate::components::chat_item::{
     display_title, initials_from_title, is_generating, tone_for, typing_dot,
 };
-use crate::context::AppCtx;
+use crate::config::RailGroupConfig;
+use crate::context::{AppCtx, RailGroupEdit};
 use crate::icons::*;
 use crate::pages::code_editor::state::CodeSession;
 use crate::pages::huggingface::state::DlStatus;
@@ -208,18 +218,10 @@ fn workspaces_segment() -> impl Widget {
             .class("nav-rail-sessions");
         let mut code_idx = 0usize;
         for entry in entries.iter() {
-            let active = rail::is_active(entry);
             let tile: Box<dyn Widget> = match entry {
-                RailEntry::Code(s) => {
-                    code_idx += 1;
-                    Box::new(code_tile(*s, code_idx, active, entry.clone()))
-                }
-                RailEntry::Graph(t) => Box::new(graph_tile(*t, active, entry.clone())),
-                RailEntry::Chat(m) => {
-                    Box::new(chat_tile(m.id.clone(), m.title.clone(), active, entry.clone()))
-                }
-                RailEntry::Notes { path, .. } => Box::new(note_tile(path, active, entry.clone())),
                 RailEntry::Separator(ts) => Box::new(separator_tile(*ts, entry.clone())),
+                RailEntry::Group { group, members } => Box::new(group_tile(group, members, entry.clone())),
+                _ => entry_tile(entry, &mut code_idx, false),
             };
             col = col.child(Stack::new().children(vec![tile]));
         }
@@ -229,6 +231,46 @@ fn workspaces_segment() -> impl Widget {
     DecoratedBox::new()
         .class("grow nav-rail-scroll-host")
         .child(ScrollView::new().vertical().class("nav-rail-scroll").child(list))
+}
+
+/// Плитка обычной записи (сессия, граф, чат, заметки) — в рейле или в
+/// панели группы (`in_flyout`).
+fn entry_tile(entry: &RailEntry, code_idx: &mut usize, in_flyout: bool) -> Box<dyn Widget> {
+    let active = rail::is_active(entry);
+    let t = TileOpts { selected: active, in_flyout };
+    match entry {
+        RailEntry::Code(s) => {
+            *code_idx += 1;
+            Box::new(code_tile(*s, *code_idx, t, entry.clone()))
+        }
+        RailEntry::Graph(tab) => Box::new(graph_tile(*tab, t, entry.clone())),
+        RailEntry::Chat(m) => Box::new(chat_tile(m.id.clone(), m.title.clone(), t, entry.clone())),
+        RailEntry::Notes { path, .. } => Box::new(note_tile(path, t, entry.clone())),
+        RailEntry::Separator(_) | RailEntry::Group { .. } => Box::new(DecoratedBox::new()),
+    }
+}
+
+/// Вид плитки: выбрана ли и лежит ли в панели группы. В панели свои
+/// классы `in-flyout`: подложка панели того же тона, что наведение в
+/// рейле, и наведение там другое.
+#[derive(Clone, Copy)]
+struct TileOpts {
+    selected: bool,
+    in_flyout: bool,
+}
+
+impl TileOpts {
+    /// `base` + `selected` / `in-flyout` по состоянию.
+    fn class(self, base: &str) -> String {
+        let mut c = base.to_string();
+        if self.selected {
+            c.push_str(" selected");
+        }
+        if self.in_flyout {
+            c.push_str(" in-flyout");
+        }
+        c
+    }
 }
 
 /// Общая обёртка плитки: визуал + подпись, перетаскивание (клик —
@@ -241,14 +283,10 @@ fn workspaces_segment() -> impl Widget {
 fn tile_with_label(
     body: impl Widget + 'static,
     label: String,
-    is_selected: bool,
+    t: TileOpts,
     entry: RailEntry,
 ) -> impl Widget {
-    let label_class = if is_selected {
-        "nav-rail-session-label selected"
-    } else {
-        "nav-rail-session-label"
-    };
+    let label_class = t.class("nav-rail-session-label");
     let tile = mgui! {
         Column::new()
             .gap(2.0)
@@ -260,6 +298,31 @@ fn tile_with_label(
     draggable_tile(tile, label, entry)
 }
 
+/// Пункты «В группу ▸» для плитки верхнего уровня, «Убрать из группы» —
+/// для плитки группы.
+fn group_menu_items(entry: &RailEntry) -> Vec<MenuItem> {
+    if !entry.groupable() {
+        return Vec::new();
+    }
+    if rail::group_of(&entry.key()).is_some() {
+        return vec![MenuItem::new("leave_group", tr!("nav.group.leave")).icon(MI_UNARCHIVE)];
+    }
+    let mut sub: Vec<MenuItem> = use_context::<AppCtx>()
+        .rail_groups
+        .get_untracked()
+        .iter()
+        .map(|g| MenuItem::new(format!("to_group:{}", g.id), g.name.clone()).icon(rail::group_icon(&g.icon)))
+        .collect();
+    if !sub.is_empty() {
+        sub.push(MenuItem::separator());
+    }
+    sub.push(MenuItem::new("new_group", tr!("nav.group.new")).icon(MI_ADD));
+    vec![MenuItem::new("to_group", tr!("nav.group.move_to")).icon(GROUP_DEFAULT_ICON).children(sub)]
+}
+
+/// Значок группы по умолчанию (Material «workspaces»).
+const GROUP_DEFAULT_ICON: &str = "\u{EA0F}";
+
 /// Draggable → DropArea → контент; снаружи — контекстное меню. `label` —
 /// подпись призрака на случай, если фреймворк не сможет нарисовать живой
 /// снимок плитки.
@@ -270,7 +333,10 @@ fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) 
     let entry_close = entry.clone();
     let dnd = Draggable::new(DRAG_TYPE_TILE, key)
         .label(label)
-        .on_click(move || rail::open(&entry_click))
+        .on_click(move || {
+            rail::close_flyout();
+            rail::open(&entry_click);
+        })
         .child(
             DropArea::new()
                 .accept_types(vec![DRAG_TYPE_TILE.to_string()])
@@ -282,33 +348,35 @@ fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) 
     if matches!(entry, RailEntry::Notes { .. }) {
         items.push(MenuItem::new("rename", tr!("notes.project.rename")).icon(MI_DRIVE_FILE_RENAME_OUTLINE));
     }
+    items.extend(group_menu_items(&entry));
     items.push(MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE));
     ContextMenu::new()
         .items(items)
         .on_select(move |action| match (action, &entry_close) {
             ("close", _) => rail::request_close(&entry_close),
             ("rename", RailEntry::Notes { path, .. }) => crate::pages::notes::project_ui::request_rename(path),
-            _ => {}
+            ("leave_group", e) => rail::remove_from_group(&e.key()),
+            ("new_group", e) => rail::edit_group(RailGroupEdit { id: None, seed: Some(e.key()) }),
+            (a, e) => {
+                if let Some(id) = a.strip_prefix("to_group:").and_then(|s| s.parse().ok()) {
+                    rail::add_to_group(&e.key(), id);
+                }
+            }
         })
         .child(dnd)
 }
 
-fn code_tile(session: CodeSession, idx: usize, is_selected: bool, entry: RailEntry) -> impl Widget {
+fn code_tile(session: CodeSession, idx: usize, t: TileOpts, entry: RailEntry) -> impl Widget {
     let folder = session.root_folder.get_untracked();
     let icon = if folder.is_some() { MI_FOLDER } else { MI_DESCRIPTION };
     let label = folder
         .as_ref()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx));
-    let btn_class = if is_selected {
-        "nav-rail-item selected"
-    } else {
-        "nav-rail-item"
-    };
     let btn = ToolButton::new(icon)
         .tooltip(label.clone())
         .press_passthrough()
-        .class(btn_class);
+        .class(t.class("nav-rail-item"));
 
     // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
     // Цвет по занятости (busy_count пишет семплер terminal_activity;
@@ -335,10 +403,10 @@ fn code_tile(session: CodeSession, idx: usize, is_selected: bool, entry: RailEnt
             .at(24.0, -2.0),
         );
     }
-    tile_with_label(btn_stack, label, is_selected, entry)
+    tile_with_label(btn_stack, label, t, entry)
 }
 
-fn graph_tile(tab: OpenTab, is_selected: bool, entry: RailEntry) -> impl Widget {
+fn graph_tile(tab: OpenTab, t: TileOpts, entry: RailEntry) -> impl Widget {
     // Иконка по происхождению графа: агентский (раскрыт из чата),
     // из шаблона или Untitled.
     let icon = if tab.agent_chat.get_untracked().is_some() {
@@ -354,31 +422,21 @@ fn graph_tile(tab: OpenTab, is_selected: bool, entry: RailEntry) -> impl Widget 
     } else {
         title.clone()
     };
-    let btn_class = if is_selected {
-        "nav-rail-item selected"
-    } else {
-        "nav-rail-item"
-    };
     let btn = ToolButton::new(icon)
         .tooltip(title)
         .press_passthrough()
-        .class(btn_class);
-    tile_with_label(btn, label, is_selected, entry)
+        .class(t.class("nav-rail-item"));
+    tile_with_label(btn, label, t, entry)
 }
 
-fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> impl Widget {
+fn chat_tile(id: String, title: String, t: TileOpts, entry: RailEntry) -> impl Widget {
     let shown = display_title(&title);
     let avatar = Avatar::new()
         .text(initials_from_title(&title))
         .size(32.0)
         .class(tone_for(&id));
-    let ring_class = if is_selected {
-        "nav-rail-chat-tile selected"
-    } else {
-        "nav-rail-chat-tile"
-    };
     let body = DecoratedBox::new()
-        .class(ring_class)
+        .class(t.class("nav-rail-chat-tile"))
         .child(Center::new().child(avatar));
     // Модель печатает ответ в этом чате — пульсирующая точка в углу: ход
     // виден, даже когда чат в фоне или свёрнут в окно. `.get()` внутри
@@ -393,26 +451,20 @@ fn chat_tile(id: String, title: String, is_selected: bool, entry: RailEntry) -> 
     } else {
         shown.clone()
     };
-    tile_with_label(Tooltip::new(stack, tooltip), shown, is_selected, entry)
+    tile_with_label(Tooltip::new(stack, tooltip), shown, t, entry)
 }
 
 /// Плитка проекта заметок: иконка режима в скруглённой рамке, подпись —
-/// имя файла проекта.
-/// Плитка проекта заметок: подпись — имя файла, подсказка — полный путь
-/// (два проекта с одним именем в разных папках различимы).
-fn note_tile(path: &std::path::Path, is_selected: bool, entry: RailEntry) -> impl Widget {
+/// имя файла, подсказка — полный путь (два проекта с одним именем в разных
+/// папках различимы).
+fn note_tile(path: &std::path::Path, t: TileOpts, entry: RailEntry) -> impl Widget {
     let title = crate::pages::notes::project::project_title(path);
     let hint = path.display().to_string();
     let icon = MI_EDIT_NOTE;
-    let ring_class = if is_selected {
-        "nav-rail-item nav-rail-note-tile selected"
-    } else {
-        "nav-rail-item nav-rail-note-tile"
-    };
     let body = DecoratedBox::new()
-        .class(ring_class)
+        .class(t.class("nav-rail-item nav-rail-note-tile"))
         .child(Center::new().child(Icon::new(icon).class("nav-rail-note-icon")));
-    tile_with_label(Tooltip::new(body, hint), title, is_selected, entry)
+    tile_with_label(Tooltip::new(body, hint), title, t, entry)
 }
 
 /// Разделитель: тонкая линия в широкой невидимой зоне — чтобы по ней можно
@@ -465,6 +517,7 @@ fn add_button() -> impl Widget {
                 .icon(MI_EDIT_NOTE)
                 .children(crate::pages::notes::project_ui::add_menu_items()),
             MenuItem::separator(),
+            MenuItem::new("group", tr!("nav.add.group")).icon(GROUP_DEFAULT_ICON),
             MenuItem::new("separator", tr!("nav.add.separator")).icon(MI_HORIZONTAL_RULE),
         ])
         .is_open(open)
@@ -475,7 +528,216 @@ fn add_button() -> impl Widget {
             "chat" => rail::new_chat(),
             id if crate::pages::notes::project_ui::handle_menu(id) => {}
             "separator" => rail::add_separator(),
+            "group" => rail::edit_group(RailGroupEdit { id: None, seed: None }),
             _ => {}
         });
     Stack::new().clip(false).child(drop).child(menu)
+}
+
+// ─────────────────────────────── Группы ───────────────────────────────
+
+/// Плитка группы. Во всю ширину рейла лежит «вкладка»: пока панель группы
+/// закрыта, она прозрачна; открыта — окрашена в цвет панели и перетекает
+/// в неё (`flow-edge: right` дорисовывает вогнутые ушки у края рейла).
+/// Клик выдвигает панель, сброс плитки — кладёт её в группу.
+fn group_tile(group: &RailGroupConfig, members: &[RailEntry], entry: RailEntry) -> impl Widget {
+    let fly = use_context::<AppCtx>().rail_flyout;
+    let id = group.id;
+    let open = fly.open.get() && fly.group.get() == Some(id);
+    let active = members.iter().any(rail::is_active);
+    let t = TileOpts { selected: active && !open, in_flyout: false };
+    let btn = ToolButton::new(rail::group_icon(&group.icon))
+        .tooltip(group.name.clone())
+        .press_passthrough()
+        .class(t.class("nav-rail-item nav-rail-group-btn"));
+    // Число плиток — маленькая метка в углу: группу видно среди плиток.
+    let mut body = Stack::new().child(btn);
+    if !members.is_empty() {
+        body = body.child(
+            Positioned::new(Badge::new(members.len().to_string()).small().class("nav-rail-group-count")).at(24.0, -2.0),
+        );
+    }
+    // Чат группы печатает — точка и на плитке группы.
+    if members.iter().any(|m| matches!(m, RailEntry::Chat(c) if is_generating(&c.id))) {
+        body = body.child(Positioned::new(typing_dot()).at(28.0, 28.0));
+    }
+    let label_class = if open { "nav-rail-session-label open".to_string() } else { t.class("nav-rail-session-label") };
+    let tile = mgui! {
+        Column::new()
+            .gap(2.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center) => [
+                body,
+                Text::new(group.name.clone()).max_lines(1).class(label_class),
+            ]
+    };
+    let tab_class = if open { "nav-rail-group-tab open" } else { "nav-rail-group-tab" };
+    let slot = DecoratedBox::new()
+        .class("nav-rail-group-slot")
+        .child(DecoratedBox::new().class(tab_class).child(Center::new().child(tile)));
+
+    let key = entry.key();
+    let dnd = Draggable::new(DRAG_TYPE_TILE, key)
+        .label(group.name.clone())
+        .on_click_with_bounds(move |r| rail::toggle_flyout(id, r))
+        .child(
+            DropArea::new()
+                .accept_types(vec![DRAG_TYPE_TILE.to_string()])
+                .on_drop(move |data| rail::add_to_group(&data.payload, id))
+                .child(slot),
+        );
+    ContextMenu::new()
+        .items(vec![
+            MenuItem::new("edit", tr!("nav.group.edit")).icon(MI_EDIT),
+            MenuItem::new("ungroup", tr!("nav.group.ungroup")).icon(MI_UNARCHIVE),
+        ])
+        .on_select(move |action| match action {
+            "edit" => rail::edit_group(RailGroupEdit { id: Some(id), seed: None }),
+            "ungroup" => rail::ungroup(id),
+            _ => {}
+        })
+        .child(dnd)
+}
+
+/// Выезжающая панель открытой группы: справа от её плитки, по центру её
+/// высоты; уезжает обратно по клику мимо, Escape или выбору плитки.
+/// Смонтирована в корне приложения — поверх страниц.
+pub fn group_flyout() -> impl Widget {
+    let fly = use_context::<AppCtx>().rail_flyout;
+    let content = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(id) = fly.group.get() else {
+            return vec![Box::new(DecoratedBox::new())];
+        };
+        let Some(RailEntry::Group { group, members }) =
+            rail::entries().into_iter().find(|e| matches!(e, RailEntry::Group { group, .. } if group.id == id))
+        else {
+            return vec![Box::new(DecoratedBox::new())];
+        };
+        let mut code_idx = 0usize;
+        let mut row = Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Start);
+        for m in &members {
+            row = row.child(entry_tile(m, &mut code_idx, true));
+        }
+        let body: Box<dyn Widget> = if members.is_empty() {
+            Box::new(Text::new(tr!("nav.group.empty")).class("nav-rail-flyout-empty"))
+        } else {
+            Box::new(row)
+        };
+        // Сброс в свободное место панели — в конец группы.
+        let drop = DropArea::new()
+            .accept_types(vec![DRAG_TYPE_TILE.to_string()])
+            .on_drop(move |data| rail::add_to_group(&data.payload, id))
+            .child(body);
+        vec![Box::new(mgui! {
+            Column::new()
+                .gap(6.0)
+                .cross_axis_alignment(CrossAxisAlignment::Start) => [
+                    Text::new(group.name.clone()).max_lines(1).class("nav-rail-flyout-title"),
+                    drop,
+                ]
+        })]
+    });
+    PopupPanel::new()
+        .is_open(fly.open)
+        .anchor_rect(fly.anchor)
+        .anchor(PopupAnchor::EndCenter)
+        .min_width(0.0)
+        .max_width(640.0)
+        .max_height(480.0)
+        .reveal(AnimationAxis::Width)
+        .class("nav-rail-flyout")
+        .child(content)
+}
+
+/// Диалог группы: название и иконка. Новая группа (с плиткой, из меню
+/// которой её создали) или правка существующей.
+pub fn group_dialog() -> impl Widget {
+    let edit = use_context::<AppCtx>().rail_flyout.edit;
+    let is_open = use_signal(false);
+    create_effect(move || {
+        let has = edit.get().is_some();
+        if is_open.get_untracked() != has {
+            is_open.set(has);
+        }
+    });
+    Portal::new()
+        .is_open(is_open)
+        .modal(true)
+        .backdrop(true)
+        .anchor(PortalAnchor::Center)
+        .on_close(move || edit.set(None))
+        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            match edit.get() {
+                Some(e) => vec![Box::new(group_card(e))],
+                None => vec![Box::new(DecoratedBox::new().class("code-editor-dialog-empty"))],
+            }
+        }))
+}
+
+fn group_card(e: RailGroupEdit) -> impl Widget {
+    let app = use_context::<AppCtx>();
+    let existing = e.id.and_then(|id| app.rail_groups.get_untracked().into_iter().find(|g| g.id == id));
+    let initial_name = existing.as_ref().map(|g| g.name.clone()).unwrap_or_default();
+    let initial_icon = existing
+        .as_ref()
+        .map(|g| g.icon.clone())
+        .filter(|i| !i.is_empty())
+        .unwrap_or_else(|| rail::GROUP_ICONS[0].0.to_string());
+    let name = use_signal(initial_name.clone());
+    let icon = use_signal(initial_icon);
+    let title = if e.id.is_some() { tr!("nav.group.edit_title") } else { tr!("nav.group.new_title") };
+    let submit = {
+        let e = e.clone();
+        move || {
+            let n = name.get_untracked().trim().to_string();
+            let n = if n.is_empty() { tr!("nav.group.default_name") } else { n };
+            let i = icon.get_untracked();
+            match e.id {
+                Some(id) => rail::update_group(id, &n, &i),
+                None => {
+                    rail::create_group(&n, &i, e.seed.as_deref());
+                }
+            }
+            use_context::<AppCtx>().rail_flyout.edit.set(None);
+        }
+    };
+    let submit_enter = submit.clone();
+    let icons = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let cur = icon.get();
+        let mut grid = Flex::row().wrap().gap(6.0).class("nav-group-icon-grid");
+        for (n, glyph) in rail::GROUP_ICONS {
+            let class = if *n == cur { "nav-group-icon selected" } else { "nav-group-icon" };
+            grid = grid.child(ToolButton::new(*glyph).on_click(move || icon.set(n.to_string())).class(class));
+        }
+        vec![Box::new(grid)]
+    });
+    mgui! {
+        DecoratedBox::new().class("code-editor-dialog-card") => [
+            Column::new()
+                .gap(14.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    Text::new(title).class("code-editor-dialog-title"),
+                    TextField::new()
+                        .text(initial_name)
+                        .placeholder(tr!("nav.group.name_placeholder"))
+                        .autofocus(true)
+                        .on_change(move |s| name.set(s.to_string()))
+                        .on_submit(move |_| submit_enter())
+                        .class("code-editor-dialog-input"),
+                    Text::new(tr!("nav.group.icon")).class("code-editor-dialog-hint"),
+                    icons,
+                    Row::new()
+                        .gap(10.0)
+                        .main_axis_alignment(MainAxisAlignment::End) => [
+                            Button::new(tr!("app.cancel"))
+                                .leading_icon(MI_CLOSE)
+                                .on_click(move || use_context::<AppCtx>().rail_flyout.edit.set(None))
+                                .class("code-editor-dialog-btn-secondary"),
+                            Button::new(tr!("app.ok"))
+                                .leading_icon(MI_CHECK)
+                                .on_click(move || submit())
+                                .class("code-editor-dialog-btn-primary"),
+                        ],
+                ]
+        ]
+    }
 }

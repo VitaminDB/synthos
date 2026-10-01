@@ -148,6 +148,14 @@ pub struct SynChatCtx {
     pub input_tok_gen: Arc<AtomicU64>,
     /// `true` пока идёт генерация (Send disabled).
     pub pending: RwSignal<bool>,
+    /// Идущий вызов инструмента с пределом времени: чат хода и предел в
+    /// секундах (`executor::timeout_for`). Карточка вызова показывает по
+    /// нему обратный отсчёт; секундомер — [`Self::tool_timer`].
+    pub tool_limit: RwSignal<Option<(Option<String>, u64)>>,
+    /// Идёт вызов инструмента: чат хода и имя инструмента. Пока он есть,
+    /// статус хода — «Выполняется инструмент …», а не «Генерация ответа».
+    pub tool_running: RwSignal<Option<(Option<String>, String)>>,
+    pub tool_timer: crate::pages::node_editor::timing::Stopwatch,
     /// Последняя ошибка для UI.
     pub error: RwSignal<Option<String>>,
     /// Монотонный счётчик прерываний; worker сравнивает со snapshot'ом.
@@ -342,6 +350,13 @@ impl CardsOpen {
 }
 
 impl SynChatCtx {
+    /// Имя инструмента, который сейчас исполняется в ходе открытого чата
+    /// (tracked).
+    pub fn running_tool(&self) -> Option<String> {
+        let (owner, name) = self.tool_running.get()?;
+        (owner == self.active_chat_id.get()).then_some(name)
+    }
+
     pub fn new() -> Self {
         // Layout-разделители восстанавливаются из persisted-конфига: чтение
         // один раз на создание контекста (сам контекст — синглтон на
@@ -378,6 +393,9 @@ impl SynChatCtx {
             input_tokens: use_signal(0),
             input_tok_gen: Arc::new(AtomicU64::new(0)),
             pending: use_signal(false),
+            tool_limit: use_signal(None),
+            tool_running: use_signal(None),
+            tool_timer: crate::pages::node_editor::timing::Stopwatch::new(),
             error: use_signal(None),
             abort: Arc::new(AtomicU64::new(0)),
             params: use_signal(SamplingParams::default()),

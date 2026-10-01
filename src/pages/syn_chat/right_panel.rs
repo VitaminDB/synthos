@@ -821,7 +821,10 @@ fn main_card_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync
             icon: MI_CHAT,
             title: tr!("chat.right.details.main.title"),
             subtitle: model,
-            status: live.then(|| tr!("chat.right.details.status.generating")),
+            status: live.then(|| match ctx.running_tool() {
+                Some(tool) => tr!("chat.right.details.status.tool", tool = tool),
+                None => tr!("chat.right.details.status.generating"),
+            }),
             badge: live.then(|| {
                 (
                     tr!("chat.right.details.state.running"),

@@ -389,6 +389,10 @@ document-editor {
 .nav-rail-note-tile:hover {
     border-color: var(--border-strong);
 }
+.nav-rail-note-tile.in-flyout {
+    background-color: var(--bg-panel);
+}
+
 .nav-rail-note-tile.selected {
     border-color: var(--primary);
 }

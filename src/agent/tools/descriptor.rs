@@ -48,7 +48,13 @@ impl Tool {
     /// Возвращает все известные инструменты — один глобальный список.
     pub fn all() -> &'static [Tool] {
         static TOOLS: OnceLock<Vec<Tool>> = OnceLock::new();
-        TOOLS.get_or_init(super::catalog::build_all).as_slice()
+        TOOLS
+            .get_or_init(|| {
+                let mut tools = super::catalog::build_all();
+                super::executor::add_timeout_params(&mut tools);
+                tools
+            })
+            .as_slice()
     }
 
     /// Находит инструмент по ключу. `O(N)` — список короткий.

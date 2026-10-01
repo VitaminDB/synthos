@@ -4,7 +4,9 @@
     background-color: var(--bg-rail);
     border-right-width: 1px;
     border-color: var(--border-soft);
-    padding: 16px 12px 16px 12px;
+    /* Без боковых полей: плитки центрируются колонками, а вкладка
+     * открытой группы тянется до самого края рейла. */
+    padding: 16px 0px 16px 0px;
     width: 72px;
     height: 100%;
 }
@@ -153,5 +155,107 @@
 }
 
 .nav-rail-session-label.selected {
+    color: var(--primary);
+}
+
+/* ─── Группы плиток ────────────────────────────────────────────────────
+ * Группа — одна плитка; клик выдвигает справа панель с её плитками
+ * (`nav_rail::group_flyout`). Плитка лежит во «вкладке» шириной до края
+ * рейла: у открытой группы вкладка окрашена в цвет панели, а
+ * `flow-edge: right` дорисовывает вогнутые ушки у края — вкладка
+ * перетекает в панель. Цвет ушек — текущий фон вкладки, так что они
+ * проявляются вместе с ним.
+ * ──────────────────────────────────────────────────────────────────── */
+.nav-rail-group-slot {
+    width: 100%;
+    padding-left: 8px;
+}
+
+.nav-rail-group-tab {
+    padding: 4px 8px 4px 0px;
+    border-top-left-radius: 14px;
+    border-bottom-left-radius: 14px;
+    border-top-right-radius: 0px;
+    border-bottom-right-radius: 0px;
+    background-color: transparent;
+    flow-edge: right;
+    flow-radius: 10px;
+    transition: background-color 200ms emphasized-decelerate;
+}
+
+.nav-rail-group-tab.open {
+    background-color: var(--surface-hover);
+}
+
+.nav-rail-session-label.open {
+    color: var(--text);
+}
+
+.nav-rail-group-count {
+    padding: 3px;
+    background-color: var(--text-muted);
+}
+
+/* Панель группы: левый край прямой — она продолжает вкладку; тень
+ * отброшена вправо, чтобы не темнить стык с рейлом. Выезжает пружиной
+ * (`transition: size` читает `PopupPanel::reveal`). */
+.nav-rail-flyout {
+    background-color: var(--surface-hover);
+    border-width: 0px;
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
+    border-top-right-radius: 16px;
+    border-bottom-right-radius: 16px;
+    box-shadow: 14px 6px 18px rgba(0, 0, 0, 0.18);
+    padding: 10px 14px 12px 10px;
+    transition: size 360ms spring(420, 34);
+}
+
+.nav-rail-flyout-title {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding: 0px 4px 0px 4px;
+}
+
+.nav-rail-flyout-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    max-width: 220px;
+    padding: 6px 4px 6px 4px;
+}
+
+/* Подложка панели — тон наведения рейла: в панели наведение своё. */
+.nav-rail-item.in-flyout:hover {
+    background-color: var(--surface-selected);
+}
+
+.nav-rail-chat-tile.in-flyout:hover {
+    background-color: var(--surface-selected);
+}
+
+/* Диалог группы: сетка иконок. */
+.nav-group-icon-grid {
+    max-width: 360px;
+}
+
+.nav-group-icon {
+    width: 36px;
+    height: 36px;
+    icon-size: 20px;
+    border-radius: 10px;
+    background-color: transparent;
+    color: var(--text-muted);
+    transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.nav-group-icon:hover {
+    background-color: var(--surface-hover);
+}
+
+.nav-group-icon.selected {
+    background-color: var(--primary-soft);
     color: var(--primary);
 }

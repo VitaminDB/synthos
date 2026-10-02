@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.289"
+version = "0.2.290"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -244,6 +244,9 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 notify = { version = "8", default-features = false, features = [
     "macos_fsevent",
 ] }
+# Обход проекта с учётом .gitignore — watcher ставит подписки по каталогам
+# сам (рекурсивный watch notify падает целиком на одном нечитаемом каталоге).
+ignore = "0.4"
 
 # Pure-Rust git: используется страницей `pages::code_editor::git_status`
 # для подсветки изменённых/новых/удалённых файлов в TreeView (Zed-style

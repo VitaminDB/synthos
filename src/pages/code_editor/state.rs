@@ -55,6 +55,17 @@ fn install_watcher(id: SessionId, watcher: FsWatcher) {
     }
 }
 
+/// Подписать раскрытый каталог на события: gitignored и служебные каталоги
+/// watcher при старте пропускает, а раскрытый пользователем должен
+/// обновляться. Повторная подписка того же каталога безвредна.
+fn watch_loaded_dir(id: SessionId, dir: &std::path::Path) {
+    if let Ok(g) = watcher_registry().lock() {
+        if let Some(w) = g.get(&id) {
+            w.watch_dir(dir);
+        }
+    }
+}
+
 /// Дроп watcher'а для сессии (вызывается при close сессии или
 /// смене root_folder перед установкой нового).
 fn drop_watcher(id: SessionId) {
@@ -984,6 +995,7 @@ pub fn toggle_dir(session: CodeSession, path: PathBuf) {
     });
 
     if need_load {
+        watch_loaded_dir(session.id, &path);
         session.loaded_dirs.update(|s| {
             s.insert(path);
         });

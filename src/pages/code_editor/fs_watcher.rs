@@ -13,7 +13,16 @@
 //!
 //! Реализация: `notify::RecommendedWatcher` (платформо-зависимый backend —
 //! inotify / FSEvents / ReadDirectoryChangesW). События приходят в
-//! channel; tokio::task дрейнит его, дебаунсит 200мс батчами и применяет.
+//! channel; поток-диспетчер дрейнит его, дебаунсит 200мс батчами и применяет.
+//!
+//! Подписки ставятся по каталогам (`NonRecursive`), а не одним
+//! `RecursiveMode::Recursive` на корень: рекурсивный watch notify падает
+//! ЦЕЛИКОМ на первом нечитаемом каталоге (например, root-овский rootfs в
+//! `devices/*/build/`), и проект оставался совсем без обновлений. Обход
+//! ([`watch_tree`]) пропускает нечитаемое, [`IGNORED_DIRS`] и gitignored
+//! каталоги (`cache/` на 12k папок съедал бы лимит inotify); такие каталоги
+//! получают подписку, только когда их раскрывают в дереве ([`watch_dir`]).
+//! Новые каталоги подписываются диспетчером по событию создания.
 //!
 //! Watcher хранится в [`CodeSession::watcher`] (не `RwSignal`, а обычный
 //! `Arc<Mutex<Option<FsWatcher>>>` — он не Reactive, держит RAII handle).
@@ -22,7 +31,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use notify::event::{EventKind, ModifyKind};
@@ -99,15 +108,17 @@ fn is_event_ignored(rel: &Path) -> bool {
 /// Watcher одной сессии (один `root_folder`). Drop останавливает поток
 /// notify и закрывает channel.
 pub struct FsWatcher {
-    /// RAII handle. Drop = stop watching.
-    _watcher: RecommendedWatcher,
+    /// RAII handle. Drop = stop watching. Диспетчер держит только `Weak`,
+    /// иначе он сам продлевал бы жизнь watcher'а и канал не закрывался бы.
+    watcher: Arc<Mutex<RecommendedWatcher>>,
     /// Корневой путь, чтобы фильтровать игнорируемые префиксы.
     root: PathBuf,
 }
 
 impl FsWatcher {
-    /// Создать watcher на `root` рекурсивно. Запускает std-поток-диспетчер,
-    /// который преобразует raw notify-события в действия над `session`.
+    /// Создать watcher на `root`. Синхронно подписывается только на сам
+    /// корень (чтобы старт сессии не ждал обхода), остальное дерево
+    /// подписывает поток-диспетчер перед входом в цикл событий.
     /// Все мутации сигналов делаются через `run_on_main_thread` (signal-runtime
     /// thread-local'ный, доступен только на main).
     ///
@@ -120,24 +131,129 @@ impl FsWatcher {
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = raw_tx.send(res);
         })?;
-        watcher.watch(&root, RecursiveMode::Recursive)?;
+        watcher.watch(&root, RecursiveMode::NonRecursive)?;
+        let watcher = Arc::new(Mutex::new(watcher));
 
+        let weak = Arc::downgrade(&watcher);
         let root_for_thread = root.clone();
         std::thread::Builder::new()
             .name("synthos-fs-watcher".to_string())
-            .spawn(move || dispatch_loop(session, raw_rx, root_for_thread))
+            .spawn(move || {
+                let started = Instant::now();
+                let n = watch_tree(&weak, &root_for_thread, &root_for_thread);
+                watch_git_meta(&weak, &root_for_thread);
+                debug!(
+                    target: "code-editor.fs_watcher",
+                    root = %root_for_thread.display(),
+                    dirs = n,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "watches installed"
+                );
+                dispatch_loop(session, raw_rx, root_for_thread, weak)
+            })
             .ok();
 
-        Ok(Self {
-            _watcher: watcher,
-            root,
-        })
+        Ok(Self { watcher, root })
     }
 
     /// Корень, на который установлен watcher (для UI-доков / диагностики).
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// Подписаться на один каталог (без рекурсии). Ошибка — только лог:
+    /// нечитаемый каталог не должен ломать остальное наблюдение.
+    pub fn watch_dir(&self, dir: &Path) {
+        add_watches(&Arc::downgrade(&self.watcher), std::iter::once(dir.to_path_buf()));
+    }
+}
+
+/// Поставить `NonRecursive`-подписку на каждый каталог из `dirs`. Ошибки
+/// (EACCES, ENOENT после гонки, исчерпанный лимит inotify) логируются и
+/// пропускаются. Возвращает число успешно подписанных каталогов.
+fn add_watches(
+    watcher: &Weak<Mutex<RecommendedWatcher>>,
+    dirs: impl IntoIterator<Item = PathBuf>,
+) -> usize {
+    let Some(w) = watcher.upgrade() else { return 0 };
+    let Ok(mut w) = w.lock() else { return 0 };
+    let mut ok = 0usize;
+    for dir in dirs {
+        match w.watch(&dir, RecursiveMode::NonRecursive) {
+            Ok(()) => ok += 1,
+            Err(e) => debug!(
+                target: "code-editor.fs_watcher",
+                dir = %dir.display(),
+                error = %e,
+                "watch failed, skip"
+            ),
+        }
+    }
+    ok
+}
+
+/// Каталоги под `start` (включая сам `start`), которые стоит наблюдать:
+/// без нечитаемых, без [`IGNORED_DIRS`], без `.git` и без gitignored.
+/// `.gitignore` всех уровней от `root` вниз учитывается обходчиком `ignore`.
+fn watchable_dirs(start: &Path) -> Vec<PathBuf> {
+    ignore::WalkBuilder::new(start)
+        .hidden(false)
+        .git_global(false)
+        .follow_links(false)
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            name != ".git" && !IGNORED_DIRS.iter().any(|ig| name == *ig)
+        })
+        .build()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|t| t.is_dir()))
+        .map(ignore::DirEntry::into_path)
+        .collect()
+}
+
+/// Подписать `start` и всё наблюдаемое под ним. `start` сам по себе
+/// проверяется на gitignore через обход родителя на глубину 1 — корень
+/// обхода `ignore` не фильтрует (новый `cache/` иначе подписался бы целиком).
+fn watch_tree(watcher: &Weak<Mutex<RecommendedWatcher>>, root: &Path, start: &Path) -> usize {
+    if start != root {
+        let Some(parent) = start.parent() else { return 0 };
+        let listed = ignore::WalkBuilder::new(parent)
+            .hidden(false)
+            .git_global(false)
+            .max_depth(Some(1))
+            .build()
+            .filter_map(Result::ok)
+            .any(|e| e.path() == start);
+        if !listed {
+            return 0;
+        }
+    }
+    add_watches(watcher, watchable_dirs(start))
+}
+
+/// `.git/` наблюдаем точечно: сам каталог (HEAD, index, MERGE_HEAD…) и
+/// `refs/` рекурсивно. `objects/`, `logs/` шумят без UX-смысла.
+fn watch_git_meta(watcher: &Weak<Mutex<RecommendedWatcher>>, root: &Path) {
+    let git = root.join(".git");
+    if !git.is_dir() {
+        return;
+    }
+    let mut dirs = vec![git.clone()];
+    dirs.extend(
+        walk_plain_dirs(&git.join("refs")),
+    );
+    add_watches(watcher, dirs);
+}
+
+/// Все каталоги под `dir` без каких-либо фильтров (для `.git/refs`).
+fn walk_plain_dirs(dir: &Path) -> Vec<PathBuf> {
+    ignore::WalkBuilder::new(dir)
+        .standard_filters(false)
+        .build()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|t| t.is_dir()))
+        .map(ignore::DirEntry::into_path)
+        .collect()
 }
 
 /// Высокоуровневое событие, переведённое из notify::EventKind.
@@ -153,6 +269,9 @@ enum FsEvent {
     /// Сам путь не нужен — мы только фиксируем факт «надо перечитать
     /// git-status»; апдейт этого signal'а делает воркер.
     GitMetaChanged,
+    /// Появился каталог — на него (и его наблюдаемое содержимое) надо
+    /// поставить подписки, без этого его файлы были бы невидимы watcher'у.
+    DirAdded(PathBuf),
 }
 
 /// Возвращает 0..2 высокоуровневых события для одного notify-event.
@@ -195,7 +314,14 @@ fn translate(res: notify::Result<notify::Event>, root: &Path) -> Vec<FsEvent> {
         .unwrap_or(false);
     if is_git_meta {
         debug!(target: "code-editor.fs_watcher", rel = %rel.display(), "git-meta event");
-        return vec![FsEvent::GitMetaChanged];
+        let mut out = vec![FsEvent::GitMetaChanged];
+        // Новая ветка с «/» в имени создаёт каталог в refs/ — подписываем.
+        if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_)))
+            && path.is_dir()
+        {
+            out.push(FsEvent::DirAdded(path));
+        }
+        return out;
     }
 
     let mut out: Vec<FsEvent> = Vec::with_capacity(2);
@@ -208,11 +334,10 @@ fn translate(res: notify::Result<notify::Event>, root: &Path) -> Vec<FsEvent> {
             out.push(FsEvent::StructureChanged(dir));
             // Atomic-rename / write-then-rename: целевой файл существует с
             // новым контентом — открытый буфер должен перечитаться.
-            if std::fs::metadata(&path)
-                .map(|m| m.is_file())
-                .unwrap_or(false)
-            {
-                out.push(FsEvent::Modified(path.clone()));
+            match std::fs::metadata(&path) {
+                Ok(m) if m.is_file() => out.push(FsEvent::Modified(path.clone())),
+                Ok(m) if m.is_dir() => out.push(FsEvent::DirAdded(path.clone())),
+                _ => {}
             }
         }
         EventKind::Remove(_) => {
@@ -240,6 +365,7 @@ fn dispatch_loop(
     session: CodeSession,
     rx: mpsc::Receiver<notify::Result<notify::Event>>,
     root: PathBuf,
+    watcher: Weak<Mutex<RecommendedWatcher>>,
 ) {
     let debounce = Duration::from_millis(200);
     loop {
@@ -251,8 +377,9 @@ fn dispatch_loop(
         let mut modified: HashSet<PathBuf> = HashSet::new();
         let mut structure: HashSet<PathBuf> = HashSet::new();
         let mut git_meta_dirty = false;
+        let mut added: HashSet<PathBuf> = HashSet::new();
         for ev in translate(raw, &root) {
-            accumulate(ev, &mut modified, &mut structure, &mut git_meta_dirty);
+            accumulate(ev, &mut modified, &mut structure, &mut git_meta_dirty, &mut added);
         }
 
         // Дебаунс: ждём 200мс с recv_timeout. Любое новое событие
@@ -267,11 +394,27 @@ fn dispatch_loop(
             match rx.recv_timeout(timeout) {
                 Ok(raw) => {
                     for ev in translate(raw, &root) {
-                        accumulate(ev, &mut modified, &mut structure, &mut git_meta_dirty);
+                        accumulate(
+                            ev,
+                            &mut modified,
+                            &mut structure,
+                            &mut git_meta_dirty,
+                            &mut added,
+                        );
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+
+        // Подписки на новые каталоги ставим здесь, в фоне: обход может
+        // быть длинным (распаковали архив). `.git/refs/*` — без фильтров.
+        for dir in added {
+            if dir.starts_with(root.join(".git")) {
+                add_watches(&watcher, walk_plain_dirs(&dir));
+            } else {
+                watch_tree(&watcher, &root, &dir);
             }
         }
 
@@ -299,6 +442,7 @@ fn accumulate(
     modified: &mut HashSet<PathBuf>,
     structure: &mut HashSet<PathBuf>,
     git_meta_dirty: &mut bool,
+    added: &mut HashSet<PathBuf>,
 ) {
     match ev {
         FsEvent::Modified(p) => {
@@ -309,6 +453,9 @@ fn accumulate(
         }
         FsEvent::GitMetaChanged => {
             *git_meta_dirty = true;
+        }
+        FsEvent::DirAdded(p) => {
+            added.insert(p);
         }
     }
 }
@@ -566,5 +713,59 @@ fn reconcile_loaded_dirs(session: CodeSession) {
         session.loaded_dirs.update(|s| {
             s.retain(|p| !missing.iter().any(|m| p == m || p.starts_with(m)));
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Нечитаемый каталог (root-овский rootfs) не должен лишать проект
+    /// наблюдения: раньше рекурсивный watch падал целиком с EACCES.
+    #[test]
+    fn unreadable_and_ignored_dirs_do_not_break_watching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        std::fs::write(root.join(".gitignore"), "/cache/\n").unwrap();
+        // .gitignore учитывается обходчиком только внутри git-репо.
+        std::fs::create_dir_all(root.join(".git/refs/heads")).unwrap();
+        for d in ["docs", "cache/deep", "build/x", "locked/inner", "src/a"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+
+        let dirs = watchable_dirs(&root);
+        let has = |d: &str| dirs.contains(&root.join(d));
+        assert!(has("docs") && has("src/a") && dirs.contains(&root));
+        assert!(!has("cache") && !has("cache/deep"), "gitignored: {dirs:?}");
+        assert!(!has("build/x") && !has(".git"), "ignored: {dirs:?}");
+
+        let (tx, rx) = mpsc::channel();
+        let w = notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        })
+        .unwrap();
+        let w = Arc::new(Mutex::new(w));
+        let weak = Arc::downgrade(&w);
+        // `locked` виден в листинге родителя, но подписка на него (если мы
+        // не root) падает с EACCES — остальные каталоги подписываются.
+        assert!(has("locked"));
+        assert!(add_watches(&weak, dirs.clone()) >= dirs.len() - 1);
+
+        // Новый gitignored каталог по событию не подписывается целиком.
+        assert_eq!(watch_tree(&weak, &root, &root.join("cache")), 0);
+        assert!(watch_tree(&weak, &root, &root.join("src")) >= 2);
+
+        std::fs::write(root.join("docs/22-camera.md"), "x").unwrap();
+        let seen = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(500)).ok())
+            .filter_map(Result::ok)
+            .flat_map(|e| e.paths)
+            .collect::<Vec<_>>();
+        assert!(seen.iter().any(|p| p.ends_with("docs/22-camera.md")), "{seen:?}");
+
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
     }
 }

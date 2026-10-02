@@ -384,16 +384,8 @@ fn code_tile(session: CodeSession, idx: usize, t: TileOpts, entry: RailEntry) ->
     // все простаивают — красный, смешанно — оранжевый.
     // Реактивность — через .get() в scope Reactive'а workspaces_segment.
     let term_count = session.terminals.tabs.get().len();
-    let busy_count = session.terminals.busy_count.get();
     let mut btn_stack = Stack::new().child(btn);
-    if term_count > 0 {
-        let tone = if busy_count == 0 {
-            "idle"
-        } else if busy_count >= term_count {
-            "busy"
-        } else {
-            "mixed"
-        };
+    if let Some(tone) = term_tone(&session) {
         btn_stack = btn_stack.child(
             Positioned::new(
                 Badge::new(term_count.to_string())
@@ -404,6 +396,45 @@ fn code_tile(session: CodeSession, idx: usize, t: TileOpts, entry: RailEntry) ->
         );
     }
     tile_with_label(btn_stack, label, t, entry)
+}
+
+/// Сводка занятости терминалов сессии для бейджа: все заняты — `busy`,
+/// все простаивают — `idle`, смешанно — `mixed`; без терминалов — `None`.
+/// Читает сигналы через `.get()` — вызывать в scope Reactive'а рейла.
+fn term_tone(session: &CodeSession) -> Option<&'static str> {
+    let term_count = session.terminals.tabs.get().len();
+    let busy_count = session.terminals.busy_count.get();
+    if term_count == 0 {
+        None
+    } else if busy_count == 0 {
+        Some("idle")
+    } else if busy_count >= term_count {
+        Some("busy")
+    } else {
+        Some("mixed")
+    }
+}
+
+/// Сколько точек статуса умещается на плитке группы: дальше полоска
+/// вылезала бы за кнопку на соседнюю плитку.
+const GROUP_DOTS_MAX: usize = 5;
+
+/// Полоска точек статуса на плитке группы — по точке на каждый проект с
+/// терминалами, в порядке панели группы, цвет — как у бейджа самого
+/// проекта. Сводный цвет одним кружком прятал бы, КАКОЙ проект затих;
+/// точки видно без раскрытия панели и они мельче числового бейджа.
+///
+/// Возвращает уже `Positioned` для `Stack` над 40-px кнопкой: правый край
+/// полоски — там же, где у числового бейджа (≈ 42 px). Ширина: точка 7 px,
+/// зазор 2 px, поля 2 px с каждой стороны (см. MSS; рамка размер не меняет).
+pub fn group_term_dots(tones: &[&'static str]) -> Positioned {
+    let mut row = Row::new().gap(2.0);
+    for tone in tones.iter().take(GROUP_DOTS_MAX) {
+        row = row.child(DecoratedBox::new().class(format!("nav-rail-group-dot {tone}")));
+    }
+    let n = tones.len().clamp(1, GROUP_DOTS_MAX) as f32;
+    let width = n * 7.0 + (n - 1.0) * 2.0 + 4.0;
+    Positioned::new(DecoratedBox::new().class("nav-rail-group-dots").child(row)).at(42.0 - width, -3.0)
 }
 
 fn graph_tile(tab: OpenTab, t: TileOpts, entry: RailEntry) -> impl Widget {
@@ -550,9 +581,19 @@ fn group_tile(group: &RailGroupConfig, members: &[RailEntry], entry: RailEntry) 
         .tooltip(group.name.clone())
         .press_passthrough()
         .class(t.class("nav-rail-item nav-rail-group-btn"));
-    // Число плиток — маленькая метка в углу: группу видно среди плиток.
+    // В углу — статусы терминалов проектов группы (точка на проект); если
+    // терминалов нет — число плиток: группу видно среди плиток.
+    let tones: Vec<&'static str> = members
+        .iter()
+        .filter_map(|m| match m {
+            RailEntry::Code(s) => term_tone(s),
+            _ => None,
+        })
+        .collect();
     let mut body = Stack::new().child(btn);
-    if !members.is_empty() {
+    if !tones.is_empty() {
+        body = body.child(group_term_dots(&tones));
+    } else if !members.is_empty() {
         body = body.child(
             Positioned::new(Badge::new(members.len().to_string()).small().class("nav-rail-group-count")).at(24.0, -2.0),
         );

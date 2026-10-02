@@ -196,6 +196,33 @@
     background-color: var(--text-muted);
 }
 
+/* Статусы терминалов проектов группы: по точке на проект, цвета — как у
+ * .nav-rail-term-badge. Подложка цвета рейла отделяет точки от иконки. */
+.nav-rail-group-dots {
+    padding: 2px;
+    border-radius: 6px;
+    border: 1px solid var(--bg-rail);
+    background-color: var(--bg-rail);
+}
+
+.nav-rail-group-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 4px;
+}
+
+.nav-rail-group-dot.busy {
+    background-color: var(--presence-online);
+}
+
+.nav-rail-group-dot.idle {
+    background-color: var(--error);
+}
+
+.nav-rail-group-dot.mixed {
+    background-color: var(--warning);
+}
+
 /* Панель группы: левый край прямой — она продолжает вкладку; тень
  * отброшена вправо, чтобы не темнить стык с рейлом. Выезжает пружиной
  * (`transition: size` читает `PopupPanel::reveal`). */

@@ -1577,6 +1577,8 @@ settings.dtype.compute.nvfp4_asr = "NVFP4 — Tensor Cores FP4 nativi (Blackwell
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "Nuovo…"
 nav.add.code = "Editor di codice"
+nav.add.terminal = "Terminale"
+nav.session.terminal = "Terminale"
 nav.add.nodes = "Editor di nodi"
 nav.add.chat = "Chat"
 nav.add.note = "Note"

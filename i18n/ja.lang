@@ -1574,6 +1574,8 @@ settings.dtype.compute.nvfp4_asr = "NVFP4 — ネイティブ FP4 Tensor Cores�
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "新規…"
 nav.add.code = "コードエディター"
+nav.add.terminal = "ターミナル"
+nav.session.terminal = "ターミナル"
 nav.add.nodes = "ノードエディター"
 nav.add.chat = "チャット"
 nav.add.note = "ノート"

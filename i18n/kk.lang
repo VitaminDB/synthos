@@ -1577,6 +1577,8 @@ settings.dtype.compute.nvfp4_asr = "NVFP4 — нативті FP4 Tensor Cores (B
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "Жасау…"
 nav.add.code = "Код редакторы"
+nav.add.terminal = "Терминал"
+nav.session.terminal = "Терминал"
 nav.add.nodes = "Түйін редакторы"
 nav.add.chat = "Чат"
 nav.add.note = "Жазбалар"

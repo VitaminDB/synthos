@@ -1588,6 +1588,8 @@ nodes.common.synthesizing = "Synteza…"
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "Nowy…"
 nav.add.code = "Edytor kodu"
+nav.add.terminal = "Terminal"
+nav.session.terminal = "Terminal"
 nav.add.nodes = "Edytor węzłów"
 nav.add.chat = "Czat"
 nav.add.note = "Notatki"

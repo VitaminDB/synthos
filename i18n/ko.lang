@@ -1574,6 +1574,8 @@ settings.dtype.compute.nvfp4_asr = "NVFP4 — native FP4 Tensor Cores(Blackwell 
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "새로 만들기…"
 nav.add.code = "코드 편집기"
+nav.add.terminal = "터미널"
+nav.session.terminal = "터미널"
 nav.add.nodes = "노드 편집기"
 nav.add.chat = "채팅"
 nav.add.note = "노트"

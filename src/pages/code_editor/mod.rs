@@ -27,6 +27,9 @@
 //! `code.session_gen` / `code.active_id` — переключение между сессиями подменяет
 //! ratio_signal на свежий, и layout мгновенно становится «под эту сессию».
 //!
+//! Сессия-«Терминал» (`CodeSession::terminal_only`, меню «+» рейла) —
+//! тот же маршрут, но каркас из одной панели терминалов (`terminal_frame`).
+//!
 //! Когда `code.active_session().is_none()` (сессий нет вовсе) — вместо каркаса
 //! рендерится no-session placeholder с подсказкой создать сессию через `+`.
 
@@ -52,7 +55,7 @@ use syngui::widgets::{SplitDirection, SplitView};
 use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::{self, expand, FrameSpec, Pane};
 use crate::context::AppCtx;
-use crate::icons::{MI_CODE, MI_DESCRIPTION, MI_FOLDER};
+use crate::icons::{MI_CODE, MI_DESCRIPTION, MI_FOLDER, MI_TERMINAL};
 
 pub use state::CodeEditorCtx;
 
@@ -81,6 +84,10 @@ pub fn view() -> impl Widget {
                     || Box::new(no_session_placeholder()),
                 )))];
             };
+
+            if session.terminal_only {
+                return vec![Box::new(terminal_frame())];
+            }
 
             // Терминал не заводится сам: PTY поднимает shell, а тот —
             // профиль пользователя со всем, что в нём прописано. Открытие
@@ -117,6 +124,23 @@ pub fn view() -> impl Widget {
     Stack::new()
         .fit(StackFit::Expand)
         .children(vec![Box::new(main) as Box<dyn Widget>, Box::new(dialogs::view())])
+}
+
+/// Каркас сессии-«Терминала»: без дерева файлов, редактора и списка
+/// открытых файлов — одна панель терминалов на весь центр.
+fn terminal_frame() -> impl Widget {
+    workspace_frame::view(FrameSpec::new(
+        "code-editor-h-split",
+        || {
+            let title = tr!("nav.session.terminal");
+            let identity = match state::home_dir() {
+                Some(home) => panel_header::identity_path(MI_TERMINAL, title, &home),
+                None => panel_header::identity_text(MI_TERMINAL, title, String::new()),
+            };
+            Box::new(panel_header::center(CenterSpec::new(identity)))
+        },
+        || Box::new(DecoratedBox::new().class("code-editor-center grow").child(terminal_pane::view(true))),
+    ))
 }
 
 /// Центр: вертикальный split editor↔terminal, а при скрытом редакторе

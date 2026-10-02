@@ -301,6 +301,7 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
                 editor_visible: None,
                 editor_states: std::collections::HashMap::new(),
                 created_at: None,
+                terminal_only: false,
             });
         }
     }
@@ -684,6 +685,7 @@ fn install_config_autosave(ctx: &AppCtx) {
                     })
                     .collect(),
                 created_at: Some(s.created_at),
+                terminal_only: s.terminal_only,
             })
             .collect();
         let active_idx = active_id.and_then(|id| sessions.iter().position(|s| s.id == id));

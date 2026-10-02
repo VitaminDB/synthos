@@ -8,7 +8,7 @@
 //! │ ⬡  │  code-сессия / граф нод / чат / разделитель — в порядке создания,
 //! │ AB │  скроллятся, если не влезают
 //! │ ─  │
-//! │ +  │  меню: Редактор кода · Нодовый редактор · Чат · Разделитель
+//! │ +  │  меню: Редактор кода · Терминал · Нодовый редактор · Чат · Разделитель
 //! │    │
 //! │ ▣  │  Syn-пакеты
 //! │ ☁  │  HuggingFace (+ бейдж активных загрузок)
@@ -240,7 +240,10 @@ fn entry_tile(entry: &RailEntry, code_idx: &mut usize, in_flyout: bool) -> Box<d
     let t = TileOpts { selected: active, in_flyout };
     match entry {
         RailEntry::Code(s) => {
-            *code_idx += 1;
+            // Терминалы не занимают номера «Сессия #N» у проектов.
+            if !s.terminal_only {
+                *code_idx += 1;
+            }
             Box::new(code_tile(*s, *code_idx, t, entry.clone()))
         }
         RailEntry::Graph(tab) => Box::new(graph_tile(*tab, t, entry.clone())),
@@ -368,11 +371,16 @@ fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) 
 
 fn code_tile(session: CodeSession, idx: usize, t: TileOpts, entry: RailEntry) -> impl Widget {
     let folder = session.root_folder.get_untracked();
-    let icon = if folder.is_some() { MI_FOLDER } else { MI_DESCRIPTION };
-    let label = folder
-        .as_ref()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx));
+    let (icon, label) = if session.terminal_only {
+        (MI_TERMINAL, tr!("nav.session.terminal"))
+    } else {
+        let icon = if folder.is_some() { MI_FOLDER } else { MI_DESCRIPTION };
+        let label = folder
+            .as_ref()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| tr!("nav.session.unnamed", n = idx));
+        (icon, label)
+    };
     let btn = ToolButton::new(icon)
         .tooltip(label.clone())
         .press_passthrough()
@@ -542,6 +550,7 @@ fn add_button() -> impl Widget {
     let menu = PopupMenu::new()
         .items(vec![
             MenuItem::new("code", tr!("nav.add.code")).icon(MI_CODE),
+            MenuItem::new("terminal", tr!("nav.add.terminal")).icon(MI_TERMINAL),
             MenuItem::new("nodes", tr!("nav.add.nodes")).icon(MI_HUB),
             MenuItem::new("chat", tr!("nav.add.chat")).icon(MI_CHAT),
             MenuItem::new("note", tr!("nav.add.note"))
@@ -555,6 +564,7 @@ fn add_button() -> impl Widget {
         .position(pos)
         .on_select(|id| match id {
             "code" => rail::new_code_session(),
+            "terminal" => rail::new_terminal(),
             "nodes" => rail::new_graph(),
             "chat" => rail::new_chat(),
             id if crate::pages::notes::project_ui::handle_menu(id) => {}

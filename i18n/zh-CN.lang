@@ -1572,6 +1572,8 @@ settings.dtype.compute.nvfp4_asr = "NVFP4 —— native FP4 Tensor Cores（Black
 # ─── Оболочка: рейл, общая шапка, каркас, архив (2026-08-27) ───
 nav.add.tooltip = "新建…"
 nav.add.code = "代码编辑器"
+nav.add.terminal = "终端"
+nav.session.terminal = "终端"
 nav.add.nodes = "节点编辑器"
 nav.add.chat = "聊天"
 nav.add.note = "笔记"

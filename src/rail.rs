@@ -383,6 +383,11 @@ pub fn open(entry: &RailEntry) {
     match entry {
         RailEntry::Code(s) => {
             use_context::<CodeEditorCtx>().switch_to(s.id);
+            // Плитка «Терминал» — это просьба о терминале: если все вкладки
+            // закрыты (или после перезапуска их ещё нет), открыть одну.
+            if s.terminal_only && s.terminals.tabs.get_untracked().is_empty() {
+                let _ = crate::pages::code_editor::state::add_terminal(*s, use_context::<AppCtx>());
+            }
             navigate("code");
         }
         RailEntry::Graph(t) => {
@@ -473,6 +478,17 @@ pub fn is_active(entry: &RailEntry) -> bool {
 /// Новая code-сессия: пустая, сразу активная, страница «code».
 pub fn new_code_session() {
     let _ = use_context::<CodeEditorCtx>().create_empty();
+    navigate("code");
+}
+
+/// Новый терминал: сессия без проекта со своей плиткой, сразу с одной
+/// вкладкой в домашнем каталоге.
+pub fn new_terminal() {
+    let code = use_context::<CodeEditorCtx>();
+    let id = code.create_terminal();
+    if let Some(s) = code.sessions.get_untracked().into_iter().find(|s| s.id == id) {
+        let _ = crate::pages::code_editor::state::add_terminal(s, use_context::<AppCtx>());
+    }
     navigate("code");
 }
 

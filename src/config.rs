@@ -458,6 +458,10 @@ pub struct CodeSessionConfig {
     /// `pages::code_editor::state::CodeEditorCtx::new`).
     #[serde(default)]
     pub created_at: Option<u64>,
+    /// Сессия-«Терминал» из меню «+»: только вкладки терминалов, без
+    /// дерева файлов и редактора; shell стартует в домашнем каталоге.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal_only: bool,
 }
 
 /// Сериализуемая копия `syngui::widgets::input::code_editor::EditorPersistedState`

@@ -216,6 +216,10 @@ pub struct CodeSession {
     /// Unix-миллисекунды создания — порядок плитки в нав-рейле. Persist:
     /// `CodeSessionConfig.created_at`.
     pub created_at: u64,
+    /// Сессия-«Терминал» (меню «+» рейла): страница показывает одни
+    /// вкладки терминалов, shell стартует в домашнем каталоге. Задаётся
+    /// при создании и не меняется. Persist: `CodeSessionConfig.terminal_only`.
+    pub terminal_only: bool,
 }
 
 impl CodeSession {
@@ -245,6 +249,7 @@ impl CodeSession {
         editor_visible_init: bool,
         editor_states_init: HashMap<PathBuf, EditorPersistedState>,
         created_at: u64,
+        terminal_only: bool,
     ) -> Self {
         let root_folder = use_signal(folder);
         let tree_nodes = use_signal(Vec::new());
@@ -409,6 +414,7 @@ impl CodeSession {
             editor_states,
             conflicts,
             created_at,
+            terminal_only,
         };
 
         // Запустить FS-watcher и git-status worker, если папка валидна.
@@ -522,6 +528,7 @@ impl CodeEditorCtx {
                 cfg.editor_visible.unwrap_or(true),
                 editor_states,
                 created_at,
+                cfg.terminal_only,
             );
             drafts::install_draft_autosave(session);
             install_editor_autohide(session);
@@ -581,6 +588,15 @@ impl CodeEditorCtx {
 
     /// Создаёт пустую сессию (без папки) и делает её активной. Возвращает id.
     pub fn create_empty(&self) -> SessionId {
+        self.create(false)
+    }
+
+    /// Создаёт сессию-«Терминал» и делает её активной. Возвращает id.
+    pub fn create_terminal(&self) -> SessionId {
+        self.create(true)
+    }
+
+    fn create(&self, terminal_only: bool) -> SessionId {
         let id = self.next_id.get_untracked();
         self.next_id.set(id.wrapping_add(1));
         let session = CodeSession::new(
@@ -595,6 +611,7 @@ impl CodeEditorCtx {
             true,  // файлов нет — редактор всё равно стартует скрытым
             HashMap::new(),
             crate::config::now_millis(),
+            terminal_only,
         );
         drafts::install_draft_autosave(session);
         install_editor_autohide(session);
@@ -712,13 +729,16 @@ impl TerminalsState {
 /// Создать новый таб терминала в указанной сессии. Сразу делает его активным.
 /// Возвращает id нового таба.
 ///
-/// cwd берётся из `session.root_folder` (корень открытого проекта). Если
-/// folder не задан — session спавнит shell без cwd (наследуется от процесса).
+/// cwd берётся из `session.root_folder` (корень открытого проекта), у
+/// сессии-«Терминала» — домашний каталог. Если ни того, ни другого —
+/// session спавнит shell без cwd (наследуется от процесса).
 /// font_size/family — снимок из `app.terminal_font_*`.
 pub fn add_terminal(session: CodeSession, app: AppCtx) -> Option<u32> {
     let mut config = TerminalConfig::default();
     if let Some(folder) = session.root_folder.get_untracked() {
         config.cwd = Some(folder);
+    } else if session.terminal_only {
+        config.cwd = home_dir();
     }
     let family = app.terminal_font_family.get_untracked();
     if !family.is_empty() {
@@ -868,6 +888,11 @@ pub fn set_active_terminal(session: CodeSession, id: u32) {
     };
     target.session.reset_autofocus();
     session.terminals.active_id.set(Some(id));
+}
+
+/// Домашний каталог — cwd терминалов сессии-«Терминала».
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).filter(|p| p.is_dir())
 }
 
 fn next_terminal_id(state: &TerminalsState) -> u32 {
@@ -1223,6 +1248,41 @@ mod tests {
         syngui::signal::drain_and_run_effects();
     }
 
+    /// Сессия-«Терминал» переживает перезапуск: флаг пишется в конфиг и
+    /// читается обратно; у обычной сессии поля в JSON нет вовсе.
+    #[test]
+    fn terminal_session_flag_roundtrips() {
+        let ctx = CodeEditorCtx::new(Vec::new(), None);
+        ctx.create_empty();
+        ctx.create_terminal();
+        let sessions = ctx.sessions.get_untracked();
+        assert!(!sessions[0].terminal_only);
+        assert!(sessions[1].terminal_only);
+        assert!(sessions[1].root_folder.get_untracked().is_none());
+
+        let cfg = |terminal_only| CodeSessionConfig {
+            root_folder: None,
+            open_files: Vec::new(),
+            active_file: None,
+            split_ratio: None,
+            left_split_ratio: None,
+            right_split_ratio: None,
+            soft_wrap: false,
+            editor_visible: None,
+            editor_states: HashMap::new(),
+            created_at: Some(1),
+            terminal_only,
+        };
+        let plain = serde_json::to_string(&cfg(false)).unwrap();
+        assert!(!plain.contains("terminal_only"), "{plain}");
+        let json = serde_json::to_string(&cfg(true)).unwrap();
+        let back: CodeSessionConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.terminal_only);
+
+        let restored = CodeEditorCtx::new(vec![back], Some(0));
+        assert!(restored.active_session_untracked().unwrap().terminal_only);
+    }
+
     #[test]
     fn editor_follows_active_file_and_manual_toggle() {
         let ctx = CodeEditorCtx::new(Vec::new(), None);
@@ -1280,6 +1340,7 @@ mod tests {
             editor_visible: visible,
             editor_states: HashMap::new(),
             created_at: None,
+            terminal_only: false,
         };
         let path = file.display().to_string();
         let ctx = CodeEditorCtx::new(

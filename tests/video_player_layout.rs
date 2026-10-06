@@ -1,4 +1,4 @@
-//! Плеер приложения (`components::video_player`): кадр во всю сцену,
+//! Плеер приложения (`syngui::widgets::VideoPlayerView`): кадр во всю сцену,
 //! панель у нижнего края поверх кадра, перемотка во всю ширину, ⏯ по центру,
 //! ±1 с по краям транспорта; пауза пробелом, кликом по кадру и большой ⏵;
 //! дорожка ползунка по центру его кружка.
@@ -23,7 +23,7 @@ use syngui::render::DrawCommand;
 use syngui::testing::{click_at, press_key, TestHarness};
 use syngui::video::VideoPlayer;
 
-use synthos::components::video_player::VideoPlayerView;
+use syngui::widgets::VideoPlayerView;
 
 const W: f32 = 1200.0;
 const H: f32 = 680.0;

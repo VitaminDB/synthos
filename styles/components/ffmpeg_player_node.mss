@@ -14,8 +14,8 @@
     box-shadow: inset 0 0 0 1px rgba(236, 72, 153, 0.20);
 }
 
-/* Кадр ноды — общий плеер (`components::video_player`, стили в
- * video_player.mss) на всю площадь хоста. */
+/* Кадр ноды — общий плеер (`syngui::widgets::VideoPlayerView`, стили —
+ * встроенные в syngui) на всю площадь хоста. */
 .ffmpeg-player-canvas-host {
     background-color: #000000;
     border-radius: 6px;

@@ -25,7 +25,7 @@ use syngui::video::{HwAccel, VideoPlayer};
 use syngui::widgets::containers::GestureDetector;
 use syngui::widgets::visual::StaticWaveform;
 
-use crate::components::video_player::{FullscreenCtl, VideoPlayerView};
+use syngui::widgets::{FullscreenCtl, VideoPlayerView};
 use crate::context::AppCtx;
 use crate::icons::{MI_DOWNLOAD, MI_FIT_SCREEN, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW};
 use crate::syn_chat::attach::{self, blobs};
@@ -135,7 +135,7 @@ fn open_from_card(
     })
 }
 
-/// Видео: постер с кнопкой ⏵, по нажатию — плеер (`components::video_player`,
+/// Видео: постер с кнопкой ⏵, по нажатию — плеер (`syngui::widgets::VideoPlayerView`,
 /// компактный) на том же месте. Ленивость намеренная: декодер на каждое видео
 /// в ленте съел бы память и GPU, а большинство роликов пользователь не
 /// переоткрывает.

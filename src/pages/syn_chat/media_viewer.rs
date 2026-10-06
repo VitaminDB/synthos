@@ -19,7 +19,7 @@
 //! Тело зависит от модальности: картинка — сцена [`super::image_stage`]
 //! (размытый фон из неё же, масштаб к курсору, полосы прокрутки, поворот,
 //! лента миниатюр и панель инструментов поверх; подвала у неё нет), видео — плеер
-//! [`crate::components::video_player`] во всю сцену (умеет разворачиваться
+//! [`syngui::widgets::VideoPlayerView`] во всю сцену (умеет разворачиваться
 //! на всё окно), аудио — waveform с play/pause, документ — первые килобайты
 //! текста. Подвал есть только когда в нём что-то есть — счётчик вложений.
 //!
@@ -40,7 +40,7 @@ use syngui::widgets::visual::StaticWaveform;
 use syngui::StyledWidget;
 
 use crate::components::drag_handle::{DragHandle, DragPhase};
-use crate::components::video_player::{FullscreenCtl, VideoPlayerView};
+use syngui::widgets::{FullscreenCtl, VideoPlayerView};
 use crate::icons::{
     MI_CHEVRON_LEFT, MI_CHEVRON_RIGHT, MI_CLOSE, MI_CLOSE_FULLSCREEN, MI_CONTENT_COPY,
     MI_OPEN_IN_FULL, MI_OPEN_IN_NEW, MI_PAUSE, MI_PLAY_ARROW,

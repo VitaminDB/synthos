@@ -125,8 +125,8 @@ ToolButton.media-viewer-close:hover {
     overflow: hidden;
 }
 
-/* Видео: сцена без фиксированной высоты — плеер (`components::video_player`,
- * стили в video_player.mss) занимает всё тело между шапкой и низом карточки;
+/* Видео: сцена без фиксированной высоты — плеер (`syngui::widgets::VideoPlayerView`,
+ * стили встроены в syngui) занимает всё тело между шапкой и низом карточки;
  * подвала у видео нет. */
 .media-viewer-video-stage {
     background-color: #000000;

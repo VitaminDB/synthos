@@ -1,5 +1,5 @@
 //! Кадры со звуком в ноде (сохранение H3): общий плеер приложения
-//! (`components::video_player`, компактный) и под ним стерео-волна в такт
+//! (`syngui::widgets::VideoPlayerView`, компактный) и под ним стерео-волна в такт
 //! позиции плеера, строка «кадр N/M · fps».
 
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use syngui::audio::AudioBuffer;
 use syngui::prelude::*;
 use syngui::widgets::Column;
 
-use crate::components::video_player::{FramesSource, MediaSource, VideoPlayerView};
+use syngui::widgets::{FramesSource, MediaSource, VideoPlayerView};
 
 use super::stereo_waveform::StereoWaveform;
 

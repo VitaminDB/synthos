@@ -4,7 +4,7 @@
 //! вместо/параллельно Video Save, либо открывает любой файл с диска.
 //!
 //! Кадр и управление — общий плеер приложения
-//! ([`crate::components::video_player`]); у ноды свои только выбор файла,
+//! ([`syngui::widgets::VideoPlayerView`]); у ноды свои только выбор файла,
 //! аппаратное декодирование и сохранённая громкость.
 
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use syngui::video::{HwAccel, VideoPlayer};
 use syngui::widget::WidgetExt;
 use syngui::widgets::{Column, DecoratedBox, Dropdown, DropdownItem, Reactive, Row, ToolButton};
 
-use crate::components::video_player::{FramesSource, MediaSource, VideoPlayerView};
+use syngui::widgets::{FramesSource, MediaSource, VideoPlayerView};
 use crate::icons::{MI_FOLDER_OPEN, MI_MOVIE, MI_PLAY_ARROW};
 
 use super::super::eval::{EvalContext, NodeExecutor};
@@ -268,7 +268,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     )
 }
 
-/// Кадр ноды — общий плеер приложения (`components::video_player`): кадры
+/// Кадр ноды — общий плеер приложения (`syngui::widgets::VideoPlayerView`): кадры
 /// из памяти, если они пришли на вход, иначе открытый файл. Файл ещё не
 /// открыт — заглушка с ⏵, которая его откроет.
 fn canvas(h: &FfmpegPlayerHandles, has_path: bool) -> Box<dyn Widget> {

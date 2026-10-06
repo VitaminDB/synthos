@@ -1,6 +1,6 @@
 //! `LtxVaeDecode` — видео-VAE decode: `(model, video_latent) → frames`.
 //! RGB `[1,3,F,H,W]` → RGBA-кадры (`LtxFrames`, шарится Arc'ами) + превью
-//! прямо в body — общий плеер приложения (`video_player::frames_preview`).
+//! прямо в body — общий плеер приложения (`syngui::widgets::frames_preview`).
 //!
 //! Перед decode снимается hold AvDit (`shared::release_avdit_hold`) и
 //! делается sync+hard-trim — CLI-паттерн «дроп DiT до VAE» (иначе на 24GB
@@ -17,7 +17,7 @@ use synaptix_core::device::Device;
 use synaptix_video_ltx23::pipeline::rgb_to_frames;
 use synaptix_video_ltx23::vae::VaeDecoder;
 
-use crate::components::video_player::frames_preview;
+use syngui::widgets::frames_preview;
 
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;

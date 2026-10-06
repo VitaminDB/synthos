@@ -25,7 +25,7 @@ use syngui::input::Key;
 use syngui::testing::{click_at, press_key, TestHarness};
 use syngui::video::VideoFrame;
 
-use synthos::components::video_player::{frames_preview, FramesSource, MediaSource};
+use syngui::widgets::{frames_preview, FramesSource, MediaSource};
 
 fn frames() -> Arc<Vec<Arc<VideoFrame>>> {
     let (w, h) = (32u32, 18u32);

@@ -8,7 +8,7 @@ use syngui::prelude::*;
 use syngui::widgets::Column;
 use synaptix_video_minimax_h3 as h3;
 
-use crate::components::video_player::frames_preview;
+use syngui::widgets::frames_preview;
 use super::super::super::eval::{EvalContext, NodeExecutor};
 use super::super::super::state::NodeEditorCtx;
 use super::super::super::types::{

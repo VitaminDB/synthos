@@ -626,6 +626,7 @@ fn group_tile(group: &RailGroupConfig, members: &[RailEntry], entry: RailEntry) 
         .class("nav-rail-group-slot")
         .child(DecoratedBox::new().class(tab_class).child(Center::new().child(tile)));
 
+    let members_count = members.len();
     let key = entry.key();
     let dnd = Draggable::new(DRAG_TYPE_TILE, key)
         .label(group.name.clone())
@@ -640,10 +641,20 @@ fn group_tile(group: &RailGroupConfig, members: &[RailEntry], entry: RailEntry) 
         .items(vec![
             MenuItem::new("edit", tr!("nav.group.edit")).icon(MI_EDIT),
             MenuItem::new("ungroup", tr!("nav.group.ungroup")).icon(MI_UNARCHIVE),
+            MenuItem::separator(),
+            MenuItem::new("delete", tr!("nav.group.delete")).icon(MI_DELETE),
         ])
         .on_select(move |action| match action {
             "edit" => rail::edit_group(RailGroupEdit { id: Some(id), seed: None }),
             "ungroup" => rail::ungroup(id),
+            "delete" => {
+                // Пустую группу удалять нечего подтверждать.
+                if members_count == 0 {
+                    rail::delete_group(id);
+                } else {
+                    use_context::<AppCtx>().rail_flyout.delete.set(Some(id));
+                }
+            }
             _ => {}
         })
         .child(dnd)
@@ -729,6 +740,68 @@ pub fn group_dialog() -> impl Widget {
                 None => vec![Box::new(DecoratedBox::new().class("code-editor-dialog-empty"))],
             }
         }))
+}
+
+/// Подтверждение «Удалить группу»: группа исчезает, её плитки
+/// закрываются (`rail::delete_group`).
+pub fn delete_group_dialog() -> impl Widget {
+    let delete = use_context::<AppCtx>().rail_flyout.delete;
+    let is_open = use_signal(false);
+    create_effect(move || {
+        let has = delete.get().is_some();
+        if is_open.get_untracked() != has {
+            is_open.set(has);
+        }
+    });
+    Portal::new()
+        .is_open(is_open)
+        .modal(true)
+        .backdrop(true)
+        .anchor(PortalAnchor::Center)
+        .on_close(move || delete.set(None))
+        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
+            let found = delete.get().and_then(|id| match rail::find_entry(&rail::group_key(id)) {
+                Some(RailEntry::Group { group, members }) => Some((group, members.len())),
+                _ => None,
+            });
+            match found {
+                Some((group, n)) => vec![Box::new(delete_group_card(group, n))],
+                None => vec![Box::new(DecoratedBox::new().class("code-editor-dialog-empty"))],
+            }
+        }))
+}
+
+fn delete_group_card(group: RailGroupConfig, n: usize) -> impl Widget {
+    let id = group.id;
+    let cancel = || use_context::<AppCtx>().rail_flyout.delete.set(None);
+    let confirm = move || {
+        use_context::<AppCtx>().rail_flyout.delete.set(None);
+        rail::delete_group(id);
+    };
+    mgui! {
+        DecoratedBox::new().class("code-editor-dialog-card") => [
+            Column::new()
+                .gap(14.0)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                    Text::new(tr!("nav.group.delete_title")).class("code-editor-dialog-title"),
+                    Text::new(tr!("nav.group.delete_hint", name = group.name, n = n))
+                        .class("code-editor-dialog-hint"),
+                    Text::new(tr!("nav.group.delete_detail")).class("code-editor-dialog-path"),
+                    Row::new()
+                        .gap(10.0)
+                        .main_axis_alignment(MainAxisAlignment::End) => [
+                            Button::new(tr!("app.cancel"))
+                                .leading_icon(MI_CLOSE)
+                                .on_click(cancel)
+                                .class("code-editor-dialog-btn-secondary"),
+                            Button::new(tr!("nav.group.delete_confirm"))
+                                .leading_icon(MI_DELETE)
+                                .on_click(confirm)
+                                .class("code-editor-dialog-btn-primary"),
+                        ],
+                ]
+        ]
+    }
 }
 
 fn group_card(e: RailGroupEdit) -> impl Widget {

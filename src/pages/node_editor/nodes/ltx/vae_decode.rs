@@ -300,6 +300,7 @@ fn frames_to_rgba_impl(
             pts_sec: i as f64 / fps,
             seek_generation: 0,
             surface: None,
+            yuv: None,
         }));
         on_progress(i + 1, total);
     }

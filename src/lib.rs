@@ -474,6 +474,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         group: use_signal(None),
         anchor: use_signal(syngui::prelude::Rect::zero()),
         edit: use_signal(None),
+        delete: use_signal(None),
     };
     let chat_recent_emoji = use_signal(saved.chat_recent_emoji.clone());
     let hf_left_split_ratio = use_signal(saved.hf_left_split_ratio);
@@ -1051,6 +1052,7 @@ fn build_app() -> impl Widget {
             pages::notes::project_ui::rename_dialog(),
             components::nav_rail::group_flyout(),
             components::nav_rail::group_dialog(),
+            components::nav_rail::delete_group_dialog(),
             pages::syn_chat::archive_dialog::view(),
             pages::syn_chat::clear_dialog::view(),
             // Плавающее окно чата и кнопка-аватар свёрнутого окна — поверх

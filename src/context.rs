@@ -378,6 +378,8 @@ pub struct RailFlyout {
     pub anchor: RwSignal<Rect>,
     /// Открыт диалог группы: создать новую (`id: None`) или изменить.
     pub edit: RwSignal<Option<RailGroupEdit>>,
+    /// Открыто подтверждение удаления группы вместе с её плитками.
+    pub delete: RwSignal<Option<u64>>,
 }
 
 /// Что правит диалог группы.

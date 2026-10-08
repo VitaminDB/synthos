@@ -341,6 +341,36 @@ pub fn ungroup(id: u64) {
     }
 }
 
+/// Удалить группу вместе с плитками: проекты и терминалы закрываются,
+/// чаты уходят в архив (подтверждение одно — на всю группу), заметки
+/// дописывают автосейв. Граф с несохранёнными правками не закрывается
+/// молча: он выпадает в рейл на место группы, его закрывают отдельно.
+pub fn delete_group(id: u64) {
+    let Some(RailEntry::Group { members, .. }) = find_entry(&group_key(id)) else { return };
+    for m in &members {
+        match m {
+            RailEntry::Code(s) => use_context::<CodeEditorCtx>().close(s.id),
+            RailEntry::Graph(t) => {
+                if !t.dirty.get_untracked() {
+                    use_context::<EditorWorkspace>().close(t.id);
+                }
+            }
+            RailEntry::Chat(c) => registry::archive(&c.id),
+            RailEntry::Notes { path, .. } => {
+                if let Err(e) = use_context::<NotesCtx>().close_project(path) {
+                    crate::pages::notes::project_ui::report_error(&e);
+                }
+            }
+            RailEntry::Separator(_) | RailEntry::Group { .. } => {}
+        }
+    }
+    let notes = use_context::<NotesCtx>();
+    if !notes.has_project() && use_context::<AppCtx>().current_route.get_untracked() == "notes" {
+        navigate("syn_chat");
+    }
+    ungroup(id);
+}
+
 /// Открыть диалог группы.
 pub fn edit_group(edit: RailGroupEdit) {
     use_context::<AppCtx>().rail_flyout.edit.set(Some(edit));

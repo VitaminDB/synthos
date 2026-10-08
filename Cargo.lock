@@ -7759,7 +7759,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.293"
+version = "0.2.294"
 dependencies = [
  "android_logger",
  "anyhow",

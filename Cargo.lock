@@ -6972,6 +6972,7 @@ dependencies = [
  "synaptix-runtime",
  "synaptix-tokenizer",
  "synaptix-tts-omnivoice",
+ "tracing",
 ]
 
 [[package]]
@@ -7065,6 +7066,7 @@ dependencies = [
  "rand 0.8.7",
  "rayon",
  "serde",
+ "serde_json",
  "thiserror 2.0.19",
 ]
 
@@ -7319,6 +7321,7 @@ dependencies = [
 name = "synaptix-llm-gemma4"
 version = "0.1.1"
 dependencies = [
+ "half",
  "serde",
  "serde_json",
  "synaptix-bundle",
@@ -7538,6 +7541,7 @@ dependencies = [
 name = "synaptix-tts-omnivoice"
 version = "0.1.1"
 dependencies = [
+ "rayon",
  "safetensors",
  "serde",
  "serde_json",
@@ -7634,6 +7638,35 @@ dependencies = [
  "synaptix-tokenizer",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "synaptixd"
+version = "0.1.42"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "synassist"
+version = "0.1.42"
+dependencies = [
+ "base64 0.22.1",
+ "dom_smoothie",
+ "futures-util",
+ "htmd",
+ "log",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "synaptixd",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]
@@ -7814,6 +7847,7 @@ dependencies = [
  "synaptix-tts-voxcpm",
  "synaptix-video-ltx23",
  "synaptix-video-minimax-h3",
+ "synassist",
  "syngui",
  "sysinfo",
  "tempfile",

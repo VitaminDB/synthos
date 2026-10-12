@@ -107,6 +107,7 @@ pub fn device_label(dev: Device) -> String {
         Device::Cuda(ord) => format!("CUDA:{ord}"),
         Device::Metal(ord) => format!("Metal:{ord}"),
         Device::Wgpu(ord) => format!("GPU:{ord}"),
+        Device::Npu(ord) => format!("NPU:{ord}"),
     }
 }
 

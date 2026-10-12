@@ -232,7 +232,7 @@ fn verify_readback(out: &PathBuf, shards: &[PathBuf], kind: QuantKind) -> anyhow
                 QuantKind::Nvfp4 => slice.quantize_to_nvfp4(),
                 QuantKind::Mxfp8 => slice.quantize_to_mxfp8(),
                 QuantKind::Sq(bits) => slice.quantize_to_sq(bits),
-                QuantKind::Ggml(_) => anyhow::bail!("smoke: формат {kind:?} не упаковывается"),
+                QuantKind::Ggml(_) | QuantKind::Q8Row => anyhow::bail!("smoke: формат {kind:?} не упаковывается"),
             }?;
 
             let (a_packed, a_scales) = host_bytes(got)?;

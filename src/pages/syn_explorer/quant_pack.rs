@@ -260,7 +260,7 @@ impl QuantizingStream {
                 QuantKind::Mxfp8 => gpu.quantize_to_mxfp8(),
                 QuantKind::Sq(bits) => gpu.quantize_to_sq(bits),
                 // Энкодеров ggml нет и не будет: их форматы — только чтение GGUF.
-                QuantKind::Ggml(_) => {
+                QuantKind::Ggml(_) | QuantKind::Q8Row => {
                     return Err(format!("{name}: формат {kind:?} упаковщик не пишет"));
                 }
             }
@@ -350,7 +350,7 @@ fn packed_shape(kind: QuantKind, slices: usize, n: usize, k: usize) -> Vec<usize
     let last = match kind {
         QuantKind::Nvfp4 => k / 2,
         QuantKind::Mxfp8 => k,
-        QuantKind::Sq(_) | QuantKind::Ggml(_) => {
+        QuantKind::Sq(_) | QuantKind::Ggml(_) | QuantKind::Q8Row => {
             synaptix_core::quant::block_row_bytes(kind.dtype(), k).unwrap_or(k)
         }
     };

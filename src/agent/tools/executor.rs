@@ -12,7 +12,6 @@
 //!   гигантские листинги не раздували контекст LLM.
 
 use thiserror::Error;
-use tokio::process::Command;
 
 use crate::agent::schema::ChatToolCall;
 
@@ -186,32 +185,8 @@ pub struct ToolOutcome {
     pub invalid_args: bool,
 }
 
-/// Диспетчер исполнения: читает `call.function.name` и вызывает
-/// соответствующий обработчик.
-///
-/// Никогда не паникует — все ошибки конвертируются в `ToolOutcome` с
-/// `error=true`.
-fn trim_json_strings(v: &mut serde_json::Value) {
-    match v {
-        serde_json::Value::String(s) => {
-            let t = s.trim().to_string();
-            *s = t;
-        }
-        serde_json::Value::Array(a) => a.iter_mut().for_each(trim_json_strings),
-        serde_json::Value::Object(o) => o.values_mut().for_each(trim_json_strings),
-        _ => {}
-    }
-}
-
 pub fn normalize_args(raw: &str) -> String {
-    let trimmed = raw.trim();
-    match serde_json::from_str::<serde_json::Value>(trimmed) {
-        Ok(mut v) => {
-            trim_json_strings(&mut v);
-            serde_json::to_string(&v).unwrap_or_else(|_| trimmed.to_string())
-        }
-        Err(_) => trimmed.to_string(),
-    }
+    synassist::tools::args::normalize(raw)
 }
 
 /// Аргументы, приведённые к типам схемы инструмента: `"True"` в поле
@@ -229,57 +204,7 @@ pub fn coerce_args(tool: &str, args: &str) -> String {
     serde_json::to_string(&v).unwrap_or_else(|_| args.to_string())
 }
 
-/// Привести значение к JSON-схеме на месте (объекты — по `properties`,
-/// массивы — по `items`); `true` — что-то поменялось.
-pub fn coerce_to_schema(v: &mut serde_json::Value, schema: &serde_json::Value) -> bool {
-    use serde_json::Value as Json;
-    if let Json::Object(map) = v {
-        let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else { return false };
-        let mut changed = false;
-        for (k, val) in map.iter_mut() {
-            if let Some(s) = props.get(k) {
-                changed |= coerce_to_schema(val, s);
-            }
-        }
-        return changed;
-    }
-    if let Json::Array(items) = v {
-        let Some(s) = schema.get("items") else { return false };
-        return items.iter_mut().fold(false, |changed, it| coerce_to_schema(it, s) | changed);
-    }
-    let types: Vec<&str> = match schema.get("type") {
-        Some(Json::String(t)) => vec![t.as_str()],
-        Some(Json::Array(a)) => a.iter().filter_map(|t| t.as_str()).collect(),
-        _ => Vec::new(),
-    };
-    let allows = |t: &str| types.contains(&t);
-    let next = match &*v {
-        Json::String(s) if !types.is_empty() && !allows("string") => {
-            let t = s.trim();
-            let as_bool = || match t.to_ascii_lowercase().as_str() {
-                "true" | "yes" | "on" | "1" => Some(Json::Bool(true)),
-                "false" | "no" | "off" | "0" => Some(Json::Bool(false)),
-                _ => None,
-            };
-            (if allows("boolean") { as_bool() } else { None })
-                .or_else(|| if allows("integer") { t.parse::<i64>().ok().map(Json::from) } else { None })
-                .or_else(|| if allows("number") { t.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Json::Number) } else { None })
-        }
-        Json::Number(n) if allows("boolean") && !allows("integer") && !allows("number") => match n.as_i64() {
-            Some(0) => Some(Json::Bool(false)),
-            Some(1) => Some(Json::Bool(true)),
-            _ => None,
-        },
-        _ => None,
-    };
-    match next {
-        Some(n) => {
-            *v = n;
-            true
-        }
-        None => false,
-    }
-}
+pub use synassist::tools::args::coerce_to_schema;
 
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
@@ -297,23 +222,8 @@ pub(crate) const TOOL_KEYS: [&str; 11] = [
     super::catalog::KEY_VIEW_MEDIA,
 ];
 
-/// Приводит имя вызова к ключу каталога.
-///
-/// Канальные шаблоны (Muse Glimmer) объявляют инструменты пространствами
-/// имён — chat-шаблон рендерит `# Valid recipients: "self", "notes.*",
-/// "bash.*", "user".`, то есть сам разрешает модели любой суффикс внутри
-/// пространства. Она этим пользуется: `to=notes.action`, `to=bash.run`,
-/// а иногда пишет и `bash.bash` или harmony-стиль `functions.web`. Ключи
-/// каталога плоские, поэтому ключом считаем первый сегмент имени, который
-/// в каталоге есть, — 04.09.2026 `notes.action` уходил в «Unknown tool», и
-/// ход умирал на трёх одинаковых вызовах подряд.
 pub(crate) fn canonical_tool_name(name: &str) -> &str {
-    if TOOL_KEYS.contains(&name) {
-        return name;
-    }
-    name.split('.')
-        .find(|seg| TOOL_KEYS.contains(seg))
-        .unwrap_or(name)
+    synassist::tools::args::canonical_name(name, &TOOL_KEYS)
 }
 
 pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
@@ -374,133 +284,15 @@ async fn run_tool(name: &str, args: &str) -> Result<String, ToolError> {
     }
 }
 
-/// Запускает `bash -lc <cmd>`. Формат результата — человекочитаемый текст
-/// с реальными `\n`, а не JSON-строка. Причина:
-/// - JSON экранирует переводы строк (`\n` → `"\\n"`), и многокилобайтный
-///   `stdout` складывается в одну длинную линию, которая рвёт layout bubble.
-/// - LLM-ы стабильно понимают plain-текстовую «секцию» `--- stdout ---`.
 pub async fn run_bash(args_json: &str) -> Result<String, ToolError> {
-    let v: serde_json::Value = serde_json::from_str(args_json)
-        .map_err(|e| ToolError::BadArgs(e.to_string()))?;
-    let command = v
-        .get("command")
-        .and_then(|x| x.as_str())
-        .ok_or(ToolError::MissingField("command"))?;
-
-    let mut cmd = Command::new("bash");
-    cmd.arg("-lc")
-        .arg(command)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        // Stop бросает этот future — процесс должен умереть вместе с ним,
-        // а не остаться сиротой (`yes`, `tail -f`, сервер).
-        .kill_on_drop(true);
-    // Своя группа процессов: при отмене гасим и то, что bash запустил
-    // (иначе потомок держит pipe, и чтение не кончается).
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let mut child = cmd.spawn().map_err(|e| ToolError::Spawn(e.to_string()))?;
-    let mut group = ProcessGroupGuard(child.id());
-    let (stdout, stdout_cut) = read_capped(child.stdout.take(), MAX_READ_OUTPUT_BYTES);
-    let (stderr, stderr_cut) = read_capped(child.stderr.take(), MAX_READ_OUTPUT_BYTES);
-    // Оба потока — одновременно: иначе процесс, заполнивший pipe stderr,
-    // встанет, пока мы ждём конца stdout.
-    let (stdout, stderr) = tokio::join!(stdout, stderr);
-    let status = child.wait().await.map_err(|e| ToolError::Spawn(e.to_string()))?;
-    // Команда завершилась сама — её фоновые потомки (`cmd &`) живут дальше,
-    // как раньше; группу гасим только при отмене.
-    group.0 = None;
-    let stdout = with_cut_note(String::from_utf8_lossy(&stdout).into_owned(), &stdout_cut);
-    let stderr = with_cut_note(String::from_utf8_lossy(&stderr).into_owned(), &stderr_cut);
-    let exit_code = status.code().unwrap_or(-1);
-
-    let mut out = String::new();
-    out.push_str(&format!("$ {}\n", command));
-    out.push_str(&format!("exit: {}\n", exit_code));
-    if !stdout.is_empty() {
-        out.push_str("--- stdout ---\n");
-        out.push_str(&stdout);
-        if !stdout.ends_with('\n') {
-            out.push('\n');
-        }
-    }
-    if !stderr.is_empty() {
-        out.push_str("--- stderr ---\n");
-        out.push_str(&stderr);
-        if !stderr.ends_with('\n') {
-            out.push('\n');
-        }
-    }
-    if stdout.is_empty() && stderr.is_empty() {
-        out.push_str("(no output)\n");
-    }
-    Ok(out)
+    let v: serde_json::Value = serde_json::from_str(args_json).map_err(|e| ToolError::BadArgs(e.to_string()))?;
+    let command = v.get("command").and_then(|x| x.as_str()).ok_or(ToolError::MissingField("command"))?;
+    synassist::tools::bash::run(command, None, MAX_READ_OUTPUT_BYTES).await.map_err(|e| match e {
+        synassist::tools::bash::BashError::Spawn(s) => ToolError::Spawn(s),
+        other => ToolError::Runtime(other.to_string()),
+    })
 }
 
-/// При drop (отмена хода посреди команды) убивает группу процессов команды
-/// `bash` вместе с потомками. После нормального завершения разоружается.
-struct ProcessGroupGuard(Option<u32>);
-
-impl Drop for ProcessGroupGuard {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(pid) = self.0 {
-            // SAFETY: killpg — обычный syscall; pgid = pid лидера группы,
-            // созданной `process_group(0)`.
-            unsafe {
-                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-            }
-        }
-    }
-}
-
-/// Читает поток до конца, храня не больше `cap` байт: остальное вычитывается
-/// и выбрасывается (иначе процесс встанет на полном pipe), а счётчик
-/// выброшенного лежит во втором значении. Без потолка `yes` или бесконечный
-/// лог копились в памяти целиком до конца процесса.
-fn read_capped<R>(
-    stream: Option<R>,
-    cap: usize,
-) -> (impl std::future::Future<Output = Vec<u8>>, std::sync::Arc<std::sync::atomic::AtomicU64>)
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt;
-    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let counter = dropped.clone();
-    let fut = async move {
-        let mut kept = Vec::new();
-        let Some(mut stream) = stream else { return kept };
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            match stream.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let room = cap.saturating_sub(kept.len()).min(n);
-                    kept.extend_from_slice(&buf[..room]);
-                    counter.fetch_add((n - room) as u64, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-        }
-        kept
-    };
-    (fut, dropped)
-}
-
-fn with_cut_note(mut text: String, dropped: &std::sync::atomic::AtomicU64) -> String {
-    let n = dropped.load(std::sync::atomic::Ordering::Relaxed);
-    if n > 0 {
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(&format!("…(truncated {n} bytes)\n"));
-    }
-    text
-}
-
-/// Обрезает строку до `limit` по char-boundary. Если укладывается —
-/// возвращает как есть. Если нет — усечение + `…(truncated N bytes)`.
 fn truncate_output(s: &str, limit: usize) -> String {
     if s.len() <= limit {
         return s.to_string();
@@ -509,11 +301,7 @@ fn truncate_output(s: &str, limit: usize) -> String {
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
-    let omitted = s.len() - end;
-    let mut out = String::with_capacity(end + 32);
-    out.push_str(&s[..end]);
-    out.push_str(&format!("\n…(truncated {} bytes)", omitted));
-    out
+    format!("{}\n…(truncated {} bytes)", &s[..end], s.len() - end)
 }
 
 #[cfg(test)]

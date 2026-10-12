@@ -7657,6 +7657,7 @@ dependencies = [
  "dom_smoothie",
  "futures-util",
  "htmd",
+ "libc",
  "log",
  "reqwest",
  "scraper",
@@ -7792,7 +7793,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.295"
+version = "0.2.296"
 dependencies = [
  "android_logger",
  "anyhow",

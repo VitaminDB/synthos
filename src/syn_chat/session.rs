@@ -41,15 +41,15 @@ use crate::agent::tools::catalog::{KEY_SUBAGENT, KEY_VIEW_MEDIA};
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
-use crate::syn_chat::channel_parser::{self, ChannelIds, ChannelParser, ATEM_CLOSE};
+use crate::syn_chat::channel_parser::{self, ChannelIds, ATEM_CLOSE};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
-    ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, QueuedMsg, SynChatCtx, ThinkParser,
+    ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment, QueuedMsg, SynChatCtx,
 };
 use crate::syn_chat::chat_settings::{ChatSettings, TurnSettings};
 use crate::syn_chat::system_prompt::{self, PromptEnv};
-use crate::syn_chat::tool_parser::{LlamaJsonParser, RawToolCall, ToolCallParser};
+use crate::syn_chat::tool_parser::RawToolCall;
 pub(crate) use synaptix::facade::chat::{prompt_for_model, StreamParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс

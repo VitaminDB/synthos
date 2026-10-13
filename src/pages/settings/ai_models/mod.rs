@@ -478,10 +478,17 @@ fn models_dir_card() -> Box<dyn Widget> {
     let ctx = use_context::<AppCtx>();
     let sig = ctx.models_dir;
 
-    let field = syngui::widgets::input::TextField::with_text(sig.get_untracked())
-        .placeholder(crate::config::default_models_dir())
-        .on_change(move |s| sig.set(s.to_string()))
-        .class("models-path-field");
+    // Перестраивается только по выбору через «Обзор» — см. `picked`.
+    let picked = use_signal(0u64);
+    let field = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        picked.get();
+        vec![Box::new(
+            syngui::widgets::input::TextField::with_text(sig.get_untracked())
+                .placeholder(crate::config::default_models_dir())
+                .on_change(move |s| sig.set(s.to_string()))
+                .class("models-path-field"),
+        )]
+    });
 
     let browse = Button::new(tr!("app.browse"))
         .icon(MI_FOLDER_OPEN)
@@ -489,6 +496,7 @@ fn models_dir_card() -> Box<dyn Widget> {
             let dlg = rfd::FileDialog::new().set_title(tr!("settings.ai_models.section.models_dir"));
             if let Some(p) = dlg.pick_folder() {
                 sig.set(p.display().to_string());
+                picked.update(|n| *n += 1);
             }
         })
         .class("ai-models-apply-button");

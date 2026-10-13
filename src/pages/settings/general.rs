@@ -231,15 +231,23 @@ fn folder_row(
     desc: impl Into<String>,
     value: RwSignal<String>,
 ) -> Box<dyn Widget> {
-    let initial = value.get_untracked();
-    let field = TextField::with_text(initial)
-        .placeholder("~/.local/share/synthos/hf")
-        .on_change(move |s| value.set(s.to_string()));
+    // Поле перестраивается только по выбору через «обзор»: при наборе
+    // текста сигнал меняет само поле, и пересборка на каждую клавишу не нужна.
+    let picked = use_signal(0u64);
+    let field = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        picked.get();
+        vec![Box::new(
+            TextField::with_text(value.get_untracked())
+                .placeholder("~/.local/share/synthos/hf")
+                .on_change(move |s| value.set(s.to_string())),
+        )]
+    });
 
     let browse = ToolButton::new(MI_FOLDER_OPEN)
         .on_click(move || {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 value.set(path.display().to_string());
+                picked.update(|n| *n += 1);
             }
         })
         .class("models-path-browse");

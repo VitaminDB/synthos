@@ -6986,6 +6986,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-io",
+ "synaptix-nn",
  "synaptix-ops",
  "thiserror 2.0.19",
 ]
@@ -7793,7 +7794,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.296"
+version = "0.2.297"
 dependencies = [
  "android_logger",
  "anyhow",

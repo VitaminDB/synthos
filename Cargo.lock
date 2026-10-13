@@ -7631,6 +7631,7 @@ name = "synaptix-video-minimax-h3"
 version = "0.1.1"
 dependencies = [
  "cudarc",
+ "libc",
  "serde",
  "serde_json",
  "synaptix-audio",
@@ -7814,7 +7815,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.301"
+version = "0.2.303"
 dependencies = [
  "android_logger",
  "anyhow",

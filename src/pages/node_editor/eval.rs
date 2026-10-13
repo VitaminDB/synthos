@@ -1,7 +1,8 @@
 //! Вычисление значений на портах графа нод.
 //!
 //! `evaluate_graph` — чистая функция: топологически сортирует ноды по
-//! `Connection`-рёбрам (Kahn's algorithm) и для каждой ноды вычисляет её
+//! `Connection`-рёбрам (`synaptix_flow::order::topo` — общий порядок с
+//! ядром нодового движка) и для каждой ноды вычисляет её
 //! outputs из inputs предшественников. Возвращает карту
 //! `(NodeId, port_name) → PortValue` где хранятся как реальные outputs, так и
 //! «pseudo-output» Output-ноды по ключу `(id, "in")` — туда записывается
@@ -18,13 +19,13 @@
 //! - `false` — читаем `get_untracked()`. Полезно для одноразового вызова
 //!   (тесты, debug).
 //!
-//! При обнаружении цикла (узлы, до которых не дошёл Kahn) их outputs
+//! При обнаружении цикла (узлы, до которых не дошёл топосорт) их outputs
 //! получают значение по умолчанию `Empty`. Это безопасный fallback —
 //! редактор не падает.
 //!
 //! Сложность O(N + E) для топосорта, плюс O(N) на итерацию полей.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use syngui::core::sync::Mutex;
@@ -121,56 +122,22 @@ pub fn evaluate_graph(
     track: bool,
 ) -> HashMap<PortKey, PortValue> {
     let mut values: HashMap<PortKey, PortValue> = HashMap::new();
+    let incoming: HashMap<PortKey, PortKey> =
+        conns.iter().map(|c| ((c.to_node, c.to_port), (c.from_node, c.from_port))).collect();
+    let ids: Vec<NodeId> = nodes.iter().map(|n| n.id).collect();
+    // Порядок — общий с ядром synaptix-flow; ноды в цикле не вычисляются.
+    let (order, _cyclic) = synaptix_flow::order::topo(&ids, conns.iter().map(|c| (c.from_node, c.to_node)));
+    let nodes_by_id: HashMap<NodeId, &NodeInstance> = nodes.iter().map(|n| (n.id, n)).collect();
 
-    let mut incoming: HashMap<PortKey, PortKey> = HashMap::new();
-    let mut out_edges: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    let mut in_deg: HashMap<NodeId, usize> = HashMap::new();
-
-    for n in nodes {
-        in_deg.insert(n.id, 0);
-        out_edges.insert(n.id, Vec::new());
-    }
-    let mut counted_pairs: std::collections::HashSet<(NodeId, NodeId)> =
-        std::collections::HashSet::new();
-    for c in conns {
-        incoming.insert((c.to_node, c.to_port), (c.from_node, c.from_port));
-        if counted_pairs.insert((c.from_node, c.to_node)) {
-            *in_deg.entry(c.to_node).or_insert(0) += 1;
-            out_edges.entry(c.from_node).or_default().push(c.to_node);
-        }
-    }
-
-    let mut queue: VecDeque<NodeId> = VecDeque::new();
-    for (id, deg) in &in_deg {
-        if *deg == 0 {
-            queue.push_back(*id);
-        }
-    }
-
-    let nodes_by_id: HashMap<NodeId, &NodeInstance> =
-        nodes.iter().map(|n| (n.id, n)).collect();
-
-    while let Some(id) = queue.pop_front() {
+    for id in order {
         let Some(node) = nodes_by_id.get(&id) else { continue };
         // Gate disabled-нод: executor пропускается, outputs остаются
         // незаписанными → downstream получит `PortValue::Empty` при
-        // `read_input`. Топосорт не нарушается — продолжаем decrement
-        // in-degree, чтобы потомки тоже обработались.
+        // `read_input`.
         let enabled = if track { node.enabled.get() } else { node.enabled.get_untracked() };
         if enabled {
             let mut ctx = EvalContext::new(node, &incoming, &mut values, track);
             super::registry::meta(node.kind).executor.evaluate(&mut ctx);
-        }
-
-        if let Some(targets) = out_edges.get(&id) {
-            for tid in targets {
-                if let Some(d) = in_deg.get_mut(tid) {
-                    if *d > 0 { *d -= 1; }
-                    if *d == 0 {
-                        queue.push_back(*tid);
-                    }
-                }
-            }
         }
     }
 

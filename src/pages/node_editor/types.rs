@@ -505,6 +505,24 @@ pub enum NodeKind {
     ImageLoad,
     /// Картинка → PNG/JPEG на диск.
     ImageSave,
+
+    // ── Ноды ядра synaptix-flow (генерация через службу, монтаж ffmpeg) ──
+    FlowText,
+    FlowFile,
+    FlowFormat,
+    FlowLines,
+    FlowList,
+    FlowLlm,
+    FlowImage,
+    FlowVideo,
+    FlowMusic,
+    FlowSpeak,
+    FlowTranscribe,
+    FlowConcat,
+    FlowMux,
+    FlowFrame,
+    FlowTrim,
+    FlowStill,
 }
 
 impl NodeKind {
@@ -623,6 +641,22 @@ impl NodeKind {
         NodeKind::SdxlVaeDecode,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
+        NodeKind::FlowText,
+        NodeKind::FlowFile,
+        NodeKind::FlowFormat,
+        NodeKind::FlowLines,
+        NodeKind::FlowList,
+        NodeKind::FlowLlm,
+        NodeKind::FlowImage,
+        NodeKind::FlowVideo,
+        NodeKind::FlowMusic,
+        NodeKind::FlowSpeak,
+        NodeKind::FlowTranscribe,
+        NodeKind::FlowConcat,
+        NodeKind::FlowMux,
+        NodeKind::FlowFrame,
+        NodeKind::FlowTrim,
+        NodeKind::FlowStill,
     ];
 }
 
@@ -767,6 +801,8 @@ pub enum DataBlob {
     QwenImage21(QwenImage21Blob),
     /// Хэндлы и тензоры пайплайна SDXL.
     Sdxl(SdxlBlob),
+    /// Значение ноды ядра synaptix-flow (файлы, списки — пакеты).
+    Flow(synaptix_flow::Val),
 }
 
 /// Картинка на проводе: RGB `[3, H, W]` F32 в [0, 1] на CPU плюс готовое
@@ -1374,6 +1410,7 @@ impl std::fmt::Debug for PortValue {
             }
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::H3(blob) => write!(f, "Data(H3::{blob:?})"),
+                DataBlob::Flow(v) => write!(f, "Data(Flow({v:?}))"),
                 DataBlob::Yue2(Yue2Blob::Model(h)) => {
                     write!(
                         f,
@@ -3216,6 +3253,8 @@ pub enum NodeRuntime {
         /// Загруженная картинка — пока путь тот же, отдаётся тот же `Arc`.
         cache: Arc<Mutex<Option<Arc<ImageData>>>>,
     },
+    /// Нода ядра synaptix-flow: прогон в потоке, выходы — значения ядра.
+    Flow(super::nodes::flow::FlowRuntime),
     ImageSave {
         path: RwSignal<Option<PathBuf>>,
         running: RwSignal<bool>,
@@ -3285,6 +3324,7 @@ impl NodeRuntime {
             | R::SdxlVaeDecode { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
+            R::Flow(f) => Some(f.error),
             _ => None,
         }
     }
@@ -3392,6 +3432,7 @@ impl NodeRuntime {
             | R::QwenImageSampler { cancel, .. }
             | R::QwenImage21Sampler { cancel, .. }
             | R::SdxlSampler { cancel, .. } => Some(cancel.clone()),
+            R::Flow(f) => Some(f.cancel.clone()),
             _ => None,
         }
     }
@@ -3477,6 +3518,7 @@ impl std::fmt::Debug for NodeRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeRuntime::None => f.write_str("NodeRuntime::None"),
+            NodeRuntime::Flow(_) => f.write_str("NodeRuntime::Flow{..}"),
             NodeRuntime::AudioFile { .. } => f.write_str("NodeRuntime::AudioFile{..}"),
             NodeRuntime::AudioPlayer { .. } => f.write_str("NodeRuntime::AudioPlayer{..}"),
             NodeRuntime::AudioRecorder { .. } => f.write_str("NodeRuntime::AudioRecorder{..}"),

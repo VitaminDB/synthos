@@ -434,7 +434,7 @@ pub fn migrate_inline_models(t: &Template) -> Option<Template> {
 /// по default_runtime и точечный set_state).
 pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
     match rt {
-        NodeRuntime::None => None,
+        NodeRuntime::None | NodeRuntime::Flow(_) => None,
         NodeRuntime::H3Checkpoint {
             model_path,
             encoder_path,

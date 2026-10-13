@@ -345,7 +345,7 @@ fn subscribe_node_signals(node: &NodeInstance) {
 
 fn subscribe_runtime_signals(rt: &NodeRuntime) {
     match rt {
-        NodeRuntime::None => {}
+        NodeRuntime::None | NodeRuntime::Flow(_) => {}
         NodeRuntime::H3Checkpoint {
             model_path,
             encoder_path,

@@ -7124,6 +7124,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-flow"
+version = "0.1.42"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synaptixd",
+]
+
+[[package]]
 name = "synaptix-gguf"
 version = "0.1.1"
 dependencies = [
@@ -7136,6 +7145,16 @@ dependencies = [
  "synaptix-core",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "synaptix-graph"
+version = "0.1.42"
+dependencies = [
+ "serde",
+ "serde_json",
+ "synaptix-flow",
+ "synaptixd",
 ]
 
 [[package]]
@@ -7664,6 +7683,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "synaptix-graph",
  "synaptixd",
  "thiserror 2.0.19",
  "tokio",
@@ -7794,7 +7814,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.297"
+version = "0.2.298"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7827,6 +7847,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-depth-anything",
+ "synaptix-flow",
  "synaptix-gguf",
  "synaptix-image-flux",
  "synaptix-image-flux2",

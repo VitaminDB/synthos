@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.297"
+version = "0.2.298"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -122,6 +122,7 @@ rfd = { version = "0.15", default-features = false, features = [
 
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
 synassist = { path = "../synshell/crates/synassist" }
+synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
 synaptix-video-ltx23 = { path = "../synaptix/crates/synaptix-models/video/ltx23" }
 synaptix-video-minimax-h3 = { path = "../synaptix/crates/synaptix-models/video/minimax_h3" }
 # FLUX.1 (dev/schnell) — txt2img/img2img для нод node_editor/nodes/flux.

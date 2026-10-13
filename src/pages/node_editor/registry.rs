@@ -21,7 +21,7 @@ use crate::icons::{
 
 use super::eval::NodeExecutor;
 use super::nodes::{
-    acestep, asr_gigaam, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
+    acestep, asr_gigaam, flow, audio_equalizer, audio_file, audio_filter, audio_gain, audio_mixer,
     audio_player, audio_recorder, audio_reverb, audio_save, ffmpeg_player, flux, flux2, image, llm, ltx,
     qwen_image, qwen_image21, sdxl,
     markdown_view,
@@ -61,6 +61,8 @@ pub enum NodeCategory {
     Image,
     DspEffects,
     Neuro,
+    /// Ноды ядра synaptix-flow: генерация через службу synaptixd и монтаж.
+    Service,
     Math,
     Output,
     Misc,
@@ -73,6 +75,7 @@ impl NodeCategory {
         NodeCategory::Image,
         NodeCategory::DspEffects,
         NodeCategory::Neuro,
+        NodeCategory::Service,
         NodeCategory::Math,
         NodeCategory::Output,
         NodeCategory::Misc,
@@ -88,6 +91,7 @@ impl NodeCategory {
             NodeCategory::Neuro => "neuro",
             NodeCategory::Math => "math",
             NodeCategory::Output => "output",
+            NodeCategory::Service => "service",
             NodeCategory::Misc => "misc",
         }
     }
@@ -105,6 +109,7 @@ impl NodeCategory {
             NodeCategory::Neuro => "Neuro",
             NodeCategory::Math => "Math",
             NodeCategory::Output => "Output",
+            NodeCategory::Service => "Service",
             NodeCategory::Misc => "Misc",
         }
     }
@@ -118,6 +123,7 @@ impl NodeCategory {
             NodeCategory::Neuro => MI_PSYCHOLOGY,
             NodeCategory::Math => MI_AUTO_AWESOME,
             NodeCategory::Output => MI_SAVE,
+            NodeCategory::Service => MI_HUB,
             NodeCategory::Misc => MI_APPS,
         }
     }
@@ -2294,8 +2300,9 @@ const LTX_A2V: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(ltx::a2v::busy_signal),
 };
 
-/// Полный список зарегистрированных типов нод. Доступно из меню «Add Node».
-pub const REGISTRY: &[NodeKindMeta] = &[
+/// Встроенные типы нод (без нод ядра synaptix-flow — их метаданные
+/// строятся по схемам ядра при первом обращении, см. [`registry`]).
+const BUILTIN: &[NodeKindMeta] = &[
     NUMBER,
     ADD,
     OUTPUT_NODE,
@@ -2437,8 +2444,19 @@ pub fn equalizer_q(n_bands: usize) -> f32 {
 // `.node-card { width: fit-content; height: fit-content; }` (см. syngui
 // расширение `Dimension::FitContent`).
 
+/// Полный список типов нод: встроенные и ноды ядра synaptix-flow.
+/// Доступно из меню «Add Node».
+pub fn registry() -> &'static [NodeKindMeta] {
+    static ALL: std::sync::OnceLock<Vec<NodeKindMeta>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        let mut v = BUILTIN.to_vec();
+        v.extend(flow::metas());
+        v
+    })
+}
+
 pub fn meta(kind: NodeKind) -> &'static NodeKindMeta {
-    REGISTRY
+    registry()
         .iter()
         .find(|m| m.kind == kind)
         .unwrap_or(&NUMBER)
@@ -2446,6 +2464,9 @@ pub fn meta(kind: NodeKind) -> &'static NodeKindMeta {
 
 /// Создать карту значений по умолчанию для свежей ноды данного типа.
 pub fn default_fields(kind: NodeKind) -> Arc<Mutex<HashMap<&'static str, FieldValue>>> {
+    if kind.flow_kind().is_some() {
+        return flow::default_fields(kind);
+    }
     let m = meta(kind);
     let mut map: HashMap<&'static str, FieldValue> = HashMap::new();
     for f in m.fields {
@@ -2466,6 +2487,9 @@ pub fn default_fields(kind: NodeKind) -> Arc<Mutex<HashMap<&'static str, FieldVa
 /// готовые RwSignal'ы (sender'ы для UI) и пустые `Option<AudioPlayer>` /
 /// `Option<AudioRecorder>` — реальные инстансы создаются по нажатию кнопки.
 pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
+    if kind.flow_kind().is_some() {
+        return Arc::new(Mutex::new(NodeRuntime::Flow(flow::FlowRuntime::new())));
+    }
     let r = match kind {
         NodeKind::AudioFile => NodeRuntime::AudioFile {
             buffer: use_signal(None),

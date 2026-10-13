@@ -67,6 +67,7 @@ pub mod audio_reverb;
 pub mod audio_save;
 pub mod decode;
 pub mod ffmpeg_player;
+pub mod flow;
 pub mod flux;
 pub mod flux2;
 pub mod image;

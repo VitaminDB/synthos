@@ -131,6 +131,22 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::SdxlSampler
         | NodeKind::SdxlVaeDecode => Color::new(0.95, 0.66, 0.20, 1.0),
         NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),
+        NodeKind::FlowText
+        | NodeKind::FlowFile
+        | NodeKind::FlowFormat
+        | NodeKind::FlowLines
+        | NodeKind::FlowList
+        | NodeKind::FlowLlm
+        | NodeKind::FlowImage
+        | NodeKind::FlowVideo
+        | NodeKind::FlowMusic
+        | NodeKind::FlowSpeak
+        | NodeKind::FlowTranscribe
+        | NodeKind::FlowConcat
+        | NodeKind::FlowMux
+        | NodeKind::FlowFrame
+        | NodeKind::FlowTrim
+        | NodeKind::FlowStill => Color::new(0.20, 0.72, 0.86, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald

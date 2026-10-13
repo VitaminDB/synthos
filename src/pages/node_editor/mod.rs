@@ -50,7 +50,7 @@ use crate::icons::{
     MI_ZOOM_OUT,
 };
 
-use self::registry::{NodeCategory, REGISTRY};
+use self::registry::{registry as node_registry, NodeCategory};
 use self::state::NodeEditorCtx;
 use self::tabs::{EditorWorkspace, OpenTab};
 
@@ -398,7 +398,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
         .filter_map(|cat| {
             // Top-level: ноды этой категории без subcategory и (для DspEffects)
             // не Mixer (он переезжает в спец-пункт).
-            let mut top: Vec<MenuItem> = REGISTRY
+            let mut top: Vec<MenuItem> = node_registry()
                 .iter()
                 .filter(|m| {
                     m.category == *cat
@@ -411,7 +411,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
             // Submenu по subcategory.
             let mut by_sub: BTreeMap<&'static str, Vec<&'static registry::NodeKindMeta>> =
                 BTreeMap::new();
-            for m in REGISTRY.iter().filter(|m| m.category == *cat) {
+            for m in node_registry().iter().filter(|m| m.category == *cat) {
                 if let Some(sub) = m.subcategory {
                     by_sub.entry(sub).or_default().push(m);
                 }
@@ -464,7 +464,7 @@ fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
             .items(items)
             .on_select(move |action| {
                 if let Some(rest) = action.strip_prefix("add:") {
-                    let kind_opt = REGISTRY.iter().find(|m| m.title == rest).map(|m| m.kind);
+                    let kind_opt = node_registry().iter().find(|m| m.title == rest).map(|m| m.kind);
                     if let Some(k) = kind_opt {
                         let world = ctx_select.menu_world_pos.get_untracked();
                         ctx_select.add_node(k, world);

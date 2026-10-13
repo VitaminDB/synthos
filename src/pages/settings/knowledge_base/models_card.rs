@@ -147,7 +147,7 @@ fn model_row(kind: ModelKind, cfg: RwSignal<KbConfig>) -> Box<dyn Widget> {
     )
 }
 
-/// «bge-m3.syn · 2,1 ГБ · ~/Storage/syn_models» (+ «указан вручную»).
+/// «bge-m3.syn · 2,1 ГБ · ~/Storage/Нейросети/Модели» (+ «указан вручную»).
 fn describe(found: &FoundModel) -> String {
     let name = found
         .path

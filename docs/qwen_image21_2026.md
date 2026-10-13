@@ -7,7 +7,7 @@
 
 ## Бандл
 
-`~/Storage/syn_models/qwen-image-2.1.syn` — 30,9 ГБ, `arch qwen-image-2.1`,
+`~/Storage/Нейросети/Модели/qwen-image-2.1.syn` — 30,9 ГБ, `arch qwen-image-2.1`,
 `purpose image`, плотный BF16 (VAE — F32). Исходный каталог
 `~/models/Qwen/Qwen-Image-2.1` (HF `Qwen/Qwen-Image-2.1`, 31 ГБ) **удалён**
 22.09 по просьбе пользователя после сверки — качать заново только с HF. Сверено: `syn-verify` (21 чанк CRC32C),
@@ -15,10 +15,10 @@
 (`tests/bundle_source`).
 
 ```sh
-cd ~/Storage/syn_models
+cd ~/Storage/Нейросети/Модели
 ~/Projects/2027/synaptix/target/release/syn-pack ~/models/Qwen/Qwen-Image-2.1 \
   -o qwen-image-2.1.syn --id qwen-image-2.1 --version 2.1.0 --arch qwen-image-2.1 --purpose image
-QWEN21_DIR=~/models/Qwen/Qwen-Image-2.1 QWEN21_SYN=~/Storage/syn_models/qwen-image-2.1.syn \
+QWEN21_DIR=~/models/Qwen/Qwen-Image-2.1 QWEN21_SYN=~/Storage/Нейросети/Модели/qwen-image-2.1.syn \
   cargo test --release -p synaptix-image-qwen21 --test bundle_source -- --ignored --nocapture
 ```
 

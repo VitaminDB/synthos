@@ -71,7 +71,7 @@ pub fn cot_from_idx(i: usize) -> synaptix_music_yue2::protocol::Cot {
 }
 
 /// Каталог моделей приложения (настройка «Каталог моделей»); вне UI-контекста
-/// (тесты) — `~/Storage/syn_models`.
+/// (тесты) — `~/Storage/Нейросети/Модели`.
 pub fn app_models_dir() -> std::path::PathBuf {
     super::acestep::app_models_dir()
 }

@@ -4294,7 +4294,7 @@ mod tests {
         use synaptix_tokenizer::{ChatTemplate, Message as TokMessage, MessageRole};
         use synaptix_tokenizer::{ToolCall as TokToolCall, ToolCallFunction as TokToolCallFunction};
 
-        let bundle = std::path::Path::new("/home/master/Storage/syn_models/gemma-4-26b-a4b-it.syn");
+        let bundle = std::path::Path::new("/home/master/Storage/Нейросети/Модели/gemma-4-26b-a4b-it.syn");
         let Some(src) = synaptix::facade::arch::read_model_file(bundle, "chat_template.jinja") else {
             eprintln!("нет бандла {} — пропуск", bundle.display());
             return;

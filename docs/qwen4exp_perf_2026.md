@@ -299,7 +299,7 @@ A/B-ручки `SYN_PREFIX_KV_KV_DTYPE=bf16|f16`, `SYN_PREFIX_KV_CHUNK=<n>`)
 ## Как мерить
 
 ```
-SYN_QWEN4EXP_BUNDLE=/home/master/Storage/syn_models/qwen3.8-flash-next.syn \
+SYN_QWEN4EXP_BUNDLE=/home/master/Storage/Нейросети/Модели/qwen3.8-flash-next.syn \
 SYN_QWEN4EXP_EXPERT_CACHE_GB=12 SYN_BENCH_CTX=80000 SYN_BENCH_TAIL=3000 \
 SYN_BENCH_NEW=64 SYN_BENCH_TURNS=2 SYN_BENCH_WAIT_MIRROR=1 \
 [SYN_QWEN4EXP_PROFILE=sync SYN_MOE_PROFILE=1] \

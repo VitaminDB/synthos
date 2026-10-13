@@ -75,7 +75,7 @@ bundle can also be transcoded on load into the format that suits the card.
 
 **In the app:**
 
-1. Put the downloaded model folder into your models directory (default `~/Storage/syn_models`,
+1. Put the downloaded model folder into your models directory (default `~/Storage/Нейросети/Модели`,
    set in **Settings → AI models → Models directory**) or any other folder.
 2. Open **Syn packages** in the left rail and add that folder to **Bookmarks**. Models that are
    not packed yet appear under **Can be packed**.

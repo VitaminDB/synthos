@@ -20,7 +20,7 @@
 ## Упаковка
 
 ```sh
-cd ~/Storage/syn_models
+cd ~/Storage/Нейросети/Модели
 ~/Projects/2027/synaptix/target/release/syn-pack FLUX.1-dev -o flux.1-dev.syn \
   --id flux.1-dev --version 1.0.0 --arch flux.1 --purpose image
 ```
@@ -94,7 +94,7 @@ directory (FluxPipeline)» и архитектуру `.syn` (`arch flux.1, image
 Смоук без GUI (настоящие `on_run` нод):
 
 ```sh
-cargo run --release --bin flux_smoke -- ~/Storage/syn_models/flux.1-dev.syn out.png 768 768 20
+cargo run --release --bin flux_smoke -- ~/Storage/Нейросети/Модели/flux.1-dev.syn out.png 768 768 20
 # FLUX_IMAGE=src.png FLUX_DENOISE=0.6 — img2img; FLUX_REPEAT=2 FLUX_RESIDENT=1 — кэш промпта и DiT
 ```
 

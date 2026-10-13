@@ -11,7 +11,7 @@
 //! `vision_smoke <model.syn> <файл> ["вопрос"] [max_new_tokens] [max_image_tokens]`
 //!
 //! Пример:
-//! `vision_smoke /run/media/storage/syn_models/muse-glimmer-30b.syn photo.png "Что на картинке?"`
+//! `vision_smoke /run/media/storage/Нейросети/Модели/muse-glimmer-30b.syn photo.png "Что на картинке?"`
 //!
 //! `VSMOKE_ROUNDS=N` повторяет круг «башня → кодирование → генерация» N раз
 //! на одной загруженной модели. Первый круг проходит на свежей VRAM и потому

@@ -703,7 +703,7 @@ pub struct AppConfig {
     /// HF-каталоги. Агентский инструмент `pipelines` (action=list)
     /// перечисляет его содержимое, чтобы модель могла проставить пути в
     /// чекпойнт-ноды без поиска по диску. По умолчанию —
-    /// `~/Storage/syn_models` (см. [`default_models_dir`]).
+    /// `~/Storage/Нейросети/Модели` (см. [`default_models_dir`]).
     #[serde(default = "default_models_dir")]
     pub models_dir: String,
     /// Положение левого разделителя страницы Syn-чата (список чатов ↔ центр).
@@ -1167,7 +1167,7 @@ pub fn default_window_opacity() -> f32 {
     1.0
 }
 
-/// Дефолтный каталог моделей: `~/Storage/syn_models`. Резолвится от `HOME`
+/// Дефолтный каталог моделей: `~/Storage/Нейросети/Модели`. Резолвится от `HOME`
 /// на текущей машине, а не хардкодом пути — на чужой системе дефолт тоже
 /// осмыслен.
 pub fn default_models_dir() -> String {

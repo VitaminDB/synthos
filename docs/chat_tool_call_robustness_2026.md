@@ -330,7 +330,7 @@ cargo test -p synthos --lib -- syn_chat::tool_parser syn_chat::session \
     syn_chat::params config::tests agent::tools::web
 cargo build --release -p synthos --bin agent_smoke
 SYN_SMOKE_OUT=/tmp/ledger.json target/release/agent_smoke \
-    /home/master/Storage/syn_models/qwen3.8-27b.syn "<вопрос>" "<уточнение>"
+    /home/master/Storage/Нейросети/Модели/qwen3.8-27b.syn "<вопрос>" "<уточнение>"
 ```
 
 В журнале: строка «анти-loop сэмплинг: temp=…» без штрафов, «guard

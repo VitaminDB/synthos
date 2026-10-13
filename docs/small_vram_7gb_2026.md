@@ -1,6 +1,6 @@
 # Все модели на карте 7 ГБ VRAM (2026-09-19)
 
-Задача: любая модель из `~/Storage/syn_models` должна работать, когда модели
+Задача: любая модель из `~/Storage/Нейросети/Модели` должна работать, когда модели
 остаётся ~7 ГБ видеопамяти. То, что не влезает, стримится с хоста (RAM) или
 из mmap бандла. Проверка — балласт в VRAM (отдельным процессом: `cudaMalloc`
 всего, кроме 7 ГБ, и сон; или тензором внутри теста) и смоуки/тесты с
@@ -34,12 +34,12 @@
 # балласт отдельным процессом (исходник — scratchpad ballast.cu: cudaMalloc + sleep)
 ./ballast 7 &   # оставляет модели 7 ГБ
 # чат-LLM (путь чата synthos: optimal_profile → подгонка блоков → префикс-KV)
-LLM_MODEL=~/Storage/syn_models/qwen3.8-27b.syn LLM_VRAM_GB=7 \
+LLM_MODEL=~/Storage/Нейросети/Модели/qwen3.8-27b.syn LLM_VRAM_GB=7 \
   cargo test -p synaptix --release --test llm_low_vram -- --nocapture
 # FLUX.2 через ноды synthos
-FLUX2_VRAM_GB=7 cargo run --release --bin flux2_smoke -- ~/Storage/syn_models/flux.2-klein-4b.syn out.png 1024 1024
+FLUX2_VRAM_GB=7 cargo run --release --bin flux2_smoke -- ~/Storage/Нейросети/Модели/flux.2-klein-4b.syn out.png 1024 1024
 # музыка с резидентным кэшем, как «Держать в памяти» у нод
-synaptix music "…" --models ~/Storage/syn_models --lm …/acestep_5hz_lm_4b.syn --quant none --quant-encoder none --repeat 2
+synaptix music "…" --models ~/Storage/Нейросети/Модели --lm …/acestep_5hz_lm_4b.syn --quant none --quant-encoder none --repeat 2
 ```
 
 `llm_low_vram` печатает минимум свободной VRAM за прогон; `flux2_smoke`,

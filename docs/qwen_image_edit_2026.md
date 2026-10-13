@@ -4,7 +4,7 @@
 картинку вместе с промптом), и DiT (латент VAE идёт в ту же
 последовательность токенов, что и генерируемая картинка).
 
-## Что лежит в `~/Storage/syn_models`
+## Что лежит в `~/Storage/Нейросети/Модели`
 
 | бандл | размер | исходник | пайплайн |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Qwen-Image-Edit-2509 — тот же пайплайн, что у 2511, без `z
 конфига трансформера), но не скачан.
 
 ```sh
-cd ~/Storage/syn_models
+cd ~/Storage/Нейросети/Модели
 ~/Projects/2027/synaptix/target/release/syn-pack Qwen-Image-Edit-2511 -o qwen-image-edit-2511.syn \
   --id qwen-image-edit-2511 --version 2511.0.0 --arch qwen-image-edit --purpose image
 syn-verify qwen-image-edit-2511.syn      # CRC32C всех 25 чанков — ок (у обоих)

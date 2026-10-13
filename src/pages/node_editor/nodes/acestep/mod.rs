@@ -43,7 +43,7 @@ use synaptix_core::{device::Device, dtype::DType};
 /// с раскрытием `~`). Дефолт поля «Каталог моделей» у ACE-Step Checkpoint:
 /// шаблоны кладут `models_dir: None`, и раньше нода из шаблона приходила
 /// пустой — пользователю приходилось руками выбирать каталог и все 4 бандла.
-/// Вне UI-контекста (тесты) — `~/Storage/syn_models`.
+/// Вне UI-контекста (тесты) — `~/Storage/Нейросети/Модели`.
 pub fn app_models_dir() -> std::path::PathBuf {
     let raw = syngui::context_provider::try_use_context::<crate::context::AppCtx>()
         .map(|c| c.models_dir.get_untracked())

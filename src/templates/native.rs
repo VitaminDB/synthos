@@ -46,11 +46,12 @@ fn option(options: &[&str], v: &str) -> usize {
     options.iter().position(|o| *o == v).unwrap_or(0)
 }
 
-/// Квант по индексу списка родной ноды → вариант ядра.
+/// Квант по индексу списка родной ноды → вариант ядра. NVFP4 медиамоделям
+/// не ставится (политика: медиа — только MXFP8) — пусто, формат файла.
 fn quant(kind: &str, idx: u64) -> &'static str {
     let names: &[&str] = match kind {
-        "sdxl_checkpoint" => &["", "mxfp8", "nvfp4"],
-        _ => &["nvfp4", "mxfp8", "bf16"],
+        "sdxl_checkpoint" => &["", "mxfp8", ""],
+        _ => &["", "mxfp8", "bf16"],
     };
     names.get(idx as usize).copied().unwrap_or("")
 }

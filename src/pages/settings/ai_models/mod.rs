@@ -8,18 +8,18 @@
 //! Глобальных тумблеров тут больше нет: ровно они и мешали — настройка,
 //! хорошая для одной архитектуры, применялась ко всем.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use syngui::prelude::*;
 use syngui::widgets::input::dropdown::{Dropdown, DropdownItem};
 use syngui::widgets::input::toggle::Toggle;
 
-use crate::config::ModelProfileConfig;
 use crate::context::AppCtx;
 use crate::icons::*;
 use crate::pages::settings::widgets::{
     compute_dtype_dropdown, kv_dtype_dropdown, row_tip, section_card, storage_dtype_dropdown,
 };
+use crate::syn_chat::model_registry::ServiceLlm;
 use crate::syn_chat::SynModelRegistry;
 
 pub fn view() -> impl Widget {
@@ -49,159 +49,72 @@ pub fn view() -> impl Widget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Список моделей
+// Список моделей — языковые модели службы нейросетей
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Found {
-    path: PathBuf,
-    name: String,
-    arch: String,
-    size: u64,
-}
-
-/// Определение архитектуры лезет в бандл за `config.json`, поэтому ответ
-/// запоминается: список перерисовывается на каждое движение сигнала, а файлы
-/// на диске за это время не меняются.
-fn arch_label(path: &Path) -> String {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(map) = cache.lock() {
-        if let Some(v) = map.get(path) {
-            return v.clone();
-        }
-    }
-    let label = match synaptix::facade::arch::detect_llm_arch(path) {
-        Ok(a) => {
-            // Уже квантованный бандл — формат в подписи: пользователь видит,
-            // что настройки хранения к нему применятся только через
-            // перекодировку.
-            let fmts = synaptix::facade::arch::bundle_quant_formats(path);
-            match fmts.first() {
-                Some((f, _)) => format!("{a:?} · {}", f.to_uppercase()),
-                None => format!("{a:?}"),
-            }
-        }
-        Err(_) => String::new(),
-    };
-    if let Ok(mut map) = cache.lock() {
-        map.insert(path.to_path_buf(), label.clone());
-    }
-    label
-}
-
-/// Бандлы и HF-каталоги, которые движок берётся грузить как LLM. Глубина 2:
-/// каталог моделей обычно разложен по вендорам.
-fn scan_llm_models(dir: &Path) -> Vec<Found> {
-    fn scan(dir: &Path, depth: usize, out: &mut Vec<Found>) {
-        if depth > 2 || out.len() > 64 {
-            return;
-        }
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if p.join("config.json").exists() {
-                    push(&p, 0, out);
-                } else {
-                    scan(&p, depth + 1, out);
-                }
-            } else if p
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case("syn") || x.eq_ignore_ascii_case("gguf"))
-            {
-                // `.gguf` движок грузит напрямую (llama/qwen2/qwen3/gemma3/
-                // gemma4): конфиг и токенизатор синтезируются из метаданных.
-                let size = e.metadata().map(|m| m.len()).unwrap_or(0);
-                push(&p, size, out);
-            }
-        }
-    }
-    fn push(p: &Path, size: u64, out: &mut Vec<Found>) {
-        let arch = arch_label(p);
-        if arch.is_empty() {
-            return;
-        }
-        out.push(Found {
-            name: p
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| p.display().to_string()),
-            path: p.to_path_buf(),
-            arch,
-            size,
-        });
-    }
-    let mut found = Vec::new();
-    scan(dir, 0, &mut found);
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
-}
-
 fn models_card() -> Box<dyn Widget> {
-    let ctx = use_context::<AppCtx>();
-    let dir_sig = ctx.models_dir;
-    let profiles = ctx.model_profiles;
+    let reg = use_context::<SynModelRegistry>();
 
     // Строки уходят одной колонкой, а не списком виджетов: `Reactive` кладёт
     // всех своих детей в одну точку — несколько моделей нарисовались бы
     // друг поверх друга.
     let rows = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let dir = crate::config::resolve_models_dir(&dir_sig.get());
-        let found = scan_llm_models(&dir);
-        if found.is_empty() {
-            return vec![row_tip(
-                MI_FOLDER_OPEN,
-                tr!("settings.ai_models.models.empty"),
-                tr!("settings.ai_models.models.empty.tip"),
-                Box::new(Text::new(dir.display().to_string()).class("settings-row-desc")),
-            )];
+        let models = reg.models.get();
+        if models.is_empty() {
+            let (title, tip) = if reg.online.get() {
+                (tr!("settings.ai_models.models.empty"), tr!("settings.ai_models.models.empty.tip"))
+            } else {
+                (tr!("chat.right.model.service.offline"), tr!("settings.ai_models.service.offline.tip"))
+            };
+            return vec![row_tip(MI_FOLDER_OPEN, title, tip, storage_button())];
         }
-        let profs = profiles.get();
         vec![Box::new(
             Column::new()
                 .gap(0.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .children(found.iter().map(|m| model_block(m, &profs))),
+                .children(models.iter().map(model_block)),
         ) as Box<dyn Widget>]
     });
 
     section_card(tr!("settings.ai_models.section.models"), vec![Box::new(rows)])
 }
 
-/// Строка модели плюс — в режиме `custom` — блок переопределений под ней.
-fn model_block(
-    m: &Found,
-    profiles: &std::collections::BTreeMap<String, ModelProfileConfig>,
-) -> Box<dyn Widget> {
-    let key = m.path.display().to_string();
-    let profile = crate::config::model_profile_of(profiles, &m.path);
-    let resolved = profile.resolve(&m.path);
+/// Хранилище моделей службы — в «Параметрах» оболочки.
+fn storage_button() -> Box<dyn Widget> {
+    Box::new(
+        Button::new(tr!("settings.ai_models.storage.button"))
+            .icon(MI_FOLDER_OPEN)
+            .on_click(|| {
+                if let Err(e) = std::process::Command::new("synsettings").arg("models/storage").spawn() {
+                    log::warn!("synsettings: {e}");
+                }
+            })
+            .class("ai-models-apply-button"),
+    )
+}
 
+/// Строка модели плюс — в режиме «свой» — блок переопределений под ней.
+fn model_block(m: &ServiceLlm) -> Box<dyn Widget> {
     let items = vec![
         DropdownItem::new("optimal", tr!("settings.ai_models.mode.optimal")),
         DropdownItem::new("custom", tr!("settings.ai_models.mode.custom")),
     ];
-    let mode_key = key.clone();
+    let id = m.id.clone();
     let mode: Box<dyn Widget> = Box::new(
         Dropdown::with_items(items)
-            .selected(profile.mode.clone())
+            .selected(if m.own.custom { "custom" } else { "optimal" })
             .on_change(move |s| {
-                let mode = s.to_string();
-                update_profile(&mode_key, move |p| p.mode = mode.clone());
+                let custom = s == "custom";
+                update_engine(&id, move |p| p.custom = custom);
             })
             .class("models-active-dropdown"),
     );
 
-    let load_key = m.path.clone();
+    let load_path = m.path.clone();
     let load: Box<dyn Widget> = Box::new(
         Button::new(tr!("settings.ai_models.apply.button"))
             .icon(MI_AUTORENEW)
-            .on_click(move || load_model(load_key.clone()))
+            .on_click(move || load_model(load_path.clone()))
             .class("ai-models-apply-button"),
     );
 
@@ -210,25 +123,27 @@ fn model_block(
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .children(vec![mode, load]);
 
-    let subtitle = if m.size > 0 {
-        format!("{} · {}", m.arch, crate::models::human_bytes(m.size))
-    } else {
-        m.arch.clone()
-    };
+    let mut subtitle = vec![crate::models::human_bytes(m.disk_bytes)];
+    if let Some(f) = m.engine.as_ref().and_then(|e| e.source.first()) {
+        subtitle.push(f.trim_start_matches("ggml:").to_uppercase());
+    }
+    if m.loaded {
+        subtitle.push(tr!("chat.right.model.service.loaded"));
+    }
 
     let head = row_tip(
         MI_MEMORY,
-        format!("{} · {subtitle}", m.name),
+        format!("{} · {}", m.title, subtitle.join(" · ")),
         tr!("settings.ai_models.model.tip", path = m.path.display()),
         Box::new(control),
     );
 
-    if !profile.is_custom() {
+    let Some(shown) = m.engine.clone().filter(|_| m.own.custom) else {
         return head;
-    }
+    };
 
     let mut rows: Vec<Box<dyn Widget>> = vec![head];
-    rows.extend(overrides(&key, &profile, &resolved));
+    rows.extend(overrides(&m.id, &shown));
     Box::new(
         Column::new()
             .gap(0.0)
@@ -237,234 +152,112 @@ fn model_block(
     )
 }
 
-/// Переопределения одной модели. Значение в контроле — своё, если задано,
-/// иначе выверенное движком: пользователь видит, от чего отталкивается.
-fn overrides(
-    key: &str,
-    profile: &ModelProfileConfig,
-    resolved: &crate::config::ResolvedProfile,
-) -> Vec<Box<dyn Widget>> {
-    let p = &resolved.policy;
-    let k = key.to_string();
-
-    let weights = {
-        let k = k.clone();
-        let cur = profile
-            .weights_storage
-            .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.weights_storage));
+/// Переопределения одной модели. Значение в контроле — действующее (своё,
+/// если задано, иначе выверенное движком): видно, от чего отталкиваешься.
+fn overrides(id: &str, e: &synaptixd::EngineProfile) -> Vec<Box<dyn Widget>> {
+    let id = id.to_string();
+    let text = |v: &Option<String>| v.clone().unwrap_or_default();
+    let storage = |cur: String, set: fn(&mut synaptixd::EngineProfile, String)| {
+        let id = id.clone();
         storage_dtype_dropdown(cur, move |s| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.weights_storage = Some(s.clone()));
+            let s = s.to_string();
+            update_engine(&id, move |p| set(p, s));
         })
     };
+    let weights = storage(text(&e.weights), |p, s| p.weights = Some(s));
+    let lm_head = storage(text(&e.lm_head), |p, s| p.lm_head = Some(s));
+    let embed = storage(text(&e.embed), |p, s| p.embed = Some(s));
     let compute = {
-        let k = k.clone();
-        let cur = profile
-            .compute
-            .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.compute));
-        compute_dtype_dropdown(cur, move |s| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.compute = Some(s.clone()));
+        let id = id.clone();
+        compute_dtype_dropdown(text(&e.compute), move |s| {
+            let s = s.to_string();
+            update_engine(&id, move |p| p.compute = Some(s));
         })
     };
     let kv = {
-        let k = k.clone();
-        let cur = profile.kv_dtype.clone().unwrap_or_else(|| p.kv_dtype.name().to_string());
-        kv_dtype_dropdown(cur, move |s| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.kv_dtype = Some(s.clone()));
+        let id = id.clone();
+        kv_dtype_dropdown(text(&e.kv_dtype), move |s| {
+            let s = s.to_string();
+            update_engine(&id, move |p| p.kv_dtype = Some(s));
         })
     };
-    let lm_head = {
-        let k = k.clone();
-        let cur = profile
-            .lm_head_storage
-            .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.lm_head_storage));
-        storage_dtype_dropdown(cur, move |s| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.lm_head_storage = Some(s.clone()));
-        })
+    let toggle = |on: bool, set: fn(&mut synaptixd::EngineProfile, bool)| {
+        let id = id.clone();
+        Box::new(Toggle::with_state(on).on_change(move |v| update_engine(&id, move |p| set(p, v)))) as Box<dyn Widget>
     };
-    let embed = {
-        let k = k.clone();
-        let cur = profile
-            .embed_storage
-            .clone()
-            .unwrap_or_else(|| crate::config::dtype_name(p.embed_storage));
-        storage_dtype_dropdown(cur, move |s| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.embed_storage = Some(s.clone()));
-        })
-    };
-
-    let graph = {
-        let k = k.clone();
-        let on = profile.graph_decode.unwrap_or(resolved.graph_decode);
-        Box::new(Toggle::with_state(on).on_change(move |v| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.graph_decode = Some(v));
-        })) as Box<dyn Widget>
-    };
-    let spec = {
-        let k = k.clone();
-        let on = profile.speculation.unwrap_or(resolved.speculation);
-        Box::new(Toggle::with_state(on).on_change(move |v| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.speculation = Some(v));
-        })) as Box<dyn Widget>
-    };
+    let graph = toggle(e.graph_decode == Some(true), |p, v| p.graph_decode = Some(v));
+    let spec = toggle(e.speculation == Some(true), |p, v| p.speculation = Some(v));
+    let transcode = toggle(e.transcode == Some(true), |p, v| p.transcode = Some(v));
     let sync = {
-        let k = k.clone();
+        let id = id.clone();
         let items = vec![
             DropdownItem::new("auto", tr!("settings.ai_models.layer_sync.auto")),
             DropdownItem::new("on", tr!("settings.ai_models.layer_sync.on")),
             DropdownItem::new("off", tr!("settings.ai_models.layer_sync.off")),
         ];
-        let cur = profile
-            .layer_sync
-            .clone()
-            .unwrap_or_else(|| layer_sync_name(resolved.layer_sync).to_string());
         Box::new(
             Dropdown::with_items(items)
-                .selected(cur)
+                .selected(e.layer_sync.clone().unwrap_or_else(|| "auto".into()))
                 .on_change(move |s| {
-                    let k = k.clone();
                     let v = s.to_string();
-                    update_profile(&k, move |p| p.layer_sync = Some(v.clone()));
+                    update_engine(&id, move |p| p.layer_sync = Some(v));
                 })
                 .class("models-active-dropdown"),
         ) as Box<dyn Widget>
     };
-
-    let transcode = {
-        let k = k.clone();
-        let on = profile.transcode.unwrap_or(resolved.policy.transcode);
-        Box::new(Toggle::with_state(on).on_change(move |v| {
-            let k = k.clone();
-            update_profile(&k, move |p| p.transcode = Some(v));
-        })) as Box<dyn Widget>
-    };
-    let src_formats = synaptix::facade::arch::bundle_quant_formats(std::path::Path::new(key));
-    let transcode_desc = if src_formats.is_empty() {
+    let transcode_desc = if e.source.is_empty() {
         tr!("settings.ai_models.transcode.desc_dense")
     } else {
-        let f: Vec<String> = src_formats.iter().map(|(f, n)| format!("{}×{n}", f.to_uppercase())).collect();
-        tr!("settings.ai_models.transcode.desc", formats = f.join(", "))
+        tr!("settings.ai_models.transcode.desc", formats = e.source.join(", ").to_uppercase())
     };
-
     let reset: Box<dyn Widget> = {
-        let k = k.clone();
+        let id = id.clone();
         Box::new(
             Button::new(tr!("settings.ai_models.reset.button"))
-                .on_click(move || {
-                    let k = k.clone();
-                    update_profile(&k, |p| {
-                        let mode = p.mode.clone();
-                        *p = ModelProfileConfig { mode, ..Default::default() };
-                    });
-                })
+                .on_click(move || update_engine(&id, |p| *p = synaptixd::EngineProfile { custom: true, ..Default::default() }))
                 .class("ai-models-apply-button"),
         )
     };
 
     vec![
-        row_tip(
-            MI_TUNE,
-            tr!("settings.ai_models.weights"),
-            tr!("settings.ai_models.weights.desc"),
-            weights,
-        ),
-        row_tip(
-            MI_SPEED,
-            tr!("settings.ai_models.compute"),
-            tr!("settings.ai_models.compute.desc"),
-            compute,
-        ),
-        row_tip(
-            MI_MEMORY,
-            tr!("settings.ai_models.kv"),
-            tr!("settings.ai_models.kv.desc"),
-            kv,
-        ),
-        row_tip(
-            MI_TUNE,
-            tr!("settings.ai_models.lm_head"),
-            tr!("settings.ai_models.lm_head.desc"),
-            lm_head,
-        ),
-        row_tip(
-            MI_TUNE,
-            tr!("settings.ai_models.embed"),
-            tr!("settings.ai_models.embed.desc"),
-            embed,
-        ),
-        row_tip(
-            MI_AUTORENEW,
-            tr!("settings.ai_models.transcode"),
-            transcode_desc,
-            transcode,
-        ),
-        row_tip(
-            MI_AUTO_AWESOME,
-            tr!("settings.ai_models.cuda_graph"),
-            tr!("settings.ai_models.cuda_graph.desc"),
-            graph,
-        ),
-        row_tip(
-            MI_BOLT,
-            tr!("settings.ai_models.speculation"),
-            tr!("settings.ai_models.speculation.desc"),
-            spec,
-        ),
-        row_tip(
-            MI_MEMORY,
-            tr!("settings.ai_models.layer_sync"),
-            tr!("settings.ai_models.layer_sync.desc"),
-            sync,
-        ),
-        row_tip(
-            MI_AUTORENEW,
-            tr!("settings.ai_models.reset"),
-            tr!("settings.ai_models.reset.desc"),
-            reset,
-        ),
+        row_tip(MI_TUNE, tr!("settings.ai_models.weights"), tr!("settings.ai_models.weights.desc"), weights),
+        row_tip(MI_SPEED, tr!("settings.ai_models.compute"), tr!("settings.ai_models.compute.desc"), compute),
+        row_tip(MI_MEMORY, tr!("settings.ai_models.kv"), tr!("settings.ai_models.kv.desc"), kv),
+        row_tip(MI_TUNE, tr!("settings.ai_models.lm_head"), tr!("settings.ai_models.lm_head.desc"), lm_head),
+        row_tip(MI_TUNE, tr!("settings.ai_models.embed"), tr!("settings.ai_models.embed.desc"), embed),
+        row_tip(MI_AUTORENEW, tr!("settings.ai_models.transcode"), transcode_desc, transcode),
+        row_tip(MI_AUTO_AWESOME, tr!("settings.ai_models.cuda_graph"), tr!("settings.ai_models.cuda_graph.desc"), graph),
+        row_tip(MI_BOLT, tr!("settings.ai_models.speculation"), tr!("settings.ai_models.speculation.desc"), spec),
+        row_tip(MI_MEMORY, tr!("settings.ai_models.layer_sync"), tr!("settings.ai_models.layer_sync.desc"), sync),
+        row_tip(MI_AUTORENEW, tr!("settings.ai_models.reset"), tr!("settings.ai_models.reset.desc"), reset),
     ]
 }
 
-fn layer_sync_name(mode: synaptix::facade::llm::LayerSyncMode) -> &'static str {
-    use synaptix::facade::llm::LayerSyncMode as M;
-    match mode {
-        M::Auto => "auto",
-        M::Off => "off",
-        M::On => "on",
-    }
-}
-
-fn update_profile<F: FnOnce(&mut ModelProfileConfig)>(key: &str, f: F) {
+/// Правка профиля модели в службе (её настройки — общие для всех программ).
+/// Смена весов, KV или спекуляции служба применит перезагрузкой модели.
+fn update_engine(id: &str, f: impl FnOnce(&mut synaptixd::EngineProfile) + Send + 'static) {
+    let reg = use_context::<SynModelRegistry>();
+    let Some(m) = reg.models.get_untracked().into_iter().find(|m| m.id == id) else { return };
     let ctx = use_context::<AppCtx>();
-    let key = key.to_string();
-    ctx.model_profiles.update(move |m| {
-        f(m.entry(key).or_default());
+    let notes = ctx.notifications;
+    let mut e = m.own.clone();
+    f(&mut e);
+    let id = id.to_string();
+    std::thread::spawn(move || {
+        let r = synaptixd::Client::connect().and_then(|mut c| c.set(&id, synaptixd::SettingsChange { engine: Some(e), ..Default::default() }));
+        if let Err(err) = r {
+            let msg = if err.code == synaptixd::ErrorCode::Denied { tr!("settings.ai_models.service.denied") } else { err.to_string() };
+            syngui::async_runtime::run_on_main_thread(move || notes.warning(msg));
+        }
     });
 }
 
-/// Загрузить модель с её профилем: рантайм-часть уходит в движок, политика
-/// квантования — в загрузчик весов.
+/// Выбрать модель для чата (служба загрузит её со своим профилем).
 fn load_model(path: PathBuf) {
     let ctx = use_context::<AppCtx>();
-    if !path.exists() {
-        ctx.notifications
-            .warning(tr!("settings.ai_models.apply.not_found", path = path.display()));
-        return;
-    }
-    let policy =
-        crate::config::resolve_model_profile(&ctx.model_profiles.get_untracked(), &path).policy;
     let registry = use_context::<SynModelRegistry>();
     registry.unload();
-    registry.load(path, policy);
+    registry.load(path, synaptix::facade::llm::QuantPolicy::quality());
     ctx.notifications.info(tr!("settings.ai_models.apply.reloading"));
 }
 

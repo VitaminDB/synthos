@@ -103,11 +103,9 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
                 "model-status error",
             )
         } else if let Some(loaded) = current.as_ref() {
-            let name = loaded
-                .path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "—".to_string());
+            let name = reg.service_model(&loaded.path).map(|m| m.title).unwrap_or_else(|| {
+                loaded.path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "—".to_string())
+            });
             (MI_CHECK, tr!("chat.right.model.ready_title"), name, "model-status ready")
         } else {
             // Путь помним, но модель не поднимаем — показываем, что именно
@@ -115,7 +113,7 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
             let hint = reg
                 .last_path
                 .get()
-                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+                .and_then(|p| reg.service_model(&p).map(|m| m.title).or_else(|| p.file_name().map(|s| s.to_string_lossy().to_string())))
                 .unwrap_or_else(|| tr!("chat.right.model.pick_hint"));
             (MI_INFO, tr!("chat.model.not_loaded"), hint, "model-status idle")
         };
@@ -135,27 +133,22 @@ fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + S
 
         // Бейдж режима: что за настройки сейчас у загруженной модели.
         //   "Оптимальный · NVFP4 / MXFP8 KV"
-        let quant_badge = match current.as_ref() {
-            Some(model) => {
-                let app = use_context::<crate::context::AppCtx>();
-                let profiles = app.model_profiles.get();
-                let profile = crate::config::model_profile_of(&profiles, &model.path);
-                let resolved = profile.resolve(&model.path);
-                let mode = if profile.is_custom() {
-                    tr!("settings.ai_models.mode.custom")
-                } else {
-                    tr!("settings.ai_models.mode.optimal")
-                };
-                // Квантованный бандл без перекодировки исполняется в своём
-                // формате — его и показываем, а не пожелание политики.
-                let weights = match synaptix::facade::arch::bundle_quant_formats(&model.path).first() {
-                    Some((f, _)) if !resolved.policy.transcode => f.to_uppercase(),
-                    _ => crate::config::dtype_name(resolved.policy.weights_storage).to_uppercase(),
-                };
-                Some(format!("{mode} · {weights} / {} KV", resolved.policy.kv_dtype.name().to_uppercase()))
-            }
-            None => None,
-        };
+        let quant_badge = current.as_ref().and_then(|model| reg.service_model(&model.path)).and_then(|m| {
+            let e = m.engine?;
+            let mode = if e.custom { tr!("settings.ai_models.mode.custom") } else { tr!("settings.ai_models.mode.optimal") };
+            // Квантованный бандл без перекодировки исполняется в своём
+            // формате — его и показываем, а не пожелание политики.
+            let weights = match e.source.first() {
+                Some(f) if e.transcode != Some(true) => f.trim_start_matches("ggml:").to_uppercase(),
+                _ => e.weights.clone().unwrap_or_default().to_uppercase(),
+            };
+            let kv = match e.kv_dtype.as_deref() {
+                Some("fp8e4m3") => "MXFP8".to_string(),
+                Some(k) => k.to_uppercase(),
+                None => "—".into(),
+            };
+            Some(format!("{mode} · {weights} / {kv} KV"))
+        });
 
         DecoratedBox::new()
             .child(mgui! {
@@ -190,28 +183,44 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         let reg = use_context::<SynModelRegistry>();
         let loading = reg.loading.get();
         let has_loaded = reg.current.get().is_some();
+        let models = reg.models.get();
+        let selected = reg.current.get().map(|m| m.path.clone()).or_else(|| reg.last_path.get());
+        let selected = selected
+            .and_then(|p| models.iter().find(|m| m.path == p).map(|m| m.id.clone()))
+            .or_else(|| reg.default_id.get().filter(|d| models.iter().any(|m| &m.id == d)));
 
-        let pick = ToolButton::new(MI_FOLDER_OPEN)
-            .tooltip(tr!("chat.right.model.pick.tooltip"))
-            .on_click(move || {
-                if reg.loading.get_untracked() {
-                    return;
+        // Модели — из библиотек службы нейросетей (как в «Параметрах»):
+        // своего движка у Synthos нет, файл выбирать не нужно.
+        let pick: Box<dyn Widget> = if models.is_empty() {
+            let text = if reg.online.get() { tr!("chat.right.model.service.empty") } else { tr!("chat.right.model.service.offline") };
+            Box::new(Text::new(text).max_lines(2).class("right-pick-empty"))
+        } else {
+            let mut dd = Dropdown::new().placeholder(tr!("chat.right.model.service.placeholder"));
+            for m in &models {
+                let mut label = m.title.clone();
+                if m.loaded {
+                    label.push_str(&format!(" · {}", tr!("chat.right.model.service.loaded")));
                 }
-                std::thread::spawn(move || {
-                    let path = rfd::FileDialog::new()
-                        .add_filter(tr!("chat.right.model.pick.filter_name"), &["syn", "gguf"])
-                        .set_title(tr!("chat.right.model.pick.dialog_title"))
-                        .pick_file();
-                    if let Some(p) = path {
-                        load_from_any_thread(p);
+                dd = dd.item(DropdownItem::new(m.id.clone(), label));
+            }
+            if let Some(id) = &selected {
+                dd = dd.selected(id.clone());
+            }
+            let list = models.clone();
+            Box::new(Tooltip::new(
+                dd.on_change(move |id: &str| {
+                    if use_context::<SynModelRegistry>().loading.get_untracked() {
+                        return;
                     }
-                });
-            })
-            .class(if loading {
-                "right-pick-btn disabled"
-            } else {
-                "right-pick-btn"
-            });
+                    if let Some(m) = list.iter().find(|m| m.id == id) {
+                        load_from_any_thread(m.path.clone());
+                    }
+                })
+                .disabled(loading)
+                .class("right-model-dropdown"),
+                tr!("chat.right.model.service.tooltip"),
+            ))
+        };
 
         // Модель поднимается только руками (авто-загрузки при входе в чат
         // нет), поэтому кнопка двойная: пока ничего не загружено — поднимает
@@ -232,7 +241,10 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
                 })
                 .class("right-model-btn right-model-btn-unload")
         } else {
-            let last = reg.last_path.get();
+            let last = reg.last_path.get().or_else(|| {
+                let id = selected.clone()?;
+                models.iter().find(|m| m.id == id).map(|m| m.path.clone())
+            });
             Button::new(tr!("chat.right.model.load"))
                 .leading_icon(MI_POWER_SETTINGS)
                 .disabled(loading || last.is_none())
@@ -249,9 +261,9 @@ fn pick_button_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sy
         // растягивает `.grow`.
         DecoratedBox::new()
             .child(mgui! {
-                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                     pick,
-                    DecoratedBox::new().class("grow").child(toggle),
+                    toggle,
                 ]
             })
             .class("right-pick-row")

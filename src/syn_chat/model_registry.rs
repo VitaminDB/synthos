@@ -100,6 +100,81 @@ pub fn reclaim_vram(device: synaptix_core::device::Device) -> (u64, usize) {
     (freed, descs)
 }
 
+/// Языковая модель из библиотеки службы — пункт списка выбора модели.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ServiceLlm {
+    pub id: String,
+    pub title: String,
+    /// Основной файл весов: по нему Synthos читает токенизатор и шаблон.
+    pub path: PathBuf,
+    pub loaded: bool,
+    pub loading: bool,
+    pub device: Option<synaptixd::DeviceKind>,
+    pub precision: String,
+    pub disk_bytes: u64,
+    /// Действующий профиль движка (выверенный с правками).
+    pub engine: Option<synaptixd::EngineProfile>,
+    /// Ручные правки профиля в настройках модели.
+    pub own: synaptixd::EngineProfile,
+}
+
+impl ServiceLlm {
+    fn from_entry(m: &synaptixd::ModelEntry) -> Option<Self> {
+        (m.kind == synaptixd::ModelKind::Llm && !m.path.is_empty()).then(|| Self {
+            id: m.id.clone(),
+            title: m.title.clone(),
+            path: PathBuf::from(&m.path),
+            loaded: m.state == synaptixd::LoadState::Loaded,
+            loading: m.state == synaptixd::LoadState::Loading,
+            device: m.device,
+            precision: m.precision.clone(),
+            disk_bytes: m.disk_bytes,
+            engine: m.engine.clone(),
+            own: m.settings.engine.clone(),
+        })
+    }
+}
+
+/// Список языковых моделей службы и модель по умолчанию; обновляется по
+/// событиям службы (подписка), без службы — повтор раз в 5 с.
+fn watch_service(models: RwSignal<Vec<ServiceLlm>>, default_id: RwSignal<Option<String>>, online: RwSignal<bool>) {
+    let fetch = move || -> synaptixd::Result<()> {
+        let mut c = synaptixd::Client::connect()?;
+        let list: Vec<ServiceLlm> = c.list()?.iter().filter_map(ServiceLlm::from_entry).collect();
+        let def = c.defaults().ok().and_then(|d| d.into_iter().find(|d| d.kind == synaptixd::ModelKind::Llm)).and_then(|d| d.resolved.or(d.model));
+        syngui::async_runtime::run_on_main_thread(move || {
+            if models.get_untracked() != list {
+                models.set(list);
+            }
+            if default_id.get_untracked() != def {
+                default_id.set(def);
+            }
+        });
+        Ok(())
+    };
+    std::thread::Builder::new()
+        .name("synaptixd-models".into())
+        .spawn(move || loop {
+            if fetch().is_ok() {
+                syngui::async_runtime::run_on_main_thread(move || online.set(true));
+                let sub = synaptixd::Client::connect().and_then(|c| {
+                    c.subscribe(|ev| {
+                        if matches!(ev, synaptixd::Event::ModelsChanged | synaptixd::Event::ModelState { .. }) {
+                            let _ = fetch();
+                        }
+                        true
+                    })
+                });
+                if let Err(e) = sub {
+                    log::warn!("[syn_chat] подписка на службу нейросетей: {e}");
+                }
+            }
+            syngui::async_runtime::run_on_main_thread(move || online.set(false));
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        })
+        .ok();
+}
+
 #[derive(Clone, Copy)]
 pub struct SynModelRegistry {
     pub current: RwSignal<Option<Arc<LoadedSynModel>>>,
@@ -113,9 +188,20 @@ pub struct SynModelRegistry {
     /// загрузки — последней (`last_path`), чтобы режим `default` показывал
     /// значения модели сразу. Профиль читает только конфиги бандла, не веса.
     pub sampling: RwSignal<Option<Arc<SamplingProfile>>>,
+    /// Языковые модели службы (список выбора).
+    pub models: RwSignal<Vec<ServiceLlm>>,
+    /// Модель чата по умолчанию в службе.
+    pub default_id: RwSignal<Option<String>>,
+    /// Служба отвечает.
+    pub online: RwSignal<bool>,
 }
 
 impl SynModelRegistry {
+    /// Модель службы по файлу весов.
+    pub fn service_model(&self, path: &std::path::Path) -> Option<ServiceLlm> {
+        self.models.get().into_iter().find(|m| m.path == path)
+    }
+
     pub fn new() -> Self {
         let last = crate::config::AppConfig::load()
             .last_syn_model
@@ -130,12 +216,17 @@ impl SynModelRegistry {
                 sampling.set(Some(Arc::new(profile)));
             });
         }
+        let (models, default_id, online) = (use_signal(Vec::new()), use_signal(None), use_signal(false));
+        watch_service(models, default_id, online);
         Self {
             current: use_signal(None),
             loading: use_signal(false),
             error: use_signal(None),
             last_path: use_signal(last),
             sampling,
+            models,
+            default_id,
+            online,
         }
     }
 

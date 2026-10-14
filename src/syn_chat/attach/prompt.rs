@@ -2,10 +2,12 @@
 //!
 //! Каждая модальность попадает к модели своим путём:
 //!
-//! - **картинка / видео** — vision-башня даёт эмбеддинги, а в текст
-//!   сообщения встаёт блок токенов-заполнителей (`<|patch|>` / `<|video|>`);
+//! - **картинка / видео** — в текст сообщения встаёт маркер
+//!   [`synaptixd::MEDIA_MARK`], а файл уходит в службу: её башня зрения
+//!   кодирует его и ставит блок токенов ровно на место маркера (эмбеддинги
+//!   служба кэширует сама);
 //! - **документ** — содержимое инлайнится текстом в fenced-блок;
-//! - **аудио** — транскрипт загруженной ASR-модели (кэшируется в
+//! - **аудио** — транскрипт модели распознавания службы (кэшируется в
 //!   `blobs/derived/<sha>.txt`), иначе — строка-заглушка;
 //! - **прочее** — только имя и размер: модель хотя бы знает, что файл есть.
 //!
@@ -13,21 +15,16 @@
 //! после блока вложения идёт строка с его путём на диске — чтобы модель
 //! могла обработать файл инструментами, а не искать его.
 //!
-//! Если модель без vision-башни, картинки и видео тоже деградируют до
-//! текстовой строки — чат остаётся рабочим, просто модель их не «видит».
+//! Если модель без зрения, картинки и видео деградируют до текстовой строки
+//! — чат остаётся рабочим, просто модель их не «видит».
 
 use std::path::Path;
+#[cfg(test)]
 use std::sync::Arc;
 
-use syngui::core::sync::Mutex;
-
-use synaptix::facade::asr::Transcriber;
-use synaptix::facade::llm::{Llm, MediaEmbedding, MediaKind};
-
 use crate::agent::state::{AttachmentKind, MsgAttachment};
-use crate::syn_chat::model_registry;
 
-use super::{blobs, format_duration, format_size, media_cache};
+use super::{blobs, format_duration, format_size};
 
 /// Потолок инлайна документа без токенизатора (юнит-тесты, прогоны вне
 /// чата): 60k символов ≈ 20k токенов. В чате действует [`DocBudget`] —
@@ -51,35 +48,30 @@ pub struct DocBudget {
 /// Что модель умеет принимать в этой сессии.
 #[derive(Clone)]
 pub struct MediaCaps {
-    /// Можно ли кодировать картинки и видео прямо сейчас: у модели есть
-    /// vision-башня и она поднята. `false` — в промпт попадут только уже
-    /// посчитанные эмбеддинги из кэша, остальное деградирует в текст.
+    /// Модель видит картинки и видео (у службы есть её башня зрения).
     pub vision: bool,
-    /// Почему кодирование недоступно (`None` — доступно). Причина уходит в
-    /// текстовую заглушку: «модель не видит картинку» без объяснения
-    /// выглядит как глюк.
+    /// Почему не видит (`None` — видит). Причина уходит в текстовую
+    /// заглушку: «модель не видит картинку» без объяснения выглядит как глюк.
     pub vision_error: Option<String>,
     /// Потолок vision-токенов на картинку (`None` — как в конфиге модели).
     pub max_image_tokens: Option<usize>,
-    /// ASR-модель для расшифровки аудио-вложений; `None` — не загружена.
-    pub asr: Option<Arc<Mutex<Option<Transcriber>>>>,
     /// Бюджет документа-вложения в токенах; `None` — потолок по символам
     /// ([`DOC_INLINE_LIMIT`]).
     pub doc_budget: Option<DocBudget>,
 }
 
-/// Готовое user-сообщение: текст для chat-шаблона + медиа в порядке
-/// появления блоков в этом тексте.
+/// Готовое сообщение: текст для chat-шаблона (маркеры на местах картинок и
+/// видео) + их файлы в порядке маркеров.
 pub struct PreparedMessage {
     pub text: String,
-    pub media: Vec<MediaEmbedding>,
+    pub media: Vec<synaptixd::Media>,
 }
 
-/// Одно вложение в промпте: его кусок текста (блок заполнителей, документ,
-/// транскрипт или строка-заглушка) и эмбеддинг, если это картинка/видео.
+/// Одно вложение в промпте: его кусок текста (маркер, документ, транскрипт
+/// или строка-заглушка) и файл, если это картинка/видео.
 pub struct Part {
     pub text: String,
-    pub media: Option<MediaEmbedding>,
+    pub media: Option<synaptixd::Media>,
     /// Почему содержимое модели не досталось (`None` — досталось): в `text`
     /// тогда лежит строка-заглушка с этой же причиной.
     pub failure: Option<String>,
@@ -92,24 +84,18 @@ impl Part {
 }
 
 /// Кусок промпта под одно вложение — каждой модальности своим путём (см.
-/// шапку модуля). Картинка и видео кодируются башней (или берутся из кэша
-/// эмбеддингов), поэтому башня к этому моменту уже должна быть поднята
-/// ([`ensure_tower`]), если эмбеддингов в кэше нет.
-pub fn attachment_part(a: &MsgAttachment, model: &Llm, caps: &MediaCaps) -> Part {
+/// шапку модуля).
+pub fn attachment_part(a: &MsgAttachment, caps: &MediaCaps) -> Part {
     let mut part = match a.kind {
-        AttachmentKind::Image | AttachmentKind::Video => match encode_media(a, model, caps) {
-            Ok(emb) => Part {
-                text: format!("{}\n", emb.prompt_block),
-                media: Some(emb),
-                failure: None,
-            },
+        AttachmentKind::Image | AttachmentKind::Video => match media_file(a, caps) {
+            Ok(m) => Part { text: format!("{}\n", synaptixd::MEDIA_MARK), media: Some(m), failure: None },
             Err(e) => {
                 log::warn!("[attach] {}: {e}", a.original_name);
                 Part::failed(fallback_line(a, Some(&e)), e)
             }
         },
         AttachmentKind::Document => document_part(a, caps),
-        AttachmentKind::Audio => audio_part(a, caps),
+        AttachmentKind::Audio => audio_part(a),
         AttachmentKind::Other => {
             Part::failed(fallback_line(a, None), "содержимое модели недоступно")
         }
@@ -123,24 +109,15 @@ pub fn attachment_part(a: &MsgAttachment, model: &Llm, caps: &MediaCaps) -> Part
 /// Собирает содержимое user-сообщения из вложений и текста.
 ///
 /// Порядок важен: блоки вложений идут перед текстом реплики (так их видят
-/// и HF-процессоры), а `media` возвращается ровно в том порядке, в каком
-/// заполнители встречаются в `text` — на этом порядке держится разбор
-/// эмбеддингов в `generate_streaming_media`.
-pub fn prepare_user_message(
-    body: &str,
-    attachments: &[MsgAttachment],
-    model: &Llm,
-    caps: &MediaCaps,
-) -> PreparedMessage {
+/// и HF-процессоры), а `media` — ровно в порядке маркеров в `text`.
+pub fn prepare_user_message(body: &str, attachments: &[MsgAttachment], caps: &MediaCaps) -> PreparedMessage {
     let mut text = String::new();
-    let mut media: Vec<MediaEmbedding> = Vec::new();
-
+    let mut media = Vec::new();
     for a in attachments {
-        let part = attachment_part(a, model, caps);
+        let part = attachment_part(a, caps);
         text.push_str(&part.text);
         media.extend(part.media);
     }
-
     if !body.trim().is_empty() {
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
@@ -158,22 +135,12 @@ pub fn prepare_user_message(
 /// Одна функция на оба пути — ход агента собирает текст из уже посчитанных
 /// кусков ([`assemble_tool_view`]), пересборка истории из ленты — отсюда;
 /// текст обязан совпасть байт в байт, иначе префикс-KV обнулится.
-pub fn prepare_tool_view(
-    body: &str,
-    attachments: &[MsgAttachment],
-    model: &Llm,
-    caps: &MediaCaps,
-) -> PreparedMessage {
-    let parts: Vec<Part> = attachments.iter().map(|a| attachment_part(a, model, caps)).collect();
-    let items: Vec<(&MsgAttachment, &str)> = attachments
-        .iter()
-        .zip(&parts)
-        .map(|(a, p)| (a, p.text.as_str()))
-        .collect();
+pub fn prepare_tool_view(body: &str, attachments: &[MsgAttachment], caps: &MediaCaps) -> PreparedMessage {
+    let parts: Vec<Part> = attachments.iter().map(|a| attachment_part(a, caps)).collect();
+    let items: Vec<(&MsgAttachment, &str)> = attachments.iter().zip(&parts).map(|(a, p)| (a, p.text.as_str())).collect();
     let text = assemble_tool_view(body, &items);
     PreparedMessage { text, media: parts.into_iter().filter_map(|p| p.media).collect() }
 }
-
 /// Текст результата `view_media` из готовых кусков: `[file N: имя]`, кусок
 /// вложения, и после всех файлов — тело результата.
 pub fn assemble_tool_view(body: &str, items: &[(&MsgAttachment, &str)]) -> String {
@@ -216,140 +183,20 @@ fn path_line(a: &MsgAttachment, delivered: bool) -> String {
     )
 }
 
-/// Ключ вложения в кэше эмбеддингов: модальность и потолок токенов.
-fn cache_key(a: &MsgAttachment, caps: &MediaCaps) -> (MediaKind, Option<usize>) {
-    match a.kind {
-        // У видео потолок токенов свой, из препроцессинга (число кадров ×
-        // токенов на кадр), и настройкой чата не режется.
-        AttachmentKind::Video => (MediaKind::Video, None),
-        _ => (MediaKind::Image, caps.max_image_tokens),
-    }
-}
-
-/// Есть ли среди вложений картинка или видео, которых ещё нет в кэше
-/// эмбеддингов, — то есть нужна ли для этого сообщения vision-башня.
-///
-/// Кэш переживает и turn'ы agent-loop, и регенерации: повторная отправка
-/// того же файла башню не требует. Проверка не косметическая — башня
-/// поднимается поверх весов LLM, и на 24 ГБ VRAM её загрузка ради нуля
-/// работы честно упирается в OOM, после которого вложение деградирует в
-/// текстовую заглушку, хотя эмбеддинги уже посчитаны.
-pub fn needs_tower(attachments: &[MsgAttachment], caps: &MediaCaps) -> bool {
-    attachments.iter().any(|a| {
-        if !a.kind.has_thumbnail() {
-            return false;
-        }
-        let (kind, limit) = cache_key(a, caps);
-        !media_cache::has(&a.sha256, kind, limit)
-    })
-}
-
-/// Кодирует картинку/видео vision-башней, переиспользуя кэш.
-///
-/// Кэш проверяется до башни: уже посчитанные эмбеддинги живут отдельными
-/// тензорами и не зависят от того, поднята башня сейчас или нет. Если
-/// кэша нет, а башни в памяти тоже ([`ensure_tower`] не смогла) — отдаём
-/// её причину, она уйдёт в текстовую заглушку.
-fn encode_media(
-    a: &MsgAttachment,
-    model: &Llm,
-    caps: &MediaCaps,
-) -> Result<MediaEmbedding, String> {
-    let (kind, limit) = cache_key(a, caps);
-    if let Some(hit) = media_cache::get(&a.sha256, kind, limit) {
-        return Ok(hit);
-    }
+/// Файл картинки или видео для службы; без зрения у модели — причина.
+fn media_file(a: &MsgAttachment, caps: &MediaCaps) -> Result<synaptixd::Media, String> {
     if !caps.vision {
-        return Err(caps
-            .vision_error
-            .clone()
-            .unwrap_or_else(|| "модель без vision-башни".into()));
+        return Err(caps.vision_error.clone().unwrap_or_else(|| "модель без зрения".into()));
     }
     let path = blobs::model_path(a);
     if !path.exists() {
         return Err(format!("файл вложения не найден: {}", path.display()));
     }
-    let t0 = std::time::Instant::now();
-    let emb = match kind {
-        MediaKind::Image => model.encode_image(&path, limit),
-        MediaKind::Video => model.encode_video(&path),
-    }
-    .map_err(|e| e.to_string())?;
-    log::info!(
-        "[attach] {} → {} vision-токенов за {:?}",
-        a.original_name,
-        emb.tokens,
-        t0.elapsed()
-    );
-    media_cache::put(&a.sha256, kind, limit, &emb);
-    Ok(emb)
-}
-
-/// Догружает vision-башню, если среди вложений есть картинки или видео.
-///
-/// `Ok(())` — башня в памяти и кодирование возможно; `Err` — причина, по
-/// которой вложения придётся деградировать до текстовой строки (её показывает
-/// UI: без неё «модель не видит картинку» выглядит как молчаливый глюк).
-pub fn ensure_tower(model: &Llm, needed: bool) -> Result<(), String> {
-    if !needed {
-        return Err(String::new());
-    }
-    if !model.supports_media() {
-        return Err("модель без vision-башни".into());
-    }
-    if model.media_tower_loaded() {
-        return Ok(());
-    }
-    // Башня (3.5 ГБ у 30B) ложится поверх весов LLM и помещается впритык,
-    // поэтому перед загрузкой выгребаем всё, что можно вернуть: после
-    // прошлых генераций в пуле сидят сегменты, пришпиленные мёртвыми
-    // записями кэша ядер.
-    let (freed, descs) = model_registry::reclaim_vram(*model.device());
-    let free_mb = model_registry::vram_free_mb();
-    log::info!(
-        "[attach] перед vision-башней: trim +{freed} MB ({descs} TMA-деск.), \
-         VRAM свободно {free_mb} MB"
-    );
-    let t0 = std::time::Instant::now();
-    match model.ensure_media_tower() {
-        Ok(true) => {
-            log::info!("[attach] vision-башня загружена за {:?}", t0.elapsed());
-            Ok(())
-        }
-        Ok(false) => {
-            log::warn!("[attach] в бандле модели нет vision-башни");
-            Err("в бандле модели нет vision-башни".into())
-        }
-        Err(e) => {
-            log::warn!("[attach] не удалось загрузить vision-башню: {e}");
-            // Загрузка падает на середине (обычно OOM после весов LLM), и
-            // уже поднятые слои остаются в пуле аллокатора. Без явной
-            // чистки они доживают до KV-ринга: тот сжимается до пары сотен
-            // токенов, и ответ обрывается на полуслове.
-            release_tower(model);
-            Err(short_reason(&e.to_string()))
-        }
-    }
-}
-
-/// Выгружает башню и возвращает её память ОС.
-pub fn release_tower(model: &Llm) {
-    model.release_media_tower();
-    let (freed, _) = model_registry::reclaim_vram(*model.device());
-    log::info!(
-        "[attach] vision-башня выгружена, trim: +{freed} MB; VRAM свободно {} MB",
-        model_registry::vram_free_mb()
-    );
-}
-
-/// Сообщение движка о загрузке башни — длинная цепочка контекстов
-/// (`vision load: load: vision: … alloc_zeros(27525120) after trim+retries:
-/// OOM`). В UI из неё нужен только смысл.
-fn short_reason(err: &str) -> String {
-    if err.contains("OOM") || err.to_lowercase().contains("out of memory") {
-        return "не хватило видеопамяти под vision-башню".into();
-    }
-    err.rsplit(": ").next().unwrap_or(err).trim().to_string()
+    let kind = match a.kind {
+        AttachmentKind::Video => synaptixd::MediaKind::Video,
+        _ => synaptixd::MediaKind::Image,
+    };
+    Ok(synaptixd::Media { kind, path: path.display().to_string() })
 }
 
 /// Строка-заглушка: модель узнаёт о файле, даже когда прочесть его не может.
@@ -450,10 +297,10 @@ fn truncate_chars(s: &str, limit: usize) -> (String, bool) {
     (s.chars().take(limit).collect(), true)
 }
 
-/// Транскрипт аудио: сначала кэш на диске, потом загруженная ASR-модель.
-fn audio_part(a: &MsgAttachment, caps: &MediaCaps) -> Part {
-    match transcribe(a, caps) {
-        Some(text) if !text.trim().is_empty() => Part {
+/// Транскрипт аудио: сначала кэш на диске, потом модель распознавания службы.
+fn audio_part(a: &MsgAttachment) -> Part {
+    match transcribe(a) {
+        Ok(text) if !text.trim().is_empty() => Part {
             text: format!(
                 "[аудио: {} · {}]\nРасшифровка:\n```\n{}\n```\n",
                 display_name(a),
@@ -463,42 +310,48 @@ fn audio_part(a: &MsgAttachment, caps: &MediaCaps) -> Part {
             media: None,
             failure: None,
         },
-        Some(_) => {
+        Ok(_) => {
             let why = "в записи не распознана речь";
             Part::failed(fallback_line(a, Some(why)), why)
         }
-        None => {
-            let why = "ASR-модель не загружена";
-            Part::failed(fallback_line(a, Some(why)), why)
-        }
+        Err(why) => Part::failed(fallback_line(a, Some(&why)), why),
     }
 }
 
-fn transcribe(a: &MsgAttachment, caps: &MediaCaps) -> Option<String> {
+fn transcribe(a: &MsgAttachment) -> Result<String, String> {
     let cached = blobs::derived_path(&a.sha256, "txt");
     if let Ok(text) = std::fs::read_to_string(&cached) {
-        return Some(text);
+        return Ok(text);
     }
-    let asr = caps.asr.as_ref()?;
     // Расшифровываем ту самую WAV 16 кГц моно, которую подготовил ingest.
     let wav_path = blobs::derived_path(&a.sha256, "wav");
-    let wav = std::fs::read(&wav_path).ok()?;
-    let mut guard = asr.lock().ok()?;
-    let transcriber = guard.as_mut()?;
+    let wav = std::fs::read(&wav_path).map_err(|e| format!("{}: {e}", wav_path.display()))?;
+    let pcm = wav_pcm(&wav).ok_or("WAV вложения не разобран")?;
     let t0 = std::time::Instant::now();
-    match transcriber.transcribe_wav(&wav) {
-        Ok(text) => {
-            log::info!("[attach] расшифровка {} за {:?}", a.original_name, t0.elapsed());
-            if let Err(e) = blobs::write_derived(&a.sha256, "txt", text.as_bytes()) {
-                log::warn!("[attach] кэш транскрипта: {e}");
-            }
-            Some(text)
-        }
-        Err(e) => {
-            log::warn!("[attach] ASR {}: {e}", a.original_name);
-            None
-        }
+    let text = synaptixd::Client::connect()
+        .and_then(|mut c| c.transcribe("", &pcm, 16_000, None))
+        .map(|t| t.text)
+        .map_err(|e| format!("распознавание речи в службе: {e}"))?;
+    log::info!("[attach] расшифровка {} за {:?}", a.original_name, t0.elapsed());
+    if let Err(e) = blobs::write_derived(&a.sha256, "txt", text.as_bytes()) {
+        log::warn!("[attach] кэш транскрипта: {e}");
     }
+    Ok(text)
+}
+
+/// Отсчёты 16-битного PCM WAV (моно) в f32.
+fn wav_pcm(wav: &[u8]) -> Option<Vec<f32>> {
+    let mut i = 12;
+    while i + 8 <= wav.len() {
+        let id = &wav[i..i + 4];
+        let len = u32::from_le_bytes(wav[i + 4..i + 8].try_into().ok()?) as usize;
+        if id == b"data" {
+            let data = wav.get(i + 8..(i + 8 + len).min(wav.len()))?;
+            return Some(data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect());
+        }
+        i += 8 + len + (len & 1);
+    }
+    None
 }
 
 #[cfg(test)]

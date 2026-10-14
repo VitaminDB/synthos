@@ -17,7 +17,6 @@
 
 pub mod blobs;
 pub mod ingest;
-pub mod media_cache;
 pub mod prompt;
 
 use std::path::PathBuf;

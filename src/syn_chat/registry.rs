@@ -12,7 +12,7 @@ use super::chat_settings::ChatSettings;
 use super::params::SamplingParams;
 use super::state::{ChatMeta, ChatMsg, SynChatCtx};
 use super::storage::{self, StoredChat};
-use super::{autosave, session, telemetry};
+use super::{autosave, telemetry};
 
 /// Контент-зависимый отпечаток чата для пропуска идемпотентного автосейва.
 pub fn fingerprint(title: &str, messages: &[ChatMsg]) -> u64 {
@@ -125,12 +125,8 @@ pub fn create_new() -> String {
 /// равно пересоберётся полным префиллом, лениво он не восстанавливается).
 fn leave_current_chat() {
     let ctx = use_context::<SynChatCtx>();
-    // Кэш префикс-KV принадлежит чату, который сейчас считает: с 04.09.2026
-    // ход переживает переключение, и ронять его контекст на полпути нельзя —
-    // это стоило бы полного префилла на следующем же ходу.
-    if ctx.generating_chat.get_untracked().is_none() {
-        session::drop_kv_session();
-    }
+    // Кэш префикс-KV чата живёт в службе по его ключу — переключение его не
+    // трогает.
     telemetry::reset();
     // Начатая правка названия принадлежит покидаемому чату — поле не
     // должно пережить переключение и открыться на новом.

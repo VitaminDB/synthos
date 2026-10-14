@@ -12,7 +12,7 @@
 use syngui::tr;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
-use synaptix::facade::llm::{LlmGeneration, Message};
+use synaptix::facade::llm::Message;
 
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
@@ -111,38 +111,15 @@ pub fn refine_voice_text(app: AppCtx, raw: String) {
 /// без tools, `enable_thinking=false` (нужна редакция, а не рассуждения).
 fn run_refine(model: &LoadedSynModel, system: &str, user: &str) -> anyhow::Result<String> {
     let history = vec![Message::system(system), Message::user(user)];
-    let prompt = model
-        .tokenizer
-        .apply_chat_template_ex_tools(&history, true, false, None)?;
-    let prompt_ids = model.tokenizer.encode(&prompt)?;
-
-    // KV-ring cap (как в syn_chat::session::run_agent_loop): rope/embed таблицы
-    // размером ровно max_seq_len, позиция model_cap — out of bounds; резервируем
-    // минимум 1 позицию и не аллоцируем ring больше, чем реально нужно.
-    let model_cap = model.model.config().max_seq_len;
-    let usable_cap = model_cap.saturating_sub(1);
-    let prompt_capped = prompt_ids.len().min(usable_cap);
-    let headroom = usable_cap.saturating_sub(prompt_capped);
-
-    let mut opts = SamplingParams::default().to_options();
-    opts.temperature = REFINE_TEMPERATURE;
-    let max_new = REFINE_MAX_NEW_TOKENS.min(headroom.max(1));
-    opts.max_new_tokens = max_new;
-    opts.max_seq_len = (prompt_capped + max_new + 128).min(usable_cap);
-
-    let mut runner = LlmGeneration::new(&model.model, opts);
-    crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
-
-    let mut out = String::new();
-    runner.generate_streaming(&prompt_ids, &model.tokenizer, |_id, delta| {
-        out.push_str(delta);
-        true
-    })?;
-    drop(runner);
-
+    let mut params = SamplingParams::default();
+    params.temperature = REFINE_TEMPERATURE;
+    params.enable_thinking = false;
+    params.max_new_tokens = REFINE_MAX_NEW_TOKENS as u32;
+    let call = crate::syn_chat::daemon::params(&params, None);
+    let g = crate::syn_chat::daemon::complete(&model.id, &history, &call, std::sync::Arc::new(|| false))?;
     // enable_thinking=false, но защитно вырезаем `<think>…</think>`, если
     // шаблон всё же их выдал.
     let mut tp = ThinkParser::new();
-    let split = tp.feed(&out);
+    let split = tp.feed(&g.text);
     Ok(split.body.trim().to_string())
 }

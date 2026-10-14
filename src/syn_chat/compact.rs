@@ -425,29 +425,13 @@ pub async fn maybe_autocompact(
         return;
     }
     // Лимит = что раньше кончится: окно модели, `max_seq_len` из настроек
-    // или VRAM-бюджет последнего хода (`RingPlan.by_mem`; 0 — ход ещё не
-    // считался). Бюджет — с учётом оффлоада: блоки, которые ещё на карте,
-    // `fit_blocks_for_context` отправит на хост и освободит VRAM под KV, так
-    // что ход на таком контексте пройдёт — медленнее, но пройдёт. Без этой
-    // поправки сжатие срабатывало там, где ход прекрасно работал
-    // (07.09.2026: 77k токенов при «лимите» 87k свернулись в сводку на 594
-    // токена, и модель дальше отвечала на вопросы по документу выдумкой).
-    let model_cap = model.model.config().max_seq_len.saturating_sub(1) as u32;
-    let offloadable_tokens: u32 = model
-        .model
-        .block_offload_shape()
-        .map(|(block_bytes, total)| {
-            let resident = model.model.resident_blocks().unwrap_or(total);
-            let kv = model.model.kv_bytes_per_token().max(1) as u64;
-            (resident as u64 * block_bytes as u64 / kv).min(u32::MAX as u64) as u32
-        })
-        .unwrap_or(0);
-    let mut effective = model_cap;
+    // или окно последнего хода в службе (0 — ход ещё не считался).
+    let mut effective = model.window.saturating_sub(1) as u32;
     if max_seq_len > 0 {
         effective = effective.min(max_seq_len);
     }
     if budget > 0 {
-        effective = effective.min(budget.saturating_add(offloadable_tokens));
+        effective = effective.min(budget);
     }
     if effective == 0 {
         return;
@@ -577,14 +561,7 @@ async fn run_compaction_scoped(
 
     push_snackbar(tr!("chat.compact.running", iteration = iteration), false);
 
-    // 2. Summary через in-process генерацию. Кэш префикс-KV сбрасываем до
-    //    неё: после компактификации история всё равно перестанет совпадать с
-    //    посчитанным префиксом, а его VRAM пригодится summary-запросу.
-    //    Внутри хода слот держит сам agent-loop — он его и освобождает, а
-    //    `drop_kv_session` тут только повесил бы отложенную очистку.
-    if matches!(scope, CompactScope::BetweenTurns) {
-        session::drop_kv_session();
-    }
+    // 2. Сводка — ходом модели в службе (без сессии: кэш чата не трогаем).
     let prompt = summary_prompt();
     let summary = match session::generate_summary(
         &model,

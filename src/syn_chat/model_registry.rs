@@ -1,34 +1,32 @@
+//! Модель чата — языковая модель службы synaptixd: веса, KV-кэш и
+//! генерация живут там (`syn_chat::daemon`). Здесь — открытая служба
+//! (соединение держит модель загруженной), токенизатор и шаблон бандла для
+//! подсчёта токенов и сборки истории, сведения о модели.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use synaptix_core::device::Device;
+use syngui::core::sync::Mutex;
 use syngui::prelude::*;
-use synaptix::facade::llm::{load_llm_with_policy, Llm, LlmTokenizer, QuantPolicy, SamplingProfile};
+use synaptix::facade::llm::{LlmTokenizer, QuantPolicy, SamplingProfile};
 
 pub struct LoadedSynModel {
-    pub model: Llm,
+    /// Id модели в библиотеке службы.
+    pub id: String,
     /// Под `Arc`, чтобы счётчики токенов (`tools::budget::model_counter`)
-    /// держали только токенизатор, а не модель: клон `Arc<LoadedSynModel>`
-    /// в бюджете хода переживал выгрузку перед `pipelines run` — веса
-    /// оставались на карте, и нодовая модель прогона падала в OOM.
+    /// держали только токенизатор.
     pub tokenizer: Arc<LlmTokenizer>,
     pub path: PathBuf,
-    /// Кэш `Llm::supports_media()`, снятый один раз при загрузке.
-    ///
-    /// Спрашивать сам пайплайн из UI нельзя: `supports_media` берёт тот же
-    /// `Mutex`, что и `generate_streaming`, а генерация держит его на весь
-    /// ход. Реактивный блок статуса модели упирался в этот мьютекс прямо в
-    /// `rebuild_if_needed` и вешал main thread на всё время генерации — окно
-    /// переставало перерисовываться, композитор помечал его «не отвечает».
-    /// Для загруженного бандла флаг неизменен, поэтому кэш честный.
+    /// Модель принимает картинки и видео (у службы есть башня зрения).
     pub supports_media: bool,
     /// Пресеты сэмплинга и уровни размышлений модели — по ним режим
     /// `default` карточки Sampling собирает параметры хода.
     pub sampling: SamplingProfile,
-}
-
-fn select_device() -> Device {
-    Device::Cuda(0)
+    /// Окно контекста модели в службе, токенов.
+    pub window: usize,
+    /// Соединение, открывшее модель: пока оно живо, служба держит её
+    /// загруженной (закрылось — модель выгружается по простою).
+    _hold: Mutex<synaptixd::Client>,
 }
 
 pub fn vram_free_mb() -> usize {
@@ -93,22 +91,13 @@ pub fn act_pool_slack_mb() -> usize {
 /// зарезервированное — за пару ходов на 24 ГБ так утекает больше гигабайта,
 /// ровно той VRAM, которой потом не хватает vision-башне. Чистим ДО трима;
 /// дескрипторы восстанавливаются лениво на первом же вызове ядра.
-pub fn reclaim_vram(device: Device) -> (u64, usize) {
-    let Device::Cuda(ordinal) = device else {
+pub fn reclaim_vram(device: synaptix_core::device::Device) -> (u64, usize) {
+    let synaptix_core::device::Device::Cuda(ordinal) = device else {
         return (0, 0);
     };
     let (descs, _scratch) = synaptix::facade::llm::cuda_release_kernel_caches();
     let freed = synaptix::facade::llm::cuda_trim_pool(ordinal as i32);
     (freed, descs)
-}
-
-fn ensure_kernels_registered() {
-    use std::sync::OnceLock;
-    static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        synaptix_kernels_cpu::ensure_registered();
-        synaptix_kernels_cuda::ensure_registered();
-    });
 }
 
 #[derive(Clone, Copy)]
@@ -188,88 +177,38 @@ impl SynModelRegistry {
         }
 
         let registry = *self;
-        crate::syn_chat::session::reset_kernel_cache_warm();
-        crate::syn_chat::session::drop_kv_session();
         registry.loading.set(true);
         registry.error.set(None);
-        // Эмбеддинги вложений привязаны к vision-башне прежней модели —
-        // при смене модели они больше не валидны (и держат её VRAM).
-        crate::syn_chat::attach::media_cache::clear();
 
         std::thread::spawn(move || {
-            ensure_kernels_registered();
-            let device = select_device();
-            let vram_before = vram_free_mb();
-            log::info!(
-                "[syn_chat] загрузка модели {:?} (device={:?}, preset={}, VRAM свободно {} MB)",
-                path, device, policy.preset_name, vram_before
-            );
+            log::info!("[syn_chat] модель {:?} — в службе (пресет {} — настройки модели в службе)", path, policy.preset_name);
             let t0 = std::time::Instant::now();
-
-            match load_llm_with_policy(&path, policy, &device) {
-                Ok((model, tokenizer)) => {
-                    if let Device::Cuda(ord) = device {
-                        let freed = synaptix::facade::llm::cuda_trim_pool(ord as i32);
-                        log::info!("[syn_chat] trim после загрузки: +{freed} MB");
-                    }
-                    let vram_after = vram_free_mb();
-                    // Потолок контекста по памяти — то, что реально ограничивает
-                    // чат: KV-ринг живёт один ход и садится в свободную VRAM.
-                    // Запас (KV_RESERVE_MB в session.rs) вычитаем, иначе цифра
-                    // обманывает на размер активаций префилла.
-                    let kv_per_token = model.kv_bytes_per_token();
-                    // Ring-окна sliding-слоёв не растут с контекстом, но VRAM
-                    // держат — вычитаем их до деления на ставку «на токен».
-                    let kv_fixed_mb =
-                        model.kv_fixed_bytes(model.config().max_seq_len) / (1024 * 1024);
-                    let ctx_ceiling = if kv_per_token > 0 {
-                        (vram_available_mb().saturating_sub(1280 + kv_fixed_mb) * 1024 * 1024)
-                            / kv_per_token
-                    } else {
-                        model.config().max_seq_len
-                    };
+            match open_in_service(&path) {
+                Ok(loaded) => {
                     log::info!(
-                        "[syn_chat] модель загружена за {:?}, vocab={}, max_seq_len={}; \
-                         VRAM: веса {} MB, свободно {} MB; KV {} B/ток → контекст по \
-                         памяти ≈{} ток после прогрева кэшей ядер (cap модели {})",
+                        "[syn_chat] модель {} открыта в службе за {:?}: окно {} ток., зрение {}",
+                        loaded.id,
                         t0.elapsed(),
-                        model.vocab_size(),
-                        model.config().max_seq_len,
-                        vram_before.saturating_sub(vram_after),
-                        vram_after,
-                        kv_per_token,
-                        ctx_ceiling,
-                        model.config().max_seq_len
+                        loaded.window,
+                        loaded.supports_media
                     );
                     let new_path_str = path.display().to_string();
-                    if crate::config::AppConfig::load().last_syn_model.as_deref()
-                        != Some(&new_path_str)
-                    {
-                        crate::config::AppConfig::update(|cfg| {
-                            cfg.last_syn_model = Some(new_path_str)
-                        });
+                    if crate::config::AppConfig::load().last_syn_model.as_deref() != Some(&new_path_str) {
+                        crate::config::AppConfig::update(|cfg| cfg.last_syn_model = Some(new_path_str));
                     }
                     registry.last_path.set_always(Some(path.clone()));
-                    let supports_media = model.supports_media();
-                    let sampling = synaptix::facade::llm::sampling_profile(&path);
-                    registry.sampling.set(Some(Arc::new(sampling.clone())));
-                    let loaded = Arc::new(LoadedSynModel {
-                        model,
-                        tokenizer: Arc::new(tokenizer),
-                        path,
-                        supports_media,
-                        sampling,
-                    });
+                    registry.sampling.set(Some(Arc::new(loaded.sampling.clone())));
+                    let loaded = Arc::new(loaded);
                     registry.current.set_always(Some(loaded.clone()));
                     if let Some(tx) = notify {
                         let _ = tx.send(Ok(loaded));
                     }
                 }
                 Err(e) => {
-                    eprintln!("[syn_chat] ошибка загрузки модели: {e:#}");
-                    registry.error.set(Some(format!("{e:#}")));
+                    log::error!("[syn_chat] модель {}: {e}", path.display());
+                    registry.error.set(Some(e.clone()));
                     if let Some(tx) = notify {
-                        let _ = tx.send(Err(format!("{e:#}")));
+                        let _ = tx.send(Err(e));
                     }
                 }
             }
@@ -277,56 +216,38 @@ impl SynModelRegistry {
         });
     }
 
+    /// Отпустить модель: служба выгрузит её по простою или когда карта
+    /// понадобится другой модели.
     pub fn unload(&self) {
-        crate::syn_chat::session::reset_kernel_cache_warm();
-        crate::syn_chat::session::drop_kv_session();
-        crate::syn_chat::attach::media_cache::clear();
         let held = self.current.get_untracked();
-        let strong = held.as_ref().map(Arc::strong_count).unwrap_or(0);
-        // Кэши на карте (у Qwen4Exp — резидентные эксперты, гигабайты) отдаём
-        // явно: `Drop` модели может задержаться, пока жива хоть одна ссылка,
-        // а видеопамять нужна следующей модели сразу.
-        if let Some(model) = held.as_ref() {
-            model.model.release_device_caches();
+        if let Some(m) = held.as_ref() {
+            log::info!("[syn_chat] модель {} отпущена (ссылок {})", m.id, Arc::strong_count(m));
         }
         drop(held);
         self.current.set_always(None);
         self.error.set(None);
-        let before = vram_free_mb();
-        // TMA-дескрипторы кэшируются по АДРЕСУ тензора, MXFP8-скретчи — по
-        // устройству: после Drop модели записи мертвы, но живы как аллокации и
-        // рассыпаны по сегментам mempool'а — trim возвращал драйверу не всё
-        // (reserved 4768 MB при used 51 MB). Чистим ДО трима.
-        let (descs, scratch) = synaptix::facade::llm::cuda_release_kernel_caches();
-        let freed = synaptix::facade::llm::cuda_trim_pool(0);
-        let after = vram_free_mb();
-        let mb = |(r, u): (u64, u64)| (r / (1024 * 1024), u / (1024 * 1024));
-        let (dres, dused) = synaptix_core::memory::cuda_pool::cuda_mempool_stats(0)
-            .map(mb)
-            .unwrap_or((0, 0));
-        let (wres, wused) = synaptix_core::device::cuda::weights_pool_stats(0)
-            .map(mb)
-            .unwrap_or((0, 0));
-        let (ares, aused) = synaptix_core::device::cuda::activations_pool_stats(0)
-            .map(mb)
-            .unwrap_or((0, 0));
-        // Топ живых классов аллокаций — если после выгрузки пул всё ещё
-        // держит сегменты, здесь видно, кто именно их пришпилил.
-        let top: Vec<String> = synaptix_core::memory::cuda_pool::live_alloc_top(5)
-            .into_iter()
-            .map(|(bytes, count)| format!("{}x{}KB", count, bytes / 1024))
-            .collect();
-        log::info!(
-            "[syn_chat] выгрузка модели: ссылок было {strong}, кэши ядер: {descs} TMA-деск. \
-             + {} MB скретчей, trim +{freed} MB, VRAM свободно {before} -> {after} MB; \
-             default-пул {dres}/{dused} MB, staging-пул {wres}/{wused} MB, \
-             пул активаций {ares}/{aused} MB (reserved/used), \
-             живых по нашему учёту {:.0} MB, топ: {}",
-            scratch / (1024 * 1024),
-            synaptix_core::memory::cuda_pool::cuda_allocated_mb(),
-            top.join(", ")
-        );
     }
+}
+
+/// Открыть модель в службе по файлу бандла: загрузка, сведения, токенизатор.
+fn open_in_service(path: &std::path::Path) -> std::result::Result<LoadedSynModel, String> {
+    let svc = |e: synaptixd::Error| format!("служба нейросетей: {e}");
+    let mut c = synaptixd::Client::connect().map_err(svc)?;
+    let file = path.display().to_string();
+    let opened = c.open(&file).map_err(svc)?;
+    let id = opened.entry.id.clone();
+    let info = c.llm_info(&id).map_err(svc)?;
+    let tokenizer = synaptix::facade::llm::load_llm_tokenizer(path).map_err(|e| format!("токенизатор {}: {e}", path.display()))?;
+    let sampling = synaptix::facade::llm::sampling_profile(path);
+    Ok(LoadedSynModel {
+        id,
+        tokenizer: Arc::new(tokenizer),
+        path: path.to_path_buf(),
+        supports_media: info.media,
+        sampling,
+        window: info.window,
+        _hold: Mutex::new(c),
+    })
 }
 
 impl Default for SynModelRegistry {

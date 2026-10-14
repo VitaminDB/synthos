@@ -26,22 +26,22 @@
 //! при 50 tok/s × ~3 char/token = ~150 update/s main thread задушивается.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::*;
 use synaptix::facade::llm::{
-    LlmGeneration, LlmKvSession, LlmTokenizer, MediaEmbedding, Message,
+    Message,
 };
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
-use crate::agent::tools::catalog::{KEY_SUBAGENT, KEY_VIEW_MEDIA};
+use crate::agent::tools::catalog::KEY_VIEW_MEDIA;
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
-use crate::syn_chat::channel_parser::{self, ChannelIds, ATEM_CLOSE};
+use crate::syn_chat::channel_parser::{self, ChannelIds};
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
@@ -50,19 +50,10 @@ use crate::syn_chat::state::{
 use crate::syn_chat::chat_settings::{ChatSettings, TurnSettings};
 use crate::syn_chat::system_prompt::{self, PromptEnv};
 use crate::syn_chat::tool_parser::RawToolCall;
-pub(crate) use synaptix::facade::chat::{prompt_for_model, StreamParser};
 
 /// Cap частоты обновлений streaming-сигналов из worker thread. При 16 мс
 /// ≈ 60 fps — UI получает свежий хвост, не задыхаясь от 100+ updates/s.
 const FLUSH_INTERVAL_MS: u64 = 16;
-/// Qwen3 chat-template завершает каждый turn `<|im_end|>`, но `eos_token_id`
-/// в `config.json` обычно содержит только `<|endoftext|>` (151643). Без явной
-/// остановки на `<|im_end|>` модель «расплывается» — генерит свой следующий
-/// `user`-turn и продолжает диалог сама с собой.
-const IM_END_TOKEN: &str = "<|im_end|>";
-/// Закрытие tool-call блока — stop-sequence для генерации, чтобы модель
-/// не уходила додумывать после tool-вызова.
-pub(crate) const TOOL_CALL_CLOSE: &str = "</tool_call>";
 /// Бюджет ответа summary-запроса компактификации: сводка в 7–15 абзацев —
 /// это сотни токенов, 2048 хватает с запасом и не раздувает ринг.
 const SUMMARY_MAX_NEW_TOKENS: usize = 2048;
@@ -187,545 +178,6 @@ const SHAPE_ALTERNATION_ANTI_LOOP_AT: usize = 3;
 /// (последняя tool-пара + плейсхолдер).
 const IN_TURN_KEEP_TAIL: usize = 3;
 
-/// Шаг ёмкости кэша префикс-KV. Сессия живёт между ходами, а пересоздание
-/// стирает префикс — значит расти надо редко и с запасом, а не «в притык» под
-/// каждый ход. 16384 токена ≈ 1 ГБ при F16-KV гибрида 27B и ≈0,5 ГБ при MXFP8.
-const SESSION_CTX_STEP: usize = 16384;
-
-/// Слот префикс-KV: посчитанный контекст диалога живёт между ходами и между
-/// сообщениями, пока это тот же чат на той же модели.
-///
-/// Ход дописывает в кэш только новый хвост промпта, поэтому agent-loop с
-/// инструментами больше не префиллит историю заново на каждом вызове (а это
-/// было до 16 полных префиллов на одно сообщение пользователя).
-struct KvSlot {
-    session: LlmKvSession,
-    model: std::path::PathBuf,
-    chat: Option<String>,
-    /// Промпт последнего хода через эту сессию — только для диагностики:
-    /// когда следующий ход не переиспользовал ничего, журнал показывает,
-    /// на какой позиции промпты разошлись и что там стояло.
-    last_prompt: Vec<u32>,
-}
-
-/// Пишет в журнал первое расхождение между промптом прошлого хода и нового.
-/// Зовётся только когда префикс-KV не переиспользовал ни токена при живой
-/// сессии: из «0 из N» причина не видна, а расхождение на 3 токена от конца
-/// (заголовок реплики) и расхождение в системном промпте — разные проблемы.
-fn log_prefix_divergence(tokenizer: &LlmTokenizer, prev: &[u32], cur: &[u32]) {
-    let common = prev.iter().zip(cur.iter()).take_while(|(a, b)| a == b).count();
-    let decode = |ids: &[u32]| tokenizer.decode(ids).unwrap_or_default().replace('\n', "⏎");
-    if common == prev.len().min(cur.len()) {
-        log::info!(
-            "[syn_chat] префикс-KV: расхождения нет, промпт {} (было {} ток): {}",
-            if cur.len() < prev.len() { "короче кэша" } else { "продолжает прошлый" },
-            prev.len(),
-            "кэш не подошёл по другой причине (пересоздание, точка возврата не снята)"
-        );
-        return;
-    }
-    let lo = common.saturating_sub(24);
-    let hi_prev = (common + 12).min(prev.len());
-    let hi_cur = (common + 12).min(cur.len());
-    log::info!(
-        "[syn_chat] префикс-KV: промпт разошёлся с прошлым на позиции {common} из {} \
-         (прошлый {} ток): было «{}», стало «{}»",
-        cur.len(),
-        prev.len(),
-        decode(&prev[lo..hi_prev]),
-        decode(&cur[lo..hi_cur])
-    );
-}
-
-static KV_SLOT: std::sync::Mutex<Option<KvSlot>> = std::sync::Mutex::new(None);
-
-/// Забыть посчитанный контекст (смена/выгрузка модели, переключение чата,
-/// освобождение VRAM под vision-башню).
-///
-/// Зовётся с main thread, поэтому блокироваться нельзя: слот держит worker на
-/// всё время хода, а ждать его — это подвесить окно на минуты. Если занято,
-/// освобождение уходит в отдельный поток и случится сразу по окончании хода.
-pub fn drop_kv_session() {
-    match KV_SLOT.try_lock() {
-        Ok(mut g) => {
-            if g.is_some() {
-                log::info!("[syn_chat] префикс-KV: кэш диалога освобождён");
-            }
-            *g = None;
-        }
-        Err(std::sync::TryLockError::Poisoned(e)) => {
-            *e.into_inner() = None;
-        }
-        Err(std::sync::TryLockError::WouldBlock) => {
-            // Занят генерацией: ждать здесь нельзя, поэтому освобождаем в
-            // отдельном потоке — он проснётся, как только ход закончится.
-            std::thread::spawn(|| {
-                let mut g = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-                *g = None;
-                log::info!("[syn_chat] префикс-KV: кэш диалога освобождён после хода");
-            });
-        }
-    }
-}
-
-/// Подходит ли уже живущая сессия под этот ход.
-///
-/// Сравнивать надо с тем, что ходу НУЖНО (`need_ctx` — промпт, ответ и
-/// хвост), а не с тем, сколько мы хотели бы выделить: `want_ctx` растёт
-/// вслед за свободной VRAM, и пока условие смотрело на него, кэш выбрасывался
-/// от того, что памяти стало БОЛЬШЕ. В журнале это выглядело так: сессия на
-/// 27056 токенов, промпт 9112, ринг 20480 — всё влезало, но бюджет подрос,
-/// `want_ctx` подскочил до 32768, кэш пересоздали и ход заплатил 11.9 с
-/// полного префилла на ровном месте.
-fn kv_slot_fits(slot: &KvSlot, model_path: &std::path::Path, chat: &Option<String>, need_ctx: usize) -> bool {
-    slot.model == model_path && &slot.chat == chat && slot.session.ctx_tokens() >= need_ctx
-}
-
-/// Взять сессию под этот чат/модель, создав или пересоздав при необходимости.
-/// `None` — префикс-KV недоступен (архитектура или нехватка VRAM), вызывающий
-/// работает как раньше.
-///
-/// `need_ctx` — минимум под этот ход, `want_ctx` — ёмкость, которую берём при
-/// пересоздании (с запасом, см. [`SESSION_CTX_STEP`]).
-fn ensure_kv_slot<'a>(
-    slot: &'a mut Option<KvSlot>,
-    model: &LoadedSynModel,
-    chat: &Option<String>,
-    need_ctx: usize,
-    want_ctx: usize,
-    max_new: usize,
-) -> Option<&'a mut LlmKvSession> {
-    let fits = slot
-        .as_ref()
-        .is_some_and(|s| kv_slot_fits(s, &model.path, chat, need_ctx));
-    if !fits {
-        if let Some(old) = slot.take() {
-            log::info!(
-                "[syn_chat] префикс-KV: пересоздаём кэш (было {} ток, ходу нужно \
-                 ≥{need_ctx}, берём {want_ctx})",
-                old.session.ctx_tokens()
-            );
-            drop(old);
-            // Старый ринг должен вернуться в пул до аллокации нового, иначе на
-            // границе роста в VRAM живут оба.
-            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-        }
-        match model.model.new_kv_session(want_ctx, max_new) {
-            Ok(Some(session)) => {
-                log::info!(
-                    "[syn_chat] префикс-KV: кэш на {} ток ({} MB)",
-                    session.ctx_tokens(),
-                    (session.ctx_tokens() as u64 * model.model.kv_bytes_per_token() as u64)
-                        / (1024 * 1024)
-                );
-                *slot = Some(KvSlot {
-                    session,
-                    model: model.path.clone(),
-                    chat: chat.clone(),
-                    last_prompt: Vec::new(),
-                });
-            }
-            Ok(None) => {
-                log::info!(
-                    "[syn_chat] префикс-KV недоступен для этой модели — префилл как раньше"
-                );
-                return None;
-            }
-            Err(e) => {
-                log::warn!("[syn_chat] префикс-KV: кэш не создан ({e}) — префилл как раньше");
-                return None;
-            }
-        }
-    }
-    slot.as_mut().map(|s| &mut s.session)
-}
-
-/// Отправляет посчитанный контекст диалога в host-RAM на время вложенной
-/// генерации и возвращает VRAM драйверу. `true` — кэш припаркован, и его
-/// надо забрать обратно [`unpark_kv_session`].
-///
-/// Альтернатива — сбросить кэш совсем, но тогда следующий ход платит полным
-/// префиллом всей истории (на 10k токенов это ~10 с против ~40 мс перевоза
-/// 250 МБ через PCIe).
-fn park_kv_session(
-    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
-    model: &LoadedSynModel,
-) -> bool {
-    let Some(slot) = kv_slot.as_mut() else {
-        return false;
-    };
-    if slot.session.device_bytes() == 0 {
-        return false;
-    }
-    let t = Instant::now();
-    match slot.session.park_to_host() {
-        Ok(bytes) => {
-            let (freed, descs) =
-                crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-            log::info!(
-                "[syn_chat] префикс-KV: {} MB освобождены (кэш уехал в RAM) за {:?}; \
-                 трим вернул {freed} MB ({descs} TMA-деск.), VRAM доступно {} MB",
-                bytes / (1024 * 1024),
-                t.elapsed(),
-                crate::syn_chat::model_registry::vram_available_mb()
-            );
-            true
-        }
-        Err(e) => {
-            // Не вышло — работаем как раньше: сбрасываем кэш, вложенный
-            // прогон получит место, а следующий ход префиллит заново.
-            log::warn!("[syn_chat] префикс-KV: выгрузка в RAM не удалась ({e}) — сбрасываем кэш");
-            **kv_slot = None;
-            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-            false
-        }
-    }
-}
-
-/// Возвращает припаркованный кэш в VRAM. Не вышло (места не нашлось) —
-/// выбрасываем сессию: полный префилл всегда возможен, половина кэша на
-/// устройстве — нет.
-fn unpark_kv_session(
-    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
-    model: &LoadedSynModel,
-) {
-    let Some(slot) = kv_slot.as_mut() else {
-        return;
-    };
-    if !slot.session.is_parked() {
-        return;
-    }
-    let t = Instant::now();
-    match slot.session.unpark_to(*model.model.device()) {
-        Ok(bytes) => log::info!(
-            "[syn_chat] префикс-KV: {} MB вернулись в VRAM за {:?}, доступно {} MB",
-            bytes / (1024 * 1024),
-            t.elapsed(),
-            crate::syn_chat::model_registry::vram_available_mb()
-        ),
-        Err(e) => {
-            log::warn!(
-                "[syn_chat] префикс-KV: кэш не вернулся в VRAM ({e}) — сбрасываем, \
-                 следующий ход префиллит историю заново"
-            );
-            **kv_slot = None;
-            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-        }
-    }
-}
-
-/// Запас VRAM, который планировщик ринга НЕ отдаёт под KV, пока кэши ядер не
-/// прогреты.
-///
-/// На первом forward'е модель лениво собирает их сама: у nvfp4 это
-/// shuffled-копии весов, ≈1.1 ГБ. Плюс активации префилла — ≈0.15…0.8 ГБ при
-/// чанке 256 (от длины промпта они не зависят: пул активаций в synaptix
-/// отделён от пула весов и выходит на плато с первого чанка).
-const KV_RESERVE_COLD_MB: usize = 3072;
-/// То же после первой удачной генерации: кэши ядер уже стоят, и держать под них
-/// запас — значит отнимать у контекста десятки тысяч токенов (при MXFP8-KV
-/// гигабайт запаса ≈ 30k токенов).
-const KV_RESERVE_WARM_MB: usize = 1280;
-
-/// Прогреты ли ленивые кэши ядер текущей модели (см. [`KV_RESERVE_COLD_MB`]).
-static KERNEL_CACHES_WARM: AtomicBool = AtomicBool::new(false);
-
-/// Сколько VRAM нужно ходу под KV: кольцо на `tokens` плюс постоянные
-/// ring-окна sliding-слоёв плюс запас под активации и кэши ядер.
-fn context_need_mb(model: &LoadedSynModel, tokens: usize) -> usize {
-    let per_token = model.model.kv_bytes_per_token();
-    let fixed = model.model.kv_fixed_bytes(tokens);
-    (tokens * per_token + fixed) / (1024 * 1024) + kv_reserve_mb()
-}
-
-/// Подогнать резидентность блоков под нужный контекст: если ход в память не
-/// помещается, часть блоков уезжает на хост и стримится во время forward'а,
-/// освобождая VRAM под KV. Когда контекст снова короткий и памяти с запасом —
-/// блоки возвращаются на карту.
-///
-/// Плата за оффлоад — скорость (каждый нерезидентный блок едет по PCIe на
-/// каждом forward'е, CUDA-графы выключаются), поэтому включается он только
-/// когда иначе ход не проходит, и снимается при первой возможности.
-///
-/// `session_held_mb` — VRAM живого кэша префикс-KV. Ход считает в этом кэше и
-/// новой памяти под него не просит (а при росте кэш освобождается ДО новой
-/// аллокации), поэтому из потребности он вычитается — ровно как в
-/// [`RingPlan::with_session`]. Без этого ход с кэшем на 30k токенов решал, что
-/// ему не хватает пары мегабайт, и выселял блоки под память, которая у него
-/// уже была: 07.09.2026 чат на промпте 10k так потерял 32 → 20 ток/с и назад
-/// уже не вернулся (гистерезис возврата требует запаса в два блока).
-fn fit_blocks_for_context(model: &LoadedSynModel, tokens: usize, session_held_mb: usize) {
-    let Some((block_bytes, total)) = model.model.block_offload_shape() else {
-        return; // архитектура со своим оффлоадом (MoE) — не наше дело
-    };
-    if block_bytes == 0 || total == 0 {
-        return;
-    }
-    let Some(resident) = model.model.resident_blocks() else {
-        return;
-    };
-    let block_mb = block_bytes / (1024 * 1024);
-    if block_mb == 0 {
-        return;
-    }
-    let need_mb = context_need_mb(model, tokens).saturating_sub(session_held_mb);
-    let free_mb = crate::syn_chat::model_registry::vram_available_mb();
-    let device = *model.model.device();
-    // Трим — ДО решения, а не после выселения: кэши ядер и слабина пулов
-    // весов/staging в `vram_available_mb` не входят, а отдают они стабильно
-    // 300–600 МБ (журнал 07.09.2026). Дефицит же бывал в 2 МБ — выселять
-    // блок ради него значило платить треть скорости за память, которую
-    // драйвер вернул бы и так.
-    let mut trimmed_mb = 0u64;
-    let after_trim = || {
-        let (freed, _) = crate::syn_chat::model_registry::reclaim_vram(device);
-        trimmed_mb = freed;
-        crate::syn_chat::model_registry::vram_available_mb()
-    };
-    let target = block_residency_target(need_mb, free_mb, after_trim, block_mb, resident, total);
-    let Some(want) = target else {
-        if trimmed_mb > 0 {
-            log::info!(
-                "[syn_chat] блоки остаются на карте ({resident} из {total}): ходу не хватало \
-                 {} MB под контекст {tokens} ток, трим вернул {trimmed_mb} MB",
-                need_mb.saturating_sub(free_mb)
-            );
-        }
-        return;
-    };
-    let got = model.model.set_block_residency(want).unwrap_or(resident);
-    if want < resident {
-        // Память уехавших блоков остаётся в резерве default-пула, а планировщик
-        // ринга считает по «свободно по драйверу»: без трима он не увидит
-        // освобождённого, упрёт ринг в пол `промпт + 512` и выдаст сессию,
-        // которую следующий ход пересоздаст с полным префиллом (07.09.2026:
-        // 103 с на 77k токенов ровно из-за этого).
-        let (after, _) = crate::syn_chat::model_registry::reclaim_vram(device);
-        log::info!(
-            "[syn_chat] оффлоад блоков: {resident} → {got} из {total} на карте \
-             (не хватало {} MB под контекст {tokens} ток, блок {block_mb} MB, \
-             кэш префикс-KV держит {session_held_mb} MB, трим до этого вернул \
-             {trimmed_mb} MB, после выселения — {after} MB); остальные стримятся с хоста",
-            need_mb.saturating_sub(free_mb + trimmed_mb as usize)
-        );
-    } else if got > resident {
-        log::info!(
-            "[syn_chat] блоки вернулись на карту: {resident} → {got} из {total} \
-             (свободно {free_mb} MB, ходу нужно ещё {need_mb} MB)"
-        );
-    }
-}
-
-/// Арифметика [`fit_blocks_for_context`] без модели — чтобы её проверял тест.
-/// `need_mb` — то, что ходу осталось выделить (потребность за вычетом живого
-/// кэша префикс-KV), `free_mb` — доступная VRAM, `after_trim` — она же после
-/// трима кэшей ядер и пулов (зовётся только когда без него не хватает).
-/// `None` — резидентность не трогаем.
-fn block_residency_target(
-    need_mb: usize,
-    free_mb: usize,
-    after_trim: impl FnOnce() -> usize,
-    block_mb: usize,
-    resident: usize,
-    total: usize,
-) -> Option<usize> {
-    if block_mb == 0 {
-        return None;
-    }
-    let free_mb = if need_mb > free_mb { free_mb.max(after_trim()) } else { free_mb };
-    if need_mb > free_mb {
-        // Не хватает: выселяем столько блоков, сколько нужно, плюс один — на
-        // сам стриминг (на карте живут текущий и префетченный), но только
-        // когда дефицит не меньше блока: при дефиците в мегабайты один
-        // выселенный блок и так оставляет почти весь свой размер запасом.
-        let missing = need_mb - free_mb;
-        let evict = missing.div_ceil(block_mb) + usize::from(missing >= block_mb);
-        let want = resident.saturating_sub(evict);
-        return (want < resident).then_some(want);
-    }
-    if resident >= total {
-        return None;
-    }
-    // Памяти хватает — возвращаем блоки. Гистерезис в два блока, чтобы не
-    // гонять их туда-сюда на каждом ходу; но если запаса хватает, доводим до
-    // полной резидентности: последний стримящийся блок стоит и CUDA-графов,
-    // и заметной части скорости (04.09.2026: 51 из 52 на карте — 14 ток/с
-    // против 22 при полной резидентности).
-    let spare = (free_mb - need_mb) / block_mb;
-    if spare < 2 {
-        return None;
-    }
-    // Если до полной резидентности не хватает меньше блока — всё равно
-    // дотягиваем: последний стримящийся блок отнимает больше (нет CUDA-графов,
-    // треть скорости), чем стоит запас под него, а если ход всё же не влезет,
-    // ретрай по OOM отработает честно.
-    let want = if resident + spare + 1 >= total { total } else { resident + spare };
-    (want > resident).then_some(want)
-}
-
-fn kv_reserve_mb() -> usize {
-    if KERNEL_CACHES_WARM.load(Ordering::Relaxed) {
-        KV_RESERVE_WARM_MB
-    } else {
-        KV_RESERVE_COLD_MB
-    }
-}
-
-/// Сбросить признак прогретости — при загрузке/выгрузке модели кэши ядер
-/// собираются заново (`release_device_caches` их и чистит).
-pub fn reset_kernel_cache_warm() {
-    KERNEL_CACHES_WARM.store(false, Ordering::Relaxed);
-}
-/// На сколько токенов ответа планируется ринг, если слайдер `max_new_tokens`
-/// стоит выше. Ринг живёт ровно один ход; планировать его на 130k «про запас»
-/// значит впустую занять гигабайты. 16k — потолок ответа по умолчанию
-/// (`SamplingParams::default`): ниже него ринг молча резал бы длинный ответ,
-/// хотя настройка обещает больше; при MXFP8-KV (33 КБ/ток у гибрида 27B)
-/// это ~530 МБ — столько же, сколько прежние 8k стоили при F16.
-pub(crate) const RING_ANSWER_TOKENS: usize = 16384;
-/// Гранулярность длины ринга. Промпт растёт от хода к ходу, и ринг «в притык»
-/// каждый раз просил бы блоки чуть большего размера — освободившиеся от
-/// прошлого ринга пул отдать под них не может. Кратность 4096 делает ринг
-/// одинаковым на серии ходов, и блоки переиспользуются.
-const RING_GRANULARITY: usize = 4096;
-/// Сколько раз пересобирать ход с меньшим рингом после OOM.
-pub(crate) const MAX_OOM_RETRIES: usize = 3;
-/// Бюджет ответа, ниже которого ретраить уже нечем.
-pub(crate) const MIN_ANSWER_TOKENS: usize = 512;
-/// Сколько просим у отдаваемых кэшей на первом OOM-ретрае. Меньше
-/// полугигабайта просить бессмысленно: и пул, и арена экспертов возвращают
-/// драйверу целыми блоками.
-const RECLAIM_ON_OOM_MB: usize = 1024;
-
-/// Расчёт KV-ринга на один ход: сколько токенов сажаем в кэш и сколько из них
-/// остаётся под ответ.
-pub(crate) struct RingPlan {
-    pub(crate) prompt_tokens: usize,
-    pub(crate) ring_tokens: usize,
-    /// Ёмкость кэша префикс-KV (крупный шаг — см. [`SESSION_CTX_STEP`]).
-    pub(crate) session_ctx: usize,
-    pub(crate) max_new: usize,
-    /// Сколько токенов контекста вообще влезает в свободную VRAM.
-    pub(crate) by_mem: usize,
-    pub(crate) cap: usize,
-    pub(crate) kv_per_token: usize,
-    pub(crate) vram_available_mb: usize,
-    /// Промпт не влезает в ринг — движок обрежет контекст.
-    pub(crate) truncated_prompt: bool,
-}
-
-impl RingPlan {
-    pub(crate) fn new(
-        model: &LoadedSynModel,
-        prompt_tokens: usize,
-        answer_tokens: usize,
-        model_cap: usize,
-    ) -> Self {
-        Self::with_session(model, prompt_tokens, answer_tokens, model_cap, 0)
-    }
-
-    /// Как [`Self::new`], но с поправкой на VRAM, которую держит кэш
-    /// префикс-KV: он освобождается ДО аллокации нового, поэтому в бюджет
-    /// входит.
-    pub(crate) fn with_session(
-        model: &LoadedSynModel,
-        prompt_tokens: usize,
-        answer_tokens: usize,
-        model_cap: usize,
-        session_held_mb: usize,
-    ) -> Self {
-        let cap = model_cap.saturating_sub(1);
-        // Кэш префикс-KV держит VRAM прямо сейчас, но при пересоздании
-        // освобождается ДО новой аллокации — иначе бюджет занижался бы ровно на
-        // размер уже живущего кэша и контекст перестал бы расти.
-        let vram_available_mb =
-            crate::syn_chat::model_registry::vram_available_mb() + session_held_mb;
-        // Часть блоков стримится с хоста — VRAM уже в дефиците, и запас под
-        // сессию только отнял бы её у рабочего набора стриминга.
-        let offloading = model
-            .model
-            .block_offload_shape()
-            .is_some_and(|(_, total)| model.model.resident_blocks().unwrap_or(total) < total);
-        Self::compute(
-            prompt_tokens,
-            answer_tokens,
-            model_cap,
-            model.model.kv_bytes_per_token(),
-            // Sliding-слои на ring-KV держат окно постоянного размера — оно не
-            // входит в ставку «на токен», но VRAM занимает.
-            model.model.kv_fixed_bytes(cap),
-            vram_available_mb,
-            offloading,
-        )
-    }
-
-    /// Арифметика плана — без модели, чтобы её можно было проверить тестом.
-    pub(crate) fn compute(
-        prompt_tokens: usize,
-        answer_tokens: usize,
-        model_cap: usize,
-        kv_per_token: usize,
-        kv_fixed_bytes: usize,
-        vram_available_mb: usize,
-        offloading: bool,
-    ) -> Self {
-        let cap = model_cap.saturating_sub(1);
-        let by_mem = if kv_per_token > 0 {
-            // Постоянные ring-окна вычитаем до деления, иначе бюджет завышен
-            // ровно на их сумму.
-            let budget = (vram_available_mb.saturating_sub(kv_reserve_mb()) * 1024 * 1024)
-                .saturating_sub(kv_fixed_bytes);
-            budget / kv_per_token
-        } else {
-            cap
-        };
-        // Даже когда бюджет ушёл в ноль (оценка пессимистична сразу после
-        // загрузки, пока пулы не прогрелись), пробуем посадить хотя бы промпт
-        // с коротким ответом: не выйдет — ретрай по OOM отработает честно,
-        // а гарантированно провальный ринг на 1024 токена не помогает никому.
-        let floor = prompt_tokens.min(cap) + MIN_ANSWER_TOKENS;
-        let hard_cap = cap.min(by_mem.max(floor));
-        let want = prompt_tokens.min(cap) + answer_tokens + 128;
-        let ring_tokens = want.div_ceil(RING_GRANULARITY) * RING_GRANULARITY;
-        let ring_tokens = ring_tokens.min(hard_cap).max(1);
-        // Ёмкость сессии берём с запасом: пересоздание кэша стирает префикс,
-        // и на моделях, где бюджет позволяет лишь пару шагов (Muse-30B: 2 ГБ
-        // свободных), каждый рост промпта стоил полного префилла. Запас —
-        // вдвое от нужного ходу, но не больше того, что честно влезает. При
-        // оффлоаде блоков удвоения нет: каждый лишний гигабайт кэша — это ещё
-        // четыре блока на хосте и треть скорости.
-        let spare = if offloading { want } else { want.saturating_mul(2) };
-        let session_ctx = want
-            .div_ceil(SESSION_CTX_STEP)
-            .max(1)
-            .saturating_mul(SESSION_CTX_STEP)
-            .max(spare)
-            .min(hard_cap)
-            .max(ring_tokens);
-        let prompt_capped = prompt_tokens.min(ring_tokens.saturating_sub(1));
-        let max_new = ring_tokens.saturating_sub(prompt_capped + 128).max(1);
-        Self {
-            prompt_tokens,
-            ring_tokens,
-            session_ctx,
-            max_new,
-            by_mem,
-            cap,
-            kv_per_token,
-            vram_available_mb,
-            truncated_prompt: prompt_tokens + 1 > ring_tokens,
-        }
-    }
-
-    pub(crate) fn ring_bytes(&self) -> u64 {
-        (self.ring_tokens as u64) * (self.kv_per_token as u64)
-    }
-
-    pub(crate) fn ring_mb(&self) -> u64 {
-        self.ring_bytes() / (1024 * 1024)
-    }
-}
-
 /// Метрики хода для таба «Детали». Собираются в worker-потоке и одним
 /// пакетом переливаются в сигналы на main thread.
 struct TurnStats {
@@ -759,19 +211,6 @@ impl TurnStats {
     }
 }
 
-/// `(на карте, всего)` блоков модели, если часть их стримится с хоста.
-fn blocks_resident_of(model: &LoadedSynModel) -> Option<(u32, u32)> {
-    let (_, total) = model.model.block_offload_shape()?;
-    let on_card = model.model.resident_blocks().unwrap_or(total);
-    (on_card < total).then_some((on_card as u32, total as u32))
-}
-
-/// Ошибка — это исчерпание VRAM? Драйвер отдаёт `CUDA_ERROR_OUT_OF_MEMORY`,
-/// наши аллокаторы добавляют свои формулировки («after trim+retries: OOM»).
-pub(crate) fn is_oom_error<E: std::fmt::Display>(e: &E) -> bool {
-    let s = e.to_string();
-    s.contains("OUT_OF_MEMORY") || s.contains("out of memory") || s.contains(": OOM")
-}
 
 /// Отправляет сообщение от пользователя и запускает генерацию ответа.
 /// Вызывается с main thread (использует use_context).
@@ -959,10 +398,6 @@ pub fn delete_message(idx: usize) {
     }
     ctx.editing_msg.set(None);
     reset_index_keyed_ui(&ctx);
-    // Префикс-KV — это токены истории по порядку; после правки середины
-    // всё дальше точки правки невалидно. Освобождаем явно, чтобы VRAM под
-    // устаревший кэш не висела до следующего хода.
-    drop_kv_session();
 }
 
 /// Удаляет работу инструмента — вызов ВМЕСТЕ с его результатом. История,
@@ -1032,7 +467,6 @@ pub fn delete_tool_work(idx: usize) {
     }
     ctx.editing_msg.set(None);
     reset_index_keyed_ui(&ctx);
-    drop_kv_session();
 }
 
 /// Удаляет цепочку tool-сообщений целиком — `len` подряд идущих сообщений
@@ -1068,7 +502,6 @@ pub fn delete_tool_chain(start_idx: usize, len: usize) {
     }
     ctx.editing_msg.set(None);
     reset_index_keyed_ui(&ctx);
-    drop_kv_session();
 }
 
 /// Заменяет текст сообщения (правка in-place). Вложения и thinking не
@@ -1079,19 +512,12 @@ pub fn edit_message(idx: usize, body: String) {
         return;
     }
     let text = body.trim_end().to_string();
-    let mut changed = false;
     ctx.messages.update(|m| {
         if let Some(msg) = m.get_mut(idx) {
-            if msg.body != text {
-                msg.body = text;
-                changed = true;
-            }
+            msg.body = text;
         }
     });
     ctx.editing_msg.set(None);
-    if changed {
-        drop_kv_session();
-    }
 }
 
 /// Очищает ленту активного чата, оставляя сам чат: название, параметры
@@ -1114,7 +540,6 @@ pub fn clear_chat() {
     ctx.queue.update(|q| q.retain(|m| Some(&m.chat_id) != active.as_ref()));
     ctx.queue_editing.set(None);
     reset_index_keyed_ui(&ctx);
-    drop_kv_session();
     log::info!("[syn_chat] лента чата очищена");
 }
 
@@ -1788,7 +1213,7 @@ async fn rebuild_history(
     model: &Arc<LoadedSynModel>,
     caps: &MediaCaps,
     chat_id: &Option<String>,
-) -> Option<Vec<Message>> {
+) -> Option<(Vec<Message>, crate::syn_chat::daemon::MediaAt)> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<HistoryItem>>();
     let ctx_main = ctx.clone();
     let sp = system_prompt.to_string();
@@ -1802,8 +1227,7 @@ async fn rebuild_history(
         let _ = tx.send(build_history(&ctx_main, &sp, channel));
     });
     let items = rx.await.ok()?;
-    let (history, _media) = prepare_history(&items, model, caps, ctx);
-    Some(history)
+    Some(prepare_history(&items, caps))
 }
 
 async fn run_agent_loop(
@@ -1834,7 +1258,6 @@ async fn run_agent_loop(
                 masked_outcomes: mut numeric_outcomes,
             },
     } = settings;
-    let model_cap = model.model.config().max_seq_len;
     let mut total_gen_tokens: u32 = 0;
     // Чистое время декода по всем ходам — без префилла и без пауз на
     // исполнение инструментов. Итоговый tps в панели считается по нему,
@@ -1842,27 +1265,6 @@ async fn run_agent_loop(
     let mut total_decode_s: f64 = 0.0;
     let t_overall = Instant::now();
 
-    // Вложения кодируются один раз на весь agent-loop: тексты сообщений с
-    // блоками-заполнителями и эмбеддинги дальше переиспользуются на каждом
-    // turn'е. Vision-башня нужна только здесь — сразу после кодирования её
-    // выгружаем, чтобы KV-ring получил свободную VRAM.
-    // Слот держим на весь agent-loop: ходы внутри одного сообщения — главные
-    // потребители префикса (каждый tool-вызов раньше требовал полного
-    // префилла выросшей истории).
-    let mut kv_slot = KV_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    // Vision-башне под НОВЫЕ вложения нужна та же VRAM, что держит кэш
-    // диалога: на время кодирования кэш уезжает в RAM и возвращается
-    // следом. Раньше он сбрасывался при любой картинке в истории, даже давно
-    // закодированной, — и каждое сообщение платило полным префиллом
-    // (журнал 11.09.2026: 55k токенов, 40 с на каждый ход).
-    let needs_vision = caps.vision
-        && items
-            .iter()
-            .any(|i| attach_prompt::needs_tower(&i.attachments, &caps));
-    let parked = needs_vision && park_kv_session(&mut kv_slot, &model);
-    // `media` растёт и посреди хода: `view_media` дописывает эмбеддинги
-    // файлов, которые модель попросила посмотреть (порядок — порядок
-    // заполнителей в промпте, новые всегда в хвосте).
     // Найденное в базах знаний — в копию текущего сообщения пользователя, не
     // в системный промпт: префикс истории не меняется, префикс-KV цел; лента
     // чата тоже (следующий ход переиспользует кэш до этого сообщения).
@@ -1875,28 +1277,16 @@ async fn run_agent_loop(
             last.body = format!("{block}\n\n{}", last.body);
         }
     }
-    let (mut history, mut media) = prepare_history(&items, &model, &caps, &ctx);
-    if parked {
-        unpark_kv_session(&mut kv_slot, &model);
+    // Картинки и видео истории — файлами для службы: её башня зрения кодирует
+    // их и кэширует эмбеддинги сама; `media_at` растёт и посреди хода
+    // (`view_media`).
+    let (mut history, mut media_at) = prepare_history(&items, &caps);
+    if !media_at.is_empty() {
+        log::info!("[syn_chat] медиа-вложений: {}", media_at.values().map(Vec::len).sum::<usize>());
     }
-    if !media.is_empty() {
-        let tokens: usize = media.iter().map(|m| m.tokens).sum();
-        log::info!(
-            "[syn_chat] медиа-вложений: {} ({} vision-токенов)",
-            media.len(),
-            tokens
-        );
-    }
-
-    // Медиа-промпт продолжает сессию там, где движок держит строки вложений
-    // в префиксе: гибрид Qwen3.6/3.8, Muse, Gemma-4, Qwen4Exp (подмену
-    // картинки при той же разметке ловит отпечаток строк). Архитектуры без
-    // сессии идут полным префиллом.
-    let mut prefix_kv_on = (media.is_empty() || model.model.kv_session_media_ok())
-        && crate::config::AppConfig::load().syn_chat_prefix_kv;
-    if !prefix_kv_on {
-        *kv_slot = None;
-    }
+    // Префикс-KV в службе — сессия по ключу чата: ход дописывает в кэш
+    // только новый хвост промпта.
+    let prefix_kv_on = crate::config::AppConfig::load().syn_chat_prefix_kv;
     let mut reused_total: u32 = 0;
 
     // Отличаем «модель ответила текстом» (break ниже) от «кончился бюджет
@@ -1948,530 +1338,201 @@ async fn run_agent_loop(
             return Ok(());
         }
 
-        let prompt = {
-            let with_note;
-            let for_prompt: &[Message] = match pending_note.take() {
-                Some(note) => {
-                    let mut h = history.clone();
-                    h.push(Message::user(note));
-                    with_note = h;
-                    &with_note
-                }
-                None => &history,
-            };
-            let rendered = model.tokenizer.apply_chat_template_reasoning(
-                for_prompt,
-                true,
-                params.enable_thinking,
-                params.effort(),
-                if tool_schemas.is_empty() {
-                    None
-                } else {
-                    Some(&tool_schemas)
-                },
-            )?;
-            prompt_for_model(&model.tokenizer, params.enable_thinking, rendered)
+        let for_prompt: Vec<Message> = match pending_note.take() {
+            Some(note) => {
+                let mut h = history.clone();
+                h.push(Message::user(note));
+                h
+            }
+            None => history.clone(),
         };
-        let prompt_ids = model.tokenizer.encode(&prompt)?;
-        log::info!(
-            "[syn_chat] turn={} prompt={} chars / {} tokens, tools={}",
-            turn,
-            prompt.len(),
-            prompt_ids.len(),
-            tool_schemas.len()
-        );
-
-        // ── План KV-ринга и запуск с ретраем по OOM.
-        let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
-        let mut oom_attempt = 0usize;
-        // Префикс-KV на этом ходу. Гаснет после OOM: кэш сессии — самый
-        // крупный кусок, который ход может отдать, и пересоздавать его тут же
-        // бессмысленно (ровно это и делал ретрай до 04.09.2026: сбрасывал
-        // 416 МБ, `ensure_kv_slot` немедленно брал их обратно, и все три
-        // попытки падали на той же аллокации).
-        let mut prefix_kv_turn = prefix_kv_on;
-        // Пишется удавшейся попыткой хода; ретраи по OOM до присваивания не
-        // доходят, поэтому ни инициализатор, ни `mut` не нужны.
-        let turn_decode_s: f64;
-        let turn_result = loop {
-            // Припаркованный в RAM кэш VRAM не держит — его размер в бюджет
-            // не идёт ни как «освободится под новый», ни как «уже выделено».
-            let session_held_mb = kv_slot
-                .as_ref()
-                .filter(|s| !s.session.is_parked())
-                .map(|s| {
-                    (s.session.ctx_tokens() * model.model.kv_bytes_per_token()) / (1024 * 1024)
-                })
-                .unwrap_or(0);
-            // Контекст важнее скорости: если ход в память не помещается,
-            // часть блоков уезжает на хост и стримится, освобождая VRAM под
-            // KV. Считаем по тому, что ходу реально нужно — промпт плюс
-            // бюджет ответа, минус уже занятый кэш префикс-KV.
-            fit_blocks_for_context(
-                &model,
-                prompt_ids.len() + answer_budget + 128,
-                session_held_mb,
-            );
-            let plan = RingPlan::with_session(
-                &model,
-                prompt_ids.len(),
-                answer_budget,
-                model_cap,
-                session_held_mb,
-            );
-            let mut opts = params.to_options();
-            opts.max_seq_len = plan.ring_tokens;
-            opts.max_new_tokens = plan.max_new;
-            if anti_loop {
-                // Повтор уже случился. Greedy-декод из петли не выходит
-                // никогда, поэтому поднимаем температуру — и только её:
-                // штрафы за повторы на агентном промпте ломают синтаксис
-                // вызова (см. [`ANTI_LOOP_TEMPERATURE`]). Настройку
-                // пользователя только повышаем, но не понижаем. Режим
-                // снимается первым же неповторённым вызовом.
-                opts.temperature = opts.temperature.max(ANTI_LOOP_TEMPERATURE);
-                log::info!(
-                    "[syn_chat] анти-loop сэмплинг: temp={:.2}",
-                    opts.temperature
-                );
+        let mut opts = params.clone();
+        if anti_loop {
+            // Повтор уже случился. Greedy-декод из петли не выходит никогда,
+            // поэтому поднимаем температуру — и только её: штрафы за повторы
+            // на агентном промпте ломают синтаксис вызова (см.
+            // [`ANTI_LOOP_TEMPERATURE`]). Настройку пользователя только
+            // повышаем. Режим снимается первым же неповторённым вызовом.
+            opts.temperature = opts.temperature.max(ANTI_LOOP_TEMPERATURE);
+            log::info!("[syn_chat] анти-loop сэмплинг: temp={:.2}", opts.temperature);
+        }
+        // Ключ KV-сессии в службе — чат: ходы и сообщения одного чата
+        // дописывают в кэш только новый хвост промпта.
+        let session_key = prefix_kv_on.then(|| chat_id.clone().unwrap_or_else(|| "syn_chat".into()));
+        let call = crate::syn_chat::daemon::params(&opts, session_key.as_deref());
+        // «Детали» с первой секунды хода — про этот ход.
+        {
+            let first_turn = turn == 0;
+            if_active(&chat_id, move |c| {
+                c.last_prefill_ms.set_always(0);
+                c.last_reused_tokens.set_always(0);
+                if first_turn {
+                    c.last_gen_tokens.set_always(0);
+                    c.last_decode_tps.set_always(0.0);
+                    c.last_turns.set_always(1);
+                }
+                c.last_turn_open.set_always(true);
+            });
+        }
+        let mut buf_body = String::new();
+        let mut buf_think = String::new();
+        let mut buf_tool = String::new();
+        let mut last_flush = Instant::now();
+        let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
+        let mut tokens_this_turn: u32 = 0;
+        // Честный prefill: время до ПЕРВОГО токена.
+        let mut ttft_ms: Option<u32> = None;
+        // Хвост текста хода (символы) — для guard'а зацикливания;
+        // `looped` — найденный период, по нему стрим и оборван.
+        let mut turn_tail: Vec<char> = Vec::new();
+        let mut looped: Option<usize> = None;
+        let t_turn = Instant::now();
+        let gen_before = total_gen_tokens;
+        let chat_for_cb = chat_id.clone();
+        let stop: Arc<dyn Fn() -> bool + Send + Sync> = {
+            let abort = abort.clone();
+            Arc::new(move || abort.load(Ordering::Relaxed) != abort_snapshot)
+        };
+        let mut on_event = |ev: synaptixd::Event| -> bool {
+            let (body, thinking, tool) = match ev {
+                synaptixd::Event::Token { text } => (text, String::new(), String::new()),
+                synaptixd::Event::Thinking { text } => (String::new(), text, String::new()),
+                synaptixd::Event::ToolText { text } => (String::new(), String::new(), text),
+                _ => return true,
+            };
+            if ttft_ms.is_none() {
+                let ms = t_turn.elapsed().as_millis() as u32;
+                ttft_ms = Some(ms);
+                if_active(&chat_for_cb, move |c| c.last_prefill_ms.set_always(ms));
             }
-            log::info!(
-                "[syn_chat] KV-ринг: {} ток ({} MB) = промпт {} + ответ {} + 128; \
-                 по VRAM влезает {} ток, cap модели {}, {} B/ток; VRAM доступно {} MB \
-                 (свободно по драйверу {} MB)",
-                plan.ring_tokens,
-                plan.ring_mb(),
-                plan.prompt_tokens,
-                plan.max_new,
-                plan.by_mem,
-                plan.cap,
-                plan.kv_per_token,
-                plan.vram_available_mb,
-                crate::syn_chat::model_registry::vram_free_mb()
-            );
-            if plan.truncated_prompt {
-                // Движок историю НЕ подрезает: без sliding-window он вернёт
-                // «KV overflow», а со скользящим окном молча выбросит голову
-                // контекста — то есть системный промпт и саму задачу.
-                log::warn!(
-                    "[syn_chat] промпт {} ток не влезает в ринг {}: движок либо \
-                     упадёт с KV overflow, либо потеряет голову контекста \
-                     (системный промпт и задачу). Сожмите чат или уменьшите \
-                     max_new_tokens",
-                    prompt_ids.len(),
-                    plan.ring_tokens
-                );
+            tokens_this_turn += 1;
+            turn_tail.extend(body.chars().chain(thinking.chars()).chain(tool.chars()));
+            if turn_tail.len() > LOOP_WINDOW_CHARS * 2 {
+                let extra = turn_tail.len() - LOOP_WINDOW_CHARS;
+                turn_tail.drain(..extra);
             }
-            // «Детали» с первой секунды хода — про этот ход: промпт и ринг
-            // известны уже сейчас, префилл придёт с первым токеном, а
-            // переиспользование префикса движок называет только в конце.
-            // Без этого новый чат до конца первого ответа показывал числа
-            // предыдущего (и «из кэша» чужого промпта).
-            {
-                let prompt_tokens = prompt_ids.len() as u32;
-                let ring_tokens = plan.ring_tokens as u32;
-                let ring_bytes = plan.ring_bytes();
-                let budget = plan.by_mem.min(plan.cap) as u32;
-                let first_turn = turn == 0;
-                if_active(&chat_id, move |c| {
-                    c.last_prompt_tokens.set_always(prompt_tokens);
-                    c.last_ring_tokens.set_always(ring_tokens);
-                    c.kv_cache_bytes.set_always(ring_bytes);
-                    c.ctx_budget_tokens.set_always(budget);
-                    c.last_prefill_ms.set_always(0);
-                    c.last_reused_tokens.set_always(0);
-                    if first_turn {
-                        c.last_gen_tokens.set_always(0);
-                        c.last_decode_tps.set_always(0.0);
-                        c.last_turns.set_always(1);
-                    }
-                    c.last_turn_open.set_always(true);
-                });
-            }
-            let mut runner = LlmGeneration::new(&model.model, opts);
-            // Stop во время префилла: движок опрашивает флаг между чанками.
-            let abort_for_prefill = abort.clone();
-            runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
-            let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
-            if StreamParser::has_native_stops(&model.tokenizer) {
-                // Канальный протокол завершает ход `<|eot|>`, Gemma-4 —
-                // `<turn|>`/`<|tool_response>`; всё это уже в eos_ids бандла,
-                // своих стопов добавлять не нужно (и `<|im_end|>` в этих
-                // словарях всё равно нет).
-                runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
-            } else {
-                set_qwen3_stops(&mut runner, &model.tokenizer);
-            }
-            // На случай если парсер callback'а не успеет отработать перед
-            // следующей итерацией — добавим явный text-level stop на закрытии
-            // tool-call (encoder в LlmGeneration сравнивает накопленный
-            // decoded-text).
-            if !tool_schemas.is_empty() {
-                runner.add_stop_sequence(if channel_mode { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
-            }
-
-            // Разбор потока — по протоколу модели (ChatML или канальный).
-            let mut parser =
-                StreamParser::for_model(&model.tokenizer, params.enable_thinking, &prompt);
-            // Текст ответа за этот turn вне tool_call-блоков. Реплика для
-            // истории собирается из него и разобранных вызовов
-            // (`assistant_turn_message`) — сырой поток модели в историю не идёт.
-            let mut clean_text: String = String::new();
-            // Размышления хода — уходят в реплику истории блоком `<think>`:
-            // шаблон Qwen3 рендерит их для реплик после последнего вопроса
-            // пользователя, и без них следующий промпт расходится с
-            // предыдущим на границе `<think>⏎` (см. `assistant_turn_message`).
-            let mut think_text: String = String::new();
-            let mut buf_body = String::new();
-            let mut buf_think = String::new();
-            let mut buf_tool = String::new();
-            let mut last_flush = Instant::now();
-            let flush_interval = Duration::from_millis(FLUSH_INTERVAL_MS);
-            let mut tokens_this_turn: u32 = 0;
-            // Честный prefill: время до ПЕРВОГО токена. Прежний замер стоял до
-            // старта генерации и показывал в панели 0 — время планирования ринга.
-            let mut ttft_ms: Option<u32> = None;
-            // Хвост текста хода (символы) — для guard'а зацикливания;
-            // `looped` — найденный период, по нему стрим и оборван.
-            let mut turn_tail: Vec<char> = Vec::new();
-            let mut looped: Option<usize> = None;
-
-            let t_turn = Instant::now();
-            // Копия, а не захват `total_gen_tokens`: он дописывается уже
-            // после хода, а замыкание живёт только внутри стрима.
-            let gen_before = total_gen_tokens;
-            let abort_for_cb = abort.clone();
-            let chat_for_cb = chat_id.clone();
-            let on_token = |id: u32, delta: &str| {
-                // Abort: сбросить накопленные буферы и выйти.
-                if abort_for_cb.load(Ordering::Relaxed) != abort_snapshot {
+            if (tokens_this_turn as usize).is_multiple_of(LOOP_CHECK_EVERY) {
+                if let Some(p) = periodic_tail(&turn_tail, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS) {
+                    looped = Some(p);
                     flush_streaming(&chat_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
                     return false;
                 }
-                if ttft_ms.is_none() {
-                    let ms = t_turn.elapsed().as_millis() as u32;
-                    ttft_ms = Some(ms);
-                    if_active(&chat_for_cb, move |c| c.last_prefill_ms.set_always(ms));
-                }
-                tokens_this_turn += 1;
-                turn_tail.extend(delta.chars());
-                if turn_tail.len() > LOOP_WINDOW_CHARS * 2 {
-                    let extra = turn_tail.len() - LOOP_WINDOW_CHARS;
-                    turn_tail.drain(..extra);
-                }
-                if (tokens_this_turn as usize).is_multiple_of(LOOP_CHECK_EVERY) {
-                    if let Some(p) = periodic_tail(&turn_tail, LOOP_WINDOW_CHARS, LOOP_MAX_PERIOD_CHARS) {
-                        looped = Some(p);
-                        flush_streaming(&chat_for_cb, &mut buf_body, &mut buf_think, &mut buf_tool, None);
-                        return false;
-                    }
-                }
-
-                let (body, thinking, tool) = parser.feed(id, delta);
-                clean_text.push_str(&body);
-                think_text.push_str(&thinking);
-                buf_body.push_str(&body);
-                buf_think.push_str(&thinking);
-                buf_tool.push_str(&tool);
-
-                // Throttled flush в UI.
-                let now = Instant::now();
-                if now.duration_since(last_flush) >= flush_interval {
-                    last_flush = now;
-                    flush_streaming(
-                        &chat_for_cb,
-                        &mut buf_body,
-                        &mut buf_think,
-                        &mut buf_tool,
-                        Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
-                    );
-                }
-
-                // Если парсер уже зафиксировал tool_call — останавливаемся,
-                // не дожидаясь, пока модель уйдёт писать прозу после блока.
-                // (Stop-sequence на закрытии блока дублирует эту защиту, но
-                // text-level stop срабатывает только когда decoded-tail совпадает,
-                // что зависит от tokenizer-decode таймингов.)
-                if parser.tool_call_ready() {
-                    return false;
-                }
-                true
-            };
-
-            // Медиа-промпт идёт своим путём: prefill по готовым эмбеддингам
-            // вместо embed'а id-токенов. Спекулятивные декодеры (DFlash /
-            // lookup / CUDA-graph) на нём не применяются.
-            let mut reused = 0usize;
-            let session = if prefix_kv_turn {
-                ensure_kv_slot(
-                    &mut kv_slot,
-                    &model,
-                    &chat_id,
-                    plan.ring_tokens,
-                    plan.session_ctx,
-                    plan.max_new,
-                )
-            } else {
-                None
-            };
-            let media_refs: Vec<&MediaEmbedding> = media.iter().collect();
-            let stream_res = match (session, media_refs.is_empty()) {
-                (Some(session), false) => runner
-                    .generate_streaming_cached_media(
-                        session,
-                        &prompt_ids,
-                        &model.tokenizer,
-                        &media_refs,
-                        on_token,
-                    )
-                    .map(|n| reused = n),
-                (None, false) => runner.generate_streaming_media(
-                    &prompt_ids,
-                    &model.tokenizer,
-                    &media_refs,
-                    on_token,
-                ),
-                (Some(session), true) => runner
-                    .generate_streaming_cached(session, &prompt_ids, &model.tokenizer, on_token)
-                    .map(|n| reused = n),
-                (None, true) => {
-                    runner.generate_streaming(&prompt_ids, &model.tokenizer, on_token)
-                }
-            };
-
-            let tail = parser.take_tail();
-            clean_text.push_str(&tail);
-            buf_body.push_str(&tail);
-            // Финальный flush — гарантированно сбрасываем хвост буферов.
-            flush_streaming(
-                &chat_id,
-                &mut buf_body,
-                &mut buf_think,
-                &mut buf_tool,
-                Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
-            );
-
-            let channel_mode = parser.is_channel();
-
-            // Явно освобождаем runner + возвращаем VRAM. cudaMallocAsync держит
-            // освобождённые chunks в pool с release threshold ≥ 2 GB по
-            // умолчанию — после Drop KV-ring (4 GB на 32K) память остаётся в
-            // pool и не возвращается ОС, что вызывает OOM на следующем turn'е
-            // при alloc нового ring. Одного трима мало: сегменты пула держат
-            // мёртвые записи кэша TMA-дескрипторов (ключ — адрес тензора), и
-            // за ход так утекает больше гигабайта — см. `reclaim_vram`.
-            drop(runner);
-            let (freed, descs) =
-                crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-            let vram_after = crate::syn_chat::model_registry::vram_available_mb();
-            log::info!(
-                "[syn_chat] после хода: trim +{freed} MB ({descs} TMA-деск.), VRAM \
-                 доступно {vram_after} MB (свободно по драйверу {} MB)",
-                crate::syn_chat::model_registry::vram_free_mb()
-            );
-
-            if let Err(e) = stream_res {
-                // Остановлено пользователем (в том числе посреди префилла —
-                // тогда движок отвечает ошибкой): это не сбой хода.
-                if abort.load(Ordering::Relaxed) != abort_snapshot {
-                    return Ok(());
-                }
-                let oom = is_oom_error(&e);
-                // Сессия как резерв считается только если ход ею пользовался:
-                // после первого OOM префикс-KV на этом ходу уже выключен.
-                let has_session = prefix_kv_turn && kv_slot.is_some();
-                let retryable = oom
-                    && tokens_this_turn == 0
-                    && oom_attempt < MAX_OOM_RETRIES
-                    && (has_session || answer_budget > MIN_ANSWER_TOKENS);
-                if retryable {
-                    oom_attempt += 1;
-                    // Первым делом двигаем кэш экспертов: он перечитывается из
-                    // бандла за миллисекунды, а посчитанный префикс-KV стоит
-                    // секунд десять полного префилла. Пока порядок был
-                    // обратный, ход платил самым дорогим, что у него было.
-                    // Только на первой попытке: кэш экспертов готов отдавать
-                    // сколько угодно раз подряд, и без этого условия все
-                    // ретраи ушли бы в него, так и не дойдя до более крупных
-                    // резервов.
-                    let gave_mb = if oom_attempt == 1 {
-                        synaptix::facade::llm::cuda_reclaim_mb(0, RECLAIM_ON_OOM_MB)
-                    } else {
-                        0
-                    };
-                    if gave_mb > 0 {
-                        log::warn!(
-                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{}: \
-                             отдаваемые кэши вернули {gave_mb} MB, кэш префикс-KV цел",
-                            plan.ring_tokens,
-                            plan.ring_mb(),
-                            oom_attempt,
-                            MAX_OOM_RETRIES,
-                        );
-                        if_active(&chat_id, |c| {
-                            c.streaming_body.set(String::new());
-                            c.streaming_thinking.set(String::new());
-                            c.streaming_tool.set(String::new());
-                        });
-                        continue;
-                    }
-                    if has_session {
-                        // Главный резерв: кэш префикс-KV держит гигабайты в
-                        // пуле активаций, и пока он жив, forward'у может не
-                        // хватать места под рабочие буферы (наблюдали OOM на
-                        // alloc в 8 MB при живой сессии на 3.9 GB). Сбрасываем
-                        // и переигрываем ход БЕЗ него: полный префилл дороже
-                        // по времени, но дешевле по памяти, а пересоздание
-                        // кэша тут же вернуло бы ход в ту же аллокацию.
-                        let held_mb = kv_slot
-                            .as_ref()
-                            .map(|s| {
-                                (s.session.ctx_tokens() * model.model.kv_bytes_per_token())
-                                    / (1024 * 1024)
-                            })
-                            .unwrap_or(0);
-                        *kv_slot = None;
-                        prefix_kv_turn = false;
-                        let (freed, _) =
-                            crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-                        log::warn!(
-                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{}: \
-                             сброшен кэш префикс-KV ({held_mb} MB, трим вернул {freed} MB), \
-                             ход доигрывается без префикс-KV",
-                            plan.ring_tokens,
-                            plan.ring_mb(),
-                            oom_attempt,
-                            MAX_OOM_RETRIES,
-                        );
-                    } else {
-                        answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
-                        log::warn!(
-                            "[syn_chat] OOM на ринге {} ток ({} MB): {e}. Повтор {}/{} \
-                             с бюджетом ответа {} ток",
-                            plan.ring_tokens,
-                            plan.ring_mb(),
-                            oom_attempt,
-                            MAX_OOM_RETRIES,
-                            answer_budget
-                        );
-                    }
-                    if_active(&chat_id, |c| {
-                        c.streaming_body.set(String::new());
-                        c.streaming_thinking.set(String::new());
-                        c.streaming_tool.set(String::new());
-                    });
-                    continue;
-                }
-                log::error!("[syn_chat] генерация оборвалась: {e:#}");
-                return Err(e.into());
             }
-
-            KERNEL_CACHES_WARM.store(true, Ordering::Relaxed);
-            if let Some(period) = looped {
-                // Ход отброшен целиком: в историю и ленту он не попал, так
-                // что префикс-KV цел, а повтор идёт с заметкой и анти-loop
-                // температурой — greedy из такой петли сам не выходит.
-                log::warn!(
-                    "[syn_chat] генерация зациклилась: фрагмент из {period} симв. повторяется \
-                     по кругу, ход отброшен ({tokens_this_turn} ток. за {:?}){}",
-                    t_turn.elapsed(),
-                    if loop_retried { " — второй подряд, останавливаемся" } else { "; повторяем" }
+            buf_body.push_str(&body);
+            buf_think.push_str(&thinking);
+            buf_tool.push_str(&tool);
+            let now = Instant::now();
+            if now.duration_since(last_flush) >= flush_interval {
+                last_flush = now;
+                flush_streaming(
+                    &chat_for_cb,
+                    &mut buf_body,
+                    &mut buf_think,
+                    &mut buf_tool,
+                    Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
                 );
-                if_active(&chat_id, |c| {
-                    c.streaming_body.set(String::new());
-                    c.streaming_thinking.set(String::new());
-                    c.streaming_tool.set(String::new());
-                });
-                if loop_retried {
-                    stop_reason = Some(format!(
-                        "Остановлено: модель зацикливается в генерации (фрагмент из {period} \
-                         символов повторяется по кругу) второй ход подряд. Переформулируйте \
-                         задачу или поднимите температуру."
-                    ));
-                    // Пустой пузырь этого хода снимаем — он выглядит как
-                    // «повисло»; после tool-результата снимать нечего.
-                    ledger_update(&chat_id, pop_empty_assistant);
-                    break 'agent;
-                }
-                loop_retried = true;
-                anti_loop = true;
-                pending_note = Some(LOOP_NOTE);
-                continue 'agent;
             }
-            loop_retried = false;
-            let dt = t_turn.elapsed();
-            turn_decode_s = (dt.as_secs_f64() - ttft_ms.unwrap_or(0) as f64 / 1000.0).max(0.0);
-            let tok_per_s = if dt.as_secs_f64() > 0.0 {
-                tokens_this_turn as f64 / dt.as_secs_f64()
-            } else {
-                0.0
-            };
-            // Имя приводим к ключу каталога сразу на выходе парсера: дальше
-            // оно идёт и в историю (`<atem:invoke name=…>` следующего
-            // промпта), и в guard, и в политику подтверждений, и в UI.
-            // Канальный шаблон Muse разрешает модели `notes.action` — если
-            // это имя доживёт до истории, модель увидит его в своём же
-            // прошлом ходу и повторит.
-            let raw_calls: Vec<RawToolCall> = parser
-                .finish()
-                .into_iter()
-                .map(|mut c| {
-                    c.name = crate::agent::tools::executor::canonical_tool_name(&c.name).to_string();
-                    c
-                })
-                .collect();
-            reused_total = reused_total.max(reused as u32);
-            if let Some(slot) = kv_slot.as_mut() {
-                if reused == 0 && !slot.last_prompt.is_empty() {
-                    log_prefix_divergence(&model.tokenizer, &slot.last_prompt, &prompt_ids);
-                }
-                slot.last_prompt = prompt_ids.clone();
-            }
-            log::info!(
-                "[syn_chat] turn={} {} tokens in {:?} ({:.1} tok/s), prefill {} ms \
-                 (префикс-KV переиспользовал {} из {} ток промпта), tool_calls={}",
-                turn,
-                tokens_this_turn,
-                dt,
-                tok_per_s,
-                ttft_ms.unwrap_or(0),
-                reused,
-                prompt_ids.len(),
-                raw_calls.len()
-            );
-
-            // Статистика панели — по КАЖДОМУ ходу, а не только по первому:
-            // после tool-вызовов промпт вырастает в разы, и старое значение
-            // (промпт первого хода) выглядело как «токенов мало, а OOM».
-            let stat = TurnStats {
-                prompt_tokens: prompt_ids.len() as u32,
-                reused_tokens: reused as u32,
-                gen_tokens: total_gen_tokens + tokens_this_turn,
-                prefill_ms: ttft_ms.unwrap_or(0),
-                turns: turn as u32 + 1,
-                ring_tokens: plan.ring_tokens as u32,
-                ring_bytes: plan.ring_bytes(),
-                // Потолок — меньшее из «влезает в VRAM» и контекста модели:
-                // память под миллион токенов у модели на 262k ничего не значит.
-                ctx_budget: plan.by_mem.min(plan.cap) as u32,
-                vram_free_mb: vram_after as u32,
-                blocks_resident: blocks_resident_of(&model),
-            };
-            if_active(&chat_id, move |c| stat.apply(c));
-
-            break (
-                clean_text,
-                think_text,
-                raw_calls,
-                tokens_this_turn,
-                channel_mode,
-                // Честный потолок контекста этого хода — нужен
-                // компактификации внутри хода.
-                plan.by_mem.min(plan.cap),
-            );
+            true
         };
-        let (clean_text, think_text, raw_calls, tokens_this_turn, channel_mode, turn_ctx_budget) =
-            turn_result;
+        let res = crate::syn_chat::daemon::generate(
+            &model.id,
+            crate::syn_chat::daemon::to_service(&for_prompt, &media_at),
+            tool_schemas.clone(),
+            &call,
+            stop,
+            &mut on_event,
+        );
+        // Финальный flush — гарантированно сбрасываем хвост буферов.
+        flush_streaming(
+            &chat_id,
+            &mut buf_body,
+            &mut buf_think,
+            &mut buf_tool,
+            Some(live_gen(gen_before, tokens_this_turn, ttft_ms, t_turn)),
+        );
+        // Остановлено пользователем (в том числе посреди префилла): не сбой.
+        if abort.load(Ordering::Relaxed) != abort_snapshot {
+            return Ok(());
+        }
+        let gen = match res {
+            Ok(g) => g,
+            Err(_) if looped.is_some() => synaptixd::Generated::default(),
+            Err(e) => {
+                log::error!("[syn_chat] генерация оборвалась: {e:#}");
+                return Err(e);
+            }
+        };
+        if let Some(period) = looped {
+            // Ход отброшен целиком: в историю и ленту он не попал, так что
+            // префикс-KV цел, а повтор идёт с заметкой и анти-loop
+            // температурой — greedy из такой петли сам не выходит.
+            log::warn!(
+                "[syn_chat] генерация зациклилась: фрагмент из {period} симв. повторяется \
+                 по кругу, ход отброшен ({tokens_this_turn} ток. за {:?}){}",
+                t_turn.elapsed(),
+                if loop_retried { " — второй подряд, останавливаемся" } else { "; повторяем" }
+            );
+            if_active(&chat_id, |c| {
+                c.streaming_body.set(String::new());
+                c.streaming_thinking.set(String::new());
+                c.streaming_tool.set(String::new());
+            });
+            if loop_retried {
+                stop_reason = Some(format!(
+                    "Остановлено: модель зацикливается в генерации (фрагмент из {period} \
+                     символов повторяется по кругу) второй ход подряд. Переформулируйте \
+                     задачу или поднимите температуру."
+                ));
+                ledger_update(&chat_id, pop_empty_assistant);
+                break 'agent;
+            }
+            loop_retried = true;
+            anti_loop = true;
+            pending_note = Some(LOOP_NOTE);
+            continue 'agent;
+        }
+        loop_retried = false;
+        let turn_decode_s = gen.decode_ms as f64 / 1000.0;
+        let tokens_this_turn = gen.tokens as u32;
+        let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
+        // Имя приводим к ключу каталога сразу: дальше оно идёт и в историю, и
+        // в guard, и в политику подтверждений, и в UI.
+        let raw_calls: Vec<RawToolCall> = gen
+            .tool_calls
+            .iter()
+            .map(|c| RawToolCall {
+                name: crate::agent::tools::executor::canonical_tool_name(&c.name).to_string(),
+                arguments_json: c.arguments.clone(),
+            })
+            .collect();
+        reused_total = reused_total.max(gen.cached_tokens as u32);
+        let last_prompt_tokens = gen.prompt_tokens as u32;
+        log::info!(
+            "[syn_chat] turn={} {} tokens, prefill {} ms, декод {} мс (префикс-KV переиспользовал {} из {} ток промпта), tool_calls={}",
+            turn,
+            gen.tokens,
+            gen.prefill_ms,
+            gen.decode_ms,
+            gen.cached_tokens,
+            gen.prompt_tokens,
+            raw_calls.len()
+        );
+        let stat = TurnStats {
+            prompt_tokens: last_prompt_tokens,
+            reused_tokens: gen.cached_tokens as u32,
+            gen_tokens: total_gen_tokens + tokens_this_turn,
+            prefill_ms: gen.prefill_ms as u32,
+            turns: turn as u32 + 1,
+            ring_tokens: gen.context as u32,
+            ring_bytes: 0,
+            ctx_budget: gen.context as u32,
+            vram_free_mb: 0,
+            blocks_resident: None,
+        };
+        if_active(&chat_id, move |c| stat.apply(c));
+        let turn_ctx_budget = gen.context;
+        let clean_text = gen.text;
+        let think_text = gen.thinking;
 
         total_gen_tokens += tokens_this_turn;
         total_decode_s += turn_decode_s;
@@ -2586,7 +1647,7 @@ async fn run_agent_loop(
         // родителя, если внутри крутился субагент.
         let _tool_budget = tools::budget::arm_turn(
             turn_ctx_budget,
-            prompt_ids.len() + tokens_this_turn as usize,
+            last_prompt_tokens as usize + tokens_this_turn as usize,
             tools::budget::model_counter(&model),
         );
 
@@ -2798,7 +1859,6 @@ async fn run_agent_loop(
                 let res = run_pipeline_tool(
                     req,
                     model,
-                    &mut kv_slot,
                     &abort,
                     abort_snapshot,
                 )
@@ -2849,13 +1909,6 @@ async fn run_agent_loop(
                 continue;
             }
 
-            // ── Субагент крутит свой agent-loop на той же модели и просит
-            // под него собственный KV-ринг. Пока кэш префикс-KV этого хода
-            // жив, его гигабайты остаются в VRAM, и субагенту не хватает
-            // места уже на активациях MoE — в ленту вместо ответа приходит
-            // «alloc_zeros(...): OOM». Отправляем кэш в RAM на время вызова
-            // и забираем обратно: перевоз через PCIe — десятки мс, полный
-            // префилл истории — секунды.
             // ── view_media: файл кодирует vision-башня этой же модели, и его
             // эмбеддинги входят в промпт следующего хода — поэтому исполняет
             // цикл, а не `tools::execute` (у того нет ни модели, ни медиа).
@@ -2863,14 +1916,11 @@ async fn run_agent_loop(
             let outcome = if tools::executor::canonical_tool_name(&tool_name(chat_call))
                 == KEY_VIEW_MEDIA
             {
-                let v = view_media_call(chat_call, &model, &caps, &mut kv_slot).await;
+                let v = view_media_call(chat_call, &caps).await;
                 let outcome = v.outcome.clone();
                 viewed = Some(v);
                 outcome
             } else {
-                let parked = tool_name(chat_call) == KEY_SUBAGENT
-                    && park_kv_session(&mut kv_slot, &model);
-
                 // Предел времени вызова — карточке на обратный отсчёт;
                 // гасится, как бы вызов ни кончился (guard).
                 let _countdown = ToolCountdown::start(
@@ -2886,16 +1936,10 @@ async fn run_agent_loop(
                 let outcome = tokio::select! {
                     o = tools::execute(chat_call) => o,
                     _ = wait_abort(&abort, abort_snapshot) => {
-                        if parked {
-                            unpark_kv_session(&mut kv_slot, &model);
-                        }
                         cancel_unanswered(&chat_id, &chat_calls[ci..]);
                         return Ok(());
                     }
                 };
-                if parked {
-                    unpark_kv_session(&mut kv_slot, &model);
-                }
                 outcome
             };
 
@@ -2946,15 +1990,7 @@ async fn run_agent_loop(
                         .collect();
                     for_history = attach_prompt::assemble_tool_view(&for_history, &items);
                     if !v.media.is_empty() {
-                        media.extend(v.media);
-                        if prefix_kv_on && !model.model.kv_session_media_ok() {
-                            log::info!(
-                                "[syn_chat] view_media: у модели нет сессии с медиа — \
-                                 префикс-KV до конца хода выключен"
-                            );
-                            prefix_kv_on = false;
-                            *kv_slot = None;
-                        }
+                        media_at.insert(history.len(), v.media);
                     }
                     push_tool_result_viewed(
                         &chat_id,
@@ -3003,17 +2039,10 @@ async fn run_agent_loop(
         // бессилен: он сжимает только то, что до последнего сообщения
         // пользователя, а tool-цепочка агента растёт после него — в чатах
         // это давало рост промпта с 25k до 70k+ символов за одно сообщение.
-        if autocompact_enabled && media.is_empty() && turn_ctx_budget > 0 {
-            let prompt_tokens = prompt_ids.len() as u32;
+        if autocompact_enabled && media_at.is_empty() && turn_ctx_budget > 0 {
+            let prompt_tokens = last_prompt_tokens;
             let pct = prompt_tokens as u64 * 100 / turn_ctx_budget as u64;
             if pct >= autocompact_threshold as u64 {
-                // Сводку считает та же модель: освобождаем кэш префикс-KV
-                // ДО summary-запроса — после сжатия он всё равно не совпадёт
-                // с новой историей, а его VRAM нужна ринг-буферу сводки.
-                if kv_slot.is_some() {
-                    *kv_slot = None;
-                    crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-                }
                 let compacted = crate::syn_chat::compact::maybe_compact_in_turn(
                     &model,
                     &abort,
@@ -3027,7 +2056,8 @@ async fn run_agent_loop(
                 .await;
                 if compacted {
                     match rebuild_history(&ctx, &sys_prompt, &model, &caps, &chat_id).await {
-                        Some(h) => {
+                        Some((h, m)) => {
+                            media_at = m;
                             log::info!(
                                 "[syn_chat] история хода пересобрана после сжатия: \
                                  {} сообщений",
@@ -3142,55 +2172,19 @@ pub(crate) fn generate_summary(
     abort_snapshot: u64,
 ) -> anyhow::Result<String> {
     let history = vec![Message::system(system), Message::user(user)];
-    let prompt = model
-        .tokenizer
-        .apply_chat_template_ex_tools(&history, true, false, None)?;
-    let prompt_ids = model.tokenizer.encode(&prompt)?;
-    let model_cap = model.model.config().max_seq_len;
-    let plan = RingPlan::new(model, prompt_ids.len(), SUMMARY_MAX_NEW_TOKENS, model_cap);
-    log::info!(
-        "[syn_chat] summary-запрос: промпт {} ток, ринг {} ток ({} MB)",
-        prompt_ids.len(),
-        plan.ring_tokens,
-        plan.ring_mb()
-    );
-
     // Низкая температура: сводка должна быть детерминированной и сухой.
     let mut params = SamplingParams::default();
     params.temperature = 0.3;
-    let mut opts = params.to_options();
-    opts.max_seq_len = plan.ring_tokens;
-    opts.max_new_tokens = plan.max_new;
-
-    let mut runner = LlmGeneration::new(&model.model, opts);
-    let abort_for_prefill = abort.clone();
-    runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
-    if StreamParser::has_native_stops(&model.tokenizer) {
-        runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
-    } else {
-        set_qwen3_stops(&mut runner, &model.tokenizer);
-    }
-
-    let mut parser = StreamParser::for_model(&model.tokenizer, false, &prompt);
-    let mut clean = String::new();
-    let abort_cb = abort.clone();
-    let res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |id, delta| {
-        if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
-            return false;
-        }
-        let (body, _thinking, _tool) = parser.feed(id, delta);
-        clean.push_str(&body);
-        true
-    });
-    clean.push_str(&parser.take_tail());
-
-    // Ринг summary-запроса больше не нужен — возвращаем VRAM (см. комментарий
-    // про cudaMallocAsync-пул в run_agent_loop).
-    drop(runner);
-    let _ = crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-
-    res?;
-    Ok(clean.trim().to_string())
+    params.enable_thinking = false;
+    params.max_new_tokens = SUMMARY_MAX_NEW_TOKENS as u32;
+    let call = crate::syn_chat::daemon::params(&params, None);
+    let stop: Arc<dyn Fn() -> bool + Send + Sync> = {
+        let abort = abort.clone();
+        Arc::new(move || abort.load(Ordering::Relaxed) != abort_snapshot)
+    };
+    let g = crate::syn_chat::daemon::complete(&model.id, &history, &call, stop)?;
+    log::info!("[syn_chat] сводка: промпт {} ток, ответ {} ток", g.prompt_tokens, g.tokens);
+    Ok(g.text.trim().to_string())
 }
 
 /// Считает живые счётчики хода: сумма токенов по всей генерации и скорость
@@ -3464,7 +2458,6 @@ struct PipelineToolResult {
 async fn run_pipeline_tool(
     req: crate::syn_chat::pipeline_run::RunRequest,
     model: Arc<LoadedSynModel>,
-    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
     abort: &Arc<AtomicU64>,
     abort_snapshot: u64,
 ) -> PipelineToolResult {
@@ -3486,40 +2479,12 @@ async fn run_pipeline_tool(
         Err(e) => return fail(Some(model), e),
     };
 
-    // 2. free_vram: освободить всё, что держит ход.
-    let mut model_opt = Some(model);
-    let mut model_path: Option<std::path::PathBuf> = None;
+    // 2. Видеопамять под прогон освобождает служба: модель чата живёт там
+    //    же и уступает карту стадиям графа, а после возвращается сама.
+    let model_opt = Some(model);
+    let model_path: Option<std::path::PathBuf> = None;
     if req.free_vram {
-        let m = model_opt.take().expect("model взята выше");
-        model_path = Some(m.path.clone());
-        let device = *m.model.device();
-        // Проверка после выгрузки: если кто-то в ходе ещё держит клон модели,
-        // веса остаются на карте, а прогон упадёт в OOM (так было с бюджетом
-        // инструментов, державшим `Arc<LoadedSynModel>`).
-        let weak = Arc::downgrade(&m);
-        **kv_slot = None;
-        drop(m);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        run_on_main_thread(move || {
-            use_context::<SynModelRegistry>().unload();
-            let _ = tx.send(());
-        });
-        let _ = rx.await;
-        let alive = weak.strong_count();
-        if alive > 0 {
-            log::warn!(
-                "[syn_chat] pipelines run: LLM НЕ освобождена — живых ссылок {alive}, \
-                 веса остаются в VRAM"
-            );
-        }
-        let (freed, descs) = crate::syn_chat::model_registry::reclaim_vram(device);
-        log::info!(
-            "[syn_chat] pipelines run: LLM выгружена (+{} MB, {} дескрипторов), \
-             VRAM доступно {} MB",
-            freed,
-            descs,
-            crate::syn_chat::model_registry::vram_available_mb()
-        );
+        log::info!("[syn_chat] pipelines run: free_vram — карту делит служба");
     }
 
     // 3. Старт прогона.
@@ -3709,8 +2674,8 @@ struct ViewedMedia {
     attachments: Vec<MsgAttachment>,
     /// Их куски промпта в том же порядке (`attach_prompt::attachment_part`).
     parts: Vec<String>,
-    /// Эмбеддинги картинок и видео среди них — в хвост медиа хода.
-    media: Vec<MediaEmbedding>,
+    /// Файлы картинок и видео среди них — на маркеры результата.
+    media: Vec<synaptixd::Media>,
 }
 
 /// Исполняет `view_media`: кладёт файлы в CAS, как вложения, и готовит их
@@ -3723,9 +2688,7 @@ struct ViewedMedia {
 /// в промпт не идут — модель узнаёт, сколько им было нужно.
 async fn view_media_call(
     call: &ChatToolCall,
-    model: &Arc<LoadedSynModel>,
     caps: &MediaCaps,
-    kv_slot: &mut std::sync::MutexGuard<'_, Option<KvSlot>>,
 ) -> ViewedMedia {
     use crate::agent::tools::view_media::{self as vm, Entry, Status};
 
@@ -3763,21 +2726,6 @@ async fn view_media_call(
         Err(e) => return fail(format!("view_media: reading files failed: {e}"), false),
     };
 
-    let ready: Vec<MsgAttachment> = ingested
-        .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().cloned())
-        .collect();
-    let needs_vision = caps.vision && attach_prompt::needs_tower(&ready, caps);
-    let parked = needs_vision && park_kv_session(kv_slot, model);
-    let tower = attach_prompt::ensure_tower(&model.model, needs_vision);
-    let mut caps = MediaCaps { vision: tower.is_ok(), ..caps.clone() };
-    if let Err(reason) = &tower {
-        // Пустая причина — башня и не требовалась (всё в кэше).
-        if !reason.is_empty() {
-            caps.vision_error = Some(reason.clone());
-        }
-    }
-
     // Половина остатка окна на весь результат — как у остальных
     // инструментов (`budget::grant`); вне цикла бюджета нет.
     let grant = tools::budget::grant(usize::MAX);
@@ -3785,7 +2733,7 @@ async fn view_media_call(
     let mut entries: Vec<Entry> = Vec::new();
     let mut attachments: Vec<MsgAttachment> = Vec::new();
     let mut parts: Vec<String> = Vec::new();
-    let mut media: Vec<MediaEmbedding> = Vec::new();
+    let mut media: Vec<synaptixd::Media> = Vec::new();
     for (path, r) in ingested {
         let a = match r {
             Ok(a) => a,
@@ -3794,12 +2742,14 @@ async fn view_media_call(
                 continue;
             }
         };
-        let part = attach_prompt::attachment_part(&a, &model.model, &caps);
-        let tokens = part
-            .media
-            .as_ref()
-            .map(|m| m.tokens)
-            .unwrap_or_else(|| tools::budget::count(&part.text));
+        let part = attach_prompt::attachment_part(&a, caps);
+        // Картинку кодирует служба: её доля окна — потолок токенов на
+        // картинку (видео — с запасом на кадры).
+        let tokens = match &part.media {
+            Some(m) if m.kind == synaptixd::MediaKind::Video => 8192,
+            Some(_) => caps.max_image_tokens.unwrap_or(1024),
+            None => tools::budget::count(&part.text),
+        };
         if tokens > allowed {
             entries.push(Entry { path, status: Status::Skipped { attachment: a, need: tokens, allowed } });
             continue;
@@ -3813,19 +2763,11 @@ async fn view_media_call(
             status: Status::Included { index: attachments.len(), attachment: a, tokens, failure: part.failure },
         });
     }
-    if tower.is_ok() {
-        attach_prompt::release_tower(&model.model);
-    }
-    if parked {
-        unpark_kv_session(kv_slot, model);
-    }
-
     let shown = entries.iter().filter(|e| e.shown()).count();
     log::info!(
-        "[syn_chat] view_media: показано {shown} из {} файлов, медиа {} ({} vision-токенов)",
+        "[syn_chat] view_media: показано {shown} из {} файлов, медиа {}",
         entries.len(),
-        media.len(),
-        media.iter().map(|m| m.tokens).sum::<usize>()
+        media.len()
     );
     ViewedMedia {
         outcome: tools::ToolOutcome {
@@ -3890,26 +2832,6 @@ fn collect_active_tool_schemas(app: &AppCtx, settings: &ChatSettings) -> Vec<ser
     schemas
 }
 
-/// Полный набор stop-токенов для Qwen3 ChatML: EOS из конфига + `<|im_end|>`.
-pub(crate) fn set_qwen3_stops(runner: &mut LlmGeneration<'_>, tokenizer: &LlmTokenizer) {
-    let mut stops: Vec<u32> = tokenizer.eos_ids().to_vec();
-    if StreamParser::has_native_stops(tokenizer) {
-        // Muse Glimmer / Gemma-4: `<|im_end|>` в словаре нет, ход закрывают
-        // их собственные токены из eos_ids.
-        runner.set_stop_tokens(stops);
-        return;
-    }
-    match tokenizer.encode(IM_END_TOKEN) {
-        Ok(ids) if ids.len() == 1 => {
-            if !stops.contains(&ids[0]) {
-                stops.push(ids[0]);
-            }
-        }
-        Ok(ids) => eprintln!("[syn_chat] неожиданный encode(<|im_end|>) → {ids:?}"),
-        Err(e) => eprintln!("[syn_chat] не удалось encode(<|im_end|>): {e:#}"),
-    }
-    runner.set_stop_tokens(stops);
-}
 
 /// Реплика ленты в форме, пригодной для сборки промпта на worker-потоке:
 /// сигналы уже прочитаны, вложения — по значению.
@@ -3966,14 +2888,13 @@ struct HistoryItem {
 /// и ответ; величина стабильна от хода к ходу (см. `DocBudget`).
 fn snapshot_media_caps(app: &AppCtx, model: &Arc<LoadedSynModel>, max_seq_len: u32) -> MediaCaps {
     let max = app.syn_chat_max_image_tokens.get_untracked();
-    let window = model.model.config().max_seq_len.min(max_seq_len as usize);
+    let window = model.window.min(if max_seq_len > 0 { max_seq_len as usize } else { usize::MAX });
     MediaCaps {
         // Кэш, а не Llm::supports_media(): функция зовётся с main thread, а
         // мьютекс пайплайна занят на всё время идущей генерации.
         vision: model.supports_media,
         vision_error: None,
         max_image_tokens: (max > 0).then_some(max),
-        asr: Some(app.audio.asr.clone()),
         doc_budget: Some(attach_prompt::DocBudget {
             tokens: (window / 2).max(1024),
             count: tools::budget::model_counter(model),
@@ -4187,59 +3108,29 @@ fn history_from_messages(msgs: &[ChatMsg], system_prompt: &str, channel: bool) -
 /// Vision-башня грузится один раз на весь вызов и сразу выгружается: её
 /// VRAM нужна KV-рингу, а эмбеддинги вложений живут отдельными тензорами
 /// и переживают выгрузку.
-fn prepare_history(
-    items: &[HistoryItem],
-    model: &Arc<LoadedSynModel>,
-    caps: &MediaCaps,
-    ctx: &SynChatCtx,
-) -> (Vec<Message>, Vec<MediaEmbedding>) {
-    // Башня нужна только под новые вложения: всё, что уже посчитано, берётся
-    // из кэша эмбеддингов и переживает и регенерацию, и выгрузку башни.
-    let needs_vision = caps.vision
-        && items
-            .iter()
-            .any(|i| attach_prompt::needs_tower(&i.attachments, caps));
-    let tower = attach_prompt::ensure_tower(&model.model, needs_vision);
-    let vision_ready = tower.is_ok();
-    let mut caps = MediaCaps { vision: vision_ready, ..caps.clone() };
-    if let Err(reason) = tower {
-        // Пустая причина — vision и не требовался (новых вложений нет).
-        if !reason.is_empty() {
-            let msg = tr!("chat.session.error.attachment_rejected", reason = reason);
-            let ctx = ctx.clone();
-            run_on_main_thread(move || ctx.error.set(Some(msg)));
-            caps.vision_error = Some(reason);
-        }
-    }
-
+fn prepare_history(items: &[HistoryItem], caps: &MediaCaps) -> (Vec<Message>, crate::syn_chat::daemon::MediaAt) {
     let mut out: Vec<Message> = Vec::with_capacity(items.len());
-    let mut media: Vec<MediaEmbedding> = Vec::new();
+    let mut media = crate::syn_chat::daemon::MediaAt::new();
     for item in items {
         if let Some(name) = &item.tool_name {
             if item.attachments.is_empty() {
                 out.push(Message::tool_named(name.as_str(), item.body.as_str()));
             } else {
                 // `view_media`: блоки файлов перед телом, как в ходе.
-                let prepared = attach_prompt::prepare_tool_view(
-                    &item.body,
-                    &item.attachments,
-                    &model.model,
-                    &caps,
-                );
-                media.extend(prepared.media);
+                let prepared = attach_prompt::prepare_tool_view(&item.body, &item.attachments, caps);
+                if !prepared.media.is_empty() {
+                    media.insert(out.len(), prepared.media);
+                }
                 out.push(Message::tool_named(name.as_str(), prepared.text));
             }
             continue;
         }
         match item.role {
             ChatMsgRole::User if !item.attachments.is_empty() => {
-                let prepared = attach_prompt::prepare_user_message(
-                    &item.body,
-                    &item.attachments,
-                    &model.model,
-                    &caps,
-                );
-                media.extend(prepared.media);
+                let prepared = attach_prompt::prepare_user_message(&item.body, &item.attachments, caps);
+                if !prepared.media.is_empty() {
+                    media.insert(out.len(), prepared.media);
+                }
                 out.push(Message::user(prepared.text));
             }
             ChatMsgRole::User => out.push(Message::user(&item.body)),
@@ -4249,9 +3140,6 @@ fn prepare_history(
             ChatMsgRole::Assistant => out.push(Message::assistant(&item.body)),
             ChatMsgRole::System => out.push(Message::system(&item.body)),
         }
-    }
-    if vision_ready {
-        attach_prompt::release_tower(&model.model);
     }
     (out, media)
 }
@@ -4371,132 +3259,6 @@ mod tests {
                 arguments: Some(args.to_string()),
             },
         }
-    }
-
-    /// План хода для qwen3.8-flash-next: 13440 Б/ток KV, окно 262144 и
-    /// ≈1.7 ГБ постоянных ring-окон sliding-слоёв. С этими числами `compute`
-    /// повторяет журнал разобранной сессии токен в токен.
-    fn plan(prompt: usize, answer: usize, vram_mb: usize) -> RingPlan {
-        RingPlan::compute(prompt, answer, 262_144, 13_440, 1_761_830_912, vram_mb, false)
-    }
-
-    /// При стриминге блоков сессия не удваивается: ровно под ход (с шагом
-    /// `SESSION_CTX_STEP`), даже если VRAM формально позволяет больше.
-    #[test]
-    fn session_is_not_doubled_while_blocks_are_streamed() {
-        let resident = plan(20_000, 8_192, 20_000);
-        let streamed = RingPlan::compute(20_000, 8_192, 262_144, 13_440, 1_761_830_912, 20_000, true);
-        assert_eq!(resident.ring_tokens, streamed.ring_tokens);
-        assert!(streamed.session_ctx < resident.session_ctx, "{} vs {}", streamed.session_ctx, resident.session_ctx);
-        assert!(streamed.session_ctx >= streamed.ring_tokens);
-    }
-
-    #[test]
-    fn ring_does_not_grow_with_a_bigger_budget() {
-        // Ход требует столько же независимо от того, сколько VRAM свободно:
-        // промпт и бюджет ответа те же.
-        let tight = plan(9_045, 11_307, 5_099);
-        let roomy = plan(9_045, 11_307, 20_000);
-        assert_eq!(tight.ring_tokens, roomy.ring_tokens);
-    }
-
-    #[test]
-    fn session_from_a_tight_budget_survives_a_bigger_one() {
-        // Разобранный случай из журнала: сессию выдали при скудном бюджете
-        // (by_mem 27056), на следующем ходу памяти стало больше и `session_ctx`
-        // подскочил до 32768. Пересоздавать кэш из-за этого нельзя — ход
-        // заплатил бы полным префиллом, хотя старой ёмкости хватало.
-        let tight = plan(9_045, 11_307, 5_099);
-        assert_eq!(tight.session_ctx, 27_056, "ожидали ёмкость из журнала");
-        let roomy = plan(9_112, 11_240, 24_000);
-        assert!(
-            tight.session_ctx >= roomy.ring_tokens,
-            "сессия на {} ток не покрывает ход на {} ток",
-            tight.session_ctx,
-            roomy.ring_tokens
-        );
-        assert!(
-            roomy.session_ctx > tight.session_ctx,
-            "тест бессмыслен: при большем бюджете ёмкость обязана расти ({} → {})",
-            tight.session_ctx,
-            roomy.session_ctx
-        );
-    }
-
-    #[test]
-    fn session_is_recreated_when_the_turn_outgrows_it() {
-        // А вот когда ходу действительно не хватает — пересоздание законно.
-        let small = plan(8_481, 384, 1_067);
-        let bigger = plan(8_889, 384, 4_459);
-        assert!(small.session_ctx < bigger.ring_tokens);
-    }
-
-    /// Журнал 07.09.2026, qwen3.8-27b: 64 блока по 229 МБ, живой кэш
-    /// префикс-KV на 30748 ток (1921 МБ) — ход считает прямо в нём и новой
-    /// памяти под KV не просит. Пока кэш не вычитался из потребности, ход на
-    /// промпте 10k видел «не хватает 2 МБ», выселял два блока и терял
-    /// 32 → 20 ток/с.
-    #[test]
-    fn a_live_prefix_kv_cache_does_not_evict_blocks() {
-        assert_eq!(block_residency_target(2431 - 1921, 2429, || 2429, 229, 64, 64), None);
-        assert!(
-            block_residency_target(2431, 2429, || 2429, 229, 64, 64).is_some(),
-            "регресс: без учёта кэша ход выселял блоки"
-        );
-    }
-
-    /// И обратно: после такого выселения блоки не возвращались никогда —
-    /// свободных 2835 МБ при потребности 2431 давали запас ровно в один блок,
-    /// а гистерезис возврата требует двух.
-    #[test]
-    fn blocks_come_back_once_the_cache_is_counted() {
-        assert_eq!(block_residency_target(2431, 2835, || 2835, 229, 62, 64), None);
-        assert_eq!(block_residency_target(2431 - 1921, 2835, || 2835, 229, 62, 64), Some(64));
-    }
-
-    #[test]
-    fn a_turn_that_really_does_not_fit_still_offloads() {
-        // Кэш на 1921 МБ жив, но контекст вырос: ходу нужно ещё 2500 МБ при
-        // 1000 свободных и бесполезном триме — выселяем 1500/229 + 1 = 8.
-        assert_eq!(block_residency_target(2500, 1000, || 1000, 229, 64, 64), Some(56));
-    }
-
-    /// Журнал 07.09.2026: «не хватало 2 MB … трим вернул 384 MB» — трим
-    /// шёл ПОСЛЕ выселения двух блоков. Теперь он идёт до решения и такой
-    /// дефицит закрывает сам; а если не закрыл — за дефицит меньше блока
-    /// уезжает один блок, а не «один плюс один на стриминг».
-    #[test]
-    fn trim_runs_before_eviction_and_a_tiny_deficit_costs_one_block_at_most() {
-        assert_eq!(block_residency_target(2431, 2429, || 2429 + 384, 229, 64, 64), None);
-        assert_eq!(block_residency_target(2431, 2429, || 2429, 229, 64, 64), Some(63));
-        // Дефицит в блок и больше — по-прежнему с запасом на стриминг.
-        assert_eq!(block_residency_target(2429 + 229, 2429, || 2429, 229, 64, 64), Some(62));
-        // Трим не зовётся, когда памяти и так хватает.
-        assert_eq!(block_residency_target(100, 2429, || unreachable!(), 229, 64, 64), None);
-    }
-
-    /// Шаг A2 плана 07.09.2026 — «ёмкость кэша префикс-KV (удвоение `want`)
-    /// не должна выселять блоки». После того как живой кэш вычитается из
-    /// потребности хода, размер кэша из решения выпадает алгебраически:
-    /// `need − free = want·kv + reserve − available` при любом `session_ctx`.
-    /// Тест держит это как инвариант — если кто-то перестанет вычитать кэш,
-    /// удвоение снова начнёт стоить блоков.
-    #[test]
-    fn session_capacity_does_not_change_the_eviction_decision() {
-        // Журнал 07.09: промпт 10108, ответ 8192, 65536 Б/ток, доступно с
-        // учётом кэша 4350 МБ (2429 свободно + 1921 в кэше), блок 229 МБ.
-        let kv = 65_536usize;
-        let want = 10_108 + 8_192 + 128;
-        let available = 2_429 + 1_921;
-        let need_total = want * kv / (1024 * 1024) + kv_reserve_mb();
-        let decision = |session_tokens: usize| {
-            let held = session_tokens * kv / (1024 * 1024);
-            let free = available - held;
-            block_residency_target(need_total.saturating_sub(held), free, || free, 229, 64, 64)
-        };
-        assert_eq!(decision(want), decision(want * 2));
-        assert_eq!(decision(want), decision(0));
-        assert_eq!(decision(want), None);
     }
 
     #[test]

@@ -32,18 +32,15 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
-use synaptix::facade::llm::{LlmGeneration, Message};
+use synaptix::facade::llm::Message;
 
 use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::chat_settings::ChatSettings;
 use crate::syn_chat::params::SamplingParams;
-use crate::syn_chat::channel_parser::{self, ChannelIds, ATEM_CLOSE};
-use crate::syn_chat::session::{
-    assistant_turn_message, RingPlan, StreamParser, MAX_OOM_RETRIES, MIN_ANSWER_TOKENS,
-    RING_ANSWER_TOKENS, TOOL_CALL_CLOSE,
-};
+use crate::syn_chat::channel_parser::{self, ChannelIds};
+use crate::syn_chat::session::assistant_turn_message;
 use crate::syn_chat::state::{SynChatCtx, ThinkParser};
 use crate::syn_chat::telemetry::{self, RunKind, RunState};
 use crate::syn_chat::tool_parser::RawToolCall;
@@ -604,185 +601,67 @@ fn generate_subagent_turn(
     // (id карточки в панели «Детали», токены, накопленные прошлыми turn'ами)
     run: (u64, u32),
 ) -> anyhow::Result<SubagentTurn> {
-    let prompt = model.tokenizer.apply_chat_template_reasoning(
-        history,
-        true,
-        params.enable_thinking,
-        params.effort(),
-        if tool_schemas.is_empty() {
-            None
-        } else {
-            Some(tool_schemas)
-        },
-    )?;
-    let prompt = crate::syn_chat::session::prompt_for_model(
-        &model.tokenizer,
-        params.enable_thinking,
-        prompt,
-    );
-    let prompt_ids = model.tokenizer.encode(&prompt)?;
-
-    // План KV-ринга — тот же, что у основного цикла (`RingPlan`), а не «cap
-    // модели минус промпт». Слайдер `max_new_tokens` стоит в конфиге на
-    // 131072: без `RING_ANSWER_TOKENS` ринг вырастал до ~132k токенов, что у
-    // гибрида 27B (33 КБ на токен) даёт 4+ ГБ VRAM под один ход субагента, а
-    // сам ход тянется до этих 131k токенов — часы генерации на один turn.
-    // Бюджет по доступной VRAM тут игнорировался полностью.
-    let model_cap = model.model.config().max_seq_len;
-    let mut answer_budget = (params.max_new_tokens as usize).min(RING_ANSWER_TOKENS);
-    let mut oom_attempt = 0usize;
-
-    loop {
-        let plan = RingPlan::new(model, prompt_ids.len(), answer_budget, model_cap);
-        let mut opts = params.to_options();
-        opts.max_seq_len = plan.ring_tokens;
-        opts.max_new_tokens = plan.max_new;
-        tracing::info!(
-            target: "subagent",
-            id = %id,
-            turn,
-            ring_tokens = plan.ring_tokens,
-            ring_mb = plan.ring_mb(),
-            prompt_tokens = plan.prompt_tokens,
-            max_new = plan.max_new,
-            by_mem = plan.by_mem,
-            "KV-ринг"
-        );
-
-        // Размер ринга и потолок контекста в панель — сразу, до генерации:
-        // это уже готовые числа, а ждать первого токена можно долго.
-        let (run_id, gen_before) = run;
-        let plan_stats = (
-            plan.prompt_tokens as u32,
-            plan.ring_tokens as u32,
-            plan.ring_bytes(),
-            plan.by_mem.min(plan.cap) as u32,
-        );
-        telemetry::patch(run_id, move |r| {
-            r.stats.prompt_tokens = plan_stats.0;
-            r.stats.ring_tokens = plan_stats.1;
-            r.stats.ring_bytes = plan_stats.2;
-            r.stats.ctx_budget = plan_stats.3;
-            // Префикс-KV в субагенте не используется — весь промпт
-            // префиллится заново каждый turn.
-            r.stats.reused_tokens = 0;
-        });
-
-        let mut runner = LlmGeneration::new(&model.model, opts);
-        let abort_for_prefill = abort.clone();
-        runner.set_interrupt(move || abort_for_prefill.load(Ordering::Relaxed) != abort_snapshot);
-        // Протокол хода — как в основном цикле: у канальных моделей (Muse
-        // Glimmer) стоп по EOS словаря и ATEM-закрытие, у ChatML — стопы
-        // Qwen3 и `</tool_call>`. До 03.09.2026 субагент знал только
-        // ChatML: ATEM-вызовы Muse не разбирались, и родителю уходил сырой
-        // текст с заголовками каналов вместо ответа.
-        let channel = ChannelIds::detect(&model.tokenizer).is_some();
-        if StreamParser::has_native_stops(&model.tokenizer) {
-            runner.set_stop_tokens(model.tokenizer.eos_ids().to_vec());
-        } else {
-            crate::syn_chat::session::set_qwen3_stops(&mut runner, &model.tokenizer);
-        }
-        if !tool_schemas.is_empty() {
-            runner.add_stop_sequence(if channel { ATEM_CLOSE } else { TOOL_CALL_CLOSE });
-        }
-
-        let mut parser = StreamParser::for_model(&model.tokenizer, params.enable_thinking, &prompt);
-        let mut raw_text = String::new();
-        let mut clean_text = String::new();
-        let mut think_text = String::new();
-        let mut tokens_this_turn = 0usize;
-        let mut ttft_ms: Option<u32> = None;
-        let t_turn = Instant::now();
-        let mut last_push = Instant::now();
-        let abort_cb = abort.clone();
-        let stream_res = runner.generate_streaming(&prompt_ids, &model.tokenizer, |tok_id, delta| {
-            if abort_cb.load(Ordering::Relaxed) != abort_snapshot {
-                return false;
-            }
+    let (run_id, gen_before) = run;
+    // Ход в службе. Своя KV-сессия субагента (ключ — его id): кэш чата
+    // родителя в это время лежит в RAM службы и вернётся следующим ходом.
+    let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let call = crate::syn_chat::daemon::params(params, Some(&format!("subagent/{id}")));
+    let stop: Arc<dyn Fn() -> bool + Send + Sync> = {
+        let abort = abort.clone();
+        Arc::new(move || abort.load(Ordering::Relaxed) != abort_snapshot)
+    };
+    let mut tokens_this_turn = 0usize;
+    let mut ttft_ms: Option<u32> = None;
+    let t_turn = Instant::now();
+    let mut last_push = Instant::now();
+    let g = crate::syn_chat::daemon::generate(
+        &model.id,
+        crate::syn_chat::daemon::to_service(history, &crate::syn_chat::daemon::MediaAt::new()),
+        tool_schemas.to_vec(),
+        &call,
+        stop,
+        &mut |_ev| {
             tokens_this_turn += 1;
             if ttft_ms.is_none() {
-                // Честный префилл — время до первого токена, как в основном
-                // цикле (замер до старта показывал бы планирование ринга).
                 ttft_ms = Some(t_turn.elapsed().as_millis() as u32);
             }
-            raw_text.push_str(delta);
-            let (body, thinking, _tool) = parser.feed(tok_id, delta);
-            clean_text.push_str(&body);
-            think_text.push_str(&thinking);
-
             let now = Instant::now();
             if now.duration_since(last_push) >= TELEMETRY_INTERVAL {
                 last_push = now;
                 push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
             }
-            // Зафиксирован tool_call и парсер вышел из блока — останавливаемся,
-            // не дожидаясь, пока модель уйдёт писать прозу после блока.
-            if parser.tool_call_ready() {
-                return false;
-            }
             true
-        });
-        // Возврат VRAM после хода — так же, как в основном цикле: одного
-        // трима пула мало, сегменты держат мёртвые записи кэша
-        // TMA-дескрипторов, и за ход субагента так утекал больше гигабайта
-        // (на длинной цепочке ходов это заканчивалось OOM на активациях).
-        drop(runner);
-        crate::syn_chat::model_registry::reclaim_vram(*model.model.device());
-
-        if let Err(e) = stream_res {
-            // Тот же ретрай, что в основном цикле: ринг вдвое короче и заново.
-            let retryable = crate::syn_chat::session::is_oom_error(&e)
-                && tokens_this_turn == 0
-                && oom_attempt < MAX_OOM_RETRIES
-                && answer_budget > MIN_ANSWER_TOKENS;
-            if retryable {
-                oom_attempt += 1;
-                answer_budget = (answer_budget / 2).max(MIN_ANSWER_TOKENS);
-                tracing::warn!(
-                    target: "subagent",
-                    id = %id,
-                    turn,
-                    ring_tokens = plan.ring_tokens,
-                    attempt = oom_attempt,
-                    answer_budget,
-                    "OOM на ринге, повтор с меньшим бюджетом: {e}"
-                );
-                continue;
-            }
-            return Err(e.into());
-        }
-
-        tracing::debug!(
-            target: "subagent",
-            id = %id,
-            turn,
-            gen_tokens = tokens_this_turn,
-            "turn done"
-        );
-        push_live_stats(run_id, gen_before, tokens_this_turn, ttft_ms, t_turn);
-        let vram_free = crate::syn_chat::model_registry::vram_available_mb() as u32;
-        telemetry::patch(run_id, move |r| r.stats.vram_free_mb = vram_free);
-        // Имя вызова — к ключу каталога (канальный шаблон разрешает модели
-        // `notes.action`, см. `executor::canonical_tool_name`).
-        let calls: Vec<RawToolCall> = parser
-            .finish()
-            .into_iter()
-            .map(|mut c| {
-                c.name = crate::agent::tools::executor::canonical_tool_name(&c.name).to_string();
-                c
-            })
-            .collect();
-        return Ok(SubagentTurn {
-            raw_text,
-            clean_text,
-            think_text,
-            calls,
-            channel,
-            gen_tokens: tokens_this_turn as u32,
-            prompt_tokens: prompt_ids.len(),
-            ctx_budget: plan.by_mem.min(plan.cap),
-        });
-    }
+        },
+    )?;
+    tracing::debug!(target: "subagent", id = %id, turn, gen_tokens = g.tokens, "turn done");
+    push_live_stats(run_id, gen_before, g.tokens, ttft_ms, t_turn);
+    let stats = (g.prompt_tokens as u32, g.context as u32, g.cached_tokens as u32);
+    telemetry::patch(run_id, move |r| {
+        r.stats.prompt_tokens = stats.0;
+        r.stats.ring_tokens = stats.1;
+        r.stats.ctx_budget = stats.1;
+        r.stats.reused_tokens = stats.2;
+    });
+    // Имя вызова — к ключу каталога (канальный шаблон разрешает модели
+    // `notes.action`, см. `executor::canonical_tool_name`).
+    let calls: Vec<RawToolCall> = g
+        .tool_calls
+        .iter()
+        .map(|c| RawToolCall {
+            name: crate::agent::tools::executor::canonical_tool_name(&c.name).to_string(),
+            arguments_json: c.arguments.clone(),
+        })
+        .collect();
+    Ok(SubagentTurn {
+        raw_text: format!("{}{}", g.thinking, g.text),
+        clean_text: g.text,
+        think_text: g.thinking,
+        calls,
+        channel,
+        gen_tokens: g.tokens as u32,
+        prompt_tokens: g.prompt_tokens,
+        ctx_budget: g.context,
+    })
 }
 
 /// Сбрасывает в карточку панели счётчик токенов и скорость декода. Зовётся

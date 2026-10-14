@@ -19,8 +19,8 @@ use syngui::async_runtime::{run_on_main_thread, spawn};
 use syngui::prelude::use_context;
 use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
-use synaptix::facade::embedding::{self as embeddings, Embedder, EmbedderConfig};
-use synaptix::facade::rerank::{self as rerank, Reranker, RerankerConfig};
+use synaptix::facade::embedding::Embedder;
+use synaptix::facade::rerank::Reranker;
 
 use crate::config::KbConfig;
 use crate::context::AppCtx;
@@ -118,14 +118,11 @@ pub async fn embedder_ready(
 
     let plan2 = plan.clone();
     let result = tokio::task::spawn_blocking(move || {
+        // Считает служба: устройство и точность — её настройки модели.
         let found = locate(ModelKind::Embedder, &plan2)?;
-        let mut cfg = EmbedderConfig::new(found.path.clone())
-            .with_device(parse_device(&plan2.cfg.embedder_device))
-            .with_dtype(parse_dtype(&plan2.cfg.embedder_dtype));
-        cfg.batch_size = 16;
-        let model = embeddings::load_embedder(cfg)
+        let model = crate::kb::service::ServiceEmbedder::open(&found.path)
             .map_err(|e| tr!("kb.loader.embedder_load_error", error = e))?;
-        Ok::<_, String>((found, model))
+        Ok::<_, String>((found, Box::new(model) as Box<dyn Embedder + Send + Sync>))
     })
     .await
     .map_err(|e| tr!("kb.loader.spawn_blocking_panic", error = e))
@@ -168,14 +165,9 @@ pub async fn reranker_ready(
     let plan2 = plan.clone();
     let result = tokio::task::spawn_blocking(move || {
         let found = locate(ModelKind::Reranker, &plan2)?;
-        let mut cfg = RerankerConfig::new(found.path.clone())
-            .with_device(parse_device_rerank(&plan2.cfg.reranker_device))
-            .with_dtype(parse_dtype_rerank(&plan2.cfg.reranker_dtype))
-            .with_max_tokens(plan2.cfg.reranker_max_tokens.max(64));
-        cfg.batch_size = 8;
-        let model = rerank::load_reranker(cfg)
+        let model = crate::kb::service::ServiceReranker::open(&found.path)
             .map_err(|e| tr!("kb.loader.reranker_load_error", error = e))?;
-        Ok::<_, String>((found, model))
+        Ok::<_, String>((found, Box::new(model) as Box<dyn Reranker + Send + Sync>))
     })
     .await
     .map_err(|e| tr!("kb.loader.spawn_blocking_panic", error = e))
@@ -241,39 +233,3 @@ pub fn unload(kb: &KbCtx, kind: ModelKind) {
     kb.model_state(kind).set(ModelState::Idle);
 }
 
-fn parse_device_rerank(s: &str) -> rerank::Device {
-    match s {
-        "cuda" => gpu_or_cpu_device(rerank::Device::Cuda(0), "kb reranker loader", "CUDA"),
-        "metal" => gpu_or_cpu_device(rerank::Device::Metal(0), "kb reranker loader", "Metal"),
-        _ => rerank::Device::Cpu,
-    }
-}
-
-fn parse_dtype_rerank(s: &str) -> rerank::DType {
-    match s {
-        "f16" | "fp16" | "half" => rerank::DType::F16,
-        "bf16" => rerank::DType::BF16,
-        _ => rerank::DType::F32,
-    }
-}
-
-fn parse_device(s: &str) -> embeddings::Device {
-    match s {
-        "cuda" => gpu_or_cpu_device(embeddings::Device::Cuda(0), "kb loader", "CUDA"),
-        "metal" => gpu_or_cpu_device(embeddings::Device::Metal(0), "kb loader", "Metal"),
-        _ => embeddings::Device::Cpu,
-    }
-}
-
-fn gpu_or_cpu_device(gpu: embeddings::Device, who: &str, backend: &str) -> embeddings::Device {
-    let _ = (who, backend);
-    gpu
-}
-
-fn parse_dtype(s: &str) -> embeddings::DType {
-    match s {
-        "f16" | "fp16" | "half" => embeddings::DType::F16,
-        "bf16" => embeddings::DType::BF16,
-        _ => embeddings::DType::F32,
-    }
-}

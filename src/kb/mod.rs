@@ -30,6 +30,7 @@ pub mod loader;
 pub mod models;
 pub mod runner;
 pub mod search;
+pub mod service;
 pub mod store;
 pub mod vector_index;
 

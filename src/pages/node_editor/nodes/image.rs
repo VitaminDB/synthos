@@ -15,7 +15,7 @@ use syngui::widgets::{Column, Reactive};
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::state::NodeEditorCtx;
 use super::super::types::{DataBlob, ImageData, NodeInstance, NodeRuntime, PortValue};
-use super::acestep::field_row;
+use super::common::field_row;
 use super::{log_worker_done, log_worker_start};
 use crate::pages::node_editor::controls::file_picker::node_file_picker;
 

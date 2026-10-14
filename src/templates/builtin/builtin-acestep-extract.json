@@ -1,0 +1,286 @@
+{
+  "name": "ACE-Step: Extract",
+  "description": "Выделение стема из микса: исходное аудио → контекст DiT, поле «Дорожка» у Generate выбирает стем (vocals, drums, bass, guitar…), теги — его имя. Для вокала впиши текст песни в lyrics: без него голос выходит без слов. LM не участвует, длина = длине исходника.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_acestep_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "acestep-v15-xl-base"
+        },
+        "quant": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "audio_file",
+      "pos": {
+        "x": 60.0,
+        "y": 360.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 3,
+      "kind": "flow_acestep_encode",
+      "pos": {
+        "x": 380.0,
+        "y": 360.0
+      },
+      "fields": {
+        "chunk": {
+          "type": "Float",
+          "value": 30.0
+        },
+        "overlap": {
+          "type": "Float",
+          "value": 0.5
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 600.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "vocals",
+          "width": 240.0,
+          "height": 80.0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 740.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "",
+          "width": 240.0,
+          "height": 200.0
+        }
+      }
+    },
+    {
+      "id": 6,
+      "kind": "flow_acestep_generate",
+      "pos": {
+        "x": 820.0,
+        "y": 220.0
+      },
+      "fields": {
+        "ar": {
+          "type": "Bool",
+          "value": true
+        },
+        "bpm": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "cot": {
+          "type": "Bool",
+          "value": true
+        },
+        "dcw_high_scaler": {
+          "type": "Float",
+          "value": 0.06
+        },
+        "dcw_scaler": {
+          "type": "Float",
+          "value": 0.02
+        },
+        "edit_n_max": {
+          "type": "Float",
+          "value": 1.0
+        },
+        "edit_n_min": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "keyscale": {
+          "type": "Choice",
+          "value": 0
+        },
+        "lm_guidance": {
+          "type": "Float",
+          "value": 2.0
+        },
+        "min_p": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "mode": {
+          "type": "Choice",
+          "value": 6
+        },
+        "norm": {
+          "type": "Choice",
+          "value": 0
+        },
+        "repaint_end": {
+          "type": "Float",
+          "value": -1.0
+        },
+        "repaint_start": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "repaint_strength": {
+          "type": "Float",
+          "value": 0.7
+        },
+        "retake_seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "retake_variance": {
+          "type": "Float",
+          "value": 0.5
+        },
+        "seconds": {
+          "type": "Float",
+          "value": -1.0
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "temperature": {
+          "type": "Float",
+          "value": 0.85
+        },
+        "timesig": {
+          "type": "Choice",
+          "value": 0
+        },
+        "top_k": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "top_p": {
+          "type": "Float",
+          "value": 0.9
+        },
+        "track": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "audio_player",
+      "pos": {
+        "x": 1320.0,
+        "y": 240.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "audio"
+    },
+    {
+      "from_node": 3,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 4,
+      "from_port": "out",
+      "to_node": 6,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 5,
+      "from_port": "out",
+      "to_node": 6,
+      "to_port": "lyrics"
+    },
+    {
+      "from_node": 6,
+      "from_port": "audio",
+      "to_node": 7,
+      "to_port": "in"
+    }
+  ],
+  "viewport": null
+}

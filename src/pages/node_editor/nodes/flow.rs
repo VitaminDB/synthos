@@ -38,7 +38,7 @@ use super::super::types::{
     DataBlob, FieldSchema, FieldType, FieldValue, ImageData, NodeId, NodeInstance, NodeKind, NodeRuntime, PortKind,
     PortSchema, PortValue, PortsLayout, PortsSpec,
 };
-use super::acestep::field_row;
+use super::common::field_row;
 use super::{log_worker_done, log_worker_start};
 use crate::icons::{
     MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_CROP_SQUARE, MI_EDIT_NOTE, MI_FOLDER_OPEN, MI_GRAPHIC_EQ,
@@ -90,6 +90,13 @@ const KINDS: &[(NodeKind, &str, &str, &str)] = &[
     (NodeKind::FlowLtxA2v, "ltx_a2v", "LTX Audio to Video", MI_AUDIOTRACK),
     (NodeKind::FlowLtxDecodeVideo, "ltx_decode_video", "LTX Video Decoder", MI_MOVIE),
     (NodeKind::FlowLtxDecodeAudio, "ltx_decode_audio", "LTX Audio Decoder", MI_GRAPHIC_EQ),
+    (NodeKind::FlowAcestepModel, "acestep_model", "ACE-Step Model", MI_INVENTORY_2),
+    (NodeKind::FlowAcestepEncode, "acestep_encode", "ACE-Step Audio to Latent", MI_GRAPHIC_EQ),
+    (NodeKind::FlowAcestepGenerate, "acestep_generate", "ACE-Step Generate", MI_LIBRARY_MUSIC),
+    (NodeKind::FlowYue2Model, "yue2_model", "YuE2 Model", MI_INVENTORY_2),
+    (NodeKind::FlowYue2Generate, "yue2_generate", "YuE2 Song", MI_LIBRARY_MUSIC),
+    (NodeKind::FlowYue2Decode, "yue2_decode", "YuE2 Decoder", MI_GRAPHIC_EQ),
+    (NodeKind::FlowYue2Transcribe, "yue2_transcribe", "Audio to Score", MI_EDIT_NOTE),
 ];
 
 /// Подкатегория палитры по разделу ядра (ключ `node.subcategory.*`).
@@ -98,6 +105,7 @@ fn subcategory(spec: &sf::NodeSpec) -> Option<&'static str> {
         "Модели картинок" => Some("flow_image"),
         "MiniMax-H3" => Some("flow_h3"),
         "LTX-2.3" => Some("flow_ltx"),
+        "Музыка" => Some("flow_music"),
         _ => None,
     }
 }
@@ -563,15 +571,20 @@ fn field_control(fk: &str, f: &'static sf::FieldSpec, value: FieldValue) -> Box<
                 .class("node-input-text"),
         ),
         (_, FieldValue::Float(sig)) => {
-            // Дробные поля — два знака и мелкий шаг, остальные — целые.
+            // Дробные поля (дробное умолчание схемы или значение) — два знака
+            // и мелкий шаг, остальные — целые. Отрицательное умолчание
+            // (-1 — «до конца», «решает модель») разрешает отрицательные.
+            let def: f64 = f.default.parse().unwrap_or(0.0);
+            let frac = f.default.contains('.') || sig.get_untracked().fract() != 0.0;
             let (dp, step) = match f.name {
+                _ if frac => (2, 0.05),
                 "volume" | "strength" | "guidance" | "denoise" | "alpha" | "tau" | "canny_low" | "canny_high" | "lora_strength" => (2, 0.05),
                 "seconds" | "start" | "end" => (1, 0.5),
                 _ => (0, 1.0),
             };
             Box::new(
                 SpinBox::new()
-                    .min(0.0)
+                    .min(if def < 0.0 { -1.0 } else { 0.0 })
                     .max(4_294_967_295.0)
                     .step(step)
                     .decimal_places(dp)

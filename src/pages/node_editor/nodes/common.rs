@@ -10,7 +10,7 @@ use syngui::async_runtime::run_on_main_thread;
 use syngui::audio::AudioBuffer;
 use syngui::layout::CrossAxisAlignment;
 use syngui::prelude::*;
-use syngui::widgets::{Reactive, Row, ToolButton};
+use syngui::widgets::{DecoratedBox, Dropdown, DropdownItem, Reactive, Row, ToolButton};
 
 use super::super::types::MemFrames;
 use crate::icons::MI_FOLDER_OPEN;
@@ -324,4 +324,66 @@ pub fn encode_mp4(
         return Err(tr!("node.ltx_video_save.err.ffmpeg_exit_code", code = code, tail = tail));
     }
     Ok(())
+}
+
+pub fn idx_in(arr: &[&str], s: &str) -> Option<usize> {
+    arr.iter().position(|x| *x == s)
+}
+
+/// Dropdown с привязкой к `RwSignal<usize>` (индекс выбранной опции).
+pub fn make_dropdown(options: &'static [&'static str], idx: RwSignal<usize>) -> Box<dyn Widget> {
+    let items: Vec<DropdownItem> = options.iter().map(|s| DropdownItem::simple(*s)).collect();
+    let current = options
+        .get(idx.get_untracked())
+        .copied()
+        .unwrap_or(options[0])
+        .to_string();
+    Box::new(
+        Dropdown::with_items(items)
+            .selected(current)
+            .on_change(move |s| {
+                if let Some(i) = idx_in(options, s) {
+                    idx.set(i);
+                }
+            })
+            .class("node-input-dropdown"),
+    )
+}
+
+/// Bool-переключатель (Switch) с привязкой к `RwSignal<bool>`. Без подписи —
+/// label рисуется снаружи через `field_row`.
+pub fn make_toggle(sig: RwSignal<bool>) -> Box<dyn Widget> {
+    Box::new(
+        Toggle::new()
+            .on(sig.get_untracked())
+            .on_change(move |b| sig.set(b))
+            .class("node-input-toggle"),
+    )
+}
+
+/// Строка с лейблом слева и control'ом справа. Layout идентичен OmniVoice:
+/// `[label_cell flex-grow:3 | control_cell flex-grow:7]` через MSS-классы
+/// `.acestep-field-label-cell` / `.acestep-field-control-cell`. Без этого
+/// control (особенно Slider) не получает остатка ширины и слипается в
+/// ~120px фиксированной геометрии `.node-input-slider`. Padding задаётся
+/// MSS-свойством на cells, чтобы не тащить отдельный widget-wrapper.
+pub fn field_row(label: &str, control: Box<dyn Widget>) -> Box<dyn Widget> {
+    let label_cell: Box<dyn Widget> = Box::new(
+        DecoratedBox::new()
+            .child(Text::new(label).class("node-card-field-label acestep-field-label"))
+            .class("acestep-field-label-cell"),
+    );
+    // DecoratedBox::child<M: IntoWidget> не принимает Box<dyn Widget>;
+    // поле `child` публичное — выставляем напрямую и далее class() для MSS.
+    let mut control_cell_inner = DecoratedBox::new();
+    control_cell_inner.child = Some(control);
+    let control_cell: Box<dyn Widget> =
+        Box::new(control_cell_inner.class("acestep-field-control-cell"));
+    Box::new(
+        Row::new()
+            .gap(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .children(vec![label_cell, control_cell])
+            .class("acestep-field-row"),
+    )
 }

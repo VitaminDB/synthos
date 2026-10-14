@@ -7332,58 +7332,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-music-acestep"
-version = "0.1.1"
-dependencies = [
- "safetensors",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-infer",
- "synaptix-io",
- "synaptix-llm-common",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-music-sheetsage2"
-version = "0.1.1"
-dependencies = [
- "half",
- "memmap2",
- "rubato",
- "rustfft",
- "safetensors",
- "serde_json",
- "sha2",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-io",
- "synaptix-ops",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-music-yue2"
-version = "0.1.1"
-dependencies = [
- "fancy-regex",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-infer",
- "synaptix-io",
- "synaptix-llm-common",
- "synaptix-nn",
- "synaptix-ops",
- "thiserror 2.0.19",
- "unicode-normalization",
-]
-
-[[package]]
 name = "synaptix-nn"
 version = "0.1.1"
 dependencies = [
@@ -7692,7 +7640,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.308"
+version = "0.2.309"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7732,9 +7680,6 @@ dependencies = [
  "synaptix-llm-common",
  "synaptix-llm-qwen3",
  "synaptix-llm-qwen3-next-hybrid",
- "synaptix-music-acestep",
- "synaptix-music-sheetsage2",
- "synaptix-music-yue2",
  "synaptix-rag",
  "synaptix-tokenizer",
  "synaptix-tts-vibevoice",

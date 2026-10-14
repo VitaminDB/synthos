@@ -56,105 +56,6 @@ pub struct PortKey {
     pub name: &'static str,
 }
 
-/// Preset ACE-Step sampler'а. Соответствует variant'у DiT-bundle'а; при смене
-/// dropdown'а в UI подменяет infer_steps/cfg_scale/flow_match_shift на
-/// заводские значения из reference `_BASE_DEFAULTS`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum SamplerPreset {
-    /// По имени bundle'а через `detect_xl_bundle_kind`.
-    #[default]
-    Auto,
-    /// `acestep_v15_xl_turbo` — 8 шагов, shift=3.0, cfg=1.0 (запечён).
-    Turbo,
-    /// `acestep_v15_xl_base` — 50 шагов, shift=1.0, cfg=7.0.
-    Base,
-    /// `acestep_v15_xl_sft` — тот же schedule что и base.
-    Sft,
-}
-
-
-/// Режим DCW (Differential Correction in Wavelet domain).
-/// Соответствует `acestep_pipeline::dcw::DcwMode`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum DcwModeOption {
-    Low,
-    High,
-    #[default]
-    Double,
-    Pix,
-}
-
-
-impl DcwModeOption {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DcwModeOption::Low => "low",
-            DcwModeOption::High => "high",
-            DcwModeOption::Double => "double",
-            DcwModeOption::Pix => "pix",
-        }
-    }
-    pub fn to_corrector_mode(self) -> synaptix_music_acestep::dcw::DcwMode {
-        use synaptix_music_acestep::dcw::DcwMode;
-        match self {
-            DcwModeOption::Low => DcwMode::Low,
-            DcwModeOption::High => DcwMode::High,
-            DcwModeOption::Double => DcwMode::Double,
-            DcwModeOption::Pix => DcwMode::Pix,
-        }
-    }
-}
-
-/// Wavelet basis для DCW. Сейчас порт поддерживает только Haar; остальные
-/// — UI-only (включить когда добавим pytorch_wavelets-эквивалент).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum DcwWaveletOption {
-    #[default]
-    Haar,
-    Db4,
-    Sym8,
-}
-
-
-impl DcwWaveletOption {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DcwWaveletOption::Haar => "haar",
-            DcwWaveletOption::Db4 => "db4",
-            DcwWaveletOption::Sym8 => "sym8",
-        }
-    }
-}
-
-/// DCW preset — задаёт пару (scaler, high_scaler) из эталонного
-/// `acestep/ui/gradio/events/dcw_defaults.py`:
-/// * `NoThink`: scaler=0.05, high_scaler=0.02
-/// * `Think`:   scaler=0.02, high_scaler=0.06
-/// * `Custom`:  значения вручную через слайдеры; смена слайдера
-///   переключает preset на Custom.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
-pub enum DcwPresetOption {
-    NoThink,
-    #[default]
-    Think,
-    Custom,
-}
-
-
-impl DcwPresetOption {
-    pub fn scalers(self) -> Option<(f32, f32)> {
-        match self {
-            DcwPresetOption::NoThink => Some((0.05, 0.02)),
-            DcwPresetOption::Think => Some((0.02, 0.06)),
-            DcwPresetOption::Custom => None,
-        }
-    }
-}
-
 /// Схема одного порта.
 #[derive(Clone, Copy, Debug)]
 pub struct PortSchema {
@@ -347,33 +248,8 @@ pub enum NodeKind {
     Llm,
 
     // ── ACE-Step v1.5 (Нейро → ACE-Step) ──
-    /// Хэндл чекпойнта (каталог моделей + 4 опц. override + device/quant/
-    /// compute) → `model: Data(Model)`. ComfyUI-стиль: один пункт настройки
-    /// модели для Generate-ноды.
-    AceStepCheckpoint,
-    /// Монолитный text→music: `(model, tags, lyrics, опц. src_latent) →
-    /// (audio, latent)`. Зовёт `generate_music` (полный пайплайн LM→enc→
-    /// DiT→VAE) в одном worker'е. Режим (text2music/retake/repaint/extend/
-    /// edit) выбирается дропдауном в body.
-    AceStepGenerate,
-    /// `audio: Audio → latent: Data(Latent)` (VAE encoder, 48 kHz →
-    /// 25 Hz латент). Вспомогательная: внешнее аудио → `src_latent` Generate.
-    AceStepVaeEncode,
 
     // ── YuE2 (Нейро → YuE2) ──
-    /// Хэндл чекпойнта YuE2: каталог моделей, опц. override костяка и
-    /// декодера, device/quant/compute → `model: Data(Model)`.
-    Yue2Checkpoint,
-    /// `(model, style, lyrics, опц. abc) → (audio, score, latent)`: партитура,
-    /// семантические токены, акустические латенты и 48 кГц стерео — одним
-    /// прогоном.
-    Yue2Generate,
-    /// `(model, latent) → audio`: передекодировать латенты YuE2 (другим
-    /// декодером — например `legacy` — без повторной генерации).
-    Yue2VaeDecode,
-    /// `(model, audio) → score`: запись → партитура ABC (SheetSage2 из того же
-    /// бандла) — мелодия для кавера или полная партитура с аккордами.
-    Yue2Transcribe,
 
     FfmpegPlayer,
 
@@ -439,6 +315,13 @@ pub enum NodeKind {
     FlowLtxA2v,
     FlowLtxDecodeVideo,
     FlowLtxDecodeAudio,
+    FlowAcestepModel,
+    FlowAcestepEncode,
+    FlowAcestepGenerate,
+    FlowYue2Model,
+    FlowYue2Generate,
+    FlowYue2Decode,
+    FlowYue2Transcribe,
 }
 
 impl NodeKind {
@@ -452,9 +335,6 @@ impl NodeKind {
     /// получила модель (своего выбора модели у неё нет). `None` — у ноды
     /// либо нет такого входа, либо его отсутствие ловит сама нода.
     pub fn model_input_source(self) -> Option<&'static str> {
-        if self == NodeKind::AceStepVaeEncode {
-            return Some("AceStepCheckpoint");
-        }
         self.slot_family().then_some("SynCheckpoint")
     }
 
@@ -495,13 +375,6 @@ impl NodeKind {
         NodeKind::SynCheckpoint,
         NodeKind::SortformerDiarizer,
         NodeKind::Llm,
-        NodeKind::AceStepCheckpoint,
-        NodeKind::AceStepGenerate,
-        NodeKind::AceStepVaeEncode,
-        NodeKind::Yue2Checkpoint,
-        NodeKind::Yue2Generate,
-        NodeKind::Yue2VaeDecode,
-        NodeKind::Yue2Transcribe,
         NodeKind::FfmpegPlayer,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
@@ -547,6 +420,13 @@ impl NodeKind {
         NodeKind::FlowLtxA2v,
         NodeKind::FlowLtxDecodeVideo,
         NodeKind::FlowLtxDecodeAudio,
+        NodeKind::FlowAcestepModel,
+        NodeKind::FlowAcestepEncode,
+        NodeKind::FlowAcestepGenerate,
+        NodeKind::FlowYue2Model,
+        NodeKind::FlowYue2Generate,
+        NodeKind::FlowYue2Decode,
+        NodeKind::FlowYue2Transcribe,
     ];
 }
 
@@ -559,30 +439,6 @@ pub enum FilterMode {
     LowPass,
     HighPass,
     BandPass,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PostNormMode {
-    None,
-    Rms,
-    #[default]
-    Peak,
-}
-
-impl PostNormMode {
-    pub const ALL: &'static [PostNormMode] =
-        &[PostNormMode::None, PostNormMode::Rms, PostNormMode::Peak];
-    pub fn label(self) -> &'static str {
-        match self {
-            PostNormMode::None => "None",
-            PostNormMode::Rms => "RMS",
-            PostNormMode::Peak => "Peak",
-        }
-    }
-    pub fn from_label(s: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|m| m.label() == s)
-    }
 }
 
 impl FilterMode {
@@ -669,10 +525,6 @@ pub enum PortValue {
 /// внутри `AceStepBlob` (специфичные для ACE-Step стадии).
 #[derive(Debug)]
 pub enum DataBlob {
-    /// Тензоры из пайплайна ACE-Step v1.5.
-    AceStep(AceStepBlob),
-    /// Хэндл и латенты пайплайна YuE2.
-    Yue2(Yue2Blob),
     /// Хэндл универсальной «Syn Checkpoint»-ноды (LLM/TTS/ASR-модели).
     SynModel(Arc<SynModelHandle>),
     /// Одна картинка — общий тип для FLUX, LTX Image, H3 Keyframe, Image Save.
@@ -864,58 +716,8 @@ pub struct SynModelHandle {
 }
 
 
-/// Конфиг ACE-Step чекпойнта: каталог моделей (как CLI `--models`) +
-/// опциональные per-bundle override'ы (lm / text-encoder / dit / vae) +
-/// device/quant/compute. Дешёвый POD — резолв путей и загрузка весов
-/// (через `generate_music` с sequential-drop под 24GB) у Generate-ноды.
-/// Резолвинг 4 путей по дефолтным именам бандлов делает потребитель —
-/// `nodes::acestep::generate::resolve_paths` (зеркалит CLI `pick`).
-#[derive(Clone, Debug, PartialEq)]
-pub struct AceStepModelHandle {
-    pub models_dir: Option<PathBuf>,
-    pub lm_path: Option<PathBuf>,
-    pub text_encoder_path: Option<PathBuf>,
-    pub dit_path: Option<PathBuf>,
-    pub vae_path: Option<PathBuf>,
-    pub device_idx: usize,
-    pub quant_dit_idx: usize,
-    pub quant_enc_idx: usize,
-    pub compute_idx: usize,
-    /// Держать модели в VRAM после прогона (чекбокс «Держать в памяти»).
-    pub resident: bool,
-}
 
-/// Конфиг чекпойнта YuE2: каталог моделей (как CLI `--models`), опциональные
-/// override'ы костяка и декодера, устройство и точность. Дешёвый POD — веса
-/// грузит Generate-нода, резолв путей делает
-/// `nodes::yue2::shared::resolve_paths`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Yue2ModelHandle {
-    pub models_dir: Option<PathBuf>,
-    /// `yue2-3b.syn` — костяк AR–NAR.
-    pub model_path: Option<PathBuf>,
-    /// `yue2-vae.syn` — декодер звука.
-    pub vae_path: Option<PathBuf>,
-    pub device_idx: usize,
-    /// Квант весов костяка: индекс в `QUANT_OPTIONS`.
-    pub quant_idx: usize,
-    /// Тип вычислений костяка: индекс в `COMPUTE_OPTIONS`.
-    pub compute_idx: usize,
-    /// Тип вычислений декодера: индекс в `VAE_DTYPE_OPTIONS` (эталон — F32).
-    pub vae_dtype_idx: usize,
-    /// Держать модели в VRAM после прогона.
-    pub resident: bool,
-}
 
-/// Типизированный payload YuE2.
-#[derive(Debug)]
-pub enum Yue2Blob {
-    /// Конфиг чекпойнта от `Yue2Checkpoint`.
-    Model(Arc<Yue2ModelHandle>),
-    /// Акустические латенты `[кадры, 64]` (F32) — их можно передекодировать,
-    /// не повторяя генерацию.
-    Latent(synaptix_core::tensor::Tensor),
-}
 
 
 /// Кадры RGBA после видео-VAE. Один экземпляр шарится Arc'ами между
@@ -934,34 +736,6 @@ impl std::fmt::Debug for MemFrames {
     }
 }
 
-/// Типизированный тензор одной из стадий ACE-Step. Распознавание типа
-/// внутри `evaluate()` нод даёт читаемые ошибки при mismatch'е, не падая
-/// с panic'ом.
-#[derive(Debug)]
-pub enum AceStepBlob {
-    /// Конфиг чекпойнта от ACE-Step Checkpoint-ноды. Подмодели грузит
-    /// Generate-нода через `generate_music` по путям из хэндла.
-    Model(Arc<AceStepModelHandle>),
-    /// Hidden-state encoder'ов: `text_emb` / `lyric_emb` / `timbre_emb`
-    /// формы `[B, T, 2048]` (timbre — `[B, 1, 2048]`).
-    Hidden(synaptix_core::tensor::Tensor),
-    /// Packed conditioning после `Pack`-ноды: `[B, T_cond, 2048]`.
-    Conditioning(synaptix_core::tensor::Tensor),
-    /// Packed conditioning + длины сегментов `[lyric, timbre, text]` (для
-    /// `task_chunk_masks` в DiT при Repaint/Cover).
-    ConditioningFull {
-        emb: synaptix_core::tensor::Tensor,
-        lyric_len: usize,
-        timbre_len: usize,
-        text_len: usize,
-    },
-    /// Латент VAE / sampler'а: `[B, 64, T]`. Используется для
-    /// `VaeEncode → Sampler`, `Sampler → VaeDecode`, `ArLm → Sampler`.
-    Latent(synaptix_core::tensor::Tensor),
-    /// Phase 1 CoT-метаданные (bpm/keyscale/timesig/duration/language/caption).
-    /// Передаются от `ArLm` к `TextEncoder`/`LyricEncoder`.
-    Phase1Metas(Arc<synaptix_music_acestep::tokenizer::Metadata>),
-}
 
 impl PartialEq for PortValue {
     fn eq(&self, other: &Self) -> bool {
@@ -1000,50 +774,6 @@ impl std::fmt::Debug for PortValue {
             }
             PortValue::Data(b) => match b.as_ref() {
                 DataBlob::Flow(v) => write!(f, "Data(Flow({v:?}))"),
-                DataBlob::Yue2(Yue2Blob::Model(h)) => {
-                    write!(
-                        f,
-                        "Data(Yue2::Model(dir={:?}))",
-                        h.models_dir.as_ref().and_then(|p| p.file_name()).unwrap_or_default()
-                    )
-                }
-                DataBlob::Yue2(Yue2Blob::Latent(t)) => {
-                    write!(f, "Data(Yue2::Latent{:?})", t.dims())
-                }
-                DataBlob::AceStep(AceStepBlob::Model(h)) => {
-                    write!(f, "Data(AceStep::Model(dir={:?}))", h.models_dir.as_ref().and_then(|p| p.file_name()).unwrap_or_default())
-                }
-                DataBlob::AceStep(AceStepBlob::Hidden(t)) => {
-                    write!(f, "Data(AceStep::Hidden{:?})", t.dims())
-                }
-                DataBlob::AceStep(AceStepBlob::Conditioning(t)) => {
-                    write!(f, "Data(AceStep::Conditioning{:?})", t.dims())
-                }
-                DataBlob::AceStep(AceStepBlob::ConditioningFull {
-                    emb,
-                    lyric_len,
-                    timbre_len,
-                    text_len,
-                }) => {
-                    write!(
-                        f,
-                        "Data(AceStep::ConditioningFull{:?} lyric={} timbre={} text={})",
-                        emb.dims(),
-                        lyric_len,
-                        timbre_len,
-                        text_len
-                    )
-                }
-                DataBlob::AceStep(AceStepBlob::Latent(t)) => {
-                    write!(f, "Data(AceStep::Latent{:?})", t.dims())
-                }
-                DataBlob::AceStep(AceStepBlob::Phase1Metas(m)) => {
-                    write!(
-                        f,
-                        "Data(AceStep::Phase1Metas{{bpm={:?}, key={:?}, ts={:?}, dur={:?}, lang={:?}}})",
-                        m.bpm, m.keyscale, m.timesignature, m.duration, m.language
-                    )
-                }
                 DataBlob::Image(img) => write!(f, "Data({img:?})"),
                 DataBlob::SynModel(h) => {
                     write!(
@@ -1092,112 +822,13 @@ impl PortValue {
         }
     }
 
-    /// Извлечь ACE-Step Hidden-тензор (`text_emb` / `lyric_emb` / `timbre_emb`).
-    /// Используется encoder-нодами при чтении upstream'а в `Pack`.
-    pub fn as_acestep_hidden(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::Hidden(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь ACE-Step Conditioning (packed). Используется Sampler-нодой.
-    /// Распознаёт оба варианта: `Conditioning(Tensor)` и `ConditioningFull{...}`.
-    pub fn as_acestep_conditioning(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::Conditioning(t)) => Some(t.clone()),
-                DataBlob::AceStep(AceStepBlob::ConditioningFull { emb, .. }) => Some(emb.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь ACE-Step Conditioning + длины сегментов. Для `Conditioning(Tensor)`
-    /// (legacy без lens) — fallback `(t, 0, dim(1), 0)` чтобы не ломать
-    /// существующие workflow'ы. Используется Sampler'ом для логирования и
-    /// (опционально) построения task_chunk_masks для Repaint/Cover.
-    pub fn as_acestep_conditioning_with_lens(
-        &self,
-    ) -> Option<(synaptix_core::tensor::Tensor, usize, usize, usize)> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::ConditioningFull {
-                    emb,
-                    lyric_len,
-                    timbre_len,
-                    text_len,
-                }) => Some((emb.clone(), *lyric_len, *timbre_len, *text_len)),
-                DataBlob::AceStep(AceStepBlob::Conditioning(t)) => {
-                    let t_cond = t.dims().get(1).copied().unwrap_or(0);
-                    Some((t.clone(), 0, t_cond, 0))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь Phase 1 CoT метаданные (`bpm/keyscale/timesignature/...`).
-    /// Используется `TextEncoder` и `LyricEncoder` для подмешивания в prompt.
-    pub fn as_acestep_phase1_metas(&self) -> Option<Arc<synaptix_music_acestep::tokenizer::Metadata>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::Phase1Metas(m)) => Some(m.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь ACE-Step Latent (`[B, 64, T]`). Используется
-    /// `VaeEncode → Sampler`, `Sampler → VaeDecode`, `ArLm → Sampler`.
-    pub fn as_acestep_latent(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::Latent(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь хэндл чекпойнта YuE2.
-    pub fn as_yue2_model(&self) -> Option<Arc<Yue2ModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Yue2(Yue2Blob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь акустические латенты YuE2.
-    pub fn as_yue2_latent(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Yue2(Yue2Blob::Latent(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь хэндл ACE-Step чекпойнта (выход Checkpoint-ноды).
-    pub fn as_acestep_model(&self) -> Option<Arc<AceStepModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::AceStep(AceStepBlob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
 
     pub fn as_syn_model(&self) -> Option<Arc<SynModelHandle>> {
@@ -1732,186 +1363,7 @@ pub enum NodeRuntime {
 
     // ── ACE-Step v1.5 (Нейро → ACE-Step) ──
     //
-    /// VAE, устройство и точность — от ACE-Step Checkpoint на входе `model`.
-    AceStepVaeEncode {
-        /// Размер chunk'а encode в секундах (для длинных файлов).
-        chunk_seconds: RwSignal<f32>,
-        /// Overlap в секундах между chunk'ами (для cross-fade).
-        overlap_seconds: RwSignal<f32>,
-        loaded_cfg: Arc<Mutex<Option<AceStepLoadedCfg>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        /// `latent [B, 64, T_latent]`.
-        output_buf: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-        /// Cooperative-cancel: воркер проверяет его между окнами энкода.
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-    },
-    /// ACE-Step Checkpoint: каталог моделей + 4 опц. override'а + device/
-    /// quant/compute. Веса не грузит — публикует хэндл в порт `model`.
-    AceStepCheckpoint {
-        models_dir: RwSignal<Option<PathBuf>>,
-        lm_path: RwSignal<Option<PathBuf>>,
-        text_encoder_path: RwSignal<Option<PathBuf>>,
-        dit_path: RwSignal<Option<PathBuf>>,
-        vae_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        quant_dit_idx: RwSignal<usize>,
-        quant_enc_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
-        /// Держать модели в VRAM после прогона.
-        resident: RwSignal<bool>,
-        /// Кэш Arc-хэндла: новый Arc только при смене параметров (иначе
-        /// ptr_eq в PortValue видел бы «новое» значение каждый evaluate).
-        handle_cache: Arc<Mutex<Option<Arc<AceStepModelHandle>>>>,
-    },
-    /// ACE-Step Generate (монолит): весь text→music пайплайн в одном worker'е
-    /// через `generate_music`. Входы (model/tags/lyrics/src_latent) — порты;
-    /// в body только режим-дропдаун и слайдеры. Выходы — `audio` + `latent`.
-    AceStepGenerate {
-        /// 0=text2music, 1=retake, 2=repaint, 3=extend, 4=edit, 5=cover, 6=extract.
-        mode_idx: RwSignal<usize>,
-        /// Preset Auto/Turbo/Base/SFT (Auto → detect по имени DiT-бандла).
-        preset: RwSignal<SamplerPreset>,
-        /// Длительность сек; `-1` = Авто (Phase-1 CoT сам предсказывает).
-        duration_seconds: RwSignal<f32>,
-        infer_steps: RwSignal<u32>,
-        cfg_scale: RwSignal<f32>,
-        flow_match_shift: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        // ── AR LM (генерация audio-кодов) ──
-        temperature: RwSignal<f32>,
-        top_p: RwSignal<f32>,
-        top_k: RwSignal<u32>,
-        min_p: RwSignal<f32>,
-        /// AR-CFG scale на logits LM (`final = uncond + cfg·(cond − uncond)`).
-        lm_cfg_scale: RwSignal<f32>,
-        /// Phase-1 CoT (bpm/keyscale/timesig/duration/language) перед Phase-2.
-        use_cot: RwSignal<bool>,
-        /// AR (5Hz LM) вкл/выкл. `false` (no-codes) штатно ТОЛЬКО для turbo;
-        /// base/sft вне распределения и аварийно падают → гард в `start()`.
-        use_ar: RwSignal<bool>,
-        /// BPM-оверрайд (`0` = N/A → модель сама предсказывает в Phase-1 CoT).
-        bpm: RwSignal<u32>,
-        /// Тональность: индекс в `KEYSCALE_OPTIONS` (`0` = N/A).
-        keyscale_idx: RwSignal<usize>,
-        /// Размер такта: индекс в `TIMESIG_OPTIONS` (`0` = N/A).
-        timesig_idx: RwSignal<usize>,
-        /// Нормализация выходного PCM (Peak/RMS/None) — общий `PostNormMode`.
-        norm_mode: RwSignal<PostNormMode>,
-        // ── DCW (пост-коррекция латента) ──
-        enable_dcw: RwSignal<bool>,
-        dcw_mode: RwSignal<DcwModeOption>,
-        dcw_scaler: RwSignal<f32>,
-        dcw_high_scaler: RwSignal<f32>,
-        dcw_wavelet: RwSignal<DcwWaveletOption>,
-        dcw_preset: RwSignal<DcwPresetOption>,
-        // ── Режим-зависимые (retake/repaint/extend) ──
-        /// retake: дисперсия вариации src-латента [0..1] (0 = no-op).
-        retake_variance: RwSignal<f32>,
-        retake_seed: RwSignal<u64>,
-        /// repaint/extend: регион [start,end] сек (-1 в end = до конца).
-        repaint_start_sec: RwSignal<f32>,
-        repaint_end_sec: RwSignal<f32>,
-        repaint_strength: RwSignal<f32>,
-        // ── Режим edit (flow-edit) ──
-        /// усечение расписания: денойз только шаги [n_min, n_max] (доли [0..1]).
-        edit_n_min: RwSignal<f32>,
-        edit_n_max: RwSignal<f32>,
-        // ── Режим extract ──
-        /// Дорожка: индекс в `TRACK_OPTIONS` (`0` = vocals).
-        track_idx: RwSignal<usize>,
-        // ── Статус + выходы ──
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        /// Stop: воркер отдаёт флаг `acestep::with_cancel` — шаги диффузии,
-        /// авторегрессия кодов и переходы между стадиями его опрашивают.
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        /// Готовый mono/stereo PCM для порта `audio`.
-        output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        /// Финальный латент `[1, 64, T]` для порта `latent` (цепочка retake).
-        output_buf_latent: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
 
-    /// Чекпойнт YuE2: пути и точности, без загрузки весов.
-    Yue2Checkpoint {
-        models_dir: RwSignal<Option<PathBuf>>,
-        model_path: RwSignal<Option<PathBuf>>,
-        vae_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        quant_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
-        vae_dtype_idx: RwSignal<usize>,
-        /// Держать модели в VRAM после прогона.
-        resident: RwSignal<bool>,
-        /// Кэш Arc-хэндла: новый Arc только при смене параметров.
-        handle_cache: Arc<Mutex<Option<Arc<Yue2ModelHandle>>>>,
-    },
-    /// YuE2 Generate: партитура → музыка → латенты → звук одним прогоном.
-    Yue2Generate {
-        /// Партитура: 0 = full (с аккордами), 1 = melody, 2 = off.
-        cot_idx: RwSignal<usize>,
-        /// Желаемая длительность, с. `0` — пока модель не закончит сама
-        /// (в пределах окна).
-        seconds: RwSignal<f32>,
-        /// Шагов решателя flow matching.
-        ode_steps: RwSignal<u32>,
-        /// CFG. `0` — дефолт режима (1.0, у `off` — 1.01).
-        cfg_scale: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        // ── Сэмплинг фазы музыки ──
-        temperature: RwSignal<f32>,
-        top_p: RwSignal<f32>,
-        top_k: RwSignal<u32>,
-        repetition_penalty: RwSignal<f32>,
-        /// Кадров в ядре тайла декодера.
-        vae_core_frames: RwSignal<u32>,
-        // ── Статус + выходы ──
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        /// Кооперативная отмена: прогон песни идёт десятки секунд, и его надо
-        /// уметь остановить, не дожидаясь конца.
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        /// Готовый стерео-PCM (48 кГц) для порта `audio`.
-        output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        /// Акустические латенты `[кадры, 64]` для порта `latent`.
-        output_buf_latent: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        /// Партитура в ABC для порта `score`.
-        output_buf_score: Arc<Mutex<Option<String>>>,
-        output_version: RwSignal<u32>,
-    },
-    /// YuE2 VAE Decode: латенты → звук декодером из чекпойнта на `model`.
-    Yue2VaeDecode {
-        vae_core_frames: RwSignal<u32>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        output_buf_audio: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        output_version: RwSignal<u32>,
-    },
-    /// YuE2 Transcribe: запись → партитура ABC (SheetSage2).
-    Yue2Transcribe {
-        /// 0 = melody (без аккордов — план кавера), 1 = full (с аккордами).
-        mode_idx: RwSignal<usize>,
-        /// 0 = обе мелодии, 1 = только вокал, 2 = только инструментальная.
-        voices_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        /// Партитура в ABC для порта `score`.
-        output_buf_score: Arc<Mutex<Option<String>>>,
-        output_version: RwSignal<u32>,
-    },
 
     /// Универсальный видеоплеер: файл (ffmpeg `VideoPlayer`) ИЛИ кадры из
     /// памяти (`FramesView` + `AudioPlayer`). Режим выбирается по наличию
@@ -1977,8 +1429,6 @@ impl NodeRuntime {
             | R::VibeVoice { error, .. }
             | R::SortformerDiarizer { error, .. }
             | R::Llm { error, .. }
-            | R::AceStepVaeEncode { error, .. }
-            | R::AceStepGenerate { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             R::Flow(f) => Some(f.error),
@@ -2003,29 +1453,23 @@ impl NodeRuntime {
     }
 
     /// Сигнал прогресса воркера (0..1) — для живой карточки прогона в чате.
-    /// У части нод он есть, но не пишется (ACE-Step Generate; Lipdub пишет
-    /// вехи 0.1/0.5/1.0) — потребитель должен переживать «застывший» 0.
+    /// Стадии службы сообщают шаги не всегда — потребитель должен
+    /// переживать «застывший» 0.
     pub fn run_progress_signal(&self) -> Option<RwSignal<f32>> {
-        use NodeRuntime as R;
         match self {
-            R::AceStepGenerate { progress_pct, .. } => Some(*progress_pct),
+            NodeRuntime::Flow(f) => Some(f.progress),
             _ => None,
         }
     }
 
     /// Cooperative-cancel флаг воркера — для отмены прогона извне
-    /// (`run_controls::cancel_active_run`). У нод без флага (в т.ч.
-    /// ACE-Step Generate) воркер не отменяется и досчитывает до конца.
+    /// (`run_controls::cancel_active_run`). У нод без флага воркер не
+    /// отменяется и досчитывает до конца.
     pub fn run_cancel_flag(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         use NodeRuntime as R;
         match self {
             R::SaveToFile { cancel, .. }
-            | R::Llm { cancel, .. }
-            | R::AceStepVaeEncode { cancel, .. }
-            | R::AceStepGenerate { cancel, .. }
-            | R::Yue2Generate { cancel, .. }
-            | R::Yue2VaeDecode { cancel, .. }
-            | R::Yue2Transcribe { cancel, .. } => Some(cancel.clone()),
+            | R::Llm { cancel, .. } => Some(cancel.clone()),
             R::Flow(f) => Some(f.cancel.clone()),
             _ => None,
         }
@@ -2092,19 +1536,6 @@ pub struct SortformerLoadedCfg {
     pub compute_idx: usize,
 }
 
-/// Снимок конфига, с которым в данный момент загружены модели ACE-Step
-/// нод. Один общий тип для всех 7 «модельных» нод (TextEncoder /
-/// LyricEncoder / TimbreEncoder / VaeEncode / VaeDecode / ArLm / Sampler) —
-/// поля идентичны (path + device + storage_dtype + compute_dtype),
-/// а конкретный тип модели в shared registry разруливается отдельным
-/// кэшем per-нода-тип.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AceStepLoadedCfg {
-    pub model_path: PathBuf,
-    pub device_idx: usize,
-    pub storage_idx: usize,
-    pub compute_idx: usize,
-}
 
 
 
@@ -2168,9 +1599,6 @@ impl std::fmt::Debug for NodeRuntime {
                 let run = running.get_untracked();
                 write!(f, "NodeRuntime::Llm{{name={name}, running={run}}}")
             }
-            NodeRuntime::AceStepVaeEncode { running, .. } => {
-                write!(f, "NodeRuntime::AceStepVaeEncode{{running={}}}", running.get_untracked())
-            }
             NodeRuntime::FfmpegPlayer { is_playing, current_path, .. } => {
                 let path = current_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
                 write!(f, "NodeRuntime::FfmpegPlayer{{path={path}, playing={}}}", is_playing.get_untracked())
@@ -2182,40 +1610,6 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::ImageSave { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
                 write!(f, "NodeRuntime::ImageSave{{path={p}}}")
-            }
-            NodeRuntime::AceStepCheckpoint { models_dir, .. } => {
-                let p = models_dir.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::AceStepCheckpoint{{dir={p}}}")
-            }
-            NodeRuntime::AceStepGenerate { running, mode_idx, .. } => {
-                write!(f, "NodeRuntime::AceStepGenerate{{running={}, mode={}}}", running.get_untracked(), mode_idx.get_untracked())
-            }
-            NodeRuntime::Yue2Checkpoint { models_dir, .. } => {
-                let p = models_dir
-                    .get_untracked()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::Yue2Checkpoint{{dir={p}}}")
-            }
-            NodeRuntime::Yue2Generate { running, cot_idx, seconds, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::Yue2Generate{{running={}, cot={}, sec={}}}",
-                    running.get_untracked(),
-                    cot_idx.get_untracked(),
-                    seconds.get_untracked()
-                )
-            }
-            NodeRuntime::Yue2VaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::Yue2VaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::Yue2Transcribe { running, mode_idx, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::Yue2Transcribe{{running={}, mode={}}}",
-                    running.get_untracked(),
-                    mode_idx.get_untracked()
-                )
             }
         }
     }

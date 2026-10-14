@@ -190,9 +190,6 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             NodeKind::VoxCpm2 => classes.push("voxcpm-node".to_string()),
             NodeKind::VibeVoice => classes.push("vibevoice-node".to_string()),
             NodeKind::Llm => classes.push("llm-node".to_string()),
-            NodeKind::AceStepVaeEncode => classes.push("acestep-vae-encode-node".to_string()),
-            NodeKind::AceStepCheckpoint => classes.push("acestep-checkpoint-node".to_string()),
-            NodeKind::AceStepGenerate => classes.push("acestep-generate-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
             _ => {}
         }

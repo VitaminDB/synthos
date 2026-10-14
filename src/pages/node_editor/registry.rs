@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use syngui::audio::{Biquad, BiquadMode, SchroederReverb};
 
 use crate::icons::{
-    MI_ADD, MI_APPS, MI_ARTICLE, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_BLUR_ON,
+    MI_ADD, MI_APPS, MI_ARTICLE, MI_AUTO_AWESOME, MI_BLUR_ON,
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
-    MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
+    MI_HUB, MI_IMAGE_ICON, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
     MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
     MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_SAVE,
     MI_TUNE,
@@ -21,7 +21,6 @@ use crate::icons::{
 
 use super::eval::NodeExecutor;
 use super::nodes::{
-    acestep,
     asr_gigaam,
     flow,
     audio_equalizer,
@@ -44,11 +43,10 @@ use super::nodes::{
     text_view,
     vibevoice,
     voxcpm2,
-    yue2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
-    PortSchema, PortsLayout, PortsSpec, PostNormMode, PrevSource, SamplerPreset, SaveStatus,
+    PortSchema, PortsLayout, PortsSpec, PrevSource, SaveStatus,
 };
 
 pub type NodeBodyBuilder = fn(&NodeInstance) -> Box<dyn Widget>;
@@ -205,15 +203,6 @@ static VIBEVOICE_EXEC: vibevoice::VibeVoiceExec = vibevoice::VibeVoiceExec;
 static LLM_EXEC: llm::LlmExec = llm::LlmExec;
 static SORTFORMER_DIARIZER_EXEC: sortformer_diarizer::SortformerDiarizerExec =
     sortformer_diarizer::SortformerDiarizerExec;
-static ACESTEP_VAE_ENCODE_EXEC: acestep::vae_encode::VaeEncodeExec =
-    acestep::vae_encode::VaeEncodeExec;
-static ACESTEP_CHECKPOINT_EXEC: acestep::checkpoint::CheckpointExec =
-    acestep::checkpoint::CheckpointExec;
-static ACESTEP_GENERATE_EXEC: acestep::generate::GenerateExec = acestep::generate::GenerateExec;
-static YUE2_CHECKPOINT_EXEC: yue2::checkpoint::CheckpointExec = yue2::checkpoint::CheckpointExec;
-static YUE2_GENERATE_EXEC: yue2::generate::GenerateExec = yue2::generate::GenerateExec;
-static YUE2_VAE_DECODE_EXEC: yue2::vae_decode::VaeDecodeExec = yue2::vae_decode::VaeDecodeExec;
-static YUE2_TRANSCRIBE_EXEC: yue2::transcribe::TranscribeExec = yue2::transcribe::TranscribeExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
 static SYN_CHECKPOINT_EXEC: syn_checkpoint::SynCheckpointExec =
     syn_checkpoint::SynCheckpointExec;
@@ -348,60 +337,12 @@ const OMNIVOICE_OUTPUTS: &[PortSchema] = &[
 
 // ── ACE-Step ─────────────────────────────────────────────────────────────
 
-const ACESTEP_VAE_ENCODE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
-const ACESTEP_VAE_ENCODE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
-];
 
-const ACESTEP_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-];
 
-const ACESTEP_GENERATE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",      label: "model",      kind: PortKind::Data },
-    PortSchema { name: "tags",       label: "tags",       kind: PortKind::Text },
-    PortSchema { name: "lyrics",     label: "lyrics",     kind: PortKind::Text },
-    PortSchema { name: "src_latent", label: "src_latent", kind: PortKind::Data },
-];
-const ACESTEP_GENERATE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio",  label: "audio",  kind: PortKind::Audio },
-    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
-];
 
-const YUE2_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-];
 
-const YUE2_GENERATE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",  label: "model",  kind: PortKind::Data },
-    PortSchema { name: "style",  label: "style",  kind: PortKind::Text },
-    PortSchema { name: "lyrics", label: "lyrics", kind: PortKind::Text },
-    PortSchema { name: "abc",    label: "abc",    kind: PortKind::Text },
-];
-const YUE2_GENERATE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio",  label: "audio",  kind: PortKind::Audio },
-    PortSchema { name: "score",  label: "score",  kind: PortKind::Text },
-    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
-];
 
-const YUE2_VAE_DECODE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",  label: "model",  kind: PortKind::Data },
-    PortSchema { name: "latent", label: "latent", kind: PortKind::Data },
-];
-const YUE2_VAE_DECODE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
 
-const YUE2_TRANSCRIBE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
-const YUE2_TRANSCRIBE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "score", label: "score", kind: PortKind::Text },
-];
 
 const FFMPEG_PLAYER_INPUTS: &[PortSchema] = &[
     PortSchema { name: "source", label: "source", kind: PortKind::Text },
@@ -916,133 +857,16 @@ const SORTFORMER_DIARIZER: NodeKindMeta = NodeKindMeta {
 
 // ── ACE-Step v1.5 (8 нод) ────────────────────────────────────────────────
 
-/// Подкатегория в меню «Add Node» (под `NodeCategory::Neuro`). Стабильный
-/// ключ каталога строк — отображаемое имя см. `node.subcategory.ace_step`.
-const ACESTEP_SUBCATEGORY: &str = "ace_step";
 
-const ACESTEP_VAE_ENCODE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::AceStepVaeEncode,
-    icon: MI_AUDIOTRACK,
-    title: "ACE-Step VAE Encode",
-    category: NodeCategory::Neuro,
-    subcategory: Some(ACESTEP_SUBCATEGORY),
-    inputs: PortsSpec::Static(ACESTEP_VAE_ENCODE_INPUTS),
-    outputs: PortsSpec::Static(ACESTEP_VAE_ENCODE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(acestep::vae_encode::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &ACESTEP_VAE_ENCODE_EXEC,
-    on_run: Some(acestep::vae_encode::on_run),
-    busy_signal: Some(acestep::vae_encode::busy_signal),
-};
 
-const ACESTEP_CHECKPOINT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::AceStepCheckpoint,
-    icon: MI_INVENTORY_2,
-    title: "ACE-Step Checkpoint",
-    category: NodeCategory::Neuro,
-    subcategory: Some(ACESTEP_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(ACESTEP_CHECKPOINT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(acestep::checkpoint::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &ACESTEP_CHECKPOINT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const ACESTEP_GENERATE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::AceStepGenerate,
-    icon: MI_LIBRARY_MUSIC,
-    title: "ACE-Step Generate",
-    category: NodeCategory::Neuro,
-    subcategory: Some(ACESTEP_SUBCATEGORY),
-    inputs: PortsSpec::Static(ACESTEP_GENERATE_INPUTS),
-    outputs: PortsSpec::Static(ACESTEP_GENERATE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(acestep::generate::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &ACESTEP_GENERATE_EXEC,
-    on_run: Some(acestep::generate::on_run),
-    busy_signal: Some(acestep::generate::busy_signal),
-};
 
 // ── YuE2 (4 ноды) ────────────────────────────────────────────────────────
 
-/// Подкатегория в меню «Добавить ноду» (под `NodeCategory::Neuro`).
-const YUE2_SUBCATEGORY: &str = "yue2";
 
-const YUE2_CHECKPOINT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::Yue2Checkpoint,
-    icon: MI_INVENTORY_2,
-    title: "YuE2 Checkpoint",
-    category: NodeCategory::Neuro,
-    subcategory: Some(YUE2_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(YUE2_CHECKPOINT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(yue2::checkpoint::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &YUE2_CHECKPOINT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const YUE2_GENERATE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::Yue2Generate,
-    icon: MI_LIBRARY_MUSIC,
-    title: "YuE2 Generate",
-    category: NodeCategory::Neuro,
-    subcategory: Some(YUE2_SUBCATEGORY),
-    inputs: PortsSpec::Static(YUE2_GENERATE_INPUTS),
-    outputs: PortsSpec::Static(YUE2_GENERATE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(yue2::generate::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &YUE2_GENERATE_EXEC,
-    on_run: Some(yue2::generate::on_run),
-    busy_signal: Some(yue2::generate::busy_signal),
-};
 
-const YUE2_VAE_DECODE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::Yue2VaeDecode,
-    icon: MI_AUDIOTRACK,
-    title: "YuE2 VAE Decode",
-    category: NodeCategory::Neuro,
-    subcategory: Some(YUE2_SUBCATEGORY),
-    inputs: PortsSpec::Static(YUE2_VAE_DECODE_INPUTS),
-    outputs: PortsSpec::Static(YUE2_VAE_DECODE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(yue2::vae_decode::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &YUE2_VAE_DECODE_EXEC,
-    on_run: Some(yue2::vae_decode::on_run),
-    busy_signal: Some(yue2::vae_decode::busy_signal),
-};
 
-const YUE2_TRANSCRIBE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::Yue2Transcribe,
-    icon: MI_LIBRARY_MUSIC,
-    title: "YuE2 Transcribe",
-    category: NodeCategory::Neuro,
-    subcategory: Some(YUE2_SUBCATEGORY),
-    inputs: PortsSpec::Static(YUE2_TRANSCRIBE_INPUTS),
-    outputs: PortsSpec::Static(YUE2_TRANSCRIBE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(yue2::transcribe::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &YUE2_TRANSCRIBE_EXEC,
-    on_run: Some(yue2::transcribe::on_run),
-    busy_signal: Some(yue2::transcribe::busy_signal),
-};
 
 const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::FfmpegPlayer,
@@ -1189,13 +1013,6 @@ const BUILTIN: &[NodeKindMeta] = &[
     VIBEVOICE,
     LLM,
     SYN_CHECKPOINT,
-    ACESTEP_VAE_ENCODE,
-    ACESTEP_CHECKPOINT,
-    ACESTEP_GENERATE,
-    YUE2_CHECKPOINT,
-    YUE2_GENERATE,
-    YUE2_VAE_DECODE,
-    YUE2_TRANSCRIBE,
     FFMPEG_PLAYER,
     IMAGE_LOAD,
     IMAGE_SAVE,
@@ -1545,17 +1362,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
                 last_input_kind: PrevSource::None,
             }
         }
-        NodeKind::AceStepVaeEncode => NodeRuntime::AceStepVaeEncode {
-            chunk_seconds: use_signal(30.0_f32),
-            overlap_seconds: use_signal(0.8_f32),
-            loaded_cfg: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            output_buf: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        },
         NodeKind::FfmpegPlayer => NodeRuntime::FfmpegPlayer {
             player: Arc::new(Mutex::new(None)),
             current_path: use_signal(None),
@@ -1588,124 +1394,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             saved: use_signal(None),
             preview: Arc::new(Mutex::new(None)),
             preview_version: use_signal(0_u32),
-        },
-        NodeKind::Yue2Checkpoint => NodeRuntime::Yue2Checkpoint {
-            // Каталог моделей приложения — нода из меню сразу находит бандлы
-            // по дефолтным именам, без ручного выбора файлов.
-            models_dir: use_signal(Some(yue2::app_models_dir())),
-            model_path: use_signal(None),
-            vae_path: use_signal(None),
-            // GPU по умолчанию: 3,6B на CPU считались бы минутами.
-            device_idx: use_signal(1_usize),
-            quant_idx: use_signal(0_usize),
-            compute_idx: use_signal(0_usize),
-            vae_dtype_idx: use_signal(0_usize),
-            resident: use_signal(false),
-            handle_cache: Arc::new(Mutex::new(None)),
-        },
-        NodeKind::Yue2Generate => NodeRuntime::Yue2Generate {
-            cot_idx: use_signal(0_usize),
-            seconds: use_signal(yue2::generate::DEFAULT_SECONDS),
-            ode_steps: use_signal(32_u32),
-            // 0 — дефолт режима (1.0, у `off` — 1.01).
-            cfg_scale: use_signal(0.0_f32),
-            seed: use_signal(0_u64),
-            temperature: use_signal(1.0_f32),
-            top_p: use_signal(0.95_f32),
-            top_k: use_signal(100_u32),
-            repetition_penalty: use_signal(1.2_f32),
-            vae_core_frames: use_signal(1024_u32),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            output_buf_audio: Arc::new(Mutex::new(None)),
-            output_buf_latent: Arc::new(Mutex::new(None)),
-            output_buf_score: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::Yue2VaeDecode => NodeRuntime::Yue2VaeDecode {
-            vae_core_frames: use_signal(1024_u32),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            output_buf_audio: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::Yue2Transcribe => NodeRuntime::Yue2Transcribe {
-            // Мелодия без аккордов — то, что просит кавер.
-            mode_idx: use_signal(0_usize),
-            voices_idx: use_signal(0_usize),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            output_buf_score: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::AceStepCheckpoint => NodeRuntime::AceStepCheckpoint {
-            // Каталог моделей приложения — чтобы нода из шаблона/меню сразу
-            // резолвила 4 бандла по дефолтным именам без ручного выбора.
-            models_dir: use_signal(Some(acestep::app_models_dir())),
-            lm_path: use_signal(None),
-            text_encoder_path: use_signal(None),
-            dit_path: use_signal(None),
-            vae_path: use_signal(None),
-            // GPU по умолчанию: инференс ACE-Step на CPU нереалистичен
-            // (минуты). DEVICE_OPTIONS[1] = "GPU (auto)".
-            device_idx: use_signal(1_usize),
-            quant_dit_idx: use_signal(acestep::default_storage_idx()),
-            quant_enc_idx: use_signal(acestep::default_storage_idx()),
-            compute_idx: use_signal(acestep::default_compute_idx()),
-            // Резидентность по умолчанию выключена — прежнее weak-поведение.
-            resident: use_signal(false),
-            handle_cache: Arc::new(Mutex::new(None)),
-        },
-        NodeKind::AceStepGenerate => NodeRuntime::AceStepGenerate {
-            mode_idx: use_signal(0_usize),
-            preset: use_signal(SamplerPreset::Auto),
-            duration_seconds: use_signal(-1.0_f32),
-            infer_steps: use_signal(32_u32),
-            cfg_scale: use_signal(7.0_f32),
-            flow_match_shift: use_signal(1.0_f32),
-            seed: use_signal(0_u64),
-            temperature: use_signal(0.85_f32),
-            top_p: use_signal(0.9_f32),
-            top_k: use_signal(0_u32),
-            min_p: use_signal(0.0_f32),
-            lm_cfg_scale: use_signal(2.0_f32),
-            use_cot: use_signal(true),
-            use_ar: use_signal(true),
-            bpm: use_signal(0_u32),
-            keyscale_idx: use_signal(0_usize),
-            timesig_idx: use_signal(0_usize),
-            norm_mode: use_signal(PostNormMode::Peak),
-            enable_dcw: use_signal(false),
-            dcw_mode: use_signal(crate::pages::node_editor::types::DcwModeOption::Double),
-            dcw_scaler: use_signal(0.02_f32),
-            dcw_high_scaler: use_signal(0.06_f32),
-            dcw_wavelet: use_signal(crate::pages::node_editor::types::DcwWaveletOption::Haar),
-            dcw_preset: use_signal(crate::pages::node_editor::types::DcwPresetOption::Think),
-            retake_variance: use_signal(0.5_f32),
-            retake_seed: use_signal(0_u64),
-            repaint_start_sec: use_signal(0.0_f32),
-            repaint_end_sec: use_signal(-1.0_f32),
-            repaint_strength: use_signal(0.7_f32),
-            edit_n_min: use_signal(0.0_f32),
-            edit_n_max: use_signal(1.0_f32),
-            track_idx: use_signal(0_usize),
-            running: use_signal(false),
-            error: use_signal(None),
-            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            loaded_name: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            output_buf_audio: Arc::new(Mutex::new(None)),
-            output_buf_latent: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
         },
         _ => NodeRuntime::None,
     };

@@ -374,39 +374,14 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep,
         ffmpeg_player,
         syn_checkpoint,
-        yue2,
     };
     match kind {
         NodeKind::SynCheckpoint => vec![
             ("device_idx", syn_checkpoint::DEVICE_PREF_OPTIONS),
             ("storage_idx", syn_checkpoint::STORAGE_PREF_OPTIONS),
             ("compute_idx", syn_checkpoint::COMPUTE_PREF_OPTIONS),
-        ],
-        NodeKind::Yue2Checkpoint => vec![
-            ("device_idx", yue2::DEVICE_OPTIONS),
-            ("quant_idx", yue2::QUANT_OPTIONS),
-            ("compute_idx", yue2::COMPUTE_OPTIONS),
-            ("vae_dtype_idx", yue2::VAE_DTYPE_OPTIONS),
-        ],
-        NodeKind::Yue2Generate => vec![("cot_idx", yue2::COT_OPTIONS)],
-        NodeKind::Yue2Transcribe => vec![
-            ("mode_idx", yue2::transcribe::MODE_OPTIONS),
-            ("voices_idx", yue2::transcribe::VOICE_OPTIONS),
-        ],
-        NodeKind::AceStepCheckpoint => vec![
-            ("device_idx", acestep::DEVICE_OPTIONS),
-            ("quant_dit_idx", acestep::QUANT_OPTIONS),
-            ("quant_enc_idx", acestep::QUANT_OPTIONS),
-            ("compute_idx", acestep::COMPUTE_OPTIONS),
-        ],
-        NodeKind::AceStepGenerate => vec![
-            ("mode_idx", acestep::generate::MODE_OPTIONS),
-            ("keyscale_idx", acestep::generate::KEYSCALE_OPTIONS),
-            ("timesig_idx", acestep::generate::TIMESIG_OPTIONS),
-            ("track_idx", acestep::generate::TRACK_OPTIONS),
         ],
         NodeKind::FfmpegPlayer => vec![("hwaccel_idx", ffmpeg_player::HWACCEL_LABELS)],
         _ => Vec::new(),
@@ -442,37 +417,6 @@ fn hardware_note(kind: NodeKind) -> Option<&'static str> {
          this machine — keep them unless the user asks. Quantization trades quality for \
          VRAM; to free VRAM use action=run with free_vram=true instead.",
     )
-}
-
-/// Подсказки для path-полей, у которых пустое значение = «взять бандл из
-/// каталога по имени». Enum-таблица их не покрывает (это строки, не индексы),
-/// а без списка кандидатов агент не знал, чем переключить связку на turbo или
-/// на лёгкий LM, и оставлял дефолт. Первое имя в списке — то, что резолвится
-/// при пустом поле.
-fn path_hints_lines(kind: NodeKind) -> Vec<String> {
-    use crate::pages::node_editor::nodes::acestep::generate;
-    let named = |field: &str, names: &[&str]| {
-        let vals = names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| if i == 0 { format!("{n} (default)") } else { (*n).to_string() })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("{field} (null = pick from models_dir): {vals}")
-    };
-    match kind {
-        NodeKind::Yue2Checkpoint => vec![
-            named("model_path", synaptix_music_yue2::pipeline::MODEL_NAMES),
-            named("vae_path", synaptix_music_yue2::pipeline::VAE_NAMES),
-        ],
-        NodeKind::AceStepCheckpoint => vec![
-            named("lm_path", generate::LM_NAMES),
-            named("text_encoder_path", generate::TEXT_ENC_NAMES),
-            named("dit_path", generate::DIT_NAMES),
-            named("vae_path", generate::VAE_NAMES),
-        ],
-        _ => Vec::new(),
-    }
 }
 
 fn state_example(kind: NodeKind) -> Option<String> {
@@ -596,7 +540,6 @@ fn nodes_impl(v: &serde_json::Value) -> Result<String, String> {
         }
         for line in enum_hints_lines(*kind)
             .into_iter()
-            .chain(path_hints_lines(*kind))
             .chain(hardware_note(*kind).map(str::to_string))
         {
             out.push_str(&format!("  {line}\n"));
@@ -1734,19 +1677,19 @@ mod tests {
     /// `*_idx`-поля state расшифрованы: без этого агент выбирал квант вслепую.
     #[test]
     fn enum_hints_explain_quant_indices() {
-        let lines = enum_hints_lines(NodeKind::Yue2Checkpoint);
+        let lines = enum_hints_lines(NodeKind::SynCheckpoint);
         let quant = lines
             .iter()
-            .find(|l| l.starts_with("quant_idx:"))
-            .expect("quant_idx расшифрован");
+            .find(|l| l.starts_with("storage_idx:"))
+            .expect("storage_idx расшифрован");
         assert!(quant.contains("0="), "{quant}");
         assert!(enum_hints_lines(NodeKind::Add).is_empty());
     }
 
     #[test]
     fn kind_slug_is_snake_case() {
-        assert_eq!(kind_slug(NodeKind::Yue2Checkpoint), "yue2_checkpoint");
-        assert_eq!(kind_slug(NodeKind::AceStepGenerate), "ace_step_generate");
+        assert_eq!(kind_slug(NodeKind::SynCheckpoint), "syn_checkpoint");
+        assert_eq!(kind_slug(NodeKind::FlowAcestepGenerate), "flow_acestep_generate");
     }
 
     /// Agent-JSON без id/pos дополняется автоматически; state парсится.
@@ -1837,29 +1780,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// Патч из одного поля не откатывает остальные: `device_idx` (GPU) и
-    /// кванты переживают точечную смену DiT на turbo.
+    /// Патч из одного поля не откатывает остальные: `device_idx` и точность
+    /// переживают точечную смену модели.
     #[test]
     fn merge_state_patch_keeps_unmentioned_fields() {
-        use crate::templates::model::AceStepCheckpointStateData;
-        let current = NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
-            models_dir: Some("/models".into()),
+        use crate::templates::model::SynCheckpointStateData;
+        let current = NodeStateData::SynCheckpoint(SynCheckpointStateData {
+            model_path: Some("/models/a.syn".into()),
             device_idx: 1,
-            quant_dit_idx: 2,
+            storage_idx: 2,
             resident: true,
             ..Default::default()
         });
         let patch = serde_json::json!({
-            "kind": "AceStepCheckpoint",
-            "data": { "dit_path": "/models/acestep_v15_xl_turbo.syn" }
+            "kind": "SynCheckpoint",
+            "data": { "model_path": "/models/b.syn" }
         });
         let merged: NodeStateData =
             serde_json::from_value(merge_state_patch(Some(&current), patch)).expect("parse");
-        let NodeStateData::AceStepCheckpoint(d) = merged else { panic!("wrong variant") };
-        assert_eq!(d.dit_path.as_deref(), Some("/models/acestep_v15_xl_turbo.syn"));
-        assert_eq!(d.models_dir.as_deref(), Some("/models"));
+        let NodeStateData::SynCheckpoint(d) = merged else { panic!("wrong variant") };
+        assert_eq!(d.model_path.as_deref(), Some("/models/b.syn"));
         assert_eq!(d.device_idx, 1);
-        assert_eq!(d.quant_dit_idx, 2);
+        assert_eq!(d.storage_idx, 2);
         assert!(d.resident);
     }
 
@@ -1906,10 +1848,10 @@ mod tests {
     /// берёт его из state-JSON, а не из slug'а.
     #[test]
     fn nodes_filter_matches_camel_case_kind() {
-        let v = serde_json::json!({ "filter": "AceStepCheckpoint AceStepGenerate" });
+        let v = serde_json::json!({ "filter": "SynCheckpoint TextView" });
         let out = nodes_impl(&v).expect("ok");
-        assert!(out.contains("--- ace_step_checkpoint"), "{out}");
-        assert!(out.contains("--- ace_step_generate"), "{out}");
+        assert!(out.contains("--- syn_checkpoint"), "{out}");
+        assert!(out.contains("--- text_view"), "{out}");
         assert!(!out.contains("no nodes found"), "{out}");
     }
 
@@ -1933,7 +1875,6 @@ mod tests {
     /// иначе агент включает квант, увидев мало свободной VRAM.
     #[test]
     fn hardware_note_covers_checkpoint_nodes() {
-        assert!(hardware_note(NodeKind::AceStepCheckpoint).is_some());
         assert!(hardware_note(NodeKind::SynCheckpoint).is_some());
         assert!(hardware_note(NodeKind::TextView).is_none());
     }
@@ -1942,8 +1883,8 @@ mod tests {
     /// вариант и выдать ошибку, а не тихо применить поля текущего.
     #[test]
     fn merge_state_patch_leaves_foreign_kind_alone() {
-        use crate::templates::model::AceStepCheckpointStateData;
-        let current = NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
+        use crate::templates::model::SynCheckpointStateData;
+        let current = NodeStateData::SynCheckpoint(SynCheckpointStateData {
             device_idx: 1,
             ..Default::default()
         });
@@ -1952,32 +1893,13 @@ mod tests {
         assert_eq!(merged, patch);
     }
 
-    /// Агент видит, каким именем переключить связку на turbo/1.7b, и какое
-    /// имя подставится при пустом path-поле.
-    #[test]
-    fn path_hints_list_acestep_bundles() {
-        let lines = path_hints_lines(NodeKind::AceStepCheckpoint).join("\n");
-        assert!(lines.contains("acestep_5hz_lm_4b.syn (default)"), "{lines}");
-        assert!(lines.contains("acestep_5hz_lm_1.7b.syn"), "{lines}");
-        assert!(lines.contains("acestep_v15_xl_base.syn (default)"), "{lines}");
-        assert!(lines.contains("acestep_v15_xl_turbo.syn"), "{lines}");
-        assert!(path_hints_lines(NodeKind::Add).is_empty());
-    }
 
-    /// Дефолтная связка ACE-Step: 4b-LM + xl_base, кванты выключены.
-    #[test]
-    fn acestep_checkpoint_defaults_are_4b_base_dense() {
-        use crate::pages::node_editor::nodes::acestep::{self, generate};
-        assert_eq!(generate::LM_NAMES[0], "acestep_5hz_lm_4b.syn");
-        assert_eq!(generate::DIT_NAMES[0], "acestep_v15_xl_base.syn");
-        assert_eq!(acestep::QUANT_OPTIONS[acestep::default_storage_idx()], "none");
-    }
 
     /// Пример state снимается с default_runtime и несёт правильный тег.
     #[test]
     fn state_example_matches_kind() {
-        let js = state_example(NodeKind::AceStepCheckpoint).expect("state");
-        assert!(js.contains("\"AceStepCheckpoint\""), "{js}");
+        let js = state_example(NodeKind::SynCheckpoint).expect("state");
+        assert!(js.contains("\"SynCheckpoint\""), "{js}");
         assert!(js.contains("device_idx"), "{js}");
         // Реактивные ноды без state.
         assert!(state_example(NodeKind::Add).is_none());
@@ -1988,8 +1910,8 @@ mod tests {
     #[test]
     fn normalize_state_shape_wraps_flat_forms() {
         use serde_json::json;
-        let flat = normalize_state_shape(Some("AceStepCheckpoint"), json!({"dit_path": "/m/x.syn"}));
-        assert_eq!(flat, json!({"kind": "AceStepCheckpoint", "data": {"dit_path": "/m/x.syn"}}));
+        let flat = normalize_state_shape(Some("SynCheckpoint"), json!({"model_path": "/m/x.syn"}));
+        assert_eq!(flat, json!({"kind": "SynCheckpoint", "data": {"model_path": "/m/x.syn"}}));
         let no_kind = normalize_state_shape(Some("TextView"), json!({"data": {"output_text": "a"}}));
         assert_eq!(no_kind, json!({"kind": "TextView", "data": {"output_text": "a"}}));
         let beside = normalize_state_shape(Some("TextView"), json!({"kind": "TextView", "output_text": "a"}));
@@ -2004,16 +1926,16 @@ mod tests {
     #[test]
     fn describe_changes_labels_indices_and_warns_on_cpu() {
         use serde_json::json;
-        let cpu = json!({"kind": "AceStepCheckpoint", "data": {"device_idx": 0, "models_dir": "/m"}});
-        let fields = vec!["device_idx".to_string(), "models_dir".to_string()];
-        let (lines, warning) = describe_changes(NodeKind::AceStepCheckpoint, &cpu, &fields);
-        assert_eq!(lines, vec!["device_idx=0 (CPU)", "models_dir"]);
+        let cpu = json!({"kind": "SynCheckpoint", "data": {"device_idx": 2, "model_path": "/m"}});
+        let fields = vec!["device_idx".to_string(), "model_path".to_string()];
+        let (lines, warning) = describe_changes(NodeKind::SynCheckpoint, &cpu, &fields);
+        assert_eq!(lines, vec!["device_idx=2 (CPU)", "model_path"]);
         assert!(warning.expect("warning").contains("CPU"));
 
-        let gpu = json!({"kind": "AceStepCheckpoint", "data": {"device_idx": 1}});
+        let gpu = json!({"kind": "SynCheckpoint", "data": {"device_idx": 1}});
         let (lines, warning) =
-            describe_changes(NodeKind::AceStepCheckpoint, &gpu, &["device_idx".to_string()]);
-        assert_eq!(lines, vec!["device_idx=1 (GPU (auto))"]);
+            describe_changes(NodeKind::SynCheckpoint, &gpu, &["device_idx".to_string()]);
+        assert_eq!(lines, vec!["device_idx=1 (CUDA)"]);
         assert!(warning.is_none());
     }
 

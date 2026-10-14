@@ -9,7 +9,9 @@
 //! кодировщик получает размер ролика проводом от «Латента ролика» (раньше
 //! его брали сэмплер и референсы), ключевой кадр становится файлом (или
 //! провод идёт прямо от картинки), референсы — списком файлов, сохранение
-//! ролика — наложением звука.
+//! ролика — наложением звука. Музыка: ACE-Step (чекпойнт, запись в латент,
+//! генерация) и YuE2 (чекпойнт, песня, декодер, транскрипция) — те же
+//! ноды стадиями.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -37,6 +39,10 @@ fn float(v: f64) -> Value {
     json!({"type": "Float", "value": v})
 }
 
+fn boolean(b: bool) -> Value {
+    json!({"type": "Bool", "value": b})
+}
+
 fn choice(i: usize) -> Value {
     json!({"type": "Choice", "value": i})
 }
@@ -54,6 +60,16 @@ fn quant(kind: &str, idx: u64) -> &'static str {
         _ => &["", "mxfp8", "bf16"],
     };
     names.get(idx as usize).copied().unwrap_or("")
+}
+
+/// Квант музыкальной модели по списку родной ноды (none, nvfp4, mxfp8):
+/// NVFP4 медиамоделям не ставится — пусто, формат файла.
+fn music_quant(idx: u64) -> &'static str {
+    if idx == 2 {
+        "mxfp8"
+    } else {
+        ""
+    }
 }
 
 /// Новый вид, поля и переименование портов (вход, выход) родной ноды.
@@ -249,6 +265,126 @@ fn plan(kind: &str, state: &Value) -> Option<Plan> {
         "ltx_video_save" => {
             f.insert("mode".into(), choice(0));
             p("flow_mux", f, &[("frames", "video"), ("audio", "audio")], &[("path", "video")])
+        }
+        "ace_step_checkpoint" => {
+            // DiT: файл (путь — как есть; голое имя — модель библиотеки по варианту).
+            let dit = state.get("dit_path").and_then(Value::as_str).unwrap_or("");
+            let model = if dit.starts_with('/') {
+                dit.to_string()
+            } else if dit.contains("turbo") {
+                "acestep-v15-xl-turbo".into()
+            } else {
+                "acestep-v15-xl-base".into()
+            };
+            f.insert("model".into(), text(model));
+            if state.get("lm_path").and_then(Value::as_str).unwrap_or("").contains("1.7b") {
+                f.insert("lm".into(), choice(1));
+            }
+            if let Some(q) = num(state, "quant_dit_idx") {
+                f.insert("quant".into(), choice(option(QUANTS, music_quant(q as u64))));
+            }
+            p("flow_acestep_model", f, &[], &[("model", "model")])
+        }
+        "ace_step_vae_encode" => {
+            for (from, to) in [("chunk_seconds", "chunk"), ("overlap_seconds", "overlap")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            p("flow_acestep_encode", f, &[("model", "model"), ("audio", "audio")], &[("latent", "latent")])
+        }
+        "ace_step_generate" => {
+            use synaptix_flow::ops::stages::{DCW_MODES, NORMS};
+            let auto = state.get("preset").and_then(Value::as_str).unwrap_or("Auto") == "Auto";
+            let mut pairs = vec![
+                ("duration_seconds", "seconds"),
+                ("seed", "seed"),
+                ("temperature", "temperature"),
+                ("top_p", "top_p"),
+                ("top_k", "top_k"),
+                ("min_p", "min_p"),
+                ("lm_cfg_scale", "lm_guidance"),
+                ("bpm", "bpm"),
+                ("dcw_scaler", "dcw_scaler"),
+                ("dcw_high_scaler", "dcw_high_scaler"),
+                ("retake_variance", "retake_variance"),
+                ("retake_seed", "retake_seed"),
+                ("repaint_start_sec", "repaint_start"),
+                ("repaint_end_sec", "repaint_end"),
+                ("repaint_strength", "repaint_strength"),
+                ("edit_n_min", "edit_n_min"),
+                ("edit_n_max", "edit_n_max"),
+            ];
+            // Пресет Auto — умолчания варианта DiT (нули), иначе заданные значения.
+            if !auto {
+                pairs.extend([("infer_steps", "steps"), ("cfg_scale", "guidance"), ("flow_match_shift", "shift")]);
+            }
+            for (from, to) in pairs {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            for (from, to) in [("mode_idx", "mode"), ("keyscale_idx", "keyscale"), ("timesig_idx", "timesig"), ("track_idx", "track")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), choice(v as usize));
+                }
+            }
+            for (from, to) in [("use_cot", "cot"), ("use_ar", "ar")] {
+                if let Some(v) = state.get(from).and_then(Value::as_bool) {
+                    f.insert(to.into(), boolean(v));
+                }
+            }
+            if let Some(n) = state.get("norm_mode").and_then(Value::as_str) {
+                f.insert("norm".into(), choice(option(NORMS, if n == "none" { "off" } else { n })));
+            }
+            if state.get("enable_dcw").and_then(Value::as_bool) == Some(true) {
+                let m = state.get("dcw_mode").and_then(Value::as_str).unwrap_or("Double").to_ascii_lowercase();
+                f.insert("dcw".into(), choice(option(DCW_MODES, &m)));
+            }
+            p("flow_acestep_generate", f, &[("model", "model"), ("tags", "prompt"), ("lyrics", "lyrics"), ("src_latent", "latent")], &[("audio", "audio"), ("latent", "latent")])
+        }
+        "yue2_checkpoint" => {
+            let model = state.get("model_path").and_then(Value::as_str).filter(|m| m.starts_with('/')).unwrap_or("yue2-3b");
+            f.insert("model".into(), text(model));
+            if let Some(q) = num(state, "quant_idx") {
+                f.insert("quant".into(), choice(option(QUANTS, music_quant(q as u64))));
+            }
+            p("flow_yue2_model", f, &[], &[("model", "model")])
+        }
+        "yue2_generate" => {
+            for (from, to) in [
+                ("seconds", "seconds"),
+                ("ode_steps", "steps"),
+                ("cfg_scale", "guidance"),
+                ("seed", "seed"),
+                ("temperature", "temperature"),
+                ("top_p", "top_p"),
+                ("top_k", "top_k"),
+                ("repetition_penalty", "repetition_penalty"),
+                ("vae_core_frames", "core_frames"),
+            ] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            if let Some(v) = num(state, "cot_idx") {
+                f.insert("cot".into(), choice(v as usize));
+            }
+            p("flow_yue2_generate", f, &[("model", "model"), ("style", "prompt"), ("lyrics", "lyrics"), ("abc", "abc")], &[("audio", "audio"), ("score", "score"), ("latent", "latent")])
+        }
+        "yue2_vae_decode" => {
+            if let Some(v) = num(state, "vae_core_frames") {
+                f.insert("core_frames".into(), float(v));
+            }
+            p("flow_yue2_decode", f, &[("model", "model"), ("latent", "latent")], &[("audio", "audio")])
+        }
+        "yue2_transcribe" => {
+            for (from, to) in [("mode_idx", "mode"), ("voices_idx", "voices")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), choice(v as usize));
+                }
+            }
+            p("flow_yue2_transcribe", f, &[("model", "model"), ("audio", "audio")], &[("score", "score")])
         }
         _ => None,
     }
@@ -555,5 +691,46 @@ mod tests {
         let file = g["nodes"].as_array().unwrap().iter().find(|n| n["kind"] == "flow_file").unwrap().clone();
         assert_eq!(file["fields"]["path"]["value"], "/a.png");
         assert!(c.contains(&conn(file["id"].as_u64().unwrap(), "file", 13, "image")));
+    }
+
+    #[test]
+    fn music_chain() {
+        let mut g = json!({
+            "nodes": [
+                node(1, "ace_step_checkpoint", json!({"kind": "AceStepCheckpoint", "data": {"dit_path": "acestep_v15_xl_turbo.syn", "lm_path": "acestep_5hz_lm_1.7b.syn", "quant_dit_idx": 1}})),
+                node(2, "audio_file", Value::Null),
+                node(3, "ace_step_vae_encode", json!({"kind": "AceStepVaeEncode", "data": {"chunk_seconds": 20.0}})),
+                node(4, "ace_step_generate", json!({"kind": "AceStepGenerate", "data": {"mode_idx": 2, "preset": "Auto", "infer_steps": 8, "use_ar": false, "norm_mode": "none", "enable_dcw": true, "dcw_mode": "Low", "track_idx": 3}})),
+                node(5, "yue2_checkpoint", Value::Null),
+                node(6, "yue2_transcribe", json!({"kind": "Yue2Transcribe", "data": {"mode_idx": 1}})),
+                node(7, "yue2_generate", json!({"kind": "Yue2Generate", "data": {"cot_idx": 1, "ode_steps": 16}}))
+            ],
+            "connections": [
+                conn(1, "model", 3, "model"), conn(2, "out", 3, "audio"), conn(1, "model", 4, "model"), conn(3, "latent", 4, "src_latent"),
+                conn(5, "model", 6, "model"), conn(2, "out", 6, "audio"), conn(5, "model", 7, "model"), conn(6, "score", 7, "abc")
+            ]
+        });
+        assert!(migrate_graph(&mut g));
+        let c = g["connections"].as_array().unwrap();
+        assert!(c.contains(&conn(3, "latent", 4, "latent")));
+        assert!(c.contains(&conn(2, "out", 3, "audio")));
+        assert!(c.contains(&conn(6, "score", 7, "abc")));
+        let n = |id: u64| g["nodes"].as_array().unwrap().iter().find(|n| n["id"] == id).unwrap().clone();
+        assert_eq!(n(1)["kind"], "flow_acestep_model");
+        assert_eq!(n(1)["fields"]["model"]["value"], "acestep-v15-xl-turbo");
+        assert_eq!(n(1)["fields"]["lm"]["value"], 1);
+        assert_eq!(n(1)["fields"]["quant"]["value"], 0); // NVFP4 медиа не ставится
+        assert_eq!(n(3)["fields"]["chunk"]["value"], 20.0);
+        let f = &n(4)["fields"];
+        assert_eq!(f["mode"]["value"], 2);
+        assert!(f.get("steps").is_none()); // Auto — умолчания варианта
+        assert_eq!(f["ar"]["value"], false);
+        assert_eq!(f["norm"]["value"], 2); // off
+        assert_eq!(f["dcw"]["value"], 2); // low
+        assert_eq!(f["track"]["value"], 3);
+        assert_eq!(n(5)["fields"]["model"]["value"], "yue2-3b");
+        assert_eq!(n(6)["fields"]["mode"]["value"], 1);
+        assert_eq!(n(7)["fields"]["cot"]["value"], 1);
+        assert_eq!(n(7)["fields"]["steps"]["value"], 16.0);
     }
 }

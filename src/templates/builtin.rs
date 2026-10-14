@@ -7,45 +7,33 @@
 //! которую уже можно править.
 
 use super::model::{
-
-    AceStepCheckpointStateData,
-
-    AceStepGenerateStateData,
-
-    AceStepVaeStateData,
-
     ConnData,
-
-    Yue2CheckpointStateData,
-
-    Yue2GenerateStateData,
-
-    Yue2TranscribeStateData,
-
     FieldValueData,
-
     NodeData,
-
     NodeStateData,
-
     PointData,
-
     Template,
-
     TemplateKind,
-
     TextViewStateData,
-
     VibeVoiceStateData,
-
 };
 use crate::pages::node_editor::types::NodeKind;
 
 /// Все встроенные шаблоны. Порядок ⇒ порядок отображения в панели.
 /// Шаблоны со стадиями моделей в службе (FLUX.1, FLUX.2, Qwen-Image,
-/// SDXL, MiniMax-H3, LTX-2.3) — JSON: переведены из прежних родных нод
+/// SDXL, MiniMax-H3, LTX-2.3, ACE-Step, YuE2) — JSON: переведены из прежних родных нод
 /// [`super::native`].
 const STAGE_TEMPLATES: &[(&str, &str)] = &[
+    ("builtin-acestep-text2music", include_str!("builtin/builtin-acestep-text2music.json")),
+    ("builtin-acestep-retake", include_str!("builtin/builtin-acestep-retake.json")),
+    ("builtin-acestep-repaint", include_str!("builtin/builtin-acestep-repaint.json")),
+    ("builtin-acestep-extend", include_str!("builtin/builtin-acestep-extend.json")),
+    ("builtin-acestep-edit", include_str!("builtin/builtin-acestep-edit.json")),
+    ("builtin-acestep-cover", include_str!("builtin/builtin-acestep-cover.json")),
+    ("builtin-acestep-extract", include_str!("builtin/builtin-acestep-extract.json")),
+    ("builtin-yue2-song", include_str!("builtin/builtin-yue2-song.json")),
+    ("builtin-yue2-edit-score", include_str!("builtin/builtin-yue2-edit-score.json")),
+    ("builtin-yue2-cover", include_str!("builtin/builtin-yue2-cover.json")),
     ("builtin-flux-image-to-image", include_str!("builtin/builtin-flux-image-to-image.json")),
     ("builtin-flux-text-to-image", include_str!("builtin/builtin-flux-text-to-image.json")),
     ("builtin-flux2-edit", include_str!("builtin/builtin-flux2-edit.json")),
@@ -100,16 +88,16 @@ pub fn all() -> Vec<Template> {
         vibevoice_dialogue_template(),
         vibevoice_single_voice_template(),
         vibevoice_llm_podcast_template(),
-        acestep_text2music_template(),
-        acestep_retake_template(),
-        acestep_repaint_template(),
-        acestep_extend_template(),
-        acestep_edit_template(),
-        acestep_cover_template(),
-        acestep_extract_template(),
-        yue2_song_template(),
-        yue2_edit_score_template(),
-        yue2_cover_template(),
+        stage("builtin-acestep-text2music"),
+        stage("builtin-acestep-retake"),
+        stage("builtin-acestep-repaint"),
+        stage("builtin-acestep-extend"),
+        stage("builtin-acestep-edit"),
+        stage("builtin-acestep-cover"),
+        stage("builtin-acestep-extract"),
+        stage("builtin-yue2-song"),
+        stage("builtin-yue2-edit-score"),
+        stage("builtin-yue2-cover"),
         stage("builtin-h3-text-to-video"),
         stage("builtin-h3-turbo"),
         stage("builtin-h3-first-frame"),
@@ -141,50 +129,6 @@ pub fn all() -> Vec<Template> {
         stage("builtin-h3-flux-keyframe"),
     ]
 }
-
-// ── FLUX.2 ────────────────────────────────────────────────────────────────
-
-
-
-
-// ── Qwen-Image ────────────────────────────────────────────────────────────
-
-
-
-
-// ── Qwen-Image 2.1 ────────────────────────────────────────────────────────
-
-
-
-
-
-
-
-
-
-// ── SDXL ──────────────────────────────────────────────────────────────────
-
-
-
-
-
-// ── FLUX.1 ────────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 fn empty_template() -> Template {
     Template {
@@ -617,13 +561,6 @@ fn omnivoice_voice_clone_template() -> Template {
     }
 }
 
-
-
-
-
-
-
-
 fn vibevoice_dialogue_template() -> Template {
     let script_state = NodeStateData::TextView(TextViewStateData {
         output_text: "Speaker 1: Привет! Сегодня мы записываем первый выпуск.\n\
@@ -783,318 +720,6 @@ fn node_plain(id: u64, kind: NodeKind, x: f32, y: f32) -> NodeData {
 }
 
 
-// ── ACE-Step builtin-шаблоны (по одному на режим Generate-ноды) ──
-
-fn conn(fr: u64, fp: &str, to: u64, tp: &str) -> ConnData {
-    ConnData { from_node: fr, from_port: fp.into(), to_node: to, to_port: tp.into() }
-}
-
-fn acestep_text_state(text: &str, h: f32) -> NodeStateData {
-    NodeStateData::TextView(TextViewStateData { output_text: text.into(), width: 240.0, height: h })
-}
-
-fn acestep_checkpoint_state() -> NodeStateData {
-    NodeStateData::AceStepCheckpoint(AceStepCheckpointStateData {
-        models_dir: None,
-        device_idx: 1, // GPU
-        ..Default::default()
-    })
-}
-
-fn acestep_vae_encode_state() -> NodeStateData {
-    NodeStateData::AceStepVaeEncode(AceStepVaeStateData {
-        chunk_seconds: 30.0,
-        overlap_seconds: 0.5,
-        ..Default::default()
-    })
-}
-
-fn acestep_gen(mode_idx: usize, tweak: impl FnOnce(&mut AceStepGenerateStateData)) -> NodeStateData {
-    let mut s = AceStepGenerateStateData { mode_idx, ..Default::default() };
-    tweak(&mut s);
-    NodeStateData::AceStepGenerate(s)
-}
-
-/// Шаблон без исходного аудио (text2music / retake): Checkpoint + tags + lyrics
-/// → Generate → AudioPlayer.
-fn acestep_t2m_like(id: &str, name: &str, desc: &str, tags: &str, gen: NodeStateData) -> Template {
-    Template {
-        id: id.into(),
-        builtin: true,
-        name: name.into(),
-        description: desc.into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::AceStepCheckpoint, 60.0, 60.0, acestep_checkpoint_state()),
-            node_with_state(2, NodeKind::TextView, 60.0, 360.0, acestep_text_state(tags, 80.0)),
-            node_with_state(3, NodeKind::TextView, 60.0, 500.0, acestep_text_state("", 200.0)),
-            node_with_state(4, NodeKind::AceStepGenerate, 480.0, 180.0, gen),
-            node_plain(5, NodeKind::AudioPlayer, 980.0, 200.0),
-        ],
-        connections: vec![
-            conn(1, "model", 4, "model"),
-            conn(2, "out", 4, "tags"),
-            conn(3, "out", 4, "lyrics"),
-            conn(4, "audio", 5, "in"),
-        ],
-        viewport: None,
-    }
-}
-
-/// Шаблон с исходным аудио (repaint / extend / edit / cover / extract):
-/// AudioFile → VaeEncode → Generate.src_latent + Checkpoint + tags + lyrics →
-/// Generate → AudioPlayer.
-fn acestep_audio_cond(id: &str, name: &str, desc: &str, tags: &str, gen: NodeStateData) -> Template {
-    Template {
-        id: id.into(),
-        builtin: true,
-        name: name.into(),
-        description: desc.into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::AceStepCheckpoint, 60.0, 60.0, acestep_checkpoint_state()),
-            node_plain(2, NodeKind::AudioFile, 60.0, 360.0),
-            node_with_state(3, NodeKind::AceStepVaeEncode, 380.0, 360.0, acestep_vae_encode_state()),
-            node_with_state(4, NodeKind::TextView, 60.0, 600.0, acestep_text_state(tags, 80.0)),
-            node_with_state(5, NodeKind::TextView, 60.0, 740.0, acestep_text_state("", 200.0)),
-            node_with_state(6, NodeKind::AceStepGenerate, 820.0, 220.0, gen),
-            node_plain(7, NodeKind::AudioPlayer, 1320.0, 240.0),
-        ],
-        connections: vec![
-            conn(1, "model", 6, "model"),
-            conn(1, "model", 3, "model"),
-            conn(2, "out", 3, "audio"),
-            conn(3, "latent", 6, "src_latent"),
-            conn(4, "out", 6, "tags"),
-            conn(5, "out", 6, "lyrics"),
-            conn(6, "audio", 7, "in"),
-        ],
-        viewport: None,
-    }
-}
-
-fn acestep_text2music_template() -> Template {
-    acestep_t2m_like(
-        "builtin-acestep-text2music",
-        "ACE-Step: Text→Music",
-        "Checkpoint + tags/lyrics → Generate (text2music) → плеер. Базовая генерация музыки из текста.",
-        "energetic electronic dance, driving synths, 128 bpm",
-        acestep_gen(0, |_| {}),
-    )
-}
-
-/// Партитура и лирика показываются текстовыми нодами: их можно прочитать,
-/// поправить и подать назад во вход `abc` — на этом и держится «белый ящик»
-/// YuE2.
-fn yue2_checkpoint_state() -> NodeStateData {
-    NodeStateData::Yue2Checkpoint(Yue2CheckpointStateData {
-        models_dir: None,
-        device_idx: 1, // GPU
-        ..Default::default()
-    })
-}
-
-fn yue2_gen(cot_idx: usize, seconds: f32) -> NodeStateData {
-    NodeStateData::Yue2Generate(Yue2GenerateStateData {
-        cot_idx,
-        seconds,
-        ..Default::default()
-    })
-}
-
-/// Checkpoint + стиль/лирика → Generate → плеер, а партитура выводится в
-/// текстовую ноду.
-fn yue2_song_like(
-    id: &str,
-    name: &str,
-    desc: &str,
-    style: &str,
-    lyrics: &str,
-    gen: NodeStateData,
-    with_abc_input: bool,
-) -> Template {
-    let mut nodes = vec![
-        node_with_state(1, NodeKind::Yue2Checkpoint, 60.0, 60.0, yue2_checkpoint_state()),
-        node_with_state(2, NodeKind::TextView, 60.0, 380.0, acestep_text_state(style, 80.0)),
-        node_with_state(3, NodeKind::TextView, 60.0, 520.0, acestep_text_state(lyrics, 220.0)),
-        node_with_state(4, NodeKind::Yue2Generate, 480.0, 180.0, gen),
-        node_plain(5, NodeKind::AudioPlayer, 1000.0, 200.0),
-        // Партитура с выхода `score`: её видно целиком и можно скопировать.
-        node_with_state(6, NodeKind::TextView, 1000.0, 420.0, acestep_text_state("", 260.0)),
-    ];
-    let mut connections = vec![
-        conn(1, "model", 4, "model"),
-        conn(2, "out", 4, "style"),
-        conn(3, "out", 4, "lyrics"),
-        conn(4, "audio", 5, "in"),
-        conn(4, "score", 6, "in"),
-    ];
-    if with_abc_input {
-        // Партитура из отдельной ноды сильнее сгенерированной: сюда вставляется
-        // правленый ABC.
-        nodes.push(node_with_state(7, NodeKind::TextView, 60.0, 820.0, acestep_text_state("", 260.0)));
-        connections.push(conn(7, "out", 4, "abc"));
-    }
-    Template {
-        id: id.into(),
-        builtin: true,
-        name: name.into(),
-        description: desc.into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
-
-fn yue2_song_template() -> Template {
-    yue2_song_like(
-        "builtin-yue2-song",
-        "YuE2: песня",
-        "Стиль и лирика → партитура с аккордами → песня; партитуру видно в текстовой ноде.",
-        "english, dream pop, female vocal, warm synths, soft drums",
-        "[verse]\nTonight I'm awake, watching city lights\n[chorus]\nHold on, hold on, the morning comes slow",
-        yue2_gen(0, 60.0),
-        false,
-    )
-}
-
-fn yue2_edit_score_template() -> Template {
-    yue2_song_like(
-        "builtin-yue2-edit-score",
-        "YuE2: рендер по партитуре",
-        "Партитура берётся из ноды abc: вставьте правленый ABC и отрендерьте заново.",
-        "english, jazz-funk, warm lead vocal, Rhodes, bass and drums",
-        "[verse]\nTonight I'm awake, watching city lights",
-        yue2_gen(0, 60.0),
-        true,
-    )
-}
-
-/// Кавер записи: SheetSage2 снимает мелодию (вокал и инструментальную тему,
-/// без аккордов), она видна и правится в текстовой ноде, а Generate с
-/// `cot = melody` поёт её в новом стиле — аккомпанемент придумывается заново
-/// (так кавер и задуман в релизе). Длительность 0 — песня идёт, пока не
-/// кончится партитура.
-fn yue2_cover_template() -> Template {
-    Template {
-        id: "builtin-yue2-cover".into(),
-        builtin: true,
-        name: "YuE2: кавер записи".into(),
-        description: "Запись → мелодия без аккордов (SheetSage2, правится в ноде) → песня в новом стиле с новой лирикой."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::Yue2Checkpoint, 60.0, 60.0, yue2_checkpoint_state()),
-            node_plain(2, NodeKind::AudioFile, 60.0, 420.0),
-            node_with_state(
-                3,
-                NodeKind::Yue2Transcribe,
-                440.0,
-                420.0,
-                NodeStateData::Yue2Transcribe(Yue2TranscribeStateData::default()),
-            ),
-            // Мелодия записи: её видно целиком, можно поправить до генерации.
-            node_with_state(4, NodeKind::TextView, 820.0, 420.0, acestep_text_state("", 260.0)),
-            node_with_state(
-                5,
-                NodeKind::TextView,
-                440.0,
-                60.0,
-                acestep_text_state("english, acoustic folk, male vocal, fingerpicked guitar", 80.0),
-            ),
-            node_with_state(
-                6,
-                NodeKind::TextView,
-                440.0,
-                180.0,
-                acestep_text_state("[verse]\nWe were younger then, the road was long", 200.0),
-            ),
-            node_with_state(7, NodeKind::Yue2Generate, 1200.0, 60.0, yue2_gen(1, 0.0)),
-            node_plain(8, NodeKind::AudioPlayer, 1720.0, 80.0),
-        ],
-        connections: vec![
-            conn(1, "model", 3, "model"),
-            conn(2, "out", 3, "audio"),
-            conn(3, "score", 4, "in"),
-            conn(1, "model", 7, "model"),
-            conn(5, "out", 7, "style"),
-            conn(6, "out", 7, "lyrics"),
-            conn(4, "out", 7, "abc"),
-            conn(7, "audio", 8, "in"),
-        ],
-        viewport: None,
-    }
-}
-
-fn acestep_retake_template() -> Template {
-    acestep_t2m_like(
-        "builtin-acestep-retake",
-        "ACE-Step: Retake",
-        "Вариация трека при тех же тегах (микс двух шумовых seed'ов). Retake variance задаёт силу вариации; src-аудио не нужно.",
-        "energetic electronic dance, driving synths, 128 bpm",
-        acestep_gen(1, |s| s.retake_variance = 0.5),
-    )
-}
-
-fn acestep_repaint_template() -> Template {
-    acestep_audio_cond(
-        "builtin-acestep-repaint",
-        "ACE-Step: Repaint",
-        "Перегенерация региона [start,end] исходного аудио (вне региона — оригинал). ⚠ Установи Duration = длине исходного аудио.",
-        "energetic electronic dance, driving synths",
-        acestep_gen(2, |s| {
-            s.repaint_start_sec = 2.0;
-            s.repaint_end_sec = 4.0;
-            s.repaint_strength = 0.6;
-        }),
-    )
-}
-
-fn acestep_extend_template() -> Template {
-    acestep_audio_cond(
-        "builtin-acestep-extend",
-        "ACE-Step: Extend",
-        "Продление аудио: оригинал сохраняется, новый хвост генерируется. ⚠ Установи Duration > длины исходного, регион = новая часть (start=длина src, end=-1).",
-        "energetic electronic dance, driving synths",
-        acestep_gen(3, |s| {
-            s.repaint_start_sec = 5.0;
-            s.repaint_end_sec = -1.0;
-            s.repaint_strength = 0.9;
-        }),
-    )
-}
-
-fn acestep_edit_template() -> Template {
-    acestep_audio_cond(
-        "builtin-acestep-edit",
-        "ACE-Step: Edit",
-        "Морфинг исходного аудио к новому промпту (SDEdit: ре-шум до n_max → денойз). n_max=0 ⇒ без изменений, ближе к 1 ⇒ сильнее. ⚠ Duration = длине src.",
-        "calm acoustic guitar, soft and warm",
-        acestep_gen(4, |s| s.edit_n_max = 0.6),
-    )
-}
-
-fn acestep_cover_template() -> Template {
-    acestep_audio_cond(
-        "builtin-acestep-cover",
-        "ACE-Step: Cover",
-        "Кавер: исходное аудио → контекст DiT, теги задают новый стиль/инструменты. ⚠ Duration = длине src.",
-        "jazz cover, smooth saxophone, brushed drums",
-        acestep_gen(5, |_| {}),
-    )
-}
-
-fn acestep_extract_template() -> Template {
-    acestep_audio_cond(
-        "builtin-acestep-extract",
-        "ACE-Step: Extract",
-        "Выделение стема из микса: исходное аудио → контекст DiT, поле «Дорожка» у Generate выбирает стем (vocals, drums, bass, guitar…), теги — его имя. Для вокала впиши текст песни в lyrics: без него голос выходит без слов. LM не участвует, длина = длине исходника.",
-        "vocals",
-        acestep_gen(6, |_| {}),
-    )
-}
-
 /// Микрофон + audio-файл через Mixer → Player. Удобно для караоке-сценариев
 /// (живой голос поверх backing track).
 fn mix_mic_and_file_template() -> Template {
@@ -1169,7 +794,6 @@ fn mix_mic_and_file_template() -> Template {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1230,7 +854,6 @@ mod tests {
             );
         }
     }
-
 
     /// Оба voice-clone TTS-шаблона зарегистрированы, попадают в раздел
     /// «Речь» и все их связи ссылаются на валидные порты registry.
@@ -1310,3 +933,4 @@ mod tests {
         }
     }
 }
+

@@ -138,6 +138,13 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::FlowLtxA2v
         | NodeKind::FlowLtxDecodeVideo
         | NodeKind::FlowLtxDecodeAudio => Color::new(0.34, 0.62, 0.95, 1.0),
+        NodeKind::FlowAcestepModel
+        | NodeKind::FlowAcestepEncode
+        | NodeKind::FlowAcestepGenerate
+        | NodeKind::FlowYue2Model
+        | NodeKind::FlowYue2Generate
+        | NodeKind::FlowYue2Decode
+        | NodeKind::FlowYue2Transcribe => Color::new(0.85, 0.45, 0.80, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald
@@ -164,17 +171,8 @@ fn node_color(kind: NodeKind) -> Color {
         NodeKind::SortformerDiarizer => Color::new(0.31, 0.78, 0.94, 1.0), // cyan (диаризация)
         // ACE-Step семейство — единая палитра в фиолетово-розовой гамме,
         // так визуально граф «AceStep — Text2Music» легко выделить.
-        NodeKind::AceStepCheckpoint
-        | NodeKind::AceStepGenerate
-        | NodeKind::AceStepVaeEncode => Color::new(0.85, 0.45, 0.95, 1.0),
         // YuE2 — та же «музыкальная» гамма, но холоднее: рядом на полотне
         // семейства различимы.
-        NodeKind::Yue2Checkpoint
-        | NodeKind::Yue2Generate
-        | NodeKind::Yue2VaeDecode
-        | NodeKind::Yue2Transcribe => {
-            Color::new(0.62, 0.40, 0.96, 1.0)
-        }
         NodeKind::FfmpegPlayer => Color::new(0.93, 0.27, 0.60, 1.0),
         // LTX-2.3 семейство — единая палитра в сине-бирюзовой гамме,
         // граф «LTX — Text2Video» визуально отличим от ACE-Step.

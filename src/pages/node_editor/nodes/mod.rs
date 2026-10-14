@@ -53,8 +53,6 @@ pub fn log_worker_done<T, E: std::fmt::Display>(
     }
 }
 
-pub mod acestep;
-pub mod yue2;
 pub mod asr_gigaam;
 pub mod audio_equalizer;
 pub mod audio_file;

@@ -435,23 +435,8 @@ pub fn create_from_plan_async(
 
     std::thread::spawn(move || {
         let cb = make_progress_cb(progress_handle.clone(), progress_gen);
-        let res = build_with_quant(plan, &opts)
-            .map(|b| {
-                let mut b = b
-                    .with_progress(cb)
-                    .with_delete_sources_after_pack(opts.delete_sources);
-                if opts.sha256 {
-                    b = b.with_sha256(true);
-                }
-                if opts.blake3 {
-                    b = b.with_blake3(true);
-                }
-                if opts.cdir_json {
-                    b = b.cdir_format(synaptix_bundle::CdirFormat::Json);
-                }
-                b
-            })
-            .and_then(|b| b.write(&out).map_err(|e| e.to_string()));
+        // С квантованием — службой: квант считается на её карте.
+        let res = if opts.quant.is_empty() { pack_local(plan, &opts, &out, cb) } else { pack_in_service(plan, &opts, &out, cb) };
         match res {
             Ok(()) => {
                 run_on_main_thread(move || {
@@ -501,85 +486,43 @@ fn staging_bytes(plan: &PackPlan, opts: &PackOptions) -> u64 {
         .unwrap_or(0)
 }
 
-/// Собрать билдер: обычный план либо, если выбрано квантование, с подменой
-/// главного компонента на квантующий поток.
-///
-/// Квантуется только главный компонент — тот, чьи слои разобраны в мастере
-/// и по которому посчитана оценка размера. Остальные компоненты копируются
-/// как есть, иначе обещанный в UI размер разошёлся бы с настоящим.
-fn build_with_quant(
-    plan: PackPlan,
-    opts: &PackOptions,
-) -> Result<synaptix_bundle::BundleBuilder, String> {
-    use super::quant_pack;
-
-    if opts.quant.is_empty() {
-        return plan.into_builder().map_err(|e| e.to_string());
+/// Побайтовая упаковка без кванта — здесь же (GPU не нужен).
+fn pack_local(plan: PackPlan, opts: &PackOptions, out: &std::path::Path, cb: synaptix_bundle::ProgressCallback) -> Result<(), String> {
+    let mut b = plan.into_builder().map_err(|e| e.to_string())?.with_progress(cb).with_delete_sources_after_pack(opts.delete_sources);
+    if opts.sha256 {
+        b = b.with_sha256(true);
     }
-    let Some(main_idx) = plan.components.iter().position(|c| c.enabled) else {
-        return plan.into_builder().map_err(|e| e.to_string());
-    };
-
-    let device = synaptix_core::device::Device::Cuda(0);
-    let decision = opts.quant.clone();
-    let decide = move |name: &str, shape: &[usize]| decision.for_tensor(name, shape);
-    let mut stream = Some(quant_pack::QuantizingStream::new(
-        &plan.components[main_idx].paths,
-        &decide,
-        device,
-    )?);
-    let quantized = stream.as_ref().map(|s| s.quantized_count()).unwrap_or(0);
-    if quantized == 0 {
-        // Ни один тензор не подошёл — незачем городить поток и объявлять
-        // возможность формата, которой в бандле нет.
-        return plan.into_builder().map_err(|e| e.to_string());
+    if opts.blake3 {
+        b = b.with_blake3(true);
     }
-    let manifest = stream
-        .as_ref()
-        .ok_or_else(|| "квантующий поток потерян".to_string())?
-        .manifest_json()?;
-
-    let mut b = synaptix_bundle::BundleBuilder::new(&plan.meta.id, &plan.meta.version);
-    if !plan.meta.arch.is_empty() {
-        b = b.arch(&plan.meta.arch);
+    if opts.cdir_json {
+        b = b.cdir_format(synaptix_bundle::CdirFormat::Json);
     }
-    if !plan.meta.purpose.is_empty() {
-        b = b.purpose(&plan.meta.purpose);
-    }
-    for (i, c) in plan.components.iter().enumerate().filter(|(_, c)| c.enabled) {
-        let prefix = (!c.prefix.is_empty()).then_some(c.prefix.as_str());
-        if let Some(p) = prefix {
-            b = b.component(&c.name, p);
-        }
-        if i == main_idx {
-            b = b.add_tensor_stream(&c.name, quant_pack::boxed(stream_take(&mut stream)?));
-            continue;
-        }
-        b = b.add_safetensors_component(&c.name, c.paths.clone(), prefix);
-    }
-    for f in plan.aux.iter().filter(|f| f.enabled) {
-        b = b.add_file_path(&f.rel, &f.path, f.tag).map_err(|e| e.to_string())?;
-    }
-    b = b
-        .add_file_bytes(
-            quant_pack::MANIFEST_NAME,
-            manifest,
-            synaptix_bundle::FileTag::Inference,
-        )
-        .map_err(|e| e.to_string())?;
-    // Читатель без поддержки раскладки обязан отказаться открывать бандл,
-    // а не искать тензоры, которых больше нет под прежними именами.
-    b = b.require_capability(quant_pack::CAP_QUANT);
-    tracing::info!(target: "syn-explorer", tensors = quantized, "упаковка с квантованием");
-    Ok(b)
+    b.write(out).map_err(|e| e.to_string())
 }
 
-/// Забрать поток из `Option` с внятной ошибкой вместо `unwrap`.
-fn stream_take(
-    slot: &mut Option<super::quant_pack::QuantizingStream>,
-) -> Result<super::quant_pack::QuantizingStream, String> {
-    slot.take()
-        .ok_or_else(|| "квантующий поток уже израсходован".to_string())
+/// Упаковка с квантованием — операцией `pack` службы нейросетей; ход
+/// приходит событиями сборщика.
+fn pack_in_service(plan: PackPlan, opts: &PackOptions, out: &std::path::Path, cb: synaptix_bundle::ProgressCallback) -> Result<(), String> {
+    let service = synaptix::facade::pack::PackOptions {
+        quant: opts.quant.clone(),
+        delete_sources: opts.delete_sources,
+        sha256: opts.sha256,
+        blake3: opts.blake3,
+        cdir_json: opts.cdir_json,
+    };
+    let plan = serde_json::to_value(&plan).map_err(|e| e.to_string())?;
+    let options = serde_json::to_value(&service).map_err(|e| e.to_string())?;
+    tracing::info!(target: "syn-explorer", "упаковка с квантованием — в службе нейросетей");
+    synaptixd::Client::connect()
+        .and_then(|mut c| {
+            c.pack(plan, &out.to_string_lossy(), options, |ev| {
+                if let Ok(ev) = serde_json::from_value::<ProgressEvent>(ev) {
+                    cb(ev);
+                }
+            })
+        })
+        .map_err(|e| format!("служба нейросетей: {e}"))
 }
 
 fn gib(n: u64) -> String {

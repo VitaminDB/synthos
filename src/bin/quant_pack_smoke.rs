@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use synaptix_bundle::inspect::{self, QuantKind};
 use synaptix_bundle::pack_plan::PackPlan;
 use synaptix_bundle::{Bundle, BundleBuilder, FileTag};
-use synthos::pages::syn_explorer::quant_pack::{self, QuantDecision, QuantizingStream};
+use synaptix::facade::pack::{self as quant_pack, QuantDecision, QuantizingStream};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);

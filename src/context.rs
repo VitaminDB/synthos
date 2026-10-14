@@ -14,7 +14,7 @@ use syngui::widgets::navigation::router::Router;
 
 use crate::agent::audio::AudioCtx;
 use crate::agent::tools::PendingApproval;
-use crate::config::{AudioModelConfig, ModelProfileConfig};
+use crate::config::AudioModelConfig;
 use crate::metrics::MetricsState;
 
 pub const ROUTES: &[&str] = &[
@@ -466,11 +466,6 @@ pub struct AppCtx {
     /// Default duration = 15s (per TASK.md). Используется как:
     /// `ctx.notifications.info("...")`, `.success(...)`, `.warning(...)`, `.error(...)`.
     pub notifications: syngui::widgets::feedback::NotificationCtx,
-    /// Как настроена каждая модель: ключ — путь к бандлу, значение —
-    /// режим `optimal`/`custom` с переопределениями. Сохраняется в
-    /// `AppConfig.model_profiles`; применяется при загрузке модели
-    /// (`ModelProfileConfig::resolve`) и там же уходит в рантайм движка.
-    pub model_profiles: RwSignal<std::collections::BTreeMap<String, ModelProfileConfig>>,
     /// Потолок vision-токенов на одну картинку-вложение в чате.
     /// `0` — снять ограничение и довериться конфигу модели (у Muse Glimmer
     /// это 4096 токенов на картинку). Сохраняется в

@@ -1197,15 +1197,8 @@ fn group(n: u64) -> String {
 
 // ─────────────────────── Общие хелперы ───────────────────────
 
-/// Запуск `SynModelRegistry::load` из любого потока — get/set сигналов
-/// сами маршализуются в main thread. policy читается ВНУТРИ run_on_main_thread,
-/// потому что signal-runtime thread-local (use_context в spawn thread недоступен).
+/// Запуск `SynModelRegistry::load` из любого потока: signal-runtime
+/// thread-local, `use_context` доступен только на главном.
 fn load_from_any_thread(path: PathBuf) {
-    syngui::async_runtime::run_on_main_thread(move || {
-        let app_ctx = use_context::<crate::context::AppCtx>();
-        let policy =
-            crate::config::resolve_model_profile(&app_ctx.model_profiles.get_untracked(), &path)
-                .policy;
-        use_context::<SynModelRegistry>().load(path, policy);
-    });
+    syngui::async_runtime::run_on_main_thread(move || use_context::<SynModelRegistry>().load(path));
 }

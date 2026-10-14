@@ -257,7 +257,7 @@ fn load_model(path: PathBuf) {
     let ctx = use_context::<AppCtx>();
     let registry = use_context::<SynModelRegistry>();
     registry.unload();
-    registry.load(path, synaptix::facade::llm::QuantPolicy::quality());
+    registry.load(path);
     ctx.notifications.info(tr!("settings.ai_models.apply.reloading"));
 }
 

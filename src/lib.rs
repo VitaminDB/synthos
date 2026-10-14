@@ -462,7 +462,6 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let terminal_font_size = use_signal(saved.terminal_font_size);
     let code_editor_font_family = use_signal(saved.code_editor_font_family.clone());
     let code_editor_font_size = use_signal(saved.code_editor_font_size);
-    let model_profiles = use_signal(saved.model_profiles.clone());
     let syn_chat_max_image_tokens = use_signal(saved.syn_chat_max_image_tokens);
     let models_dir = use_signal(saved.models_dir.clone());
     let panels = context::PanelsCtx::from_config(&saved.panels);
@@ -483,10 +482,6 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let settings_right_split_ratio = use_signal(saved.settings_right_split_ratio);
     let notes_left_split_ratio = use_signal(saved.notes_left_split_ratio);
     let notes_right_split_ratio = use_signal(saved.notes_right_split_ratio);
-
-    // Рантайм-часть профиля выставляется не здесь, а при загрузке модели:
-    // выверенные пути у каждой архитектуры свои, и глобальные тумблеры
-    // ровно этим и мешали (`ModelProfileConfig::resolve`).
 
     let ctx = AppCtx {
         theme_key,
@@ -514,7 +509,6 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         code_editor_font_size,
         kb,
         notifications,
-        model_profiles,
         syn_chat_max_image_tokens,
         models_dir,
         panels,
@@ -613,7 +607,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     let code_editor_font_family = ctx.code_editor_font_family;
     let code_editor_font_size = ctx.code_editor_font_size;
     let kb_auto_augment = ctx.kb.auto_augment;
-    let model_profiles = ctx.model_profiles;
     let syn_chat_max_image_tokens = ctx.syn_chat_max_image_tokens;
     let models_dir_sig = ctx.models_dir;
     let panels = ctx.panels;
@@ -774,7 +767,6 @@ fn install_config_autosave(ctx: &AppCtx) {
             hf_dock_expanded: hf.dock_expanded.get(),
 
             hf_token: hf.token.get(),
-            model_profiles: model_profiles.get(),
             syn_chat_max_image_tokens: syn_chat_max_image_tokens.get(),
             models_dir: models_dir_sig.get(),
             // Layout-разделители страницы Syn-чата. `.get()` подписывает

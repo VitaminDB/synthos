@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use syngui::core::sync::Mutex;
 use syngui::prelude::*;
-use synaptix::facade::llm::{LlmTokenizer, QuantPolicy, SamplingProfile};
+use synaptix::facade::llm::{LlmTokenizer, SamplingProfile};
 
 pub struct LoadedSynModel {
     /// Id модели в библиотеке службы.
@@ -230,8 +230,9 @@ impl SynModelRegistry {
         }
     }
 
-    pub fn load(&self, path: PathBuf, policy: QuantPolicy) {
-        self.load_inner(path, policy, None);
+    /// Открыть модель в службе (её профиль — в настройках модели службы).
+    pub fn load(&self, path: PathBuf) {
+        self.load_inner(path, None);
     }
 
     /// Как [`Self::load`], но по завершении (успех или ошибка) сигналит в
@@ -240,16 +241,14 @@ impl SynModelRegistry {
     pub fn load_with_notify(
         &self,
         path: PathBuf,
-        policy: QuantPolicy,
         notify: tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>,
     ) {
-        self.load_inner(path, policy, Some(notify));
+        self.load_inner(path, Some(notify));
     }
 
     fn load_inner(
         &self,
         path: PathBuf,
-        policy: QuantPolicy,
         notify: Option<tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>>,
     ) {
         if self.loading.get_untracked() {
@@ -272,7 +271,7 @@ impl SynModelRegistry {
         registry.error.set(None);
 
         std::thread::spawn(move || {
-            log::info!("[syn_chat] модель {:?} — в службе (пресет {} — настройки модели в службе)", path, policy.preset_name);
+            log::info!("[syn_chat] модель {:?} — в службе", path);
             let t0 = std::time::Instant::now();
             match open_in_service(&path) {
                 Ok(loaded) => {

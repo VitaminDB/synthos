@@ -116,14 +116,11 @@ fn open_bundle(path: PathBuf) {
 }
 
 fn load_model(path: PathBuf) {
-    let app = use_context::<AppCtx>();
     let reg = use_context::<SynModelRegistry>();
     if reg.loading.get_untracked() {
         return;
     }
-    let policy =
-        crate::config::resolve_model_profile(&app.model_profiles.get_untracked(), &path).policy;
-    reg.load(path, policy);
+    reg.load(path);
     navigate("syn_chat");
 }
 

@@ -246,15 +246,9 @@ fn run() -> std::result::Result<(), String> {
     provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&cfg));
     provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
 
-    // Модель — той же политикой, что выбрала бы страница чата.
-    let policy = synthos::config::resolve_model_profile(
-        &app_ctx.model_profiles.get_untracked(),
-        &bundle,
-    )
-    .policy;
-    eprintln!("agent_smoke: профиль {}", policy.preset_name);
+    // Модель грузит служба со своим профилем.
     let t_load = Instant::now();
-    registry.load(bundle.clone(), policy);
+    registry.load(bundle.clone());
     loop {
         drain();
         if let Some(e) = registry.error.get_untracked() {

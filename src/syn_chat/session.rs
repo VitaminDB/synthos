@@ -2591,13 +2591,7 @@ async fn reload_if_needed(
     };
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {
-        let app_ctx = use_context::<AppCtx>();
-        let policy = crate::config::resolve_model_profile(
-            &app_ctx.model_profiles.get_untracked(),
-            &path,
-        )
-        .policy;
-        use_context::<SynModelRegistry>().load_with_notify(path, policy, tx);
+        use_context::<SynModelRegistry>().load_with_notify(path, tx);
     });
     match rx.await {
         Ok(Ok(m)) => (Some(m), None),

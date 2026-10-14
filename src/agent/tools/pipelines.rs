@@ -644,7 +644,7 @@ fn h3_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
 /// кодировщика H3). Нумерация зависит от порядка и от того, есть ли у видео
 /// дорожка, — агенту она нужна до прогона, чтобы написать промпт.
 fn h3_reference_labels(ctx: &NodeEditorCtx) -> String {
-    use synaptix_video_minimax_h3::refs;
+    use synaptix_io::refs;
     let mut out = String::new();
     for (id, n) in h3_refs_lists(ctx) {
         let items: Vec<std::path::PathBuf> = field_text(&n, "items").lines().map(str::trim).filter(|l| !l.is_empty()).map(std::path::PathBuf::from).collect();

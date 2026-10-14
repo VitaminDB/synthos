@@ -1,6 +1,6 @@
 {
   "name": "LTX: Retake",
-  "description": "Исходное видео (LTX Video Input) + промпт → Text Encoder → Retake (регенерация региона [начало,конец] сек, остальное frozen) → VAE Decode + Audio Decode → Видеоплеер / Save. Одностадийно (без upscale). В Checkpoint укажите чекпойнт LTX-2.3 и Gemma; в Video Input — видео.",
+  "description": "Source video (file) + prompt → LTX Retake: only the [from, to] seconds are regenerated, the rest is kept → decoders → Mux → mp4 and player. Single stage, no upscale.",
   "kind": "full",
   "nodes": [
     {

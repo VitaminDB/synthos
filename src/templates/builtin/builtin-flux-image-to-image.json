@@ -1,6 +1,6 @@
 {
   "name": "FLUX: Image to Image",
-  "description": "Картинка → VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG. Чем меньше denoise, тем ближе к исходнику; 1.0 — рисовать заново в размере картинки.",
+  "description": "Image → Image to Latent → Sampler with strength 0.6 → Image Decoder → PNG. Lower strength stays closer to the source; 1 redraws at the image size.",
   "kind": "full",
   "nodes": [
     {

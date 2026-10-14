@@ -1,6 +1,6 @@
 {
   "name": "LTX: Audio to Video",
-  "description": "Аудио (Audio Input) фиксирует звуковую дорожку, промпт задаёт сцену → Text Encoder → A2V (stage1 video-denoise при frozen-аудио → upscale ×2 → stage2 refine) → VAE Decode + Audio Decode → Видеоплеер / Save. В Checkpoint укажите чекпойнт LTX-2.3, Gemma и upscaler; в Audio Input — звук.",
+  "description": "Audio (file) sets the soundtrack, the prompt the scene → LTX Audio to Video (audio frozen on both stages) → decoders → Mux → mp4 and player.",
   "kind": "full",
   "nodes": [
     {

@@ -1,6 +1,6 @@
 {
   "name": "H3: Turbo (6 шагов)",
-  "description": "Тот же граф, что и Text to Video, но под Turbo LoRA: 6 шагов без CFG (задано в Sampler этого шаблона). Укажите minimax_h3_turbo_v4_step600_ema.safetensors в поле LoRA у Checkpoint — без неё на 6 шагах будет рябь.",
+  "description": "Same graph as Text to Video for the Turbo LoRA: 6 steps without CFG. Put the Turbo LoRA file (minimax_h3_turbo…safetensors) into the LoRA field of H3 Model — without it 6 steps come out noisy.",
   "kind": "full",
   "nodes": [
     {

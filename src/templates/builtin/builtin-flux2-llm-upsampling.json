@@ -1,6 +1,6 @@
 {
   "name": "FLUX.2: LLM Upsampling",
-  "description": "Короткий промпт → LLM переписывает его подробно по инструкции Black Forest Labs (детали, свет, материалы, надписи в кавычках) → Text View (можно поправить) → FLUX.2 → PNG. В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась FLUX.2.",
+  "description": "Short prompt → an LLM expands it per Black Forest Labs guidance (details, light, materials, quoted text) → Text View (editable) → FLUX.2 → PNG.",
   "kind": "full",
   "nodes": [
     {

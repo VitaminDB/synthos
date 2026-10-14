@@ -1,6 +1,6 @@
 {
   "name": "SDXL: Text to Image",
-  "description": "Промпт и негатив → CLIP-L + bigG → Sampler (30 шагов, CFG 5) → VAE Decode → PNG 1024². В Checkpoint — sdxl-base-1.0.syn.",
+  "description": "Prompt and negative → Prompt Encoder (CLIP-L + bigG) → Sampler (30 steps, CFG 5) → Image Decoder → 1024² PNG.",
   "kind": "full",
   "nodes": [
     {

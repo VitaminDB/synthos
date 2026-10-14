@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image 2.1: Text to Image",
-  "description": "Промпт → Text Encoder (Qwen3-VL) → Sampler (40 шагов, без CFG, KV-кэш) → VAE Decode → PNG. Размер — FLUX Empty Latent (стороны кратны 32; родные 1024² и 2048²). В Checkpoint — qwen-image-2.1.syn.",
+  "description": "Prompt → Prompt Encoder (Qwen3-VL) → Sampler (40 steps, no CFG, KV cache) → Image Decoder → PNG. Size in Empty Latent (multiples of 32; native 1024² and 2048²).",
   "kind": "full",
   "nodes": [
     {

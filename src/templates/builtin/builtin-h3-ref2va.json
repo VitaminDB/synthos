@@ -1,6 +1,6 @@
 {
   "name": "H3: References to Video",
-  "description": "Видео по референсам (чекпойнт Ref2VA): до 9 картинок, 3 видео и 3 аудио, всего до 12, в ноде H3 References. Порядок списка задаёт метки <Picture i> / <Video k> / <Audio j> — нода показывает их у каждой строки, на них и ссылается промпт. Промпт — шесть секций (subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music). В Checkpoint нужен бандл Ref2VA: FL2VA референсов не понимает.",
+  "description": "Video from references (Ref2VA model): up to 9 images, 3 videos and 3 audio, 12 total — one file per line in the List node. The order sets the <Picture i> / <Video k> / <Audio j> tags the prompt refers to.",
   "kind": "full",
   "nodes": [
     {

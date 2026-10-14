@@ -1,6 +1,6 @@
 {
   "name": "H3: Text to Video + Audio",
-  "description": "Промпт → Qwen3-VL Text Encoder → Sampler (совместный денойзинг видео и звука) → VAE Decode + Audio Decode → mp4 и плеер. В Checkpoint укажите .syn-бандл MiniMax-H3; энкодер подхватится из бандла. Оригинальный пайплайн: 20 шагов, CFG 5 — дефолты Sampler.",
+  "description": "Prompt → H3 Encoder (Qwen3-VL) → H3 Sampler (joint video and audio, 20 steps, CFG 5) → video and audio decoders → Mux → mp4 and player. Size and duration in H3 Video Size.",
   "kind": "full",
   "nodes": [
     {

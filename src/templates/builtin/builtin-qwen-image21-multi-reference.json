@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image 2.1: Multi-Reference",
-  "description": "Две картинки → Reference → Reference (цепочкой, до 10) → энкодер и Sampler: человек, предмет или стиль с одной картинки в сцене другой. В промпте — <image1>, <image2> по порядку цепочки; размер — Empty Latent.",
+  "description": "Two images → References → References (chained, up to 10) → encoder and sampler. Refer to <image1>, <image2> in chain order; size in Empty Latent.",
   "kind": "full",
   "nodes": [
     {

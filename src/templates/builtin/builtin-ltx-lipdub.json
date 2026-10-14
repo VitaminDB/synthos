@@ -1,6 +1,6 @@
 {
   "name": "LTX: Lipdub",
-  "description": "Reference-видео (лицо) + речь (Audio Input) → синхрон губ под речь: Text Encoder → Lipdub (stage1 A/V append ref+audio → upscale → stage2 refine) → VAE Decode + Audio Decode → Видеоплеер / Save. В Checkpoint укажите чекпойнт LTX-2.3, Gemma, upscaler и lipdub-IC-LoRA (поле LoRA).",
+  "description": "A face video + new speech (files) → LTX LipDub: lips follow the speech, both stages at once → decoders → mp4 and player. The lipdub adapter in the LoRA field of LTX Model.",
   "kind": "full",
   "nodes": [
     {

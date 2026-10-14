@@ -1,6 +1,6 @@
 {
   "name": "FLUX: Text to Image",
-  "description": "Промпт → CLIP-L + T5-XXL → Sampler (28 шагов, guidance 3.5) → VAE Decode → PNG. В Checkpoint укажите бандл flux.1-dev.syn (или каталог diffusers); размер картинки — в Empty Latent.",
+  "description": "Prompt → Prompt Encoder → Sampler (28 steps, guidance 3.5 by default) → Image Decoder → PNG. Model: FLUX.1 from the service library; size in Empty Latent.",
   "kind": "full",
   "nodes": [
     {

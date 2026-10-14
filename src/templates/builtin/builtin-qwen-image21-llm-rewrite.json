@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image 2.1: LLM Prompt Rewrite",
-  "description": "Короткий промпт → LLM переписывает его в подробное описание кадра по инструкции Qwen (Prompt Enhancer: что зафиксировано — сохранить, остальное — додумать, надписи в кавычках) → Text View (можно поправить) → Qwen-Image 2.1 → PNG. В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась DiT.",
+  "description": "Short prompt → an LLM rewrites it into a detailed shot description per Qwen's Prompt Enhancer → Text View (editable) → Qwen-Image 2.1 → PNG.",
   "kind": "full",
   "nodes": [
     {

@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image 2.1: Edit Image",
-  "description": "Картинка → Reference (в энкодер Qwen3-VL и в сэмплер) + инструкция правки → Sampler → PNG в пропорциях исходника. Прозрачные PNG правятся с альфой. Пишите, что изменить и что оставить.",
+  "description": "Image → References (to the encoder and sampler) + edit instruction → Sampler → PNG in the source proportions. Transparent PNGs keep their alpha.",
   "kind": "full",
   "nodes": [
     {

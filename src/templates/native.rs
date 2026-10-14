@@ -79,6 +79,18 @@ fn plan(kind: &str, state: &Value) -> Option<Plan> {
             if let Some(q) = q {
                 f.insert("quant".into(), choice(option(QUANTS, quant(kind, q as u64))));
             }
+            if let (true, Some(i)) = (kind == "qwen_image21_checkpoint", num(state, "resolution_idx")) {
+                let r = ["512", "768", "1024", "1536", "2048"].get(i as usize).copied().unwrap_or("");
+                f.insert("resolution".into(), choice(option(synaptix_flow::ops::stages::RESOLUTIONS, r)));
+            }
+            if kind == "h3_checkpoint" {
+                if let Some(v) = state.get("lora_path").and_then(Value::as_str).filter(|v| !v.is_empty()) {
+                    f.insert("lora".into(), text(v));
+                }
+                if let Some(v) = num(state, "lora_strength") {
+                    f.insert("lora_strength".into(), float(v));
+                }
+            }
             let flow = if kind == "h3_checkpoint" { "flow_h3_model" } else { "flow_image_model" };
             p(flow, f, &[], &[("model", "model")])
         }
@@ -282,6 +294,8 @@ pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
             _ => {}
         }
     }
+    // Крупные референсы H3 («max») — теперь поле кодировщика.
+    let refs_max = nodes.iter().any(|n| str_of(n, "kind") == "h3_references" && n["state"]["data"].get("image_size_idx").and_then(Value::as_u64) == Some(1));
     // H3 с референсами — вариант Ref2VA.
     if kinds.values().any(|k| k == "h3_references") {
         for n in nodes.iter_mut().filter(|n| str_of(n, "kind") == "h3_checkpoint") {
@@ -358,6 +372,11 @@ pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
         plans.insert(id, pl);
     }
     nodes.retain(|n| id_of(n, "id").map(|i| !bypass.contains_key(&i)).unwrap_or(true));
+    if refs_max {
+        for n in nodes.iter_mut().filter(|n| str_of(n, "kind") == "flow_h3_encode") {
+            n["fields"]["ref_size"] = choice(1);
+        }
+    }
     // LipDub и IC-LoRA работают с адаптером модели: без своего — компонент службы.
     let adapter = if nodes.iter().any(|n| str_of(n, "kind") == "flow_ltx_lipdub") {
         Some("lipdub")

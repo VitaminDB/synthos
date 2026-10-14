@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image 2.1: Transparent RGBA",
-  "description": "Стикер, логотип или вырезанный объект без фона: промпт в формате карточки модели («This is an RGBA image with transparency … the background is transparent») → PNG с альфа-каналом. Image Save сохраняет прозрачность.",
+  "description": "Sticker, logo or cut-out object without background: prompt in the model card format (\"This is an RGBA image with transparency … the background is transparent\") → PNG with alpha.",
   "kind": "full",
   "nodes": [
     {

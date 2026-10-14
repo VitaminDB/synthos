@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image: Multi-Image Edit",
-  "description": "Две картинки → Reference → Reference (цепочкой) → энкодер и Sampler: человек, предмет или стиль с одной картинки в сцене другой. Только Qwen-Image-Edit-2509/2511; в промпте — «Picture 1», «Picture 2» по порядку цепочки.",
+  "description": "Two images → References → References (chained) → encoder and sampler: a person, object or style from one image in the other's scene. Qwen-Image-Edit-2509/2511 only; refer to \"Picture 1\", \"Picture 2\".",
   "kind": "full",
   "nodes": [
     {

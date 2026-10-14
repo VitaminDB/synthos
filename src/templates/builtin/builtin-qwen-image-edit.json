@@ -1,6 +1,6 @@
 {
   "name": "Qwen-Image: Edit Image",
-  "description": "Картинка → Reference (в энкодер Qwen2.5-VL и в сэмплер) + инструкция правки → Sampler (true CFG 4, шаги по модели) → PNG ~1 Мп в пропорциях исходника. В Checkpoint — qwen-image-edit-2511.syn или qwen-image-edit.syn.",
+  "description": "Image → References (seen by the encoder and the sampler) + edit instruction → Sampler (true CFG 4) → ~1 MP PNG in the source proportions. Model: Qwen-Image-Edit / 2511.",
   "kind": "full",
   "nodes": [
     {

@@ -1,6 +1,6 @@
 {
   "name": "LTX: IC-LoRA",
-  "description": "Reference-видео (LTX Video Input) задаёт структуру/движение, промпт — содержание → Text Encoder → IC-LoRA (append ref-control) → VAE Decode + Audio Decode → Видеоплеер / Save. В Checkpoint укажите чекпойнт LTX-2.3, Gemma и IC-LoRA-адаптер (поле LoRA); в Video Input — reference-видео.",
+  "description": "A sample video (file) sets the structure or motion, the prompt sets the content → LTX IC-LoRA (signal: as is, Canny edges or depth) → decoders → mp4 and player. Adapter: LoRA field of LTX Model (union / motion or a file).",
   "kind": "full",
   "nodes": [
     {

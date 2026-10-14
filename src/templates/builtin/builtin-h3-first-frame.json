@@ -1,6 +1,6 @@
 {
   "name": "H3: First Frame to Video",
-  "description": "Оживление изображения: Keyframe (слот «первый кадр») уходит и в Text Encoder (как <Picture 1> в презентации промпта), и в Sampler (VAE-энкод в cond-строки). Разрешение AV-латента задайте под пропорции исходника.",
+  "description": "Animate an image: the file goes to the H3 Encoder's first frame (the model sees it as <Picture 1>, the sampler keeps it as frame one). Set the video size to the image proportions.",
   "kind": "full",
   "nodes": [
     {

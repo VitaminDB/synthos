@@ -1,6 +1,6 @@
 {
   "name": "LTX: Image to Video",
-  "description": "Изображение (кадр 0) + промпт → Text Encoder → Sampler Stage1 (A/V, image-cond, NAG) → Upscale ×2 → Stage2-refine → VAE Decode + Audio Decode → Видеоплеер / Save. В Checkpoint укажите чекпойнт LTX-2.3, Gemma и upscaler; в LTX Image — картинку.",
+  "description": "Image (file → LTX Frame, frame 0) + prompt → Stage1 → Upscale ×2 → Stage2 (the frame is held on both stages) → decoders → Mux → mp4 and player.",
   "kind": "full",
   "nodes": [
     {

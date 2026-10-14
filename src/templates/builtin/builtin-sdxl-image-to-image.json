@@ -1,6 +1,6 @@
 {
   "name": "SDXL: Image to Image",
-  "description": "Картинка → SDXL VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG (до 1 Мп, стороны кратны 64). Чем меньше denoise, тем ближе к исходнику.",
+  "description": "Image → Image to Latent → Sampler with strength 0.6 → Image Decoder → PNG (up to 1 MP, sides multiple of 64). Lower strength stays closer to the source.",
   "kind": "full",
   "nodes": [
     {

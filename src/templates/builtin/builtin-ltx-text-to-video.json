@@ -1,6 +1,6 @@
 {
   "name": "LTX: Text to Video",
-  "description": "Промпт → Text Encoder (Gemma) → Sampler Stage1 (A/V, NAG) → Upscale ×2 → Stage2-refine → VAE Decode + Audio Decode → Video Save (mp4) и Видеоплеер (кадры+звук из памяти, параллельно Save). В Checkpoint-ноде укажите чекпойнт LTX-2.3, Gemma и upscaler — .syn-бандлы из каталога моделей (или .safetensors + HF-каталог Gemma). Чекпойнт нужен ИМЕННО distilled (ltx-2.3-22b-distilled-*): стадии идут по distilled-расписанию 8+3 шага, на dev-модели видео выйдет размытым.",
+  "description": "Prompt → LTX Encoder (Gemma) + NAG → Stage1 → Upscale ×2 → Stage2 → video and audio decoders → Mux → mp4 and player. Model: distilled LTX-2.3 from the service library (a dev model gets the distilled LoRA).",
   "kind": "full",
   "nodes": [
     {

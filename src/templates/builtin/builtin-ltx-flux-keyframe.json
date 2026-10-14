@@ -1,6 +1,6 @@
 {
   "name": "LTX: FLUX Frame to Video",
-  "description": "FLUX рисует первый кадр по промпту (16:9, 1344×768) → LTX Image → LTX-2.3 image-to-video со звуком. Два промпта: верхний — что на кадре, нижний — что происходит в видео. В FLUX Checkpoint укажите flux.1-dev.syn, в LTX Checkpoint — чекпойнт, Gemma и upscaler.",
+  "description": "FLUX draws the first frame from a prompt (16:9, 1344×768) → LTX Frame → LTX-2.3 image-to-video with audio. Upper prompt: what is in the frame; lower: what happens in the video.",
   "kind": "full",
   "nodes": [
     {

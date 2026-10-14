@@ -1,6 +1,6 @@
 {
   "name": "FLUX.2: Multi-Reference",
-  "description": "Две картинки → Reference → Reference (цепочкой) → Sampler: персонаж, предмет или стиль с одной картинки в сцене другой. В промпте ссылайтесь на «image 1», «image 2» по порядку цепочки.",
+  "description": "Two images → References → References (chained) → Sampler: a character, object or style from one image placed in the other's scene. Refer to them as \"image 1\", \"image 2\" in chain order.",
   "kind": "full",
   "nodes": [
     {

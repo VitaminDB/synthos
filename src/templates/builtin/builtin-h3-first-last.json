@@ -1,6 +1,6 @@
 {
   "name": "H3: First+Last Frame",
-  "description": "Переход между двумя кадрами: у второй Keyframe-ноды уже выбран слот «последний кадр». Модель поддерживает якоря только на первом и последнем кадрах, середина отвергается на этапе сборки layout.",
+  "description": "Transition between two frames: files into the H3 Encoder's first and last frame — the model anchors only the first and last frames.",
   "kind": "full",
   "nodes": [
     {

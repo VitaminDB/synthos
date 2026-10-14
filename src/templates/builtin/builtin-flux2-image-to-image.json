@@ -1,6 +1,6 @@
 {
   "name": "FLUX.2: Image to Image",
-  "description": "Картинка → VAE Encode → Sampler с denoise 0.7 → VAE Decode → PNG. Чем меньше denoise, тем ближе к исходнику по композиции и цветам; для правки по инструкции — шаблон Edit Image.",
+  "description": "Image → Image to Latent → Sampler with strength 0.7 → Image Decoder → PNG. Lower strength stays closer to the source; for instruction edits use Edit Image.",
   "kind": "full",
   "nodes": [
     {

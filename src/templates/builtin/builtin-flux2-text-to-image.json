@@ -1,6 +1,6 @@
 {
   "name": "FLUX.2: Text to Image",
-  "description": "Промпт → LLM-энкодер (Mistral-24B у dev, Qwen3 у klein) → Sampler (шаги по модели: dev 50, klein 4) → VAE Decode → PNG. В Checkpoint — flux.2-dev.syn, flux.2-klein-4b.syn или flux.2-klein-9b.syn; не влезшее в VRAM стримится.",
+  "description": "Prompt → Prompt Encoder (Mistral-24B for dev, Qwen3 for klein) → Sampler (model steps: dev 50, klein 4) → Image Decoder → PNG. Model: FLUX.2 dev/klein from the service library.",
   "kind": "full",
   "nodes": [
     {

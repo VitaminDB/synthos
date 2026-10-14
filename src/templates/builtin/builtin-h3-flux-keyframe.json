@@ -1,6 +1,6 @@
 {
   "name": "H3: FLUX Frame to Video",
-  "description": "FLUX рисует первый кадр (16:9, 1344×768) → H3 Keyframe → MiniMax-H3 видео со звуком от этого кадра. Верхний промпт — кадр, нижний — действие и звук в формате H3. В FLUX Checkpoint укажите flux.1-dev.syn, в H3 Checkpoint — бандл MiniMax-H3.",
+  "description": "FLUX draws the first frame (16:9, 1344×768) → H3 Encoder first frame → MiniMax-H3 video with audio from it. Upper prompt: the frame; lower: action and sound in H3 format.",
   "kind": "full",
   "nodes": [
     {

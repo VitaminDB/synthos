@@ -1,6 +1,6 @@
 {
   "name": "FLUX.2: Edit Image",
-  "description": "Картинка → Reference → Sampler вместе с инструкцией правки → PNG в размере исходника (до 1 Мп). Пишите, что изменить и что оставить как есть.",
+  "description": "Image → References → Sampler with an edit instruction → PNG at the source size (up to 1 MP). Say what to change and what to keep.",
   "kind": "full",
   "nodes": [
     {

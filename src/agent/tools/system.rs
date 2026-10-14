@@ -1,25 +1,21 @@
 //! Tool `system` — состояние системы и памяти для агента Syn-чата.
 //!
 //! Контракт:
-//! - `{ "action": "status" }` — VRAM (всего / свободно по драйверу /
-//!   доступно с учётом слабины пула активаций), RAM, список моделей в
-//!   памяти: нодовые (`crate::models`, с id для выгрузки) и чат-LLM
-//!   (`SynModelRegistry`).
-//! - `{ "action": "unload", "id"?: N, "all"?: true }` — выгрузить нодовые
-//!   модели из VRAM. Чат-LLM отсюда НЕ выгружается: worker-поток агента
-//!   держит `Arc<LoadedSynModel>` весь ход, веса всё равно не освободятся —
-//!   для этого есть `free_vram` у `pipelines action=run`.
+//! - `{ "action": "status" }` — видеопамять (NVML), RAM, модели в памяти
+//!   службы нейросетей (`crate::models`, с id для выгрузки и программами,
+//!   которые их держат) и чат-LLM (`SynModelRegistry`).
+//! - `{ "action": "unload", "id"?: "id", "all"?: true }` — выгрузить модели
+//!   в службе (их память — у неё).
 //!
 //! Формат результата — секционный plain-text (конвенция `web`/`kb_search`).
 //! Все данные, кроме чат-LLM, читаются без main-thread: `models::list` —
-//! Mutex + атомики, VRAM — прямые CUDA-вызовы, RAM — sysinfo. Снимок
+//! снимок службы, видеопамять — NVML, RAM — sysinfo. Снимок
 //! чат-LLM берётся через `run_on_main_thread` + oneshot (сигналы).
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
 
 use crate::models;
-use crate::syn_chat::model_registry::{act_pool_slack_mb, vram_available_mb, vram_free_mb};
 use crate::syn_chat::SynModelRegistry;
 
 use super::executor::ToolError;
@@ -78,21 +74,9 @@ async fn status() -> Result<String, ToolError> {
 
     let mut out = String::new();
 
-    // VRAM. mem_info даёт (free, total); available добавляет слабину
-    // пула активаций — по ней и надо принимать решения о памяти.
-    out.push_str("--- VRAM (CUDA:0) ---\n");
-    match synaptix_core::device::cuda::mem_info(0) {
-        Ok((_free, total)) => {
-            out.push_str(&format!("total: {} MB\n", total / (1024 * 1024)));
-            out.push_str(&format!("free per driver: {} MB\n", vram_free_mb()));
-            out.push_str(&format!(
-                "available (free + activation pool slack {} MB): {} MB\n",
-                act_pool_slack_mb(),
-                vram_available_mb()
-            ));
-        }
-        Err(_) => out.push_str("CUDA unavailable\n"),
-    }
+    out.push_str("--- VRAM (GPU 0) ---\n");
+    out.push_str(&vram_line());
+    out.push('\n');
 
     // RAM — свежий замер sysinfo, только память (дёшево).
     let mut sys = sysinfo::System::new();
@@ -105,20 +89,22 @@ async fn status() -> Result<String, ToolError> {
     ));
 
     // Нодовые модели: id нужен для action=unload.
-    out.push_str("--- Models in memory (node-graph) ---\n");
+    out.push_str("--- Models in memory (synaptixd service) ---\n");
     let infos = models::list();
     if infos.is_empty() {
         out.push_str("(none)\n");
     } else {
         for m in &infos {
             out.push_str(&format!(
-                "id={} · {} · {} · {} · {} · {}\n",
+                "id={} · {} · {} · {} · {} · {}{} · used by: {}\n",
                 m.id,
                 m.family,
                 m.component,
                 m.label,
                 m.device,
-                models::human_bytes(m.bytes)
+                models::human_bytes(m.bytes),
+                if m.busy { " · busy" } else { "" },
+                if m.apps.is_empty() { "-".to_string() } else { m.apps.join(", ") }
             ));
         }
     }
@@ -146,9 +132,8 @@ async fn status() -> Result<String, ToolError> {
     }
 
     out.push_str(
-        "---\nUnload node-graph models: system {\"action\":\"unload\",\"id\":N} \
-         or {\"all\":true}. The chat LLM is only unloaded via free_vram on \
-         pipelines run.\n",
+        "---\nUnload models of the service: system {\"action\":\"unload\",\"id\":\"model-id\"} \
+         or {\"all\":true}. The service also unloads idle models by itself when memory is needed.\n",
     );
     Ok(out)
 }
@@ -166,42 +151,34 @@ fn unload(v: &serde_json::Value) -> Result<String, ToolError> {
             _ => false,
         })
         .unwrap_or(false);
-    let id = v
-        .get("id")
-        .and_then(|x| x.as_u64().or_else(|| x.as_str()?.trim().parse::<u64>().ok()));
+    let id = v.get("id").and_then(|x| x.as_str().map(str::to_string).or_else(|| x.as_u64().map(|n| n.to_string())));
 
     let mut out = String::new();
-    let before_mb = vram_available_mb();
+    let before = vram_line();
 
     if all {
         let n = models::unload_all();
-        models::trim_all();
         out.push_str(&format!("models unloaded: {n}\n"));
     } else if let Some(id) = id {
-        let known = models::list().iter().any(|m| m.id == id);
-        if !known {
-            return Err(ToolError::BadArgs(format!(
-                "no model with id={id} in the registry (see system status)"
-            )));
+        if !models::list().iter().any(|m| m.id == id) {
+            return Err(ToolError::BadArgs(format!("no loaded model with id={id} (see system status)")));
         }
-        let released = models::unload(id);
-        models::trim_all();
-        if released {
-            out.push_str(&format!("model id={id} unloaded\n"));
-        } else {
-            out.push_str(&format!(
-                "model id={id} is still held by a running worker — \
-                 wait for the run to finish\n"
-            ));
+        match models::unload(&id) {
+            Ok(()) => out.push_str(&format!("model id={id} unloaded\n")),
+            Err(e) => out.push_str(&format!("model id={id} not unloaded: {e}\n")),
         }
     } else {
         return Err(ToolError::MissingField("id (or all=true)"));
     }
 
-    out.push_str(&format!(
-        "VRAM available: was {} MB, now {} MB\n",
-        before_mb,
-        vram_available_mb()
-    ));
+    out.push_str(&format!("VRAM before: {before}; now: {}\n", vram_line()));
     Ok(out)
+}
+
+/// «used 9.1 GB of 24.0 GB» — по NVML (без своего CUDA-контекста).
+fn vram_line() -> String {
+    match crate::metrics::gpu::GpuMonitor::try_new().and_then(|g| g.sample()) {
+        Some(g) => format!("used {} of {}", models::human_bytes(g.mem_used), models::human_bytes(g.mem_total)),
+        None => "GPU metrics unavailable".into(),
+    }
 }

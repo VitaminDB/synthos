@@ -166,32 +166,32 @@ fn list(items: Vec<ModelInfo>, app: &AppCtx) -> Box<dyn Widget> {
 
 /// Строка модели: две текстовые строки слева, кнопка выгрузки справа.
 fn row(m: ModelInfo, app: AppCtx) -> Box<dyn Widget> {
-    let id = m.id;
-    let name = format!("{} · {}", m.family, m.component);
-    let meta = if m.bytes > 0 {
-        format!("{} · {}", m.device, models::human_bytes(m.bytes))
-    } else {
-        m.device.clone()
-    };
+    let id = m.id.clone();
+    let mut meta = vec![m.device.clone(), m.label.clone()];
+    if m.bytes > 0 {
+        meta.push(models::human_bytes(m.bytes));
+    }
+    let users = if m.apps.is_empty() { tr!("nodes.models_panel.idle") } else { m.apps.join(", ") };
 
     let main = Column::new()
         .gap(1.0)
         .cross_axis_alignment(CrossAxisAlignment::Start)
-        .child(Text::new(name).class("ne-models-row-title"))
-        .child(Text::new(m.label.clone()).class("ne-models-row-label"))
-        .child(Text::new(meta).class("ne-models-row-meta"));
+        .child(Text::new(m.component.clone()).class("ne-models-row-title"))
+        .child(Text::new(format!("{} · {}", m.family, meta.join(" · "))).class("ne-models-row-label"))
+        .child(Text::new(if m.busy { format!("{users} · {}", tr!("nodes.models_panel.busy_now")) } else { users }).class("ne-models-row-meta"));
 
-    let label_for_msg = m.label.clone();
+    let label_for_msg = m.component.clone();
     let unload = ToolButton::new(MI_REMOVE_CIRCLE_OUTLINE)
         .tooltip(tr!("nodes.models_panel.unload"))
         .on_click(move || {
-            if models::unload(id) {
-                app.notifications
-                    .info(tr!("nodes.models_panel.unloaded", label = label_for_msg.clone()));
-            } else {
-                app.notifications
-                    .info(tr!("nodes.models_panel.busy", label = label_for_msg.clone()));
-            }
+            let (id, label, notes) = (id.clone(), label_for_msg.clone(), app.notifications.clone());
+            std::thread::spawn(move || {
+                let r = models::unload(&id);
+                syngui::async_runtime::run_on_main_thread(move || match r {
+                    Ok(()) => notes.info(tr!("nodes.models_panel.unloaded", label = label)),
+                    Err(e) => notes.warning(e),
+                });
+            });
         })
         .class("ne-models-unload");
 

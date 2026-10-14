@@ -2532,22 +2532,8 @@ async fn run_pipeline_tool(
     //    прогона: LTX/H3 держат веса и пулы активаций, и на 24 ГБ LLM
     //    возвращалась в остаток — первый же forward падал с
     //    «alloc_zeros(...) after trim+retries: OOM».
+    // Видеопамятью между моделями прогона и чата распоряжается служба.
     let was_freed = model_path.is_some();
-    if was_freed {
-        let (tx, rx) = tokio::sync::oneshot::channel::<(usize, u64, u64)>();
-        run_on_main_thread(move || {
-            let free_before = crate::models::cuda_free_mb();
-            let n = crate::models::unload_all();
-            crate::models::trim_all();
-            let _ = tx.send((n, free_before, crate::models::cuda_free_mb()));
-        });
-        if let Ok((n, before, after)) = rx.await {
-            log::info!(
-                "[syn_chat] после прогона выгружено нодовых моделей: {n}; \
-                 VRAM свободно {before} -> {after} MB"
-            );
-        }
-    }
     let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
     let llm_note = if was_freed {
         Some(match (&model, &reload_error) {

@@ -26,7 +26,6 @@
 //! перепишет): для очистки ошибки используйте `audio.session.error().set(None)`.
 
 use syngui::tr;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use syngui::async_runtime::{run_on_main_thread, spawn};
@@ -35,9 +34,8 @@ use syngui::context_provider::use_context;
 use syngui::core::sync::Mutex;
 use syngui::signal::{create_effect, use_signal, RwSignal};
 
-use synaptix::facade::asr::{AsrConfig, AsrModelKind, Transcriber};
 
-use crate::config::{AsrEngineKind, AudioModelConfig};
+use crate::config::AudioModelConfig;
 use crate::context::AppCtx;
 
 /// Куда отправлять распознанный текст после транскрипции.
@@ -78,7 +76,8 @@ pub struct AudioCtx {
     pub transcribing: RwSignal<bool>,
     /// Загруженная ASR-модель. `None` пока пользователь не нажал
     /// «Загрузить модель» в Settings → Аудио модели.
-    pub asr: Arc<Mutex<Option<Transcriber>>>,
+    /// Модель распознавания в службе (открыта — служба держит её загруженной).
+    pub asr: Arc<Mutex<Option<ServiceAsr>>>,
     /// Имя текущей загруженной модели — для статус-чипа в UI настроек.
     pub asr_loaded_name: RwSignal<Option<String>>,
     /// Идёт ли загрузка модели (Transcriber::load в spawn_blocking).
@@ -381,7 +380,7 @@ fn fallback_transcribe(actx: AudioCtx, sink: TranscriptSink, wav: Vec<u8>) {
             let Some(t) = guard.as_mut() else {
                 return Err(tr!("voice.asr.model_unloaded"));
             };
-            t.transcribe_wav(&wav_for_asr).map_err(|e| e.to_string())
+            t.transcribe_wav(&wav_for_asr)
         })
         .await;
 
@@ -466,46 +465,59 @@ fn current_audio_model(app: &AppCtx) -> Option<AudioModelConfig> {
 // Загрузка / выгрузка ASR-модели (вызывается из Settings → Аудио модели)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn config_kind_to_asr(kind: AsrEngineKind) -> AsrModelKind {
-    match kind {
-        AsrEngineKind::Whisper => AsrModelKind::Whisper,
-        AsrEngineKind::GigaAm => AsrModelKind::GigaAm,
+/// Модель распознавания речи в службе synaptixd: файл пресета служба
+/// находит в своей библиотеке; устройство и точность — её настройки модели.
+pub struct ServiceAsr {
+    model: String,
+    language: Option<String>,
+    /// Соединение, открывшее модель: пока оно живо, служба держит её.
+    _hold: synaptixd::Client,
+}
+
+impl ServiceAsr {
+    pub fn open(model_path: &str, language: Option<String>) -> Result<Self, String> {
+        let mut c = synaptixd::Client::connect().map_err(|e| format!("служба нейросетей: {e}"))?;
+        let info = c.open(model_path).map_err(|e| format!("служба нейросетей: {e}"))?;
+        Ok(Self { model: info.entry.id, language, _hold: c })
+    }
+
+    /// Распознать PCM (моно); язык — пресета, если не задан.
+    pub fn transcribe_pcm_text(&self, pcm: &[f32], sample_rate: u32, language: Option<&str>) -> Result<String, String> {
+        let lang = language.or(self.language.as_deref());
+        synaptixd::Client::connect()
+            .and_then(|mut c| c.transcribe(&self.model, pcm, sample_rate, lang))
+            .map(|t| t.text)
+            .map_err(|e| format!("распознавание речи в службе: {e}"))
+    }
+
+    /// Распознать WAV (16 бит, моно).
+    pub fn transcribe_wav(&self, wav: &[u8]) -> Result<String, String> {
+        let (pcm, sr) = wav_mono(wav).ok_or("WAV записи не разобран")?;
+        self.transcribe_pcm_text(&pcm, sr, None)
     }
 }
 
-/// Маппит строковый `device` из `AudioModelConfig` в `synaptix_core::Device`.
-/// `"gpu_auto"` выбирает GPU только в GPU-сборке (`asr-cuda`/`asr-metal`),
-/// иначе fallback на CPU (без паники).
-fn config_device_to_synaptix(s: &str) -> synaptix::facade::asr::Device {
-    use synaptix::facade::asr::Device;
-    match s {
-        "gpu_auto" => audio_gpu_device(),
-        _ => Device::Cpu,
-    }
-}
-
-fn audio_gpu_device() -> synaptix::facade::asr::Device {
-    synaptix::facade::asr::Device::Cuda(0)
-}
-
-/// Маппит строковый `compute_dtype` из `AudioModelConfig` в [`ComputeDType`].
-/// Принимает F32/BF16/F16 (standard) или FP8E4M3/NVFP4 (native quantized
-/// paths). Unknown → F16.
-fn config_compute_to_compute_dtype(s: &str) -> synaptix::facade::asr::ComputeDType {
-    synaptix::facade::asr::ComputeDType::from_name(s).unwrap_or(synaptix::facade::asr::ComputeDType::F16)
-}
-
-/// Маппит строковый `storage_dtype` из `AudioModelConfig` в `StorageDType`.
-/// На Stage 0 quantized форматы не реализованы — `Transcriber::load`
-/// выдаст warn + downgrade до standard, поэтому здесь просто пробрасываем
-/// что есть. Unknown → F16.
-fn config_storage_to_storage_dtype(s: &str) -> synaptix::facade::asr::StorageDType {
-    match s.to_ascii_lowercase().as_str() {
-        "fp8e4m3" | "fp8" | "mxfp8" => synaptix::facade::asr::StorageDType::MXFP8,
-        other => {
-            synaptix_core::precision::parse_dtype(other).unwrap_or(synaptix::facade::asr::StorageDType::F16)
+/// Отсчёты и частота 16-битного PCM WAV (каналы усредняются).
+fn wav_mono(wav: &[u8]) -> Option<(Vec<f32>, u32)> {
+    let le16 = |i: usize| u16::from_le_bytes([wav[i], wav[i + 1]]);
+    let le32 = |i: usize| u32::from_le_bytes([wav[i], wav[i + 1], wav[i + 2], wav[i + 3]]);
+    let (mut ch, mut sr) = (1usize, 16_000u32);
+    let mut i = 12;
+    while i + 8 <= wav.len() {
+        let id = &wav[i..i + 4];
+        let len = le32(i + 4) as usize;
+        if id == b"fmt " && i + 16 <= wav.len() {
+            ch = le16(i + 10).max(1) as usize;
+            sr = le32(i + 12);
         }
+        if id == b"data" {
+            let data = wav.get(i + 8..(i + 8 + len).min(wav.len()))?;
+            let s: Vec<f32> = data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+            return Some((s.chunks(ch).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect(), sr));
+        }
+        i += 8 + len + (len & 1);
     }
+    None
 }
 
 /// Запустить загрузку ASR-модели по выбранному пресету.
@@ -533,17 +545,11 @@ pub fn load_selected_model() {
         return;
     }
 
-    let cfg = AsrConfig {
-        kind: config_kind_to_asr(model.kind),
-        model_path: PathBuf::from(model.model_path.clone()),
-        language: if model.language.is_empty() || model.language.eq_ignore_ascii_case("auto") {
-            None
-        } else {
-            Some(model.language.clone())
-        },
-        device: config_device_to_synaptix(&model.device),
-        storage_dtype: config_storage_to_storage_dtype(&model.storage_dtype),
-        compute_dtype: config_compute_to_compute_dtype(&model.compute_dtype),
+    let path = model.model_path.clone();
+    let language = if model.language.is_empty() || model.language.eq_ignore_ascii_case("auto") {
+        None
+    } else {
+        Some(model.language.clone())
     };
     let model_name = model.name.clone();
     let actx = app.audio.clone();
@@ -551,7 +557,7 @@ pub fn load_selected_model() {
     actx.asr_loading.set(true);
 
     spawn(async move {
-        let result = tokio::task::spawn_blocking(move || Transcriber::load(cfg)).await;
+        let result = tokio::task::spawn_blocking(move || ServiceAsr::open(&path, language)).await;
         let actx2 = actx.clone();
         run_on_main_thread(move || {
             actx2.asr_loading.set(false);

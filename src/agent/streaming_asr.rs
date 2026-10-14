@@ -36,7 +36,16 @@ pub fn start(stream: Arc<AudioStream>, actx: AudioCtx, language: Option<String>)
         language,
         ..StreamingAsrConfig::default()
     };
-    let handle = StreamingAsr::start(rx, sr, actx.asr.clone(), cfg);
+    // Распознаёт служба: модель открыта в `actx.asr`.
+    let asr = actx.asr.clone();
+    let run: synaptix::facade::asr::stream::TranscribeFn = Arc::new(move |buf, sr, lang| {
+        let guard = asr.lock().map_err(|_| "asr mutex poisoned".to_string())?;
+        match guard.as_ref() {
+            Some(t) => t.transcribe_pcm_text(buf, sr, lang),
+            None => Err("ASR-модель не загружена".to_string()),
+        }
+    });
+    let handle = StreamingAsr::start_with(rx, sr, run, cfg);
 
     let actx_drain = actx.clone();
     let spawn_result = thread::Builder::new()

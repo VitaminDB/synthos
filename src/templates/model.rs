@@ -259,350 +259,47 @@ pub enum NodeStateData {
     LtxAudioInput(LtxAudioInputStateData),
     LtxLipdub(LtxLipdubStateData),
     LtxA2V(LtxA2VStateData),
-    H3Checkpoint(H3CheckpointStateData),
-    H3Sampler(H3SamplerStateData),
-    H3EmptyLatentAv(H3EmptyLatentAvStateData),
-    H3Keyframe(H3KeyframeStateData),
-    H3References(H3ReferencesStateData),
-    FluxCheckpoint(FluxCheckpointStateData),
-    FluxTextEncoder(FluxTextEncoderStateData),
-    FluxEmptyLatent(FluxEmptyLatentStateData),
-    FluxVaeEncode(FluxVaeEncodeStateData),
-    FluxSampler(FluxSamplerStateData),
-    Flux2Checkpoint(Flux2CheckpointStateData),
-    /// Настройки те же, что у FLUX VAE Encode.
-    Flux2VaeEncode(FluxVaeEncodeStateData),
-    Flux2Sampler(Flux2SamplerStateData),
-    QwenImageCheckpoint(QwenImageCheckpointStateData),
-    QwenImageSampler(QwenImageSamplerStateData),
-    QwenImage21Checkpoint(QwenImage21CheckpointStateData),
-    QwenImage21Sampler(QwenImage21SamplerStateData),
-    SdxlCheckpoint(SdxlCheckpointStateData),
-    /// Настройки те же, что у FLUX VAE Encode.
-    SdxlVaeEncode(FluxVaeEncodeStateData),
-    SdxlSampler(SdxlSamplerStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
 }
 
-/// State FLUX Checkpoint: бандл/каталог и железо. `quant_idx` —
-/// `nodes::flux::QUANT_OPTIONS` (по умолчанию mxfp8).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FluxCheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default = "default_flux_quant_idx")]
-    pub quant_idx: usize,
-    #[serde(default)]
-    pub memory_mode_idx: usize,
-    #[serde(default)]
-    pub resident: bool,
-}
 
-impl Default for FluxCheckpointStateData {
-    fn default() -> Self {
-        Self {
-            model_path: None,
-            device_idx: 0,
-            quant_idx: default_flux_quant_idx(),
-            memory_mode_idx: 0,
-            resident: false,
-        }
-    }
-}
 
-fn default_flux_quant_idx() -> usize {
-    crate::pages::node_editor::nodes::flux::DEFAULT_QUANT_IDX
-}
 
-/// State FLUX Text Encoder: длина T5 (0 — по модели).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct FluxTextEncoderStateData {
-    #[serde(default)]
-    pub seq_len_idx: usize,
-}
 
-/// State FLUX Empty Latent: размер картинки и пропорция (0 — свободно).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FluxEmptyLatentStateData {
-    #[serde(default = "default_flux_side")]
-    pub width: u32,
-    #[serde(default = "default_flux_side")]
-    pub height: u32,
-    #[serde(default)]
-    pub aspect_idx: usize,
-}
 
-impl Default for FluxEmptyLatentStateData {
-    fn default() -> Self {
-        Self { width: default_flux_side(), height: default_flux_side(), aspect_idx: 0 }
-    }
-}
 
-fn default_flux_side() -> u32 {
-    crate::pages::node_editor::nodes::flux::latent::DEFAULT_SIDE
-}
 
-/// State FLUX VAE Encode: вписывание в размер со входа `size`
-/// (0 — растянуть, 1 — обрезать по центру).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct FluxVaeEncodeStateData {
-    #[serde(default)]
-    pub resize_idx: usize,
-}
 
-/// State FLUX Sampler. Дефолты — FLUX.1-dev: 28 шагов, guidance 3.5;
-/// `denoise` < 1 работает, только когда на входе латент картинки.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FluxSamplerStateData {
-    #[serde(default = "default_flux_steps")]
-    pub steps: u32,
-    #[serde(default = "default_flux_guidance")]
-    pub guidance: f32,
-    #[serde(default)]
-    pub seed: u64,
-    #[serde(default = "default_flux_denoise")]
-    pub denoise: f32,
-}
 
-impl Default for FluxSamplerStateData {
-    fn default() -> Self {
-        Self {
-            steps: default_flux_steps(),
-            guidance: default_flux_guidance(),
-            seed: 0,
-            denoise: default_flux_denoise(),
-        }
-    }
-}
 
-pub fn default_flux_steps() -> u32 {
-    crate::pages::node_editor::nodes::flux::sampler::DEFAULT_STEPS
-}
 
-pub fn default_flux_guidance() -> f32 {
-    crate::pages::node_editor::nodes::flux::sampler::DEFAULT_GUIDANCE
-}
 
-fn default_flux_denoise() -> f32 {
-    1.0
-}
 
-/// State FLUX.2 Checkpoint: бандл/каталог и железо. `quant_idx` —
-/// `nodes::flux2::QUANT_OPTIONS` (по умолчанию mxfp8).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Flux2CheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default = "default_flux2_quant_idx")]
-    pub quant_idx: usize,
-    #[serde(default)]
-    pub memory_mode_idx: usize,
-    #[serde(default)]
-    pub resident: bool,
-}
 
-impl Default for Flux2CheckpointStateData {
-    fn default() -> Self {
-        Self { model_path: None, device_idx: 0, quant_idx: default_flux2_quant_idx(), memory_mode_idx: 0, resident: false }
-    }
-}
 
-fn default_flux2_quant_idx() -> usize {
-    crate::pages::node_editor::nodes::flux2::DEFAULT_QUANT_IDX
-}
 
-/// State FLUX.2 Sampler. `steps` 0 — по модели (dev 50, klein 4); guidance
-/// у dev — эмбеддинг, у klein base — CFG, дистиллированный klein его не
-/// использует; `denoise` < 1 работает, только когда на входе латент картинки.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Flux2SamplerStateData {
-    #[serde(default)]
-    pub steps: u32,
-    #[serde(default = "default_flux2_guidance")]
-    pub guidance: f32,
-    #[serde(default)]
-    pub seed: u64,
-    #[serde(default = "default_flux_denoise")]
-    pub denoise: f32,
-}
 
-impl Default for Flux2SamplerStateData {
-    fn default() -> Self {
-        Self { steps: 0, guidance: default_flux2_guidance(), seed: 0, denoise: default_flux_denoise() }
-    }
-}
 
-pub fn default_flux2_guidance() -> f32 {
-    crate::pages::node_editor::nodes::flux2::sampler::DEFAULT_GUIDANCE
-}
 
-/// State Qwen-Image Checkpoint: бандл/каталог и железо. `quant_idx` —
-/// `nodes::qwen_image::QUANT_OPTIONS` (по умолчанию mxfp8).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QwenImageCheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default = "default_qwen_image_quant_idx")]
-    pub quant_idx: usize,
-    #[serde(default)]
-    pub memory_mode_idx: usize,
-    #[serde(default)]
-    pub resident: bool,
-}
 
-impl Default for QwenImageCheckpointStateData {
-    fn default() -> Self {
-        Self {
-            model_path: None,
-            device_idx: 0,
-            quant_idx: default_qwen_image_quant_idx(),
-            memory_mode_idx: 0,
-            resident: false,
-        }
-    }
-}
 
-fn default_qwen_image_quant_idx() -> usize {
-    crate::pages::node_editor::nodes::qwen_image::DEFAULT_QUANT_IDX
-}
 
-/// State Qwen-Image Sampler. `steps` 0 — по модели (Edit 50, 2509/2511 40);
-/// `cfg` — масштаб true CFG (≤ 1 — без CFG).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QwenImageSamplerStateData {
-    #[serde(default)]
-    pub steps: u32,
-    #[serde(default = "default_qwen_image_cfg")]
-    pub cfg: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for QwenImageSamplerStateData {
-    fn default() -> Self {
-        Self { steps: 0, cfg: default_qwen_image_cfg(), seed: 0 }
-    }
-}
 
-fn default_qwen_image_cfg() -> f32 {
-    crate::pages::node_editor::nodes::qwen_image::sampler::DEFAULT_CFG
-}
 
-/// State Qwen-Image 2.1 Checkpoint: бандл/каталог, железо и разрешение
-/// (`nodes::qwen_image21::RESOLUTION_OPTIONS`, по умолчанию 1024).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QwenImage21CheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default = "default_qwen_image21_quant_idx")]
-    pub quant_idx: usize,
-    #[serde(default)]
-    pub memory_mode_idx: usize,
-    #[serde(default = "default_qwen_image21_resolution_idx")]
-    pub resolution_idx: usize,
-    #[serde(default)]
-    pub resident: bool,
-}
 
-impl Default for QwenImage21CheckpointStateData {
-    fn default() -> Self {
-        Self {
-            model_path: None,
-            device_idx: 0,
-            quant_idx: default_qwen_image21_quant_idx(),
-            memory_mode_idx: 0,
-            resolution_idx: default_qwen_image21_resolution_idx(),
-            resident: false,
-        }
-    }
-}
 
-fn default_qwen_image21_quant_idx() -> usize {
-    crate::pages::node_editor::nodes::qwen_image21::DEFAULT_QUANT_IDX
-}
 
-fn default_qwen_image21_resolution_idx() -> usize {
-    crate::pages::node_editor::nodes::qwen_image21::DEFAULT_RESOLUTION_IDX
-}
 
-/// State Qwen-Image 2.1 Sampler. `steps` 0 — по модели (40); `cfg` — масштаб
-/// true CFG (≤ 1 — без CFG, умолчание модели); `kv_cache` — кэш K/V префикса.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QwenImage21SamplerStateData {
-    #[serde(default)]
-    pub steps: u32,
-    #[serde(default = "default_qwen_image21_cfg")]
-    pub cfg: f32,
-    #[serde(default)]
-    pub seed: u64,
-    #[serde(default = "default_true")]
-    pub kv_cache: bool,
-}
 
-impl Default for QwenImage21SamplerStateData {
-    fn default() -> Self {
-        Self { steps: 0, cfg: default_qwen_image21_cfg(), seed: 0, kv_cache: true }
-    }
-}
 
-fn default_qwen_image21_cfg() -> f32 {
-    crate::pages::node_editor::nodes::qwen_image21::sampler::DEFAULT_CFG
-}
 
-/// State SDXL Checkpoint. `quant_idx` — `nodes::sdxl::QUANT_OPTIONS`
-/// (по умолчанию плотный F16).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct SdxlCheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default)]
-    pub quant_idx: usize,
-    #[serde(default)]
-    pub resident: bool,
-}
 
-/// State SDXL Sampler; `denoise` работает, только когда на входе латент
-/// картинки (SDXL VAE Encode).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SdxlSamplerStateData {
-    #[serde(default = "default_sdxl_steps")]
-    pub steps: u32,
-    #[serde(default = "default_sdxl_guidance")]
-    pub guidance: f32,
-    #[serde(default)]
-    pub seed: u64,
-    #[serde(default = "default_sdxl_denoise")]
-    pub denoise: f32,
-}
 
-impl Default for SdxlSamplerStateData {
-    fn default() -> Self {
-        Self { steps: default_sdxl_steps(), guidance: default_sdxl_guidance(), seed: 0, denoise: default_sdxl_denoise() }
-    }
-}
 
-fn default_sdxl_steps() -> u32 {
-    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_STEPS
-}
 
-fn default_sdxl_guidance() -> f32 {
-    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_GUIDANCE
-}
 
-fn default_sdxl_denoise() -> f32 {
-    crate::pages::node_editor::nodes::sdxl::sampler::DEFAULT_DENOISE
-}
 
 /// State ноды Image: путь к картинке.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -859,139 +556,19 @@ fn default_ltx_lora_strength() -> f32 {
     1.0
 }
 
-/// State Checkpoint-ноды MiniMax-H3: `.syn`-бандлы модели и энкодера
-/// (или каталоги — путь хранится как есть) + LoRA и device/quant/compute.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct H3CheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub encoder_path: Option<String>,
-    #[serde(default)]
-    pub lora_path: Option<String>,
-    #[serde(default = "default_h3_lora_strength")]
-    pub lora_strength: f32,
-    #[serde(default)]
-    pub variant_idx: usize,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default)]
-    pub quant_dit_idx: usize,
-    #[serde(default)]
-    pub quant_enc_idx: usize,
-    #[serde(default)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub memory_mode_idx: usize,
-    /// Держать DiT в VRAM после прогона. Старые шаблоны → false.
-    #[serde(default)]
-    pub resident: bool,
-}
 
-/// State ноды H3 Keyframe: картинка и якорь (0 — первый кадр, 1 — последний).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct H3KeyframeStateData {
-    #[serde(default)]
-    pub image_path: Option<String>,
-    #[serde(default)]
-    pub frame_slot_idx: usize,
-    #[serde(default)]
-    pub resize_idx: usize,
-}
 
-fn default_true() -> bool {
-    true
-}
 
-/// Один референс ноды H3 References. Тип (картинка/видео/аудио) — по
-/// расширению файла.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct H3ReferenceItemData {
-    pub path: String,
-    /// Для видео: брать ли его звуковую дорожку как `<Audio j>`.
-    #[serde(default = "default_true")]
-    pub use_audio: bool,
-}
 
-/// State ноды H3 References: референсы Ref2VA по порядку — порядок задаёт
-/// номера `<Picture i>` / `<Video k>` / `<Audio j>`, на которые ссылается
-/// промпт.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct H3ReferencesStateData {
-    #[serde(default)]
-    pub items: Vec<H3ReferenceItemData>,
-    /// 0 — match (до площади кадра), 1 — max (2048 по короткой стороне).
-    #[serde(default)]
-    pub image_size_idx: usize,
-}
 
-fn default_h3_lora_strength() -> f32 {
-    1.0
-}
 
-/// State Sampler-ноды MiniMax-H3. Дефолты — оригинальный пайплайн
-/// (20 шагов, CFG 5); турбо-шаблон задаёт свои значения явно.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct H3SamplerStateData {
-    #[serde(default = "default_h3_steps")]
-    pub steps: u32,
-    #[serde(default = "default_h3_cfg_scale")]
-    pub cfg_scale: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for H3SamplerStateData {
-    fn default() -> Self {
-        Self { steps: default_h3_steps(), cfg_scale: default_h3_cfg_scale(), seed: 0 }
-    }
-}
 
-pub fn default_h3_steps() -> u32 {
-    20
-}
 
-pub fn default_h3_cfg_scale() -> f32 {
-    5.0
-}
 
-/// State Empty AV Latent ноды MiniMax-H3: размеры кадра, длительность и
-/// выбранная пропорция (индекс в `minimax_h3::latent::ASPECT_OPTIONS`,
-/// 0 = «Свободно»).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct H3EmptyLatentAvStateData {
-    #[serde(default = "default_h3_width")]
-    pub width: u32,
-    #[serde(default = "default_h3_height")]
-    pub height: u32,
-    #[serde(default = "default_h3_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub aspect_idx: usize,
-}
 
-impl Default for H3EmptyLatentAvStateData {
-    fn default() -> Self {
-        Self {
-            width: default_h3_width(),
-            height: default_h3_height(),
-            duration_seconds: default_h3_duration(),
-            aspect_idx: 0,
-        }
-    }
-}
 
-pub fn default_h3_width() -> u32 {
-    1344
-}
 
-pub fn default_h3_height() -> u32 {
-    768
-}
-
-pub fn default_h3_duration() -> f32 {
-    5.0
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct LtxTextEncoderStateData {

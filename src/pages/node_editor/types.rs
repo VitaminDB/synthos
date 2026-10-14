@@ -418,87 +418,16 @@ pub enum NodeKind {
     /// `(model, v_enc, a_enc, audio) → (video_latent, audio_tokens)` —
     /// audio→video (видео под фиксированное входное аудио).
     LtxA2V,
-    /// MiniMax-H3: конфиг чекпойнта (DiT + VAE + audio VAE + энкодер + LoRA).
-    H3Checkpoint,
-    /// MiniMax-H3: промпт + ключевые кадры → кондиционирование Qwen3-VL.
-    H3TextEncoder,
-    /// MiniMax-H3: пустой AV-латент (ширина/высота/кадры со снапом 17k+5).
-    H3EmptyLatentAv,
-    /// MiniMax-H3: изображение → ключевой кадр (первый/последний).
-    H3Keyframe,
-    H3References,
-    /// MiniMax-H3: совместный денойзинг видео и звука.
-    H3Sampler,
-    /// MiniMax-H3: видео-латент → RGB-кадры (ViT-декодер VAE).
-    H3VaeDecode,
-    /// MiniMax-H3: аудио-латент → стерео 32 кГц (DAC + BigVGAN).
-    H3AudioDecode,
-    /// MiniMax-H3: кадры + звук → mp4 через ffmpeg.
-    H3VideoSave,
 
     // ── FLUX.1 (Нейро → FLUX) ──
-    /// FLUX: `.syn`-бандл/каталог + квант, память. Лёгкий хэндл.
-    FluxCheckpoint,
-    /// FLUX: промпт → CLIP pooled + T5.
-    FluxTextEncoder,
-    /// FLUX: размер картинки (пустой латент).
-    FluxEmptyLatent,
-    /// FLUX: картинка → латент для img2img.
-    FluxVaeEncode,
-    /// FLUX: денойз (txt2img или img2img).
-    FluxSampler,
-    /// FLUX: латент → картинка.
-    FluxVaeDecode,
 
     // ── FLUX.2 (Нейро → FLUX.2) ──
-    /// FLUX.2: `.syn`-бандл/каталог (dev / klein) + квант, память.
-    Flux2Checkpoint,
-    /// FLUX.2: промпт → скрытые состояния LLM (Mistral-24B / Qwen3).
-    Flux2TextEncoder,
-    /// FLUX.2: картинка → токены референса для правки (цепочкой).
-    Flux2Reference,
-    /// FLUX.2: картинка → латент для img2img.
-    Flux2VaeEncode,
-    /// FLUX.2: денойз (+ референсы).
-    Flux2Sampler,
-    /// FLUX.2: латент → картинка.
-    Flux2VaeDecode,
 
     // ── Qwen-Image (Нейро → Qwen-Image) ──
-    /// Qwen-Image: `.syn`-бандл/каталог (Edit / Edit-2509 / Edit-2511) + квант, память.
-    QwenImageCheckpoint,
-    /// Qwen-Image: промпт (+ картинки) → скрытые состояния Qwen2.5-VL.
-    QwenImageTextEncoder,
-    /// Qwen-Image: картинка для правки (цепочкой) → латент VAE + исходник для энкодера.
-    QwenImageReference,
-    /// Qwen-Image: денойз с true CFG.
-    QwenImageSampler,
-    /// Qwen-Image: латент → картинка.
-    QwenImageVaeDecode,
 
     // ── Qwen-Image 2.1 (Нейро → Qwen-Image 2.1) ──
-    /// Qwen-Image 2.1: `.syn`-бандл/каталог + квант, память, разрешение.
-    QwenImage21Checkpoint,
-    /// Qwen-Image 2.1: промпт (+ референсы) → скрытые состояния Qwen3-VL.
-    QwenImage21TextEncoder,
-    /// Qwen-Image 2.1: референс (цепочкой, до 10) → латент VAE + исходник для энкодера.
-    QwenImage21Reference,
-    /// Qwen-Image 2.1: денойз с KV-кэшем префикса (и true CFG по желанию).
-    QwenImage21Sampler,
-    /// Qwen-Image 2.1: латент → картинка RGBA.
-    QwenImage21VaeDecode,
 
     // ── SDXL (Нейро → SDXL) ──
-    /// SDXL: `.syn`-бандл/каталог + квант UNet.
-    SdxlCheckpoint,
-    /// SDXL: промпт и негатив → CLIP-L + bigG.
-    SdxlTextEncoder,
-    /// SDXL: картинка → латент для img2img.
-    SdxlVaeEncode,
-    /// SDXL: денойз (txt2img или img2img) с CFG.
-    SdxlSampler,
-    /// SDXL: латент → картинка.
-    SdxlVaeDecode,
 
     // ── Картинки ──
     /// Картинка из файла → порт `image`.
@@ -523,6 +452,20 @@ pub enum NodeKind {
     FlowFrame,
     FlowTrim,
     FlowStill,
+    // Стадии моделей в службе: картинки (FLUX.1/FLUX.2/Qwen-Image/SDXL) и MiniMax-H3.
+    FlowImageModel,
+    FlowImageEncode,
+    FlowImageRefs,
+    FlowImageLatent,
+    FlowImageToLatent,
+    FlowImageSample,
+    FlowImageDecode,
+    FlowH3Model,
+    FlowH3Latent,
+    FlowH3Encode,
+    FlowH3Sample,
+    FlowH3DecodeVideo,
+    FlowH3DecodeAudio,
 }
 
 impl NodeKind {
@@ -603,42 +546,6 @@ impl NodeKind {
         NodeKind::LtxAudioInput,
         NodeKind::LtxLipdub,
         NodeKind::LtxA2V,
-        NodeKind::H3Checkpoint,
-        NodeKind::H3TextEncoder,
-        NodeKind::H3EmptyLatentAv,
-        NodeKind::H3Keyframe,
-        NodeKind::H3References,
-        NodeKind::H3Sampler,
-        NodeKind::H3VaeDecode,
-        NodeKind::H3AudioDecode,
-        NodeKind::H3VideoSave,
-        NodeKind::FluxCheckpoint,
-        NodeKind::FluxTextEncoder,
-        NodeKind::FluxEmptyLatent,
-        NodeKind::FluxVaeEncode,
-        NodeKind::FluxSampler,
-        NodeKind::FluxVaeDecode,
-        NodeKind::Flux2Checkpoint,
-        NodeKind::Flux2TextEncoder,
-        NodeKind::Flux2Reference,
-        NodeKind::Flux2VaeEncode,
-        NodeKind::Flux2Sampler,
-        NodeKind::Flux2VaeDecode,
-        NodeKind::QwenImageCheckpoint,
-        NodeKind::QwenImageTextEncoder,
-        NodeKind::QwenImageReference,
-        NodeKind::QwenImageSampler,
-        NodeKind::QwenImageVaeDecode,
-        NodeKind::QwenImage21Checkpoint,
-        NodeKind::QwenImage21TextEncoder,
-        NodeKind::QwenImage21Reference,
-        NodeKind::QwenImage21Sampler,
-        NodeKind::QwenImage21VaeDecode,
-        NodeKind::SdxlCheckpoint,
-        NodeKind::SdxlTextEncoder,
-        NodeKind::SdxlVaeEncode,
-        NodeKind::SdxlSampler,
-        NodeKind::SdxlVaeDecode,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
         NodeKind::FlowText,
@@ -657,6 +564,19 @@ impl NodeKind {
         NodeKind::FlowFrame,
         NodeKind::FlowTrim,
         NodeKind::FlowStill,
+        NodeKind::FlowImageModel,
+        NodeKind::FlowImageEncode,
+        NodeKind::FlowImageRefs,
+        NodeKind::FlowImageLatent,
+        NodeKind::FlowImageToLatent,
+        NodeKind::FlowImageSample,
+        NodeKind::FlowImageDecode,
+        NodeKind::FlowH3Model,
+        NodeKind::FlowH3Latent,
+        NodeKind::FlowH3Encode,
+        NodeKind::FlowH3Sample,
+        NodeKind::FlowH3DecodeVideo,
+        NodeKind::FlowH3DecodeAudio,
     ];
 }
 
@@ -785,22 +705,10 @@ pub enum DataBlob {
     Yue2(Yue2Blob),
     /// Хэндлы и тензоры пайплайна LTX-2.3 (synaptix).
     Ltx(LtxBlob),
-    /// Хэндлы и тензоры пайплайна MiniMax-H3 (synaptix).
-    H3(H3Blob),
     /// Хэндл универсальной «Syn Checkpoint»-ноды (LLM/TTS/ASR-модели).
     SynModel(Arc<SynModelHandle>),
     /// Одна картинка — общий тип для FLUX, LTX Image, H3 Keyframe, Image Save.
     Image(Arc<ImageData>),
-    /// Хэндлы и тензоры пайплайна FLUX.1 (synaptix).
-    Flux(FluxBlob),
-    /// Хэндлы и тензоры пайплайна FLUX.2 (латент — общий `FluxBlob::Latent`).
-    Flux2(Flux2Blob),
-    /// Хэндлы и тензоры пайплайна Qwen-Image.
-    QwenImage(QwenImageBlob),
-    /// Хэндлы и тензоры пайплайна Qwen-Image 2.1.
-    QwenImage21(QwenImage21Blob),
-    /// Хэндлы и тензоры пайплайна SDXL.
-    Sdxl(SdxlBlob),
     /// Значение ноды ядра synaptix-flow (файлы, списки — пакеты).
     Flow(synaptix_flow::Val),
 }
@@ -942,244 +850,28 @@ impl std::fmt::Debug for ImageData {
     }
 }
 
-/// Типизированный payload одной из стадий FLUX.1.
-#[derive(Debug)]
-pub enum FluxBlob {
-    Model(Arc<FluxModelHandle>),
-    /// CLIP pooled `[1, 768]` + T5 `[1, L, 4096]`.
-    Conditioning(Arc<synaptix_image_flux::FluxConditioning>),
-    /// Латент: пустой (только размер) или картинки для img2img/декода.
-    Latent(Arc<FluxLatent>),
-}
 
-/// Типизированный payload стадий FLUX.2. Хэндл чекпойнта — тот же POD, что у
-/// FLUX.1 (путь, устройство, квант, память), но другой вариант блоба, чтобы
-/// ноды семейств не путали модели на проводе.
-#[derive(Debug)]
-pub enum Flux2Blob {
-    Model(Arc<FluxModelHandle>),
-    /// Склейка скрытых состояний LLM `[1, 512, 3·hidden]` (+ пустой промпт
-    /// для CFG у klein base).
-    Conditioning(Arc<synaptix_image_flux2::Flux2Conditioning>),
-    /// Референсные картинки для правки.
-    References(Arc<synaptix_image_flux2::Flux2References>),
-}
 
-/// Типизированный payload стадий Qwen-Image. Хэндл чекпойнта — тот же POD,
-/// что у FLUX (путь, устройство, квант, память). Латент свой: 16 каналов, как
-/// у FLUX.1, но другой VAE — ноды FLUX его не примут.
-#[derive(Debug)]
-pub enum QwenImageBlob {
-    Model(Arc<FluxModelHandle>),
-    /// Скрытые состояния Qwen2.5-VL `[1, S, 3584]` (+ негатив для true CFG).
-    Conditioning(Arc<synaptix_image_qwen::QwenConditioning>),
-    /// Картинки для правки.
-    References(Arc<QwenImageRefs>),
-    /// Латент `[1, 16, H/8, W/8]` из Qwen-Image Sampler.
-    Latent(Arc<FluxLatent>),
-}
 
-/// Картинки для правки Qwen-Image: исходники (их видит VL-энкодер — Text
-/// Encoder берёт их с того же провода) и их латент VAE (его берёт сэмплер).
-pub struct QwenImageRefs {
-    pub images: Vec<Arc<ImageData>>,
-    pub latents: synaptix_image_qwen::QwenReferences,
-}
 
-impl std::fmt::Debug for QwenImageRefs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "QwenImageRefs({} шт.)", self.images.len())
-    }
-}
 
-/// Конфиг чекпойнта Qwen-Image 2.1: POD FLUX плюс `resolution_idx` —
-/// `output_resolution` пайплайна (`nodes::qwen_image21::RESOLUTION_OPTIONS`):
-/// под него приводятся референсы и от него считается размер выхода.
-#[derive(Clone, Debug, PartialEq)]
-pub struct QwenImage21ModelHandle {
-    pub model_path: PathBuf,
-    pub device_idx: usize,
-    pub quant_idx: usize,
-    pub memory_mode_idx: usize,
-    pub resolution_idx: usize,
-    pub resident: bool,
-}
 
-/// Типизированный payload стадий Qwen-Image 2.1. Латент свой: 64 канала на
-/// токен 16×16 px — ноды FLUX и Qwen-Image его не примут.
-#[derive(Debug)]
-pub enum QwenImage21Blob {
-    Model(Arc<QwenImage21ModelHandle>),
-    /// Скрытые состояния Qwen3-VL `[1, S, 4096]` + маска слотов картинок (+ негатив).
-    Conditioning(Arc<synaptix_image_qwen21::Qwen21Conditioning>),
-    /// Референсы.
-    References(Arc<QwenImage21Refs>),
-    /// Латент `[1, 64, H/16, W/16]` из Qwen-Image 2.1 Sampler.
-    Latent(Arc<FluxLatent>),
-}
 
-/// Референсы Qwen-Image 2.1: исходники (их видит Qwen3-VL — Text Encoder
-/// берёт их с того же провода) и их латент VAE (его берёт сэмплер).
-pub struct QwenImage21Refs {
-    pub images: Vec<Arc<ImageData>>,
-    pub latents: synaptix_image_qwen21::Qwen21References,
-}
 
-impl std::fmt::Debug for QwenImage21Refs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "QwenImage21Refs({} шт.)", self.images.len())
-    }
-}
 
-/// Типизированный payload стадий SDXL. Хэндл — POD FLUX (память не
-/// используется: UNet всегда целиком на карте).
-#[derive(Debug)]
-pub enum SdxlBlob {
-    Model(Arc<FluxModelHandle>),
-    /// CLIP-L ‖ bigG `[2, 77, 2048]` и pooled `[2, 1280]` (негатив, промпт).
-    Conditioning(Arc<synaptix_image_sdxl::SdxlConditioning>),
-    /// Латент `[1, 4, H/8, W/8]` (масштабированный): VAE Encode или Sampler.
-    Latent(Arc<FluxLatent>),
-}
 
-/// Конфиг FLUX-чекпойнта. Дешёвый POD — веса грузят потребители через
-/// `nodes::flux::shared`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FluxModelHandle {
-    /// `.syn`-бандл или каталог diffusers.
-    pub model_path: PathBuf,
-    pub device_idx: usize,
-    pub quant_idx: usize,
-    pub memory_mode_idx: usize,
-    /// Держать трансформер в VRAM между прогонами.
-    pub resident: bool,
-}
 
-/// Латент FLUX. `tensor == None` — пустой латент от Empty Latent: сэмплер
-/// начинает с шума (общий для FLUX.1 и FLUX.2 — это только размер). С
-/// тензором — `[1, 16, H/8, W/8]` у FLUX.1 (VAE Encode / Sampler) или
-/// `[1, 128, H/16, W/16]` у FLUX.2 Sampler.
-pub struct FluxLatent {
-    pub width: usize,
-    pub height: usize,
-    pub tensor: Option<synaptix_core::tensor::Tensor>,
-}
 
-impl std::fmt::Debug for FluxLatent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.tensor {
-            Some(t) => write!(f, "FluxLatent({}x{}, {:?})", self.width, self.height, t.dims()),
-            None => write!(f, "FluxLatent({}x{}, пустой)", self.width, self.height),
-        }
-    }
-}
 
-/// Типизированный payload одной из стадий MiniMax-H3.
-#[derive(Debug)]
-pub enum H3Blob {
-    /// Конфиг чекпойнта от H3Checkpoint-ноды.
-    Model(Arc<H3ModelHandle>),
-    /// Кондиционирование: hidden `[1, L, 5120]` + adaLN-теги токенов.
-    Conditioning(Arc<H3Conditioning>),
-    /// Пустой AV-латент: только геометрия, шум генерит семплер по seed.
-    AvLatent(H3Geometry),
-    /// Видео-латент `[1, 24, T', H', W']` + геометрия.
-    VideoLatent(Arc<H3VideoLatent>),
-    /// Аудио-латент `[1, 32, 2, T]` (40 Гц, стерео).
-    AudioLatent(synaptix_core::tensor::Tensor),
-    /// Ключевой кадр: RGB `[3,H,W]` в [0,1] + индекс пиксель-кадра.
-    Keyframe(Arc<H3Keyframe>),
-    /// Декодированные кадры для превью и сохранения.
-    Frames(Arc<LtxFrames>),
-    /// Референсы Ref2VA: декодированные и нормализованные медиа по порядку.
-    Refs(Arc<H3Refs>),
-}
 
-/// Конфиг H3-чекпойнта: модель (`.syn`-бандл либо HF-каталог) + энкодер +
-/// LoRA + device/quant. Дешёвый POD — веса грузят потребители через
-/// `nodes::minimax_h3::shared`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct H3ModelHandle {
-    /// `.syn`-бандл MiniMax-H3 или каталог варианта (FL2VA/Ref2VA).
-    pub model_path: PathBuf,
-    /// Отдельный `.syn`/каталог энкодера. `None` — энкодер берётся из модели.
-    pub encoder_path: Option<PathBuf>,
-    pub lora_path: Option<PathBuf>,
-    pub lora_strength: f32,
-    pub variant_idx: usize,
-    pub device_idx: usize,
-    pub quant_dit_idx: usize,
-    pub quant_enc_idx: usize,
-    pub compute_idx: usize,
-    pub memory_mode_idx: usize,
-    /// Держать DiT в VRAM после прогона (чекбокс «Держать в памяти»).
-    pub resident: bool,
-}
 
-/// Геометрия генерации: снапнутое число кадров + латентная сетка.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct H3Geometry {
-    pub width: usize,
-    pub height: usize,
-    pub frame_count: usize,
-    pub latent_t: usize,
-    pub latent_h: usize,
-    pub latent_w: usize,
-    pub audio_t: usize,
-}
 
-/// Выход энкодера Qwen3-VL: hidden-состояния слоя 50 + теги модальности.
-pub struct H3Conditioning {
-    pub hidden: synaptix_core::tensor::Tensor,
-    pub tags: Vec<u8>,
-}
 
-impl std::fmt::Debug for H3Conditioning {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "H3Conditioning({:?})", self.hidden.dims())
-    }
-}
 
-#[derive(Debug)]
-pub struct H3VideoLatent {
-    pub tensor: synaptix_core::tensor::Tensor,
-    pub geometry: H3Geometry,
-}
 
-#[derive(Debug)]
-pub struct H3Keyframe {
-    pub image: synaptix_core::tensor::Tensor,
-    pub frame_index: usize,
-    /// Как класть кадр на холст генерации: `false` — растянуть, `true` —
-    /// покрыть и обрезать по центру. Применяет сэмплер: размер знает он.
-    pub center_crop: bool,
-}
 
-/// Строка списка ноды H3 References. `has_audio` — есть ли в файле
-/// аудиопоток (узнаётся пробой при добавлении): от него зависит нумерация
-/// `<Audio j>`, а она нужна уже при написании промпта, до прогона.
-#[derive(Debug, Clone, PartialEq)]
-pub struct H3RefEntry {
-    pub path: PathBuf,
-    pub kind: synaptix_video_minimax_h3::refs::RefKind,
-    pub use_audio: bool,
-    pub has_audio: bool,
-}
 
-/// Декодированные референсы под конкретную геометрию: энкодеру нужны кадры
-/// на 2 fps, сэмплеру — латенты тех же самых медиа, поэтому декодируем один
-/// раз и отдаём обоим. `frame_count` — под какую длину обрезаны видео и звук.
-pub struct H3Refs {
-    pub media: Vec<synaptix_video_minimax_h3::refs::RefMedia>,
-    pub labels: Vec<String>,
-    pub frame_count: usize,
-}
 
-impl std::fmt::Debug for H3Refs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "H3Refs{{{} шт., {} кадров}}", self.media.len(), self.frame_count)
-    }
-}
 
 /// Типизированный payload одной из стадий LTX-2.3. Тензоры —
 /// `synaptix_core`: живут на устройстве из [`LtxModelHandle`].
@@ -1409,7 +1101,6 @@ impl std::fmt::Debug for PortValue {
                 write!(f, "VideoStream({}x{}, {:.1}fps)", s.width, s.height, s.fps_estimate)
             }
             PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(blob) => write!(f, "Data(H3::{blob:?})"),
                 DataBlob::Flow(v) => write!(f, "Data(Flow({v:?}))"),
                 DataBlob::Yue2(Yue2Blob::Model(h)) => {
                     write!(
@@ -1484,33 +1175,6 @@ impl std::fmt::Debug for PortValue {
                     write!(f, "Data(Ltx::AudioInput({:?}))", p.file_name().unwrap_or_default())
                 }
                 DataBlob::Image(img) => write!(f, "Data({img:?})"),
-                DataBlob::Flux(FluxBlob::Model(h)) => {
-                    write!(f, "Data(Flux::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::Flux(FluxBlob::Conditioning(c)) => write!(f, "Data(Flux::{c:?})"),
-                DataBlob::Flux(FluxBlob::Latent(l)) => write!(f, "Data(Flux::{l:?})"),
-                DataBlob::Flux2(Flux2Blob::Model(h)) => {
-                    write!(f, "Data(Flux2::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::Flux2(Flux2Blob::Conditioning(c)) => write!(f, "Data(Flux2::{c:?})"),
-                DataBlob::Flux2(Flux2Blob::References(r)) => write!(f, "Data(Flux2::{r:?})"),
-                DataBlob::QwenImage(QwenImageBlob::Model(h)) => {
-                    write!(f, "Data(QwenImage::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::QwenImage(QwenImageBlob::Conditioning(c)) => write!(f, "Data(QwenImage::{c:?})"),
-                DataBlob::QwenImage(QwenImageBlob::References(r)) => write!(f, "Data(QwenImage::{r:?})"),
-                DataBlob::QwenImage(QwenImageBlob::Latent(l)) => write!(f, "Data(QwenImage::{l:?})"),
-                DataBlob::QwenImage21(QwenImage21Blob::Model(h)) => {
-                    write!(f, "Data(QwenImage21::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::QwenImage21(QwenImage21Blob::Conditioning(c)) => write!(f, "Data(QwenImage21::{c:?})"),
-                DataBlob::QwenImage21(QwenImage21Blob::References(r)) => write!(f, "Data(QwenImage21::{r:?})"),
-                DataBlob::QwenImage21(QwenImage21Blob::Latent(l)) => write!(f, "Data(QwenImage21::{l:?})"),
-                DataBlob::Sdxl(SdxlBlob::Model(h)) => {
-                    write!(f, "Data(Sdxl::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::Sdxl(SdxlBlob::Conditioning(c)) => write!(f, "Data(Sdxl::{c:?})"),
-                DataBlob::Sdxl(SdxlBlob::Latent(l)) => write!(f, "Data(Sdxl::{l:?})"),
                 DataBlob::SynModel(h) => {
                     write!(
                         f,
@@ -1686,93 +1350,13 @@ impl PortValue {
         }
     }
 
-    /// Извлечь хэндл H3-чекпойнта.
-    pub fn as_h3_model(&self) -> Option<Arc<H3ModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь H3-кондиционирование.
-    pub fn as_h3_conditioning(&self) -> Option<Arc<H3Conditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь геометрию пустого AV-латента.
-    pub fn as_h3_av_latent(&self) -> Option<H3Geometry> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::AvLatent(g)) => Some(*g),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь H3 видео-латент.
-    pub fn as_h3_video_latent(&self) -> Option<Arc<H3VideoLatent>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::VideoLatent(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь H3 аудио-латент.
-    pub fn as_h3_audio_latent(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::AudioLatent(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь ключевой кадр H3.
-    pub fn as_h3_keyframe(&self) -> Option<Arc<H3Keyframe>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::Keyframe(k)) => Some(k.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь референсы H3.
-    pub fn as_h3_refs(&self) -> Option<Arc<H3Refs>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::Refs(r)) => Some(r.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь кадры H3 (после VAE-декода).
-    pub fn as_h3_frames(&self) -> Option<Arc<LtxFrames>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::H3(H3Blob::Frames(f)) => Some(f.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
     /// Извлечь картинку (выход FLUX VAE Decode / Image).
     pub fn as_image(&self) -> Option<Arc<ImageData>> {
@@ -1785,175 +1369,22 @@ impl PortValue {
         }
     }
 
-    pub fn as_flux_model(&self) -> Option<Arc<FluxModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux(FluxBlob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_flux_conditioning(&self) -> Option<Arc<synaptix_image_flux::FluxConditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux(FluxBlob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_flux2_model(&self) -> Option<Arc<FluxModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux2(Flux2Blob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_flux2_conditioning(&self) -> Option<Arc<synaptix_image_flux2::Flux2Conditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux2(Flux2Blob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_flux2_references(&self) -> Option<Arc<synaptix_image_flux2::Flux2References>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux2(Flux2Blob::References(r)) => Some(r.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image_model(&self) -> Option<Arc<FluxModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage(QwenImageBlob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image_conditioning(&self) -> Option<Arc<synaptix_image_qwen::QwenConditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage(QwenImageBlob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image_references(&self) -> Option<Arc<QwenImageRefs>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage(QwenImageBlob::References(r)) => Some(r.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image_latent(&self) -> Option<Arc<FluxLatent>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage(QwenImageBlob::Latent(l)) => Some(l.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image21_model(&self) -> Option<Arc<QwenImage21ModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage21(QwenImage21Blob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image21_conditioning(&self) -> Option<Arc<synaptix_image_qwen21::Qwen21Conditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage21(QwenImage21Blob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image21_references(&self) -> Option<Arc<QwenImage21Refs>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage21(QwenImage21Blob::References(r)) => Some(r.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_qwen_image21_latent(&self) -> Option<Arc<FluxLatent>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::QwenImage21(QwenImage21Blob::Latent(l)) => Some(l.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_sdxl_model(&self) -> Option<Arc<FluxModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Sdxl(SdxlBlob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_sdxl_conditioning(&self) -> Option<Arc<synaptix_image_sdxl::SdxlConditioning>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Sdxl(SdxlBlob::Conditioning(c)) => Some(c.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_sdxl_latent(&self) -> Option<Arc<FluxLatent>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Sdxl(SdxlBlob::Latent(l)) => Some(l.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    pub fn as_flux_latent(&self) -> Option<Arc<FluxLatent>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Flux(FluxBlob::Latent(l)) => Some(l.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
     /// Извлечь видео-контекст `[1, T_txt, 4096]`.
     pub fn as_ltx_video_encoding(&self) -> Option<synaptix_core::tensor::Tensor> {
@@ -2904,89 +2335,6 @@ pub enum NodeRuntime {
         a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
         output_version: RwSignal<u32>,
     },
-    H3Checkpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        encoder_path: RwSignal<Option<PathBuf>>,
-        lora_path: RwSignal<Option<PathBuf>>,
-        lora_strength: RwSignal<f32>,
-        variant_idx: RwSignal<usize>,
-        device_idx: RwSignal<usize>,
-        quant_dit_idx: RwSignal<usize>,
-        quant_enc_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
-        memory_mode_idx: RwSignal<usize>,
-        /// Держать DiT в VRAM после прогона.
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<H3ModelHandle>>>>,
-    },
-    H3TextEncoder {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<H3Conditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    H3EmptyLatentAv {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        /// Индекс в `minimax_h3::latent::ASPECT_OPTIONS`: 0 = «Свободно»,
-        /// дальше фиксированные пропорции (16:9, 9:16, …) — ширина и
-        /// высота связаны, портретные варианты дают вертикальное видео.
-        aspect_idx: RwSignal<usize>,
-    },
-    H3Keyframe {
-        path: RwSignal<Option<PathBuf>>,
-        frame_slot_idx: RwSignal<usize>,
-        resize_idx: RwSignal<usize>,
-        image: Arc<Mutex<Option<Arc<H3Keyframe>>>>,
-        error: RwSignal<Option<String>>,
-        output_version: RwSignal<u32>,
-    },
-    H3References {
-        /// Порядок значим: он задаёт номера меток и RoPE-часы раскладки.
-        items: RwSignal<Vec<H3RefEntry>>,
-        /// Индекс в `minimax_h3::references::IMAGE_SIZE_OPTIONS`.
-        image_size_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<H3Refs>>>>,
-        output_version: RwSignal<u32>,
-    },
-    H3Sampler {
-        steps: RwSignal<u32>,
-        cfg_scale: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<Arc<H3VideoLatent>>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    H3VaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        frames: Arc<Mutex<Option<Arc<LtxFrames>>>>,
-        preview_version: RwSignal<u32>,
-        output_version: RwSignal<u32>,
-    },
-    H3AudioDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        buffer: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        output_version: RwSignal<u32>,
-    },
-    H3VideoSave {
-        path: RwSignal<Option<PathBuf>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        saved: RwSignal<Option<String>>,
-        preview: Arc<Mutex<Option<(Arc<LtxFrames>, Option<Arc<AudioBuffer>>)>>>,
-        preview_version: RwSignal<u32>,
-    },
     LtxA2V {
         width: RwSignal<u32>,
         height: RwSignal<u32>,
@@ -2999,252 +2347,6 @@ pub enum NodeRuntime {
         cancel: Arc<std::sync::atomic::AtomicBool>,
         v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
         a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    FluxCheckpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::flux::QUANT_OPTIONS`.
-        quant_idx: RwSignal<usize>,
-        /// Индекс в `nodes::flux::MEMORY_MODE_OPTIONS`.
-        memory_mode_idx: RwSignal<usize>,
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
-    },
-    FluxTextEncoder {
-        /// Индекс в `nodes::flux::SEQ_LEN_OPTIONS` (0 — по модели).
-        seq_len_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_flux::FluxConditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    FluxEmptyLatent {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        /// Индекс в `nodes::flux::latent::ASPECT_OPTIONS`, 0 — свободно.
-        aspect_idx: RwSignal<usize>,
-    },
-    FluxVaeEncode {
-        /// Как вписать картинку в размер латента со входа `size`:
-        /// 0 — растянуть, 1 — покрыть и обрезать по центру.
-        resize_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    FluxSampler {
-        steps: RwSignal<u32>,
-        guidance: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        /// Доля шума для img2img (латент с картинкой на входе).
-        denoise: RwSignal<f32>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    FluxVaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<ImageData>>>>,
-        output_version: RwSignal<u32>,
-    },
-    Flux2Checkpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::flux2::QUANT_OPTIONS`.
-        quant_idx: RwSignal<usize>,
-        /// Индекс в `nodes::flux2::MEMORY_MODE_OPTIONS`.
-        memory_mode_idx: RwSignal<usize>,
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
-    },
-    Flux2TextEncoder {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_flux2::Flux2Conditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    Flux2Reference {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_flux2::Flux2References>>>>,
-        output_version: RwSignal<u32>,
-    },
-    Flux2VaeEncode {
-        /// Как вписать картинку в размер латента со входа `size`:
-        /// 0 — растянуть, 1 — покрыть и обрезать по центру.
-        resize_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    Flux2Sampler {
-        /// 0 — по модели (dev 50, klein 4).
-        steps: RwSignal<u32>,
-        guidance: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        /// Доля шума для img2img (латент с картинкой на входе).
-        denoise: RwSignal<f32>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        /// Итог прогона: шаги, время, блоков на карте.
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    Flux2VaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<ImageData>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImageCheckpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::qwen_image::QUANT_OPTIONS`.
-        quant_idx: RwSignal<usize>,
-        /// Индекс в `nodes::qwen_image::MEMORY_MODE_OPTIONS`.
-        memory_mode_idx: RwSignal<usize>,
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
-    },
-    QwenImageTextEncoder {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_qwen::QwenConditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImageReference {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<QwenImageRefs>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImageSampler {
-        /// 0 — по модели (Edit 50, 2509/2511 40).
-        steps: RwSignal<u32>,
-        /// Масштаб true CFG; ≤ 1 — без CFG (вдвое быстрее).
-        cfg: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        /// Итог прогона: шаги, время, блоков на карте.
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImageVaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<ImageData>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImage21Checkpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::qwen_image21::QUANT_OPTIONS`.
-        quant_idx: RwSignal<usize>,
-        /// Индекс в `nodes::qwen_image21::MEMORY_MODE_OPTIONS`.
-        memory_mode_idx: RwSignal<usize>,
-        /// Индекс в `nodes::qwen_image21::RESOLUTION_OPTIONS`.
-        resolution_idx: RwSignal<usize>,
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<QwenImage21ModelHandle>>>>,
-    },
-    QwenImage21TextEncoder {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_qwen21::Qwen21Conditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImage21Reference {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<QwenImage21Refs>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImage21Sampler {
-        /// 0 — по модели (40).
-        steps: RwSignal<u32>,
-        /// Масштаб true CFG; ≤ 1 или без негатива — без CFG (умолчание модели).
-        cfg: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        /// Кэшировать K/V текста и референсов после первого шага.
-        kv_cache: RwSignal<bool>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        /// Итог прогона: шаги, время, блоков на карте.
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    QwenImage21VaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<ImageData>>>>,
-        output_version: RwSignal<u32>,
-    },
-    SdxlCheckpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        device_idx: RwSignal<usize>,
-        /// Индекс в `nodes::sdxl::QUANT_OPTIONS`.
-        quant_idx: RwSignal<usize>,
-        resident: RwSignal<bool>,
-        handle_cache: Arc<Mutex<Option<Arc<FluxModelHandle>>>>,
-    },
-    SdxlTextEncoder {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<synaptix_image_sdxl::SdxlConditioning>>>>,
-        output_version: RwSignal<u32>,
-    },
-    SdxlVaeEncode {
-        /// Как вписать картинку в размер со входа `size`: 0 — растянуть,
-        /// 1 — покрыть и обрезать по центру.
-        resize_idx: RwSignal<usize>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    SdxlSampler {
-        steps: RwSignal<u32>,
-        guidance: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        /// Сила img2img (латент с картинкой на входе).
-        denoise: RwSignal<f32>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        out: Arc<Mutex<Option<Arc<FluxLatent>>>>,
-        output_version: RwSignal<u32>,
-    },
-    SdxlVaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<ImageData>>>>,
         output_version: RwSignal<u32>,
     },
     ImageLoad {
@@ -3294,34 +2396,6 @@ impl NodeRuntime {
             | R::LtxIcLora { error, .. }
             | R::LtxLipdub { error, .. }
             | R::LtxA2V { error, .. }
-            | R::H3TextEncoder { error, .. }
-            | R::H3Keyframe { error, .. }
-            | R::H3References { error, .. }
-            | R::H3Sampler { error, .. }
-            | R::H3VaeDecode { error, .. }
-            | R::H3AudioDecode { error, .. }
-            | R::H3VideoSave { error, .. }
-            | R::FluxTextEncoder { error, .. }
-            | R::FluxVaeEncode { error, .. }
-            | R::FluxSampler { error, .. }
-            | R::FluxVaeDecode { error, .. }
-            | R::Flux2TextEncoder { error, .. }
-            | R::Flux2Reference { error, .. }
-            | R::Flux2VaeEncode { error, .. }
-            | R::Flux2Sampler { error, .. }
-            | R::Flux2VaeDecode { error, .. }
-            | R::QwenImageTextEncoder { error, .. }
-            | R::QwenImageReference { error, .. }
-            | R::QwenImageSampler { error, .. }
-            | R::QwenImageVaeDecode { error, .. }
-            | R::QwenImage21TextEncoder { error, .. }
-            | R::QwenImage21Reference { error, .. }
-            | R::QwenImage21Sampler { error, .. }
-            | R::QwenImage21VaeDecode { error, .. }
-            | R::SdxlTextEncoder { error, .. }
-            | R::SdxlVaeEncode { error, .. }
-            | R::SdxlSampler { error, .. }
-            | R::SdxlVaeDecode { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             R::Flow(f) => Some(f.error),
@@ -3364,12 +2438,6 @@ impl NodeRuntime {
                 }
                 v
             }
-            R::H3Checkpoint { model_path, .. }
-            | R::FluxCheckpoint { model_path, .. }
-            | R::Flux2Checkpoint { model_path, .. }
-            | R::QwenImageCheckpoint { model_path, .. }
-            | R::QwenImage21Checkpoint { model_path, .. }
-            | R::SdxlCheckpoint { model_path, .. }
             | R::SynCheckpoint { model_path, .. } => {
                 if empty(model_path) {
                     vec!["model_path"]
@@ -3396,13 +2464,7 @@ impl NodeRuntime {
             | R::LtxRetake { progress_pct, .. }
             | R::LtxIcLora { progress_pct, .. }
             | R::LtxLipdub { progress_pct, .. }
-            | R::LtxA2V { progress_pct, .. }
-            | R::H3Sampler { progress_pct, .. }
-            | R::FluxSampler { progress_pct, .. }
-            | R::Flux2Sampler { progress_pct, .. }
-            | R::QwenImageSampler { progress_pct, .. }
-            | R::QwenImage21Sampler { progress_pct, .. }
-            | R::SdxlSampler { progress_pct, .. } => Some(*progress_pct),
+            | R::LtxA2V { progress_pct, .. } => Some(*progress_pct),
             _ => None,
         }
     }
@@ -3425,13 +2487,7 @@ impl NodeRuntime {
             | R::AceStepGenerate { cancel, .. }
             | R::Yue2Generate { cancel, .. }
             | R::Yue2VaeDecode { cancel, .. }
-            | R::Yue2Transcribe { cancel, .. }
-            | R::H3Sampler { cancel, .. }
-            | R::FluxSampler { cancel, .. }
-            | R::Flux2Sampler { cancel, .. }
-            | R::QwenImageSampler { cancel, .. }
-            | R::QwenImage21Sampler { cancel, .. }
-            | R::SdxlSampler { cancel, .. } => Some(cancel.clone()),
+            | R::Yue2Transcribe { cancel, .. } => Some(cancel.clone()),
             R::Flow(f) => Some(f.cancel.clone()),
             _ => None,
         }
@@ -3633,140 +2689,6 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::LtxA2V { running, .. } => {
                 write!(f, "NodeRuntime::LtxA2V{{running={}}}", running.get_untracked())
             }
-            NodeRuntime::H3Checkpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::H3Checkpoint{{model={p}}}")
-            }
-            NodeRuntime::H3TextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::H3TextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::H3EmptyLatentAv{{{}x{}, {:.1}s}}",
-                    width.get_untracked(),
-                    height.get_untracked(),
-                    duration_seconds.get_untracked()
-                )
-            }
-            NodeRuntime::H3Keyframe { path, .. } => {
-                let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::H3Keyframe{{path={p}}}")
-            }
-            NodeRuntime::H3References { items, .. } => {
-                write!(f, "NodeRuntime::H3References{{{} шт.}}", items.get_untracked().len())
-            }
-            NodeRuntime::FluxCheckpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
-                write!(f, "NodeRuntime::FluxCheckpoint{{path={p}}}")
-            }
-            NodeRuntime::FluxTextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::FluxTextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::FluxEmptyLatent { width, height, .. } => {
-                write!(f, "NodeRuntime::FluxEmptyLatent{{{}x{}}}", width.get_untracked(), height.get_untracked())
-            }
-            NodeRuntime::FluxVaeEncode { running, .. } => {
-                write!(f, "NodeRuntime::FluxVaeEncode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::FluxSampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::FluxSampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::FluxVaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::FluxVaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::Flux2Checkpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
-                write!(f, "NodeRuntime::Flux2Checkpoint{{path={p}}}")
-            }
-            NodeRuntime::Flux2TextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::Flux2TextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::Flux2Reference { running, .. } => {
-                write!(f, "NodeRuntime::Flux2Reference{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::Flux2VaeEncode { running, .. } => {
-                write!(f, "NodeRuntime::Flux2VaeEncode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::Flux2Sampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::Flux2Sampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::Flux2VaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::Flux2VaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImageCheckpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
-                write!(f, "NodeRuntime::QwenImageCheckpoint{{path={p}}}")
-            }
-            NodeRuntime::QwenImageTextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::QwenImageTextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImageReference { running, .. } => {
-                write!(f, "NodeRuntime::QwenImageReference{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImageSampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::QwenImageSampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::QwenImageVaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::QwenImageVaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImage21Checkpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
-                write!(f, "NodeRuntime::QwenImage21Checkpoint{{path={p}}}")
-            }
-            NodeRuntime::QwenImage21TextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::QwenImage21TextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImage21Reference { running, .. } => {
-                write!(f, "NodeRuntime::QwenImage21Reference{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::QwenImage21Sampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::QwenImage21Sampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::QwenImage21VaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::QwenImage21VaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::SdxlCheckpoint { model_path, .. } => {
-                let p = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
-                write!(f, "NodeRuntime::SdxlCheckpoint{{path={p}}}")
-            }
-            NodeRuntime::SdxlTextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::SdxlTextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::SdxlVaeEncode { running, .. } => {
-                write!(f, "NodeRuntime::SdxlVaeEncode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::SdxlSampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::SdxlSampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::SdxlVaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::SdxlVaeDecode{{running={}}}", running.get_untracked())
-            }
             NodeRuntime::ImageLoad { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
                 write!(f, "NodeRuntime::ImageLoad{{path={p}}}")
@@ -3774,23 +2696,6 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::ImageSave { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();
                 write!(f, "NodeRuntime::ImageSave{{path={p}}}")
-            }
-            NodeRuntime::H3Sampler { running, steps, .. } => {
-                write!(
-                    f,
-                    "NodeRuntime::H3Sampler{{running={}, steps={}}}",
-                    running.get_untracked(),
-                    steps.get_untracked()
-                )
-            }
-            NodeRuntime::H3VaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::H3VaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::H3AudioDecode { running, .. } => {
-                write!(f, "NodeRuntime::H3AudioDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::H3VideoSave { saved, .. } => {
-                write!(f, "NodeRuntime::H3VideoSave{{saved={:?}}}", saved.get_untracked())
             }
             NodeRuntime::AceStepCheckpoint { models_dir, .. } => {
                 let p = models_dir.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());

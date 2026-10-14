@@ -1,0 +1,281 @@
+{
+  "name": "FLUX.2: LLM Upsampling",
+  "description": "Короткий промпт → LLM переписывает его подробно по инструкции Black Forest Labs (детали, свет, материалы, надписи в кавычках) → Text View (можно поправить) → FLUX.2 → PNG. В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась FLUX.2.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_image_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "flux-2-klein-4b"
+        },
+        "quant": {
+          "type": "Choice",
+          "value": 2
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "кот читает газету в уличном кафе в Париже",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "kind": "syn_checkpoint",
+      "pos": {
+        "x": 60.0,
+        "y": 680.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "SynCheckpoint",
+        "data": {
+          "model_path": null,
+          "device_idx": 0,
+          "storage_idx": 4,
+          "compute_idx": 0,
+          "resident": false
+        }
+      }
+    },
+    {
+      "id": 9,
+      "kind": "llm",
+      "pos": {
+        "x": 480.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "Llm",
+        "data": {
+          "system_prompt": "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. Rewrite user prompts to be more descriptive while strictly preserving their core subject and intent.\n\nGuidelines:\n1. Structure: Keep structured inputs structured (enhance within fields). Convert natural language to detailed paragraphs.\n2. Details: Add concrete visual specifics - form, scale, textures, materials, lighting (quality, direction, color), shadows, spatial relationships, and environmental context.\n3. Text in Images: Put ALL text in quotation marks, matching the prompt's language. Always provide explicit quoted text for objects that would contain text in reality (signs, labels, screens, etc.) - without it, the model generates gibberish.\n4. Language: Write the revised prompt in English, whatever the language of the request; only the quoted text that must appear in the image keeps its original language.\n\nOutput only the revised prompt and nothing else.",
+          "context": 4096,
+          "think": false,
+          "max_tokens": 512,
+          "temperature": 0.15000000596046448,
+          "top_k": 0,
+          "top_p": 1.0,
+          "min_p": 0.0,
+          "repetition_penalty": 1.0,
+          "seed": 0
+        }
+      }
+    },
+    {
+      "id": 10,
+      "kind": "text_view",
+      "pos": {
+        "x": 940.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "",
+          "width": 360.0,
+          "height": 260.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_image_encode",
+      "pos": {
+        "x": 1380.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_image_latent",
+      "pos": {
+        "x": 1380.0,
+        "y": 670.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 1024.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1024.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_image_sample",
+      "pos": {
+        "x": 1820.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_image_decode",
+      "pos": {
+        "x": 2260.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "image_save",
+      "pos": {
+        "x": 2700.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 9,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 8,
+      "from_port": "model",
+      "to_node": 9,
+      "to_port": "model"
+    },
+    {
+      "from_node": 9,
+      "from_port": "answer",
+      "to_node": 10,
+      "to_port": "in"
+    },
+    {
+      "from_node": 10,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 4,
+      "from_port": "latent",
+      "to_node": 5,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 7,
+      "to_port": "image"
+    }
+  ],
+  "viewport": null
+}

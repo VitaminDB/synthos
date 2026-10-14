@@ -37,7 +37,7 @@ use crate::pages::node_editor::registry::{self, NodeCategory};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::tabs::EditorWorkspace;
 use crate::pages::node_editor::types::{
-    Connection, NodeKind, NodeRuntime, PortKind, PortsSpec, PortSide,
+    Connection, NodeKind, PortKind, PortsSpec, PortSide,
 };
 use crate::syn_chat::attach::blobs;
 use crate::syn_chat::SynChatCtx;
@@ -374,7 +374,10 @@ fn ports_line(spec: PortsSpec) -> String {
 /// `*_OPTIONS`-константы нод.
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
-        acestep, ffmpeg_player, flux, flux2, ltx, minimax_h3, qwen_image, qwen_image21, sdxl, syn_checkpoint,
+        acestep,
+        ffmpeg_player,
+        ltx,
+        syn_checkpoint,
         yue2,
     };
     match kind {
@@ -421,50 +424,6 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("fps_idx", ltx::FPS_OPTIONS),
             ("control_idx", ltx::CONTROL_OPTIONS),
         ],
-        NodeKind::H3Checkpoint => vec![
-            ("variant_idx", minimax_h3::VARIANT_OPTIONS),
-            ("device_idx", minimax_h3::DEVICE_OPTIONS),
-            ("quant_dit_idx", minimax_h3::QUANT_DIT_OPTIONS),
-            ("quant_enc_idx", minimax_h3::QUANT_ENC_OPTIONS),
-            ("compute_idx", minimax_h3::COMPUTE_OPTIONS),
-            ("memory_mode_idx", minimax_h3::MEMORY_MODE_OPTIONS),
-        ],
-        NodeKind::H3EmptyLatentAv => vec![("aspect_idx", minimax_h3::latent::ASPECT_OPTIONS)],
-        NodeKind::H3Keyframe => vec![
-            ("frame_slot_idx", crate::pages::node_editor::controls::FRAME_SLOTS),
-            ("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES),
-        ],
-        NodeKind::H3References => {
-            vec![("image_size_idx", minimax_h3::references::IMAGE_SIZE_OPTIONS)]
-        }
-        NodeKind::FluxCheckpoint => vec![
-            ("device_idx", flux::DEVICE_OPTIONS),
-            ("quant_idx", flux::QUANT_OPTIONS),
-            ("memory_mode_idx", flux::MEMORY_MODE_OPTIONS),
-        ],
-        NodeKind::FluxTextEncoder => vec![("seq_len_idx", flux::SEQ_LEN_OPTIONS)],
-        NodeKind::FluxEmptyLatent => vec![("aspect_idx", flux::latent::ASPECT_OPTIONS)],
-        NodeKind::FluxVaeEncode | NodeKind::Flux2VaeEncode => {
-            vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)]
-        }
-        NodeKind::Flux2Checkpoint => vec![
-            ("device_idx", flux2::DEVICE_OPTIONS),
-            ("quant_idx", flux2::QUANT_OPTIONS),
-            ("memory_mode_idx", flux2::MEMORY_MODE_OPTIONS),
-        ],
-        NodeKind::QwenImageCheckpoint => vec![
-            ("device_idx", qwen_image::DEVICE_OPTIONS),
-            ("quant_idx", qwen_image::QUANT_OPTIONS),
-            ("memory_mode_idx", qwen_image::MEMORY_MODE_OPTIONS),
-        ],
-        NodeKind::QwenImage21Checkpoint => vec![
-            ("device_idx", qwen_image21::DEVICE_OPTIONS),
-            ("quant_idx", qwen_image21::QUANT_OPTIONS),
-            ("memory_mode_idx", qwen_image21::MEMORY_MODE_OPTIONS),
-            ("resolution_idx", qwen_image21::RESOLUTION_OPTIONS),
-        ],
-        NodeKind::SdxlCheckpoint => vec![("device_idx", sdxl::DEVICE_OPTIONS), ("quant_idx", sdxl::QUANT_OPTIONS)],
-        NodeKind::SdxlVaeEncode => vec![("resize_idx", crate::pages::node_editor::controls::RESIZE_MODES)],
         _ => Vec::new(),
     }
 }
@@ -704,19 +663,30 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     Ok(out)
 }
 
-/// Формат промпта картинок — при открытии шаблона с Text Encoder FLUX,
-/// FLUX.2, Qwen-Image или SDXL.
+fn field_text(n: &crate::pages::node_editor::types::NodeInstance, name: &str) -> String {
+    use crate::pages::node_editor::types::FieldValue;
+    match n.fields.lock().ok().and_then(|m| m.get(name).cloned()) {
+        Some(FieldValue::Text(s)) => s.get_untracked(),
+        _ => String::new(),
+    }
+}
+
+/// Формат промпта картинок — по модели ноды «Модель картинок» (FLUX.1,
+/// FLUX.2, Qwen-Image, Qwen-Image 2.1, SDXL).
 fn flux_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
-    let has = |kind: NodeKind| ctx.nodes.get_untracked().iter().any(|n| n.kind == kind && n.enabled.get_untracked());
-    if has(NodeKind::QwenImage21TextEncoder) {
+    let nodes = ctx.nodes.get_untracked();
+    let Some(model) = nodes.iter().find(|n| n.kind == NodeKind::FlowImageModel && n.enabled.get_untracked()).map(|n| field_text(n, "model").to_lowercase()) else {
+        return "";
+    };
+    if model.contains("qwen-image-2") || model.contains("qwen_image21") || model.contains("qwen-image21") {
         QWEN_IMAGE21_PROMPT
-    } else if has(NodeKind::QwenImageTextEncoder) {
+    } else if model.contains("qwen") {
         QWEN_IMAGE_PROMPT
-    } else if has(NodeKind::SdxlTextEncoder) {
+    } else if model.contains("sdxl") {
         SDXL_PROMPT
-    } else if has(NodeKind::Flux2TextEncoder) {
+    } else if model.contains("flux-2") || model.contains("flux.2") || model.contains("flux2") {
         FLUX2_PROMPT
-    } else if has(NodeKind::FluxTextEncoder) {
+    } else if model.contains("flux") {
         FLUX_PROMPT
     } else {
         ""
@@ -731,59 +701,67 @@ const QWEN_IMAGE21_PROMPT: &str = include_str!("qwen_image21_prompt.md");
 const SDXL_PROMPT: &str = include_str!("sdxl_prompt.md");
 const H3_PROMPT_REF: &str = include_str!("h3_prompt_ref.md");
 
+/// Нода «Список», что идёт на вход референсов кодировщика H3.
+fn h3_refs_lists(ctx: &NodeEditorCtx) -> Vec<(u64, crate::pages::node_editor::types::NodeInstance)> {
+    let nodes = ctx.nodes.get_untracked();
+    let conns = ctx.connections.get_untracked();
+    nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::FlowH3Encode && n.enabled.get_untracked())
+        .filter_map(|e| conns.iter().find(|c| c.to_node == e.id && c.to_port == "refs"))
+        .filter_map(|c| nodes.iter().find(|n| n.id == c.from_node && n.kind == NodeKind::FlowList).map(|n| (n.id.0, n.clone())))
+        .collect()
+}
+
 /// Формат промпта MiniMax-H3 — при открытии шаблона, один раз. Закрытый
 /// H3-Context-IR у MiniMax переписывает запрос пользователя в эту структуру;
 /// локально эту роль играет агент, и без структуры модель заметно теряет в
 /// следовании референсам.
 fn h3_prompt_guide(ctx: &NodeEditorCtx) -> &'static str {
     let nodes = ctx.nodes.get_untracked();
-    let has = |k: NodeKind| nodes.iter().any(|n| n.kind == k && n.enabled.get_untracked());
-    if !has(NodeKind::H3TextEncoder) {
+    if !nodes.iter().any(|n| n.kind == NodeKind::FlowH3Encode && n.enabled.get_untracked()) {
         ""
-    } else if has(NodeKind::H3References) {
+    } else if !h3_refs_lists(ctx).is_empty() {
         H3_PROMPT_REF
     } else {
         H3_PROMPT_BASE
     }
 }
 
-/// Метки, под которыми модель увидит референсы ноды H3 References. Нумерация
-/// зависит от порядка и от того, есть ли у видео дорожка, — агенту она нужна
-/// до прогона, чтобы написать промпт.
+/// Метки, под которыми модель увидит референсы (список файлов на входе
+/// кодировщика H3). Нумерация зависит от порядка и от того, есть ли у видео
+/// дорожка, — агенту она нужна до прогона, чтобы написать промпт.
 fn h3_reference_labels(ctx: &NodeEditorCtx) -> String {
-    use crate::pages::node_editor::nodes::minimax_h3::references::labels_of;
+    use synaptix_video_minimax_h3::refs;
     let mut out = String::new();
-    for n in ctx.nodes.get_untracked().iter().filter(|n| n.kind == NodeKind::H3References) {
-        let Ok(rt) = n.runtime.lock() else { continue };
-        let NodeRuntime::H3References { items, error, .. } = &*rt else { continue };
-        let entries = items.get_untracked();
-        if entries.is_empty() {
+    for (id, n) in h3_refs_lists(ctx) {
+        let items: Vec<std::path::PathBuf> = field_text(&n, "items").lines().map(str::trim).filter(|l| !l.is_empty()).map(std::path::PathBuf::from).collect();
+        if items.is_empty() {
             out.push_str(&format!(
-                "H3 References (node {}): empty — set_state data.items = \
-                 [{{\"path\": \"attachment:<name>\", \"use_audio\": true}}, …] in the order \
-                 the model should read them (≤9 images, ≤3 videos of 2–15 s, ≤3 audio, ≤12 total; \
-                 audio never alone). use_audio=false drops a video's own soundtrack.\n",
-                n.id.0
+                "H3 references (list node {id}): empty — set fields.items = file paths, one per line, in the order \
+                 the model should read them (≤9 images, ≤3 videos of 2–15 s, ≤3 audio, ≤12 total; audio never alone).\n"
             ));
-        } else {
-            out.push_str(&format!(
-                "H3 References (node {}) — refer to them in the prompt by these tags:\n",
-                n.id.0
-            ));
-            for (e, label) in entries.iter().zip(labels_of(&entries)) {
-                let name = e.path.file_name().map(|s| s.to_string_lossy().to_string());
-                out.push_str(&format!(
-                    "  {label} = {}\n",
-                    name.unwrap_or_else(|| e.path.display().to_string())
-                ));
-            }
+            continue;
         }
-        if let Some(err) = error.get_untracked() {
-            out.push_str(&format!("  ⚠ {err}\n"));
+        let kinds: Vec<(refs::RefKind, bool)> = items
+            .iter()
+            .map(|p| {
+                let k = refs::RefKind::of_path(p).unwrap_or(refs::RefKind::Image);
+                (k, k == refs::RefKind::Video && refs::has_audio_stream(p))
+            })
+            .collect();
+        out.push_str(&format!("H3 references (list node {id}) — refer to them in the prompt by these tags:\n"));
+        for (p, label) in items.iter().zip(refs::labels(&kinds)) {
+            let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string());
+            out.push_str(&format!("  {label} = {name}\n"));
         }
     }
     out
 }
+
+
+
+
 
 /// Ноды графа с пустыми путями моделей — то же, что проверяет pre-check
 /// прогона (`pipeline_run::prepare`), но до `run`.
@@ -1002,7 +980,8 @@ fn apply_impl(v: &serde_json::Value) -> Result<String, String> {
         return Ok(format!(
             "apply made no changes — only [{got}] was passed. Edits go through \
              set_state / connect / disconnect / graph, set_state format: \
-             [{{\"node\": <id|kind name>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}]\n\
+             [{{\"node\": <id|kind name>, \"state\": {{\"kind\": \"…\", \"data\": {{…}}}}}}] \
+             or, for service nodes (flow_*), [{{\"node\": <id>, \"fields\": {{\"name\": value}}}}]\n\
              If the graph is already assembled — the next step is action=run.\n{}",
             graph_brief(&ctx)?
         ));
@@ -1386,12 +1365,59 @@ fn describe_changes(
     (lines, warning)
 }
 
+/// Поля ноды (у нод ядра — стадии моделей, генерация службы, монтаж —
+/// параметры живут в полях, не в state): `{"имя": значение}`; выбор — строкой
+/// варианта или номером.
+fn apply_fields(ctx: &NodeEditorCtx, node_id: u64, fields: &serde_json::Value) -> Result<String, String> {
+    use crate::pages::node_editor::types::{FieldType, FieldValue};
+    let (fields, _) = unwrap_json_string(fields, "fields")?;
+    let obj = fields.as_object().ok_or("fields: expected an object {\"name\": value}")?;
+    let nodes = ctx.nodes.get_untracked();
+    let node = nodes.iter().find(|n| n.id.0 == node_id).ok_or_else(|| format!("node {node_id} not found in the graph"))?;
+    let meta = registry::meta(node.kind);
+    let map = node.fields.lock().map_err(|_| "fields are locked".to_string())?;
+    let mut done = Vec::new();
+    for (k, v) in obj {
+        let Some(slot) = map.get(k.as_str()) else {
+            let names: Vec<&str> = meta.fields.iter().map(|f| f.name).collect();
+            return Err(format!("node {node_id}: no field \"{k}\" (fields: {})", names.join(", ")));
+        };
+        let num = || v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(|| format!("field {k}: expected a number"));
+        match slot {
+            FieldValue::Text(sig) => sig.set(v.as_str().map(String::from).unwrap_or_else(|| v.to_string())),
+            FieldValue::Float(sig) => sig.set(num()? as f32),
+            FieldValue::Int(sig) => sig.set(num()? as i32),
+            FieldValue::Bool(sig) => sig.set(v.as_bool().unwrap_or_else(|| matches!(v.as_str(), Some("true" | "1" | "yes")))),
+            FieldValue::Choice(sig) => {
+                let opts = meta.fields.iter().find(|f| f.name == k).and_then(|f| match f.ty {
+                    FieldType::Choice(o) => Some(o),
+                    _ => None,
+                });
+                let idx = match (v.as_str(), opts) {
+                    (Some(s), Some(o)) => o.iter().position(|x| *x == s).ok_or_else(|| format!("field {k}: «{s}» is not one of {o:?}"))?,
+                    _ => num()? as usize,
+                };
+                sig.set(idx);
+            }
+            FieldValue::Color(_) => return Err(format!("field {k}: colors are not set by the agent")),
+        }
+        done.push(format!("{k} = {v}"));
+    }
+    Ok(format!("fields of node {node_id} updated: {}", done.join(", ")))
+}
+
 fn apply_one_state(ctx: &NodeEditorCtx, item: &serde_json::Value) -> Result<String, String> {
     let node_ref = item
         .get("node")
         .ok_or("the node field is required (node id or kind name)")?;
     let node_id = resolve_node_ref(node_ref, ctx)?;
-    let state_v = item.get("state").cloned().ok_or("the state field is required")?;
+    let fields_note = match item.get("fields") {
+        Some(f) => Some(apply_fields(ctx, node_id, f)?),
+        None => None,
+    };
+    let Some(state_v) = item.get("state").cloned() else {
+        return fields_note.ok_or_else(|| "the state (or fields) field is required".to_string());
+    };
     let (state_v, parse_note) = unwrap_json_string(&state_v, "state")?;
     let nodes = ctx.nodes.get_untracked();
     let node = nodes
@@ -1672,7 +1698,8 @@ mod tests {
     /// ради чего инструмент звали).
     #[test]
     fn templates_section_fits_history_budget() {
-        let len: usize = templates::list_all()
+        // Только встроенные: свои шаблоны пользователя в ~/.config — не про код.
+        let len: usize = templates::builtin::all()
             .iter()
             .map(|t| {
                 format!(
@@ -1803,8 +1830,6 @@ mod tests {
         assert!(miss.contains(&"model_path"), "{miss:?}");
         assert!(miss.contains(&"gemma_dir"), "{miss:?}");
         drop(g);
-        let rt = registry::default_runtime(NodeKind::H3Checkpoint);
-        assert_eq!(rt.lock().unwrap().missing_model_paths(), vec!["model_path"]);
         // Реактивные ноды ничего не требуют.
         let rt = registry::default_runtime(NodeKind::Add);
         assert!(rt.lock().unwrap().missing_model_paths().is_empty());

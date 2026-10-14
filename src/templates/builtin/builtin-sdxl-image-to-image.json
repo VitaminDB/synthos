@@ -1,0 +1,256 @@
+{
+  "name": "SDXL: Image to Image",
+  "description": "Картинка → SDXL VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG (до 1 Мп, стороны кратны 64). Чем меньше denoise, тем ближе к исходнику.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_image_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "sdxl-base-1-0"
+        },
+        "quant": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 520.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "the same scene as an oil painting, thick brush strokes, vivid colors",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 780.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "blurry, low quality, deformed, watermark, text",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_image_encode",
+      "pos": {
+        "x": 520.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_image_sample",
+      "pos": {
+        "x": 960.0,
+        "y": 420.0
+      },
+      "fields": {
+        "denoise": {
+          "type": "Float",
+          "value": 0.6000000238418579
+        },
+        "guidance": {
+          "type": "Float",
+          "value": 5.0
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "steps": {
+          "type": "Float",
+          "value": 30.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_image_decode",
+      "pos": {
+        "x": 1400.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "image_save",
+      "pos": {
+        "x": 1840.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 9,
+      "kind": "image_load",
+      "pos": {
+        "x": 60.0,
+        "y": 1040.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 10,
+      "kind": "flow_image_to_latent",
+      "pos": {
+        "x": 520.0,
+        "y": 790.0
+      },
+      "fields": {
+        "fit": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 8,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "negative"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 7,
+      "to_port": "image"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 10,
+      "to_port": "model"
+    },
+    {
+      "from_node": 9,
+      "from_port": "image",
+      "to_node": 10,
+      "to_port": "image"
+    },
+    {
+      "from_node": 10,
+      "from_port": "latent",
+      "to_node": 5,
+      "to_port": "latent"
+    }
+  ],
+  "viewport": null
+}

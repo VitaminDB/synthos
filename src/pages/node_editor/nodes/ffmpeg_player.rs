@@ -31,10 +31,15 @@ impl NodeExecutor for FfmpegPlayerExec {
     fn evaluate(&self, ctx: &mut EvalContext<'_>) {
         let new_path = match ctx.read_input("source") {
             PortValue::Text(s) if !s.trim().is_empty() => Some(PathBuf::from(s.trim())),
+            // Ролик с ноды ядра (служба нейросетей, монтаж).
+            PortValue::Data(blob) => match &*blob {
+                super::super::types::DataBlob::Flow(v) => v.file().map(PathBuf::from),
+                _ => None,
+            },
             _ => None,
         };
         let frames_pv = ctx.read_input("frames");
-        let new_frames = frames_pv.as_ltx_frames().or_else(|| frames_pv.as_h3_frames());
+        let new_frames = frames_pv.as_ltx_frames();
         let new_audio = ctx.read_input("audio").as_audio();
 
         let Ok(g) = ctx.runtime().lock() else { return };

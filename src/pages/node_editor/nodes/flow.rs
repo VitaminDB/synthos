@@ -4,12 +4,18 @@
 //! звука, кадр, обрезка, картинка в ролик), данные — текст, файл, шаблон,
 //! строки, список.
 //!
-//! Метаданные (порты, поля) строятся по схемам ядра; исполнение — тот же
-//! `synaptix_flow::run_node`, что у рецептов ассистента: список на входе —
-//! пакет, нода выполняется для каждого элемента. Значения между нодами ядра
-//! передаются как есть ([`DataBlob::Flow`]); с родными нодами Synthos —
-//! через файлы: картинка на выходе — [`ImageData`], звук — `AudioBuffer`,
-//! на входе картинка и звук пишутся во временные файлы.
+//! Стадии моделей картинок (FLUX.1, FLUX.2, Qwen-Image, SDXL) и MiniMax-H3:
+//! модель → условие → латент → сэмплер → декодер; модели грузит служба,
+//! дескрипторы между стадиями живут в её памяти.
+//!
+//! Метаданные (порты, поля) строятся по схемам ядра; исполняет граф служба
+//! (`synaptixd::flow`), тем же ядром, что рецепты ассистента: список на
+//! входе — пакет, нода выполняется для каждого элемента. Запуск ноды
+//! отправляет её вместе с нодами ядра, от которых к ней идут дескрипторы
+//! (их служба берёт из кэша стадий, если входы не менялись); остальные
+//! входы — готовые значения: с нод ядра — их последние выходы, с родных
+//! нод Synthos — через файлы (картинка на выходе — [`ImageData`], звук —
+//! `AudioBuffer`, на входе картинка и звук пишутся во временные файлы).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -29,14 +35,15 @@ use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::registry::{NodeCategory, NodeKindMeta};
 use super::super::state::NodeEditorCtx;
 use super::super::types::{
-    DataBlob, FieldSchema, FieldType, FieldValue, ImageData, NodeInstance, NodeKind, NodeRuntime, PortKind,
+    DataBlob, FieldSchema, FieldType, FieldValue, ImageData, NodeId, NodeInstance, NodeKind, NodeRuntime, PortKind,
     PortSchema, PortValue, PortsLayout, PortsSpec,
 };
 use super::acestep::field_row;
 use super::{log_worker_done, log_worker_start};
 use crate::icons::{
-    MI_ARTICLE, MI_AUDIOTRACK, MI_EDIT_NOTE, MI_FOLDER_OPEN, MI_IMAGE_ICON, MI_LANGUAGE, MI_LAYERS, MI_LIBRARY_MUSIC,
-    MI_MERGE_TYPE, MI_MIC, MI_MOVIE, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_TUNE,
+    MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_CROP_SQUARE, MI_EDIT_NOTE, MI_FOLDER_OPEN, MI_GRAPHIC_EQ,
+    MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LAYERS, MI_LIBRARY_MUSIC, MI_MERGE_TYPE, MI_MIC, MI_MOVIE, MI_PALETTE,
+    MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_TRANSLATE, MI_TUNE,
 };
 
 /// Вид ноды Synthos ↔ вид ноды ядра.
@@ -57,7 +64,29 @@ const KINDS: &[(NodeKind, &str, &str, &str)] = &[
     (NodeKind::FlowFrame, "frame", "Flow Frame", MI_IMAGE_ICON),
     (NodeKind::FlowTrim, "trim", "Flow Trim", MI_MOVIE),
     (NodeKind::FlowStill, "still", "Flow Still Video", MI_LANGUAGE),
+    (NodeKind::FlowImageModel, "image_model", "Image Model", MI_INVENTORY_2),
+    (NodeKind::FlowImageEncode, "image_encode", "Prompt Encoder", MI_TRANSLATE),
+    (NodeKind::FlowImageRefs, "image_refs", "References", MI_LAYERS),
+    (NodeKind::FlowImageLatent, "image_latent", "Empty Latent", MI_ASPECT_RATIO),
+    (NodeKind::FlowImageToLatent, "image_to_latent", "Image to Latent", MI_IMAGE_ICON),
+    (NodeKind::FlowImageSample, "image_sample", "Sampler", MI_AUTO_AWESOME),
+    (NodeKind::FlowImageDecode, "image_decode", "Image Decoder", MI_PALETTE),
+    (NodeKind::FlowH3Model, "h3_model", "H3 Model", MI_INVENTORY_2),
+    (NodeKind::FlowH3Latent, "h3_latent", "H3 Video Size", MI_CROP_SQUARE),
+    (NodeKind::FlowH3Encode, "h3_encode", "H3 Encoder", MI_TRANSLATE),
+    (NodeKind::FlowH3Sample, "h3_sample", "H3 Sampler", MI_AUTO_AWESOME),
+    (NodeKind::FlowH3DecodeVideo, "h3_decode_video", "H3 Video Decoder", MI_MOVIE),
+    (NodeKind::FlowH3DecodeAudio, "h3_decode_audio", "H3 Audio Decoder", MI_GRAPHIC_EQ),
 ];
+
+/// Подкатегория палитры по разделу ядра (ключ `node.subcategory.*`).
+fn subcategory(spec: &sf::NodeSpec) -> Option<&'static str> {
+    match spec.category {
+        "Модели картинок" => Some("flow_image"),
+        "MiniMax-H3" => Some("flow_h3"),
+        _ => None,
+    }
+}
 
 impl NodeKind {
     /// Вид ноды ядра synaptix-flow, если это нода ядра.
@@ -81,7 +110,7 @@ fn port_kind(t: PT) -> PortKind {
         PT::Image => PortKind::Image,
         PT::Audio => PortKind::Audio,
         PT::Video | PT::Media => PortKind::Video,
-        PT::List | PT::Any => PortKind::Data,
+        PT::List | PT::Any | PT::Model | PT::Cond | PT::Latent => PortKind::Data,
     }
 }
 
@@ -110,7 +139,7 @@ pub fn metas() -> Vec<NodeKindMeta> {
                 icon,
                 title,
                 category: NodeCategory::Service,
-                subcategory: None,
+                subcategory: subcategory(s),
                 inputs: PortsSpec::Static(ports(s.inputs)),
                 outputs: PortsSpec::Static(ports(s.outputs)),
                 fields: leak(s.fields.iter().map(|f| FieldSchema { name: f.name, label: f.label, ty: field_type(f.ty) }).collect()),
@@ -154,6 +183,9 @@ pub struct FlowRuntime {
     /// Те же выходы для проводов Synthos.
     pub ports: Arc<Mutex<HashMap<String, PortValue>>>,
     pub version: RwSignal<u32>,
+    /// Сид прошлого запуска при поле «Сид» = 0: прогон потомка (декодера)
+    /// берёт тот же, и служба отдаёт результат сэмплера из кэша.
+    pub seed: Arc<Mutex<Option<u64>>>,
 }
 
 impl FlowRuntime {
@@ -167,6 +199,7 @@ impl FlowRuntime {
             outputs: Arc::new(Mutex::new(BTreeMap::new())),
             ports: Arc::new(Mutex::new(HashMap::new())),
             version: use_signal(0),
+            seed: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -272,21 +305,86 @@ fn to_port(v: &Val, ty: PT) -> PortValue {
     }
 }
 
-/// Входы ноды: с нод ядра — их значения как есть, с родных нод — через файлы.
-fn gather(node: &NodeInstance, ctx: &NodeEditorCtx, dir: &Path) -> HashMap<String, Val> {
+/// Подграф запуска ноды: она сама и ноды ядра, от которых к ней (по цепочке)
+/// идут дескрипторы — модель, условие, латент существуют только в службе.
+/// Прочие входы — готовые значения: с нод ядра — последние выходы, с родных
+/// нод — через файлы.
+fn subflow(node: &NodeInstance, ctx: &NodeEditorCtx, dir: &Path) -> (sf::Flow, HashMap<(u64, String), Val>, HashMap<u64, FlowRuntime>) {
     let nodes = ctx.nodes.get_untracked();
+    let conns = ctx.connections.get_untracked();
     let values = ctx.values.get_untracked();
-    let mut out = HashMap::new();
-    for c in ctx.connections.get_untracked().iter().filter(|c| c.to_node == node.id) {
-        let src = nodes.iter().find(|n| n.id == c.from_node);
-        let from_flow = src.and_then(runtime).and_then(|r| r.outputs.lock().ok().and_then(|o| o.get(c.from_port).cloned()));
+    let by_id: HashMap<NodeId, &NodeInstance> = nodes.iter().map(|n| (n.id, n)).collect();
+    let mut included = vec![node.id];
+    let mut i = 0;
+    while i < included.len() {
+        let id = included[i];
+        i += 1;
+        for c in conns.iter().filter(|c| c.to_node == id) {
+            let Some(src) = by_id.get(&c.from_node) else { continue };
+            let handle = spec(src.kind).and_then(|s| s.output(c.from_port)).is_some_and(|p| p.ty.is_handle());
+            if handle && !included.contains(&src.id) {
+                included.push(src.id);
+            }
+        }
+    }
+    let mut flow = sf::Flow::default();
+    let mut rts = HashMap::new();
+    for id in &included {
+        let n = by_id[id];
+        let (Some(fk), Some(rt)) = (n.kind.flow_kind(), runtime(n)) else { continue };
+        let mut f = sf::FlowNode::new(id.0, fk);
+        f.fields = fields_json(n);
+        // Сид 0 — случайный: свой запуск — новый, у предков — прошлый.
+        if f.fields.get("seed").and_then(Json::as_f64) == Some(0.0) {
+            let mut last = rt.seed.lock().unwrap_or_else(|e| e.into_inner());
+            let seed = match *last {
+                Some(s) if *id != node.id => s,
+                _ => random_seed(id.0),
+            };
+            *last = Some(seed);
+            f.fields.insert("seed".into(), Json::from(seed));
+        }
+        flow.nodes.push(f);
+        rts.insert(id.0, rt);
+    }
+    let mut inputs = HashMap::new();
+    for c in conns.iter().filter(|c| rts.contains_key(&c.to_node.0)) {
+        if rts.contains_key(&c.from_node.0) {
+            flow.links.push(sf::Link { from_node: c.from_node.0, from_port: c.from_port.into(), to_node: c.to_node.0, to_port: c.to_port.into() });
+            continue;
+        }
+        let src = by_id.get(&c.from_node);
+        let from_flow = src.and_then(|n| runtime(n)).and_then(|r| r.outputs.lock().ok().and_then(|o| o.get(c.from_port).cloned()));
         let v = match from_flow {
             Some(v) => v,
-            None => values.get(&(c.from_node, c.from_port)).map(|pv| to_val(pv, dir, c.to_port)).unwrap_or_default(),
+            None => values.get(&(c.from_node, c.from_port)).map(|pv| to_val(pv, dir, &format!("{}-{}", c.to_node.0, c.to_port))).unwrap_or_default(),
         };
-        out.insert(c.to_port.to_string(), v);
+        inputs.insert((c.to_node.0, c.to_port.to_string()), v);
     }
-    out
+    flow.outputs = vec![node.id.0];
+    (flow, inputs, rts)
+}
+
+fn random_seed(salt: u64) -> u64 {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
+    (nanos ^ salt.wrapping_mul(0x9e37_79b9_7f4a_7c15)) % 1_000_000_007 + 1
+}
+
+/// Выходы ноды ядра → её состояние и провода Synthos.
+fn publish(rt: &FlowRuntime, fk: &str, outs: sf::Outputs, summary: String) {
+    let Some(spec) = sf::ops::spec(fk) else { return };
+    let ports: HashMap<String, PortValue> = spec.outputs.iter().map(|p| (p.name.to_string(), outs.get(p.name).map(|v| to_port(v, p.ty)).unwrap_or_default())).collect();
+    if let Ok(mut o) = rt.outputs.lock() {
+        *o = outs;
+    }
+    if let Ok(mut p) = rt.ports.lock() {
+        *p = ports;
+    }
+    rt.error.set(None);
+    rt.status.set(summary);
+    // update — только в главном потоке (set годится из любого).
+    let version = rt.version;
+    syngui::async_runtime::run_on_main_thread(move || version.update(|v| *v = v.wrapping_add(1)));
 }
 
 pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
@@ -301,9 +399,9 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
         rt.error.set(Some(format!("{}: {e}", dir.display())));
         return;
     }
-    let inputs = gather(node, ctx, &dir);
-    let mut fnode = sf::FlowNode::new(node.id.0, fk);
-    fnode.fields = fields_json(node);
+    let (flow, inputs, rts) = subflow(node, ctx, &dir);
+    let kinds: HashMap<u64, String> = flow.nodes.iter().map(|n| (n.id, n.kind.clone())).collect();
+    let target = node.id.0;
     rt.cancel.store(false, Ordering::SeqCst);
     rt.running.set(true);
     rt.error.set(None);
@@ -312,7 +410,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
     let _ = std::thread::Builder::new().name(format!("synthos-flow-{fk}")).spawn(move || {
         let started = log_worker_start("flow", fk);
         let cancel = sf::Cancel::new();
-        // Флаг Stop из run_controls → отмена ядра (рвёт запрос к службе).
+        // Флаг Stop из run_controls → отмена прогона (рвёт запрос к службе).
         let done = Arc::new(AtomicBool::new(false));
         {
             let (flag, done, cancel) = (rt.cancel.clone(), done.clone(), cancel.clone());
@@ -326,46 +424,113 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 }
             });
         }
-        let (progress, status) = (rt.progress, rt.status);
-        let res = sf::run_node(&fnode, inputs, &dir, &cancel, &mut |e| match e {
-            sf::Event::Progress { step, total, .. } if total > 0 => progress.set(step as f32 / total as f32),
-            sf::Event::Started { item: Some((k, n)), .. } => {
-                status.set(format!("{k} / {n}"));
-                progress.set(0.0);
+        let opts = sf::RunOpts { cancel, inputs, ..Default::default() };
+        let res = synaptixd::flow::run_with(&flow, &dir, &opts, &mut |e| match e {
+            sf::Event::Started { id, item, .. } => {
+                if let Some(r) = rts.get(&id) {
+                    r.progress.set(0.0);
+                    r.status.set(match item {
+                        Some((k, n)) => format!("{k} / {n}"),
+                        None if id == target => String::new(),
+                        None => "выполняется…".into(),
+                    });
+                }
+            }
+            sf::Event::Progress { id, step, total } if total > 0 => {
+                if let Some(r) = rts.get(&id) {
+                    r.progress.set(step as f32 / total as f32);
+                    if id != target {
+                        r.status.set(format!("шаг {step} / {total}"));
+                    }
+                }
+            }
+            sf::Event::Finished { id, outputs, summary, .. } => {
+                if let (Some(r), Some(k)) = (rts.get(&id), kinds.get(&id)) {
+                    publish(r, k, outputs, summary);
+                }
             }
             _ => {}
         });
         done.store(true, Ordering::SeqCst);
         log_worker_done("flow", started, &res);
-        match res {
-            Ok((outs, label)) => {
-                let spec = sf::ops::spec(fk).unwrap();
-                let ports: HashMap<String, PortValue> = spec.outputs.iter().map(|p| (p.name.to_string(), outs.get(p.name).map(|v| to_port(v, p.ty)).unwrap_or_default())).collect();
-                let summary = summary(&outs, &label);
-                if let Ok(mut o) = rt.outputs.lock() {
-                    *o = outs;
-                }
-                if let Ok(mut p) = rt.ports.lock() {
-                    *p = ports;
-                }
-                rt.status.set(summary);
-                rt.version.update(|v| *v = v.wrapping_add(1));
-            }
-            Err(e) => rt.error.set(Some(e)),
+        if let Err(e) = res {
+            rt.error.set(Some(e));
         }
         rt.running.set(false);
     });
 }
 
-fn summary(outs: &sf::Outputs, label: &str) -> String {
-    let files: usize = outs.values().map(|v| v.files().len()).sum();
-    let what = if files > 0 { format!("{files} файл(ов)") } else { String::new() };
-    [what, label.to_string()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
-}
-
 // ── Тело карточки ─────────────────────────────────────────────────────────
 
-fn field_control(f: &'static sf::FieldSpec, value: FieldValue) -> Box<dyn Widget> {
+/// Вид моделей службы для поля «Модель» ноды (и фильтр по id).
+fn model_kind(fk: &str) -> Option<(synaptixd::ModelKind, Option<&'static str>)> {
+    use synaptixd::ModelKind as K;
+    Some(match fk {
+        "image" | "image_model" => (K::Image, None),
+        "video" => (K::Video, None),
+        "h3_model" => (K::Video, Some("h3")),
+        "music" => (K::Music, None),
+        "llm" => (K::Llm, None),
+        "speak" => (K::Tts, None),
+        _ => return None,
+    })
+}
+
+/// Модели службы (список кэшируется на минуту: карточки строятся часто).
+fn service_models(kind: synaptixd::ModelKind, filter: Option<&str>) -> Vec<String> {
+    static CACHE: std::sync::OnceLock<Mutex<Option<(std::time::Instant, Vec<synaptixd::ModelEntry>)>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let mut g = cache.lock().unwrap_or_else(|e| e.into_inner());
+    let fresh = g.as_ref().is_some_and(|(t, _)| t.elapsed() < std::time::Duration::from_secs(60));
+    if !fresh {
+        let list = synaptixd::Client::connect().and_then(|mut c| c.list()).unwrap_or_default();
+        *g = Some((std::time::Instant::now(), list));
+    }
+    let mut ids: Vec<String> = g.as_ref().map(|(_, l)| l.iter().filter(|m| m.kind == kind && filter.is_none_or(|f| m.id.contains(f))).map(|m| m.id.clone()).collect()).unwrap_or_default();
+    ids.sort();
+    ids
+}
+
+/// Поле «Модель»: модели службы нужного вида; пусто — модель по умолчанию;
+/// путь или чужой id из шаблона остаётся вариантом списка.
+fn model_control(kind: synaptixd::ModelKind, filter: Option<&'static str>, sig: RwSignal<String>) -> Box<dyn Widget> {
+    const AUTO: &str = "по умолчанию";
+    let current = sig.get_untracked();
+    let mut ids = service_models(kind, filter);
+    if !current.is_empty() && !ids.contains(&current) {
+        ids.insert(0, current.clone());
+    }
+    let mut items = vec![DropdownItem::simple(AUTO)];
+    items.extend(ids.iter().map(|i| DropdownItem::simple(i.clone())));
+    Box::new(
+        Dropdown::with_items(items)
+            .selected(if current.is_empty() { AUTO.to_string() } else { current })
+            .on_change(move |val| sig.set(if val == AUTO { String::new() } else { val.to_string() }))
+            .class("node-input-dropdown"),
+    )
+}
+
+/// Путь к файлу: поле и кнопка выбора.
+fn file_control(sig: RwSignal<String>) -> Box<dyn Widget> {
+    let field = TextField::new().text(sig.get_untracked()).placeholder("путь к файлу").on_change(move |s| sig.set(s.to_string())).class("node-input-text");
+    let pick = ToolButton::new(MI_FOLDER_OPEN)
+        .tooltip("Выбрать файл")
+        .on_click(move || {
+            if let Some(p) = rfd::FileDialog::new().pick_file() {
+                sig.set(p.display().to_string());
+            }
+        })
+        .class("node-file-picker-btn");
+    Box::new(Row::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Center).children(vec![Box::new(field) as Box<dyn Widget>, Box::new(pick)]))
+}
+
+fn field_control(fk: &str, f: &'static sf::FieldSpec, value: FieldValue) -> Box<dyn Widget> {
+    if let (FieldValue::Text(sig), Some((kind, filter)), "model") = (&value, model_kind(fk), f.name) {
+        return model_control(kind, filter, *sig);
+    }
+    if let (FT::File, FieldValue::Text(sig)) = (f.ty, &value) {
+        return file_control(*sig);
+    }
     match (f.ty, value) {
         (FT::LongText, FieldValue::Text(sig)) => Box::new(
             MultilineTextEdit::new()
@@ -387,7 +552,11 @@ fn field_control(f: &'static sf::FieldSpec, value: FieldValue) -> Box<dyn Widget
                 .min(0.0)
                 .max(4_294_967_295.0)
                 .step(1.0)
-                .decimal_places(if f.name == "volume" || f.name == "strength" || f.name == "guidance" { 2 } else { 0 })
+                .decimal_places(match f.name {
+                    "volume" | "strength" | "guidance" | "denoise" => 2,
+                    "seconds" | "start" | "end" => 1,
+                    _ => 0,
+                })
                 .value(sig.get_untracked() as f64)
                 .on_change(move |v| sig.set(v as f32))
                 .width(120.0)
@@ -419,6 +588,10 @@ fn result_view(rt: &FlowRuntime, spec: &'static sf::NodeSpec) -> Vec<Box<dyn Wid
     let ports = rt.ports.lock().map(|p| p.clone()).unwrap_or_default();
     for p in spec.outputs {
         let Some(v) = outputs.get(p.name) else { continue };
+        // Дескриптор (модель, условие, латент) уже описан строкой статуса.
+        if v.handle().is_some() {
+            continue;
+        }
         if let Some(PortValue::Data(blob)) = ports.get(p.name) {
             if let DataBlob::Image(img) = &**blob {
                 out.push(super::image::image_preview(Some(img.clone())));
@@ -464,7 +637,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let map = node.fields.lock().map(|m| m.clone()).unwrap_or_default();
     for f in spec.fields {
         if let Some(v) = map.get(f.name).cloned() {
-            col = col.children(vec![field_row(f.label, field_control(f, v))]);
+            col = col.children(vec![field_row(f.label, field_control(spec.kind, f, v))]);
         }
     }
     let (running, error, status, progress, version) = (rt.running, rt.error, rt.status, rt.progress, rt.version);

@@ -74,7 +74,10 @@ pub fn load_all() -> Vec<Template> {
 pub fn load_one(id: &str) -> Option<Template> {
     let path = templates_dir().join(format!("{id}.json"));
     let raw = fs::read_to_string(&path).ok()?;
-    let mut t: Template = serde_json::from_str(&raw).ok()?;
+    let mut v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    // Родные ноды моделей → стадии ядра в службе.
+    super::native::migrate_graph(&mut v);
+    let mut t: Template = serde_json::from_value(v).ok()?;
     t.id = id.to_string();
     t.builtin = false;
     Some(t)

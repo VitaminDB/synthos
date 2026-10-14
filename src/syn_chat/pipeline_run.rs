@@ -297,7 +297,6 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             let Ok(rt) = n.runtime.lock() else { continue };
             match &*rt {
                 NodeRuntime::LtxVideoSave { path, .. } => (SavePathSig::Str(*path), "mp4"),
-                NodeRuntime::H3VideoSave { path, .. } => (SavePathSig::OptPath(*path), "mp4"),
                 NodeRuntime::ImageSave { path, .. } => (SavePathSig::OptPath(*path), "png"),
                 NodeRuntime::SaveToFile { path, .. } => (SavePathSig::Str(*path), "wav"),
                 _ => continue,
@@ -375,9 +374,7 @@ enum ViewerOutput {
         audio: Option<std::sync::Arc<syngui::audio::AudioBuffer>>,
     },
     Audio(std::sync::Arc<syngui::audio::AudioBuffer>),
-    /// Картинка VAE Decode (FLUX, FLUX.2, Qwen-Image, SDXL), которую никто не сохранил.
-    Image(std::sync::Arc<crate::pages::node_editor::types::ImageData>),
-    /// Плеер, которому дали файл (а не память) — прикладываем как есть.
+    /// Плеер, которому дали файл (а не память), или файл ноды ядра — прикладываем как есть.
     File(PathBuf),
 }
 
@@ -400,6 +397,7 @@ fn planned_viewers(
         return (chat_id, Vec::new());
     };
     let mut out = Vec::new();
+    let conns = ctx.connections.get_untracked();
     for n in ctx.nodes.get_untracked().iter() {
         if !n.enabled.get_untracked() {
             continue;
@@ -407,6 +405,19 @@ fn planned_viewers(
         let Ok(rt) = n.runtime.lock() else { continue };
         let title = registry::meta(n.kind).title;
         match &*rt {
+            // Ноды ядра (стадии моделей, монтаж в службе): файлы конечных нод —
+            // картинка декодера, ролик наложения звука и т. п.
+            NodeRuntime::Flow(f) if !conns.iter().any(|c| c.from_node == n.id) => {
+                let files: Vec<PathBuf> = f.outputs.lock().map(|o| o.values().flat_map(|v| v.files()).collect()).unwrap_or_default();
+                for p in files {
+                    let image = matches!(p.extension().and_then(|e| e.to_str()), Some("png" | "jpg" | "jpeg" | "webp"));
+                    let video = matches!(p.extension().and_then(|e| e.to_str()), Some("mp4" | "mkv" | "webm" | "mov"));
+                    if (image && skip_image) || (video && skip_video) || (!image && !video && skip_audio) {
+                        continue;
+                    }
+                    out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::File(p) });
+                }
+            }
             NodeRuntime::FfmpegPlayer { frames_in, audio_in, current_path, .. } => {
                 if skip_video {
                     continue;
@@ -421,18 +432,6 @@ fn planned_viewers(
                     });
                 } else if let Some(p) = current_path.get_untracked() {
                     out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::File(p) });
-                }
-            }
-            NodeRuntime::FluxVaeDecode { out: image_out, .. }
-            | NodeRuntime::Flux2VaeDecode { out: image_out, .. }
-            | NodeRuntime::QwenImageVaeDecode { out: image_out, .. }
-            | NodeRuntime::QwenImage21VaeDecode { out: image_out, .. }
-            | NodeRuntime::SdxlVaeDecode { out: image_out, .. } => {
-                if skip_image {
-                    continue;
-                }
-                if let Some(img) = image_out.lock().ok().and_then(|g| g.clone()) {
-                    out.push(PlannedViewer { node_id: n.id.0, title, out: ViewerOutput::Image(img) });
                 }
             }
             NodeRuntime::AudioPlayer { pcm_view, .. } => {
@@ -510,16 +509,6 @@ pub async fn collect_viewer_outputs(
                     Ok(()) => out,
                     Err(e) => {
                         lines.push(tr!("chat.pipeline.viewer.wav_write_failed", title = p.title, node_id = p.node_id, error = e));
-                        continue;
-                    }
-                }
-            }
-            ViewerOutput::Image(img) => {
-                let out = dir.join(format!("node{}_preview.png", p.node_id));
-                match crate::pages::node_editor::nodes::image::write_image(img, &out) {
-                    Ok(()) => out,
-                    Err(e) => {
-                        lines.push(tr!("chat.pipeline.viewer.encode_failed", title = p.title, node_id = p.node_id, error = e));
                         continue;
                     }
                 }

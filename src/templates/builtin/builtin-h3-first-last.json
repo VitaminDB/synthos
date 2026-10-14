@@ -1,0 +1,299 @@
+{
+  "name": "H3: First+Last Frame",
+  "description": "Переход между двумя кадрами: у второй Keyframe-ноды уже выбран слот «последний кадр». Модель поддерживает якоря только на первом и последнем кадрах, середина отвергается на этапе сборки layout.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_h3_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "minimax-h3-fl2va"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 620.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "a smooth cinematic transition between the two frames, steady camera, evolving ambient soundscape",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_h3_encode",
+      "pos": {
+        "x": 520.0,
+        "y": 560.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_h3_latent",
+      "pos": {
+        "x": 520.0,
+        "y": 930.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 768.0
+        },
+        "seconds": {
+          "type": "Float",
+          "value": 5.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1344.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_h3_sample",
+      "pos": {
+        "x": 940.0,
+        "y": 560.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_h3_decode_video",
+      "pos": {
+        "x": 1360.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "flow_h3_decode_audio",
+      "pos": {
+        "x": 1360.0,
+        "y": 800.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 8,
+      "kind": "flow_mux",
+      "pos": {
+        "x": 1800.0,
+        "y": 480.0
+      },
+      "fields": {
+        "mode": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 9,
+      "kind": "ffmpeg_player",
+      "pos": {
+        "x": 1800.0,
+        "y": 760.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 10,
+      "kind": "flow_file",
+      "pos": {
+        "x": 60.0,
+        "y": 900.0
+      },
+      "fields": {
+        "path": {
+          "type": "Text",
+          "value": ""
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 11,
+      "kind": "flow_file",
+      "pos": {
+        "x": 60.0,
+        "y": 1120.0
+      },
+      "fields": {
+        "path": {
+          "type": "Text",
+          "value": ""
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 7,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 7,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "video",
+      "to_node": 8,
+      "to_port": "video"
+    },
+    {
+      "from_node": 7,
+      "from_port": "audio",
+      "to_node": 8,
+      "to_port": "audio"
+    },
+    {
+      "from_node": 10,
+      "from_port": "file",
+      "to_node": 3,
+      "to_port": "first_frame"
+    },
+    {
+      "from_node": 11,
+      "from_port": "file",
+      "to_node": 3,
+      "to_port": "last_frame"
+    },
+    {
+      "from_node": 8,
+      "from_port": "video",
+      "to_node": 9,
+      "to_port": "source"
+    },
+    {
+      "from_node": 4,
+      "from_port": "latent",
+      "to_node": 3,
+      "to_port": "latent"
+    }
+  ],
+  "viewport": null
+}

@@ -1,0 +1,427 @@
+{
+  "name": "H3: FLUX Frame to Video",
+  "description": "FLUX рисует первый кадр (16:9, 1344×768) → H3 Keyframe → MiniMax-H3 видео со звуком от этого кадра. Верхний промпт — кадр, нижний — действие и звук в формате H3. В FLUX Checkpoint укажите flux.1-dev.syn, в H3 Checkpoint — бандл MiniMax-H3.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_image_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "flux-1-dev"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 520.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "portrait of a street musician playing violin under a streetlamp at night, light rain, warm bokeh, cinematic photograph",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_image_encode",
+      "pos": {
+        "x": 520.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_image_latent",
+      "pos": {
+        "x": 520.0,
+        "y": 790.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 768.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1344.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_image_sample",
+      "pos": {
+        "x": 960.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_image_decode",
+      "pos": {
+        "x": 1400.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "image_save",
+      "pos": {
+        "x": 1840.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 101,
+      "kind": "flow_h3_model",
+      "pos": {
+        "x": 60.0,
+        "y": 1160.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "minimax-h3-fl2va"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 102,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 1720.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "the musician keeps playing, bow moving across the strings, raindrops glinting in the lamplight, slow dolly-in; violin melody, soft rain on the pavement",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 103,
+      "kind": "flow_h3_encode",
+      "pos": {
+        "x": 520.0,
+        "y": 1660.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 104,
+      "kind": "flow_h3_latent",
+      "pos": {
+        "x": 520.0,
+        "y": 2030.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 768.0
+        },
+        "seconds": {
+          "type": "Float",
+          "value": 5.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1344.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 105,
+      "kind": "flow_h3_sample",
+      "pos": {
+        "x": 940.0,
+        "y": 1660.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 106,
+      "kind": "flow_h3_decode_video",
+      "pos": {
+        "x": 1360.0,
+        "y": 1520.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 107,
+      "kind": "flow_h3_decode_audio",
+      "pos": {
+        "x": 1360.0,
+        "y": 1900.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 108,
+      "kind": "flow_mux",
+      "pos": {
+        "x": 1800.0,
+        "y": 1580.0
+      },
+      "fields": {
+        "mode": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 109,
+      "kind": "ffmpeg_player",
+      "pos": {
+        "x": 1800.0,
+        "y": 1860.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 4,
+      "from_port": "latent",
+      "to_node": 5,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 7,
+      "to_port": "image"
+    },
+    {
+      "from_node": 101,
+      "from_port": "model",
+      "to_node": 103,
+      "to_port": "model"
+    },
+    {
+      "from_node": 101,
+      "from_port": "model",
+      "to_node": 105,
+      "to_port": "model"
+    },
+    {
+      "from_node": 101,
+      "from_port": "model",
+      "to_node": 106,
+      "to_port": "model"
+    },
+    {
+      "from_node": 101,
+      "from_port": "model",
+      "to_node": 107,
+      "to_port": "model"
+    },
+    {
+      "from_node": 102,
+      "from_port": "out",
+      "to_node": 103,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 103,
+      "from_port": "cond",
+      "to_node": 105,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 105,
+      "from_port": "latent",
+      "to_node": 106,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 105,
+      "from_port": "latent",
+      "to_node": 107,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 106,
+      "from_port": "video",
+      "to_node": 108,
+      "to_port": "video"
+    },
+    {
+      "from_node": 107,
+      "from_port": "audio",
+      "to_node": 108,
+      "to_port": "audio"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 103,
+      "to_port": "first_frame"
+    },
+    {
+      "from_node": 108,
+      "from_port": "video",
+      "to_node": 109,
+      "to_port": "source"
+    },
+    {
+      "from_node": 104,
+      "from_port": "latent",
+      "to_node": 103,
+      "to_port": "latent"
+    }
+  ],
+  "viewport": null
+}

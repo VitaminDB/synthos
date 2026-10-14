@@ -193,42 +193,6 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             NodeKind::AceStepVaeEncode => classes.push("acestep-vae-encode-node".to_string()),
             NodeKind::AceStepCheckpoint => classes.push("acestep-checkpoint-node".to_string()),
             NodeKind::AceStepGenerate => classes.push("acestep-generate-node".to_string()),
-            NodeKind::H3Checkpoint => classes.push("h3-checkpoint-node".to_string()),
-            NodeKind::H3TextEncoder => classes.push("h3-text-encoder-node".to_string()),
-            NodeKind::H3EmptyLatentAv => classes.push("h3-empty-latent-node".to_string()),
-            NodeKind::H3Keyframe => classes.push("h3-keyframe-node".to_string()),
-            NodeKind::H3References => classes.push("h3-references-node".to_string()),
-            NodeKind::H3Sampler => classes.push("h3-sampler-node".to_string()),
-            NodeKind::H3VaeDecode => classes.push("h3-vae-decode-node".to_string()),
-            NodeKind::H3AudioDecode => classes.push("h3-audio-decode-node".to_string()),
-            NodeKind::H3VideoSave => classes.push("h3-video-save-node".to_string()),
-            NodeKind::FluxCheckpoint
-            | NodeKind::FluxTextEncoder
-            | NodeKind::FluxEmptyLatent
-            | NodeKind::FluxVaeEncode
-            | NodeKind::FluxSampler
-            | NodeKind::FluxVaeDecode
-            | NodeKind::Flux2Checkpoint
-            | NodeKind::Flux2TextEncoder
-            | NodeKind::Flux2Reference
-            | NodeKind::Flux2VaeEncode
-            | NodeKind::Flux2Sampler
-            | NodeKind::Flux2VaeDecode
-            | NodeKind::QwenImageCheckpoint
-            | NodeKind::QwenImageTextEncoder
-            | NodeKind::QwenImageReference
-            | NodeKind::QwenImageSampler
-            | NodeKind::QwenImageVaeDecode
-            | NodeKind::QwenImage21Checkpoint
-            | NodeKind::QwenImage21TextEncoder
-            | NodeKind::QwenImage21Reference
-            | NodeKind::QwenImage21Sampler
-            | NodeKind::QwenImage21VaeDecode
-            | NodeKind::SdxlCheckpoint
-            | NodeKind::SdxlTextEncoder
-            | NodeKind::SdxlVaeEncode
-            | NodeKind::SdxlSampler
-            | NodeKind::SdxlVaeDecode => classes.push("flux-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
             NodeKind::LtxCheckpoint => classes.push("ltx-checkpoint-node".to_string()),
             NodeKind::LtxTextEncoder => classes.push("ltx-text-encoder-node".to_string()),

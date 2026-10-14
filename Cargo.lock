@@ -7097,17 +7097,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-diffusion"
-version = "0.1.1"
-dependencies = [
- "synaptix-core",
- "synaptix-infer",
- "synaptix-nn",
- "synaptix-ops",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "synaptix-embedding-bge-m3"
 version = "0.1.1"
 dependencies = [
@@ -7129,7 +7118,6 @@ version = "0.1.42"
 dependencies = [
  "serde",
  "serde_json",
- "synaptixd",
 ]
 
 [[package]]
@@ -7155,92 +7143,6 @@ dependencies = [
  "serde_json",
  "synaptix-flow",
  "synaptixd",
-]
-
-[[package]]
-name = "synaptix-image-flux"
-version = "0.1.1"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-diffusion",
- "synaptix-io",
- "synaptix-kernels-cuda",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-image-flux2"
-version = "0.1.1"
-dependencies = [
- "half",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-diffusion",
- "synaptix-io",
- "synaptix-kernels-cuda",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-image-qwen"
-version = "0.1.1"
-dependencies = [
- "half",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-diffusion",
- "synaptix-io",
- "synaptix-kernels-cuda",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-image-qwen21"
-version = "0.1.1"
-dependencies = [
- "half",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-diffusion",
- "synaptix-image-qwen",
- "synaptix-io",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-image-sdxl"
-version = "0.1.1"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-diffusion",
- "synaptix-io",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -7668,6 +7570,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "synaptix-flow",
 ]
 
 [[package]]
@@ -7815,7 +7718,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.304"
+version = "0.2.305"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7850,11 +7753,6 @@ dependencies = [
  "synaptix-depth-anything",
  "synaptix-flow",
  "synaptix-gguf",
- "synaptix-image-flux",
- "synaptix-image-flux2",
- "synaptix-image-qwen",
- "synaptix-image-qwen21",
- "synaptix-image-sdxl",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
@@ -7871,6 +7769,7 @@ dependencies = [
  "synaptix-tts-voxcpm",
  "synaptix-video-ltx23",
  "synaptix-video-minimax-h3",
+ "synaptixd",
  "synassist",
  "syngui",
  "sysinfo",

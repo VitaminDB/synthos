@@ -1,0 +1,294 @@
+{
+  "name": "Qwen-Image 2.1: LLM Prompt Rewrite",
+  "description": "Короткий промпт → LLM переписывает его в подробное описание кадра по инструкции Qwen (Prompt Enhancer: что зафиксировано — сохранить, остальное — додумать, надписи в кавычках) → Text View (можно поправить) → Qwen-Image 2.1 → PNG. В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась DiT.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_image_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "qwen-image-2-1"
+        },
+        "quant": {
+          "type": "Choice",
+          "value": 2
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "кот читает газету в уличном кафе в Париже",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "kind": "syn_checkpoint",
+      "pos": {
+        "x": 60.0,
+        "y": 680.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "SynCheckpoint",
+        "data": {
+          "model_path": null,
+          "device_idx": 0,
+          "storage_idx": 4,
+          "compute_idx": 0,
+          "resident": false
+        }
+      }
+    },
+    {
+      "id": 9,
+      "kind": "llm",
+      "pos": {
+        "x": 480.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "Llm",
+        "data": {
+          "system_prompt": "You are an image prompt rewriting expert for Qwen-Image 2.1. Turn the user's short image request into one long English paragraph that describes the finished image as if you were looking at it. You are an observer reporting what is in the frame, not talking to the user.\n\nRules:\n1. Keep everything the user fixed unchanged: every string of text they want shown (copy it character for character, in its own script, in double quotes), every named object, count, colour, position and the aspect ratio.\n2. Decide everything they left open: subject, setting, time of day, lighting (quality, direction, colour), materials and textures, camera and framing, palette. A three-word request still becomes a full description.\n3. Name colours with a modifier (deep navy, warm terracotta), give materials (brushed metal, coarse linen), enumerate objects instead of summarising, describe people by their observable surface, keep shadows, reflections and scale physically consistent.\n4. Text shown inside the image goes in double quotes exactly; do not add text the user did not ask for.\n5. Write in English whatever the language of the request; only quoted in-image text keeps its script.\n6. Output only the description paragraph — no JSON, no headings, no aspect ratio, no explanations.",
+          "context": 4096,
+          "think": false,
+          "max_tokens": 640,
+          "temperature": 0.30000001192092896,
+          "top_k": 0,
+          "top_p": 1.0,
+          "min_p": 0.0,
+          "repetition_penalty": 1.0,
+          "seed": 0
+        }
+      }
+    },
+    {
+      "id": 10,
+      "kind": "text_view",
+      "pos": {
+        "x": 940.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "",
+          "width": 360.0,
+          "height": 260.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_image_encode",
+      "pos": {
+        "x": 1380.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_image_latent",
+      "pos": {
+        "x": 1380.0,
+        "y": 670.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 1024.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1024.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_image_sample",
+      "pos": {
+        "x": 1820.0,
+        "y": 300.0
+      },
+      "fields": {
+        "guidance": {
+          "type": "Float",
+          "value": 1.0
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "steps": {
+          "type": "Float",
+          "value": 0.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_image_decode",
+      "pos": {
+        "x": 2260.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "image_save",
+      "pos": {
+        "x": 2700.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 9,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 8,
+      "from_port": "model",
+      "to_node": 9,
+      "to_port": "model"
+    },
+    {
+      "from_node": 9,
+      "from_port": "answer",
+      "to_node": 10,
+      "to_port": "in"
+    },
+    {
+      "from_node": 10,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 4,
+      "from_port": "latent",
+      "to_node": 5,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 7,
+      "to_port": "image"
+    }
+  ],
+  "viewport": null
+}

@@ -1,0 +1,381 @@
+//! Перевод графов с прежними родными нодами моделей (FLUX.1, FLUX.2,
+//! Qwen-Image, Qwen-Image 2.1, SDXL, MiniMax-H3) в стадии ядра
+//! synaptix-flow, которые исполняет служба synaptixd. Работает по JSON до
+//! разбора нод: рабочая область, свои шаблоны и встроенные шаблоны
+//! (`builtin/*.json` получены этим же переводом).
+//!
+//! Нода к ноде: чекпойнт → «Модель», кодировщик → «Кодировщик описания»,
+//! пустой латент, картинка в латент, референсы, сэмплер, декодер. У H3
+//! кодировщик получает размер ролика проводом от «Латента ролика» (раньше
+//! его брали сэмплер и референсы), ключевой кадр становится файлом (или
+//! провод идёт прямо от картинки), референсы — списком файлов, сохранение
+//! ролика — наложением звука.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+use serde_json::{json, Value};
+
+/// Модель по умолчанию для чекпойнта без выбранного файла (id каталога службы).
+fn default_model(kind: &str, state: &Value) -> &'static str {
+    match kind {
+        "flux_checkpoint" => "flux-1-dev",
+        "flux2_checkpoint" => "flux-2-klein-4b",
+        "qwen_image_checkpoint" => "qwen-image-edit-2511",
+        "qwen_image21_checkpoint" => "qwen-image-2-1",
+        "sdxl_checkpoint" => "sdxl-base-1-0",
+        _ if state.get("variant_idx").and_then(Value::as_u64) == Some(1) => "minimax-h3-ref2va",
+        _ => "minimax-h3-fl2va",
+    }
+}
+
+fn text(s: impl Into<String>) -> Value {
+    json!({"type": "Text", "value": s.into()})
+}
+
+fn float(v: f64) -> Value {
+    json!({"type": "Float", "value": v})
+}
+
+fn choice(i: usize) -> Value {
+    json!({"type": "Choice", "value": i})
+}
+
+/// Индекс варианта поля ядра (`synaptix_flow::ops::stages::QUANTS` и т. п.).
+fn option(options: &[&str], v: &str) -> usize {
+    options.iter().position(|o| *o == v).unwrap_or(0)
+}
+
+/// Квант по индексу списка родной ноды → вариант ядра.
+fn quant(kind: &str, idx: u64) -> &'static str {
+    let names: &[&str] = match kind {
+        "sdxl_checkpoint" => &["", "mxfp8", "nvfp4"],
+        _ => &["nvfp4", "mxfp8", "bf16"],
+    };
+    names.get(idx as usize).copied().unwrap_or("")
+}
+
+/// Новый вид, поля и переименование портов (вход, выход) родной ноды.
+struct Plan {
+    kind: &'static str,
+    fields: BTreeMap<String, Value>,
+    inputs: &'static [(&'static str, &'static str)],
+    outputs: &'static [(&'static str, &'static str)],
+}
+
+fn num(state: &Value, k: &str) -> Option<f64> {
+    state.get(k).and_then(Value::as_f64)
+}
+
+fn plan(kind: &str, state: &Value) -> Option<Plan> {
+    use synaptix_flow::ops::stages::{FITS, QUANTS};
+    let mut f = BTreeMap::new();
+    let p = |kind, fields, inputs, outputs| Some(Plan { kind, fields, inputs, outputs });
+    match kind {
+        "flux_checkpoint" | "flux2_checkpoint" | "qwen_image_checkpoint" | "qwen_image21_checkpoint" | "sdxl_checkpoint" | "h3_checkpoint" => {
+            let model = state.get("model_path").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| default_model(kind, state).into());
+            f.insert("model".into(), text(model));
+            let q = if kind == "h3_checkpoint" { num(state, "quant_dit_idx") } else { num(state, "quant_idx") };
+            if let Some(q) = q {
+                f.insert("quant".into(), choice(option(QUANTS, quant(kind, q as u64))));
+            }
+            let flow = if kind == "h3_checkpoint" { "flow_h3_model" } else { "flow_image_model" };
+            p(flow, f, &[], &[("model", "model")])
+        }
+        "flux_text_encoder" | "flux2_text_encoder" | "qwen_image_text_encoder" | "qwen_image21_text_encoder" | "sdxl_text_encoder" => {
+            if let Some(i) = num(state, "seq_len_idx") {
+                f.insert("seq_len".into(), float([0.0, 256.0, 512.0].get(i as usize).copied().unwrap_or(0.0)));
+            }
+            p("flow_image_encode", f, &[("model", "model"), ("prompt", "prompt"), ("negative", "negative"), ("references", "refs")], &[("conditioning", "cond")])
+        }
+        "flux_empty_latent" => {
+            f.insert("width".into(), float(num(state, "width").unwrap_or(1024.0)));
+            f.insert("height".into(), float(num(state, "height").unwrap_or(1024.0)));
+            p("flow_image_latent", f, &[], &[("latent", "latent")])
+        }
+        "flux_vae_encode" | "flux2_vae_encode" | "sdxl_vae_encode" => {
+            let fit = if num(state, "resize_idx") == Some(0.0) { "stretch" } else { "cover" };
+            f.insert("fit".into(), choice(option(FITS, fit)));
+            p("flow_image_to_latent", f, &[("model", "model"), ("image", "image"), ("size", "size")], &[("latent", "latent")])
+        }
+        "flux2_reference" | "qwen_image_reference" | "qwen_image21_reference" => {
+            p("flow_image_refs", f, &[("model", "model"), ("image", "images"), ("references", "refs")], &[("references", "refs")])
+        }
+        "flux_sampler" | "flux2_sampler" | "qwen_image_sampler" | "qwen_image21_sampler" | "sdxl_sampler" => {
+            for (from, to) in [("steps", "steps"), ("guidance", "guidance"), ("cfg", "guidance"), ("seed", "seed"), ("denoise", "denoise")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            p("flow_image_sample", f, &[("model", "model"), ("conditioning", "cond"), ("latent", "latent"), ("references", "refs")], &[("latent", "latent")])
+        }
+        "flux_vae_decode" | "flux2_vae_decode" | "qwen_image_vae_decode" | "qwen_image21_vae_decode" | "sdxl_vae_decode" => {
+            p("flow_image_decode", f, &[("model", "model"), ("latent", "latent")], &[("image", "image")])
+        }
+        "h3_text_encoder" => p(
+            "flow_h3_encode",
+            f,
+            &[("model", "model"), ("prompt", "prompt"), ("keyframe", "first_frame"), ("keyframe_last", "last_frame"), ("refs", "refs")],
+            &[("conditioning", "cond")],
+        ),
+        "h3_empty_latent_av" => {
+            f.insert("width".into(), float(num(state, "width").unwrap_or(1344.0)));
+            f.insert("height".into(), float(num(state, "height").unwrap_or(768.0)));
+            f.insert("seconds".into(), float(num(state, "duration_seconds").unwrap_or(5.0)));
+            p("flow_h3_latent", f, &[], &[("av_latent", "latent")])
+        }
+        "h3_keyframe" => {
+            let path = state.get("image_path").and_then(Value::as_str).unwrap_or("");
+            f.insert("path".into(), text(path));
+            p("flow_file", f, &[], &[("keyframe", "file")])
+        }
+        "h3_references" => {
+            let items: Vec<&str> = state.get("items").and_then(Value::as_array).map(|a| a.iter().filter_map(|i| i.get("path").and_then(Value::as_str)).collect()).unwrap_or_default();
+            f.insert("items".into(), text(items.join("\n")));
+            p("flow_list", f, &[], &[("refs", "list")])
+        }
+        "h3_sampler" => {
+            for (from, to) in [("steps", "steps"), ("cfg_scale", "guidance"), ("seed", "seed")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            p("flow_h3_sample", f, &[("model", "model"), ("conditioning", "cond")], &[("video_latent", "latent"), ("audio_latent", "latent")])
+        }
+        "h3_vae_decode" => p("flow_h3_decode_video", f, &[("model", "model"), ("video_latent", "latent")], &[("frames", "video")]),
+        "h3_audio_decode" => p("flow_h3_decode_audio", f, &[("model", "model"), ("audio_latent", "latent")], &[("audio", "audio")]),
+        "h3_video_save" => {
+            f.insert("mode".into(), choice(0));
+            p("flow_mux", f, &[("frames", "video"), ("audio", "audio")], &[("path", "video")])
+        }
+        _ => None,
+    }
+}
+
+fn id_of(v: &Value, k: &str) -> Option<u64> {
+    v.get(k).and_then(Value::as_u64)
+}
+
+fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
+    v.get(k).and_then(Value::as_str).unwrap_or("")
+}
+
+fn conn(from: u64, fp: &str, to: u64, tp: &str) -> Value {
+    json!({"from_node": from, "from_port": fp, "to_node": to, "to_port": tp})
+}
+
+/// Перевести родные ноды графа. `true` — что-то изменилось.
+pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
+    let kinds: HashMap<u64, String> = nodes.iter().filter_map(|n| Some((id_of(n, "id")?, str_of(n, "kind").to_string()))).collect();
+    if !kinds.values().any(|k| plan(k, &Value::Null).is_some()) {
+        return false;
+    }
+    // Ключевой кадр H3 с проводом картинки — сам провод идёт дальше.
+    let mut bypass: HashMap<u64, (u64, String)> = HashMap::new();
+    for c in conns.iter() {
+        let (Some(to), Some(from)) = (id_of(c, "to_node"), id_of(c, "from_node")) else { continue };
+        if kinds.get(&to).map(String::as_str) == Some("h3_keyframe") && str_of(c, "to_port") == "image" {
+            bypass.insert(to, (from, str_of(c, "from_port").to_string()));
+        }
+    }
+    // Кодировщику H3 — размер ролика: латент, что шёл в сэмплер этого кодировщика.
+    let mut sampler_latent: HashMap<u64, u64> = HashMap::new();
+    let mut encoder_sampler: HashMap<u64, u64> = HashMap::new();
+    for c in conns.iter() {
+        let (Some(from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { continue };
+        match (kinds.get(&from).map(String::as_str), kinds.get(&to).map(String::as_str), str_of(c, "to_port")) {
+            (Some("h3_empty_latent_av"), Some("h3_sampler"), "av_latent") => {
+                sampler_latent.insert(to, from);
+            }
+            (Some("h3_text_encoder"), Some("h3_sampler"), "conditioning") => {
+                encoder_sampler.insert(from, to);
+            }
+            _ => {}
+        }
+    }
+    // H3 с референсами — вариант Ref2VA.
+    if kinds.values().any(|k| k == "h3_references") {
+        for n in nodes.iter_mut().filter(|n| str_of(n, "kind") == "h3_checkpoint") {
+            if n["state"]["data"].get("model_path").and_then(Value::as_str).unwrap_or("").is_empty() {
+                n["state"] = json!({"kind": "H3Checkpoint", "data": {"variant_idx": 1}});
+            }
+        }
+    }
+    // Проигрыватель кадров H3 → готовый ролик: сохранение (наложение звука)
+    // тех же декодеров или ролик декодера.
+    let mut save_of: HashMap<u64, u64> = HashMap::new();
+    for c in conns.iter() {
+        let (Some(from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { continue };
+        if kinds.get(&to).map(String::as_str) == Some("h3_video_save") && kinds.get(&from).map(String::as_str) == Some("h3_vae_decode") {
+            save_of.insert(from, to);
+        }
+    }
+    let mut player = Vec::new();
+    conns.retain(|c| {
+        let (Some(from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { return true };
+        if kinds.get(&to).map(String::as_str) != Some("ffmpeg_player") {
+            return true;
+        }
+        match (kinds.get(&from).map(String::as_str), str_of(c, "to_port")) {
+            (Some("h3_vae_decode"), "frames") => {
+                player.push(match save_of.get(&from) {
+                    Some(&save) => conn(save, "path", to, "source"),
+                    None => conn(from, "frames", to, "source"),
+                });
+                false
+            }
+            (Some("h3_audio_decode"), "audio") => false,
+            _ => true,
+        }
+    });
+    conns.extend(player);
+    let latents: Vec<u64> = kinds.iter().filter(|(_, k)| *k == "h3_empty_latent_av").map(|(i, _)| *i).collect();
+    let mut extra = Vec::new();
+    for (id, k) in &kinds {
+        if k != "h3_text_encoder" {
+            continue;
+        }
+        let lat = encoder_sampler.get(id).and_then(|s| sampler_latent.get(s)).copied().or(if latents.len() == 1 { Some(latents[0]) } else { None });
+        if let Some(l) = lat {
+            extra.push(conn(l, "av_latent", *id, "latent_size"));
+        }
+    }
+    conns.extend(extra);
+
+    let mut plans: HashMap<u64, Plan> = HashMap::new();
+    for n in nodes.iter_mut() {
+        let Some(id) = id_of(n, "id") else { continue };
+        let state = n.get("state").and_then(|s| s.get("data")).cloned().unwrap_or(Value::Null);
+        let Some(pl) = plan(str_of(n, "kind"), &state) else { continue };
+        n["kind"] = json!(pl.kind);
+        n["fields"] = json!(pl.fields);
+        n["state"] = Value::Null;
+        plans.insert(id, pl);
+    }
+    nodes.retain(|n| id_of(n, "id").map(|i| !bypass.contains_key(&i)).unwrap_or(true));
+
+    let mut out = Vec::with_capacity(conns.len());
+    let mut taken: HashSet<(u64, String)> = HashSet::new();
+    for c in conns.iter() {
+        let (Some(mut from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { continue };
+        let mut fp = str_of(c, "from_port").to_string();
+        let mut tp = str_of(c, "to_port").to_string();
+        if bypass.contains_key(&to) {
+            continue;
+        }
+        if let Some((src, port)) = bypass.get(&from) {
+            from = *src;
+            fp = port.clone();
+        } else if let Some(pl) = plans.get(&from) {
+            match pl.outputs.iter().find(|(o, _)| *o == fp) {
+                Some((_, n)) => fp = (*n).to_string(),
+                None => continue,
+            }
+        }
+        if tp == "latent_size" {
+            tp = "latent".into();
+        } else if let Some(pl) = plans.get(&to) {
+            match pl.inputs.iter().find(|(i, _)| *i == tp) {
+                Some((_, n)) => tp = (*n).to_string(),
+                None => continue,
+            }
+        }
+        // На вход — один провод.
+        if !taken.insert((to, tp.clone())) {
+            continue;
+        }
+        out.push(conn(from, &fp, to, &tp));
+    }
+    *conns = out;
+    true
+}
+
+/// Перевести граф в JSON-объекте с `nodes`/`connections` (шаблон, вкладка).
+pub fn migrate_graph(graph: &mut Value) -> bool {
+    let (Some(nodes), Some(conns)) = (graph.get("nodes").cloned(), graph.get("connections").cloned()) else {
+        return false;
+    };
+    let (Value::Array(mut nodes), Value::Array(mut conns)) = (nodes, conns) else { return false };
+    if !migrate(&mut nodes, &mut conns) {
+        return false;
+    }
+    graph["nodes"] = Value::Array(nodes);
+    graph["connections"] = Value::Array(conns);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: u64, kind: &str, state: Value) -> Value {
+        json!({"id": id, "kind": kind, "pos": {"x": 0.0, "y": 0.0}, "fields": {}, "state": state})
+    }
+
+    #[test]
+    fn flux_chain() {
+        let mut g = json!({
+            "nodes": [
+                node(1, "flux_checkpoint", json!({"kind": "FluxCheckpoint", "data": {"model_path": "/m/flux.1-dev.syn", "quant_idx": 1}})),
+                node(2, "text_view", Value::Null),
+                node(3, "flux_text_encoder", Value::Null),
+                node(4, "flux_empty_latent", json!({"kind": "FluxEmptyLatent", "data": {"width": 768, "height": 512}})),
+                node(5, "flux_sampler", json!({"kind": "FluxSampler", "data": {"steps": 24, "guidance": 3.0, "seed": 7, "denoise": 1.0}})),
+                node(6, "flux_vae_decode", Value::Null),
+                node(7, "image_save", Value::Null)
+            ],
+            "connections": [
+                conn(1, "model", 3, "model"), conn(2, "text", 3, "prompt"), conn(1, "model", 5, "model"),
+                conn(3, "conditioning", 5, "conditioning"), conn(4, "latent", 5, "latent"),
+                conn(1, "model", 6, "model"), conn(5, "latent", 6, "latent"), conn(6, "image", 7, "image")
+            ]
+        });
+        assert!(migrate_graph(&mut g));
+        let kinds: Vec<&str> = g["nodes"].as_array().unwrap().iter().map(|n| n["kind"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["flow_image_model", "text_view", "flow_image_encode", "flow_image_latent", "flow_image_sample", "flow_image_decode", "image_save"]);
+        assert_eq!(g["nodes"][0]["fields"]["model"]["value"], "/m/flux.1-dev.syn");
+        assert_eq!(g["nodes"][0]["fields"]["quant"]["value"], 2); // mxfp8 в QUANTS
+        assert_eq!(g["nodes"][4]["fields"]["seed"]["value"], 7.0);
+        assert!(g["connections"].as_array().unwrap().contains(&conn(3, "cond", 5, "cond")));
+        assert!(g["connections"].as_array().unwrap().contains(&conn(6, "image", 7, "image")));
+        // Повторно — без изменений.
+        assert!(!migrate_graph(&mut g));
+    }
+
+    #[test]
+    fn h3_chain() {
+        let mut g = json!({
+            "nodes": [
+                node(1, "h3_checkpoint", Value::Null),
+                node(2, "h3_text_encoder", Value::Null),
+                node(3, "h3_empty_latent_av", json!({"kind": "H3EmptyLatentAv", "data": {"width": 960, "height": 544, "duration_seconds": 3.0}})),
+                node(4, "h3_keyframe", json!({"kind": "H3Keyframe", "data": {"image_path": "/a.png"}})),
+                node(5, "h3_sampler", json!({"kind": "H3Sampler", "data": {"steps": 6, "cfg_scale": 1.0, "seed": 0}})),
+                node(6, "h3_vae_decode", Value::Null),
+                node(7, "h3_audio_decode", Value::Null),
+                node(8, "h3_video_save", Value::Null),
+                node(9, "flux_vae_decode", Value::Null),
+                node(10, "h3_keyframe", Value::Null)
+            ],
+            "connections": [
+                conn(1, "model", 2, "model"), conn(4, "keyframe", 2, "keyframe"), conn(1, "model", 5, "model"),
+                conn(2, "conditioning", 5, "conditioning"), conn(3, "av_latent", 5, "av_latent"), conn(4, "keyframe", 5, "keyframe"),
+                conn(1, "model", 6, "model"), conn(5, "video_latent", 6, "video_latent"),
+                conn(1, "model", 7, "model"), conn(5, "audio_latent", 7, "audio_latent"),
+                conn(6, "frames", 8, "frames"), conn(7, "audio", 8, "audio"),
+                conn(9, "image", 10, "image"), conn(10, "keyframe", 2, "keyframe_last")
+            ]
+        });
+        assert!(migrate_graph(&mut g));
+        let c = g["connections"].as_array().unwrap();
+        assert!(c.contains(&conn(3, "latent", 2, "latent")));
+        assert!(c.contains(&conn(4, "file", 2, "first_frame")));
+        assert!(c.contains(&conn(9, "image", 2, "last_frame")));
+        assert!(c.contains(&conn(5, "latent", 6, "latent")));
+        assert!(c.contains(&conn(6, "video", 8, "video")));
+        assert!(!c.iter().any(|x| x["to_node"] == 5 && x["to_port"] == "av_latent"));
+        // Ключевой кадр с проводом картинки убран.
+        assert!(!g["nodes"].as_array().unwrap().iter().any(|n| n["id"] == 10));
+        assert_eq!(g["nodes"][0]["fields"]["model"]["value"], "minimax-h3-fl2va");
+        assert_eq!(g["nodes"][4]["fields"]["guidance"]["value"], 1.0);
+    }
+}

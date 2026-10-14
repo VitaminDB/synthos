@@ -7,18 +7,63 @@
 //! которую уже можно править.
 
 use super::model::{
-    AceStepCheckpointStateData, AceStepGenerateStateData, AceStepVaeStateData, ConnData,
-    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2TranscribeStateData,
-    FieldValueData, Flux2CheckpointStateData, Flux2SamplerStateData, FluxEmptyLatentStateData, FluxSamplerStateData,
-    QwenImageCheckpointStateData, QwenImage21CheckpointStateData, QwenImage21SamplerStateData,
-    SdxlCheckpointStateData, SdxlSamplerStateData,
-    H3KeyframeStateData, H3SamplerStateData, LlmStateData, LtxSamplerStage1StateData, NodeData,
+    AceStepCheckpointStateData,
+    AceStepGenerateStateData,
+    AceStepVaeStateData,
+    ConnData,
+    Yue2CheckpointStateData,
+    Yue2GenerateStateData,
+    Yue2TranscribeStateData,
+    FieldValueData,
+    LtxSamplerStage1StateData,
+    NodeData,
     NodeStateData,
-    PointData, SynCheckpointStateData, Template, TemplateKind, TextViewStateData, VibeVoiceStateData,
+    PointData,
+    Template,
+    TemplateKind,
+    TextViewStateData,
+    VibeVoiceStateData,
 };
 use crate::pages::node_editor::types::NodeKind;
 
 /// Все встроенные шаблоны. Порядок ⇒ порядок отображения в панели.
+/// Шаблоны со стадиями моделей в службе (FLUX.1, FLUX.2, Qwen-Image,
+/// SDXL, MiniMax-H3) — JSON: переведены из прежних родных нод
+/// [`super::native`].
+const STAGE_TEMPLATES: &[(&str, &str)] = &[
+    ("builtin-flux-image-to-image", include_str!("builtin/builtin-flux-image-to-image.json")),
+    ("builtin-flux-text-to-image", include_str!("builtin/builtin-flux-text-to-image.json")),
+    ("builtin-flux2-edit", include_str!("builtin/builtin-flux2-edit.json")),
+    ("builtin-flux2-image-to-image", include_str!("builtin/builtin-flux2-image-to-image.json")),
+    ("builtin-flux2-llm-upsampling", include_str!("builtin/builtin-flux2-llm-upsampling.json")),
+    ("builtin-flux2-multi-reference", include_str!("builtin/builtin-flux2-multi-reference.json")),
+    ("builtin-flux2-text-to-image", include_str!("builtin/builtin-flux2-text-to-image.json")),
+    ("builtin-h3-first-frame", include_str!("builtin/builtin-h3-first-frame.json")),
+    ("builtin-h3-first-last", include_str!("builtin/builtin-h3-first-last.json")),
+    ("builtin-h3-flux-keyframe", include_str!("builtin/builtin-h3-flux-keyframe.json")),
+    ("builtin-h3-ref2va", include_str!("builtin/builtin-h3-ref2va.json")),
+    ("builtin-h3-text-to-video", include_str!("builtin/builtin-h3-text-to-video.json")),
+    ("builtin-h3-turbo", include_str!("builtin/builtin-h3-turbo.json")),
+    ("builtin-ltx-flux-keyframe", include_str!("builtin/builtin-ltx-flux-keyframe.json")),
+    ("builtin-qwen-image-edit", include_str!("builtin/builtin-qwen-image-edit.json")),
+    ("builtin-qwen-image-multi-edit", include_str!("builtin/builtin-qwen-image-multi-edit.json")),
+    ("builtin-qwen-image21-edit", include_str!("builtin/builtin-qwen-image21-edit.json")),
+    ("builtin-qwen-image21-llm-rewrite", include_str!("builtin/builtin-qwen-image21-llm-rewrite.json")),
+    ("builtin-qwen-image21-multi-reference", include_str!("builtin/builtin-qwen-image21-multi-reference.json")),
+    ("builtin-qwen-image21-text-to-image", include_str!("builtin/builtin-qwen-image21-text-to-image.json")),
+    ("builtin-qwen-image21-transparent", include_str!("builtin/builtin-qwen-image21-transparent.json")),
+    ("builtin-sdxl-image-to-image", include_str!("builtin/builtin-sdxl-image-to-image.json")),
+    ("builtin-sdxl-text-to-image", include_str!("builtin/builtin-sdxl-text-to-image.json")),
+];
+
+fn stage(id: &str) -> Template {
+    let raw = STAGE_TEMPLATES.iter().find(|(i, _)| *i == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("нет шаблона {id}"));
+    let mut t: Template = serde_json::from_str(raw).unwrap_or_else(|e| panic!("шаблон {id}: {e}"));
+    t.id = id.into();
+    t.builtin = true;
+    t
+}
+
 pub fn all() -> Vec<Template> {
     vec![
         empty_template(),
@@ -44,982 +89,74 @@ pub fn all() -> Vec<Template> {
         yue2_song_template(),
         yue2_edit_score_template(),
         yue2_cover_template(),
-        h3_text_to_video_template(),
-        h3_turbo_template(),
-        h3_first_frame_template(),
-        h3_first_last_template(),
-        h3_ref2va_template(),
+        stage("builtin-h3-text-to-video"),
+        stage("builtin-h3-turbo"),
+        stage("builtin-h3-first-frame"),
+        stage("builtin-h3-first-last"),
+        stage("builtin-h3-ref2va"),
         ltx_text_to_video_template(),
         ltx_image_to_video_template(),
         ltx_retake_template(),
         ltx_ic_lora_template(),
         ltx_lipdub_template(),
         ltx_a2v_template(),
-        flux_text_to_image_template(),
-        flux_image_to_image_template(),
-        flux2_text_to_image_template(),
-        flux2_edit_template(),
-        flux2_image_to_image_template(),
-        flux2_llm_upsampling_template(),
-        flux2_multi_reference_template(),
-        qwen_image_edit_template(),
-        qwen_image_multi_edit_template(),
-        qwen_image21_text_to_image_template(),
-        qwen_image21_edit_template(),
-        qwen_image21_multi_reference_template(),
-        qwen_image21_transparent_template(),
-        qwen_image21_llm_rewrite_template(),
-        sdxl_text_to_image_template(),
-        sdxl_image_to_image_template(),
-        ltx_flux_keyframe_template(),
-        h3_flux_keyframe_template(),
+        stage("builtin-flux-text-to-image"),
+        stage("builtin-flux-image-to-image"),
+        stage("builtin-flux2-text-to-image"),
+        stage("builtin-flux2-edit"),
+        stage("builtin-flux2-image-to-image"),
+        stage("builtin-flux2-llm-upsampling"),
+        stage("builtin-flux2-multi-reference"),
+        stage("builtin-qwen-image-edit"),
+        stage("builtin-qwen-image-multi-edit"),
+        stage("builtin-qwen-image21-text-to-image"),
+        stage("builtin-qwen-image21-edit"),
+        stage("builtin-qwen-image21-multi-reference"),
+        stage("builtin-qwen-image21-transparent"),
+        stage("builtin-qwen-image21-llm-rewrite"),
+        stage("builtin-sdxl-text-to-image"),
+        stage("builtin-sdxl-image-to-image"),
+        stage("builtin-ltx-flux-keyframe"),
+        stage("builtin-h3-flux-keyframe"),
     ]
 }
 
 // ── FLUX.2 ────────────────────────────────────────────────────────────────
 
-/// Цепочка FLUX.2 txt2img: Checkpoint(1) → Text Encoder(3) ← промпт(2),
-/// Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7). Empty
-/// Latent — общий с FLUX.1 (это только размер).
-fn flux2_base_nodes(prompt: &str, width: u32, height: u32, aspect_idx: usize) -> Vec<NodeData> {
-    vec![
-        node_with_state(
-            1,
-            NodeKind::Flux2Checkpoint,
-            60.0,
-            60.0,
-            NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData::default()),
-        ),
-        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
-        node_plain(3, NodeKind::Flux2TextEncoder, 520.0, 420.0),
-        node_with_state(
-            4,
-            NodeKind::FluxEmptyLatent,
-            520.0,
-            640.0,
-            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx }),
-        ),
-        node_plain(5, NodeKind::Flux2Sampler, 960.0, 420.0),
-        node_plain(6, NodeKind::Flux2VaeDecode, 1400.0, 420.0),
-        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
-    ]
-}
 
-fn flux2_text_to_image_template() -> Template {
-    Template {
-        id: "builtin-flux2-text-to-image".into(),
-        builtin: true,
-        name: "FLUX.2: Text to Image".into(),
-        description: "Промпт → LLM-энкодер (Mistral-24B у dev, Qwen3 у klein) → Sampler (шаги по \
-             модели: dev 50, klein 4) → VAE Decode → PNG. В Checkpoint — flux.2-dev.syn, \
-             flux.2-klein-4b.syn или flux.2-klein-9b.syn; не влезшее в VRAM стримится."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: flux2_base_nodes(
-            "A cozy reading nook by a rainy window at dusk: a ginger cat asleep on a chunky knitted \
-             blanket, a brass floor lamp casting warm light, raindrops on the glass, photograph",
-            1024,
-            1024,
-            0,
-        ),
-        connections: vec![
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(2, "out", 3, "prompt"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(4, "latent", 5, "latent"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
 
-/// Правка: Image(8) → Reference(9) → Sampler.references; размер — с
-/// референса, Empty Latent не нужен.
-fn flux2_edit_template() -> Template {
-    let mut nodes: Vec<NodeData> =
-        flux2_base_nodes("Make it a snowy winter evening; keep everything else unchanged", 1024, 1024, 0)
-            .into_iter()
-            .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
-            .collect();
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
-    nodes.push(node_plain(9, NodeKind::Flux2Reference, 520.0, 720.0));
-    Template {
-        id: "builtin-flux2-edit".into(),
-        builtin: true,
-        name: "FLUX.2: Edit Image".into(),
-        description: "Картинка → Reference → Sampler вместе с инструкцией правки → PNG в размере \
-             исходника (до 1 Мп). Пишите, что изменить и что оставить как есть."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections: vec![
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(1, "model", 9, "model"),
-            conn(2, "out", 3, "prompt"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(8, "image", 9, "image"),
-            conn(9, "references", 5, "references"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
-
-/// Img2img: Image(8) → VAE Encode(9) → Sampler.latent с denoise 0.7; размер —
-/// картинки (до 2 Мп), Empty Latent не нужен.
-fn flux2_image_to_image_template() -> Template {
-    let mut nodes: Vec<NodeData> = flux2_base_nodes(
-        "The same scene as a watercolor painting, soft washes of color, visible paper texture",
-        1024,
-        1024,
-        0,
-    )
-    .into_iter()
-    .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
-    .collect();
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
-    nodes.push(node_plain(9, NodeKind::Flux2VaeEncode, 520.0, 720.0));
-    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::Flux2Sampler) {
-        n.state = Some(NodeStateData::Flux2Sampler(Flux2SamplerStateData { denoise: 0.7, ..Default::default() }));
-    }
-    Template {
-        id: "builtin-flux2-image-to-image".into(),
-        builtin: true,
-        name: "FLUX.2: Image to Image".into(),
-        description: "Картинка → VAE Encode → Sampler с denoise 0.7 → VAE Decode → PNG. Чем меньше \
-             denoise, тем ближе к исходнику по композиции и цветам; для правки по инструкции — \
-             шаблон Edit Image."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections: vec![
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(1, "model", 9, "model"),
-            conn(2, "out", 3, "prompt"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(8, "image", 9, "image"),
-            conn(9, "latent", 5, "latent"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
-
-/// Системная инструкция «апсемплинга промпта» из официального пайплайна
-/// FLUX.2 (Black Forest Labs, `flux2/src/flux2/system_messages.py`, её же
-/// берёт diffusers `Flux2Pipeline.upsample_prompt`): там промпт переписывает
-/// сама Mistral из энкодера dev, у нас энкодер урезан и текст не генерирует,
-/// поэтому переписывает любая чат-LLM. Добавлено одно правило: результат —
-/// по-английски (так лучше всего понимают энкодеры FLUX.2), надписи — на
-/// языке оригинала.
-const FLUX2_UPSAMPLING_SYSTEM: &str = "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. \
-Rewrite user prompts to be more descriptive while strictly preserving their core subject and intent.
-
-Guidelines:
-1. Structure: Keep structured inputs structured (enhance within fields). Convert natural language to detailed paragraphs.
-2. Details: Add concrete visual specifics - form, scale, textures, materials, lighting (quality, direction, color), \
-shadows, spatial relationships, and environmental context.
-3. Text in Images: Put ALL text in quotation marks, matching the prompt's language. Always provide explicit quoted \
-text for objects that would contain text in reality (signs, labels, screens, etc.) - without it, the model \
-generates gibberish.
-4. Language: Write the revised prompt in English, whatever the language of the request; only the quoted text that \
-must appear in the image keeps its original language.
-
-Output only the revised prompt and nothing else.";
-
-/// Апсемплинг промпта LLM: короткий промпт(2) → LLM(9) (модель — Syn
-/// Checkpoint(8), без «Держать в памяти»: VRAM нужна FLUX.2) → Text View(10)
-/// с подробным промптом (правится руками) → Text Encoder(3) → Sampler(5) →
-/// VAE Decode(6) → Image Save(7).
-fn flux2_llm_upsampling_template() -> Template {
-    let llm = NodeStateData::Llm(LlmStateData {
-        model_path: None,
-        device_idx: crate::pages::node_editor::nodes::llm::default_device_idx(),
-        quant_idx: crate::pages::node_editor::nodes::llm::default_quant_idx(),
-        compute_idx: crate::pages::node_editor::nodes::llm::default_compute_idx(),
-        system_prompt: FLUX2_UPSAMPLING_SYSTEM.into(),
-        context: 4096,
-        think: false,
-        max_tokens: 512,
-        // Как у пайплайна BFL: 0.15 — переписать, а не сочинить заново.
-        temperature: 0.15,
-        top_k: 0,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        seed: 0,
-    });
-    // NVFP4: «Auto» у LLM-ноды — плотный BF16, 27B-модель на 24 ГБ не
-    // влезала и стримилась с хоста. Замер шаблона (qwen3.8-27b + klein-4B):
-    // NVFP4 — 15 с на загрузку и переписывание, FP8 — 95 с (не влезает
-    // целиком); у gemma-4-26b в NVFP4 текст промпта чистый (9 с).
-    let checkpoint = NodeStateData::SynCheckpoint(SynCheckpointStateData {
-        model_path: None,
-        device_idx: 0,
-        storage_idx: 4,
-        compute_idx: 0,
-        resident: false,
-    });
-    let upsampled = NodeStateData::TextView(TextViewStateData { output_text: String::new(), width: 360.0, height: 260.0 });
-    Template {
-        id: "builtin-flux2-llm-upsampling".into(),
-        builtin: true,
-        name: "FLUX.2: LLM Upsampling".into(),
-        description: "Короткий промпт → LLM переписывает его подробно по инструкции Black Forest Labs \
-             (детали, свет, материалы, надписи в кавычках) → Text View (можно поправить) → FLUX.2 → PNG. \
-             В Syn Checkpoint — любая чат-LLM; «Держать в памяти» выключено, чтобы VRAM досталась FLUX.2."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(
-                1,
-                NodeKind::Flux2Checkpoint,
-                60.0,
-                60.0,
-                NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData::default()),
-            ),
-            node_with_state(2, NodeKind::TextView, 60.0, 420.0, flux_prompt_state("кот читает газету в уличном кафе в Париже")),
-            node_with_state(8, NodeKind::SynCheckpoint, 60.0, 680.0, checkpoint),
-            node_with_state(9, NodeKind::Llm, 480.0, 420.0, llm),
-            node_with_state(10, NodeKind::TextView, 940.0, 420.0, upsampled),
-            node_plain(3, NodeKind::Flux2TextEncoder, 1380.0, 300.0),
-            node_with_state(
-                4,
-                NodeKind::FluxEmptyLatent,
-                1380.0,
-                560.0,
-                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
-            ),
-            node_plain(5, NodeKind::Flux2Sampler, 1820.0, 300.0),
-            node_plain(6, NodeKind::Flux2VaeDecode, 2260.0, 300.0),
-            node_plain(7, NodeKind::ImageSave, 2700.0, 300.0),
-        ],
-        connections: vec![
-            conn(2, "out", 9, "prompt"),
-            conn(8, "model", 9, "model"),
-            conn(9, "answer", 10, "in"),
-            conn(10, "out", 3, "prompt"),
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(4, "latent", 5, "latent"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
-
-/// Два референса цепочкой: Image(8) → Reference(9) → Reference(11) ← Image(10)
-/// → Sampler.references, размер — Empty Latent.
-fn flux2_multi_reference_template() -> Template {
-    let mut nodes = flux2_base_nodes(
-        "The person from image 1 sitting at the café table from image 2, natural daylight, photograph",
-        1024,
-        1024,
-        0,
-    );
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 900.0));
-    nodes.push(node_plain(9, NodeKind::Flux2Reference, 520.0, 860.0));
-    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1160.0));
-    nodes.push(node_plain(11, NodeKind::Flux2Reference, 520.0, 1100.0));
-    Template {
-        id: "builtin-flux2-multi-reference".into(),
-        builtin: true,
-        name: "FLUX.2: Multi-Reference".into(),
-        description: "Две картинки → Reference → Reference (цепочкой) → Sampler: персонаж, предмет \
-             или стиль с одной картинки в сцене другой. В промпте ссылайтесь на «image 1», \
-             «image 2» по порядку цепочки."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections: vec![
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(1, "model", 9, "model"),
-            conn(1, "model", 11, "model"),
-            conn(2, "out", 3, "prompt"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(4, "latent", 5, "latent"),
-            conn(8, "image", 9, "image"),
-            conn(9, "references", 11, "references"),
-            conn(10, "image", 11, "image"),
-            conn(11, "references", 5, "references"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
 
 // ── Qwen-Image ────────────────────────────────────────────────────────────
 
-/// Правка Qwen-Image: Checkpoint(1), промпт(2) → Text Encoder(3) → Sampler(5)
-/// → VAE Decode(6) → Image Save(7); Image(8) → Reference(9) — и в энкодер,
-/// и в сэмплер. Размер — с картинки (~1 Мп).
-fn qwen_image_edit_nodes(prompt: &str) -> Vec<NodeData> {
-    vec![
-        node_with_state(
-            1,
-            NodeKind::QwenImageCheckpoint,
-            60.0,
-            60.0,
-            NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData::default()),
-        ),
-        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
-        node_plain(3, NodeKind::QwenImageTextEncoder, 960.0, 420.0),
-        node_plain(5, NodeKind::QwenImageSampler, 1400.0, 420.0),
-        node_plain(6, NodeKind::QwenImageVaeDecode, 1840.0, 420.0),
-        node_plain(7, NodeKind::ImageSave, 2280.0, 420.0),
-        node_plain(8, NodeKind::ImageLoad, 60.0, 780.0),
-        node_plain(9, NodeKind::QwenImageReference, 520.0, 720.0),
-    ]
-}
 
-fn qwen_image_edit_connections(last_ref: u64) -> Vec<ConnData> {
-    vec![
-        conn(1, "model", 3, "model"),
-        conn(1, "model", 5, "model"),
-        conn(1, "model", 6, "model"),
-        conn(1, "model", 9, "model"),
-        conn(2, "out", 3, "prompt"),
-        conn(8, "image", 9, "image"),
-        conn(last_ref, "references", 3, "references"),
-        conn(last_ref, "references", 5, "references"),
-        conn(3, "conditioning", 5, "conditioning"),
-        conn(5, "latent", 6, "latent"),
-        conn(6, "image", 7, "image"),
-    ]
-}
 
-fn qwen_image_edit_template() -> Template {
-    Template {
-        id: "builtin-qwen-image-edit".into(),
-        builtin: true,
-        name: "Qwen-Image: Edit Image".into(),
-        description: "Картинка → Reference (в энкодер Qwen2.5-VL и в сэмплер) + инструкция правки → \
-             Sampler (true CFG 4, шаги по модели) → PNG ~1 Мп в пропорциях исходника. В \
-             Checkpoint — qwen-image-edit-2511.syn или qwen-image-edit.syn."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: qwen_image_edit_nodes(
-            "Replace the sky with a dramatic orange sunset; keep the buildings, people and lighting on them unchanged",
-        ),
-        connections: qwen_image_edit_connections(9),
-        viewport: None,
-    }
-}
 
 // ── Qwen-Image 2.1 ────────────────────────────────────────────────────────
 
-/// Костяк Qwen-Image 2.1: Checkpoint(1), промпт(2) → Text Encoder(3) →
-/// Sampler(5) → VAE Decode(6) → Image Save(7); Empty Latent(4) — только с
-/// явным размером (без него размер — из разрешения чекпойнта).
-fn qwen_image21_base_nodes(prompt: &str, size: Option<(u32, u32)>) -> Vec<NodeData> {
-    let mut nodes = vec![
-        node_with_state(
-            1,
-            NodeKind::QwenImage21Checkpoint,
-            60.0,
-            60.0,
-            NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData::default()),
-        ),
-        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
-        node_plain(3, NodeKind::QwenImage21TextEncoder, 960.0, 420.0),
-        node_with_state(
-            5,
-            NodeKind::QwenImage21Sampler,
-            1400.0,
-            420.0,
-            NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData::default()),
-        ),
-        node_plain(6, NodeKind::QwenImage21VaeDecode, 1840.0, 420.0),
-        node_plain(7, NodeKind::ImageSave, 2280.0, 420.0),
-    ];
-    if let Some((width, height)) = size {
-        nodes.push(node_with_state(
-            4,
-            NodeKind::FluxEmptyLatent,
-            960.0,
-            720.0,
-            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx: 0 }),
-        ));
-    }
-    nodes
-}
 
-fn qwen_image21_base_connections(size: bool) -> Vec<ConnData> {
-    let mut c = vec![
-        conn(1, "model", 3, "model"),
-        conn(1, "model", 5, "model"),
-        conn(1, "model", 6, "model"),
-        conn(2, "out", 3, "prompt"),
-        conn(3, "conditioning", 5, "conditioning"),
-        conn(5, "latent", 6, "latent"),
-        conn(6, "image", 7, "image"),
-    ];
-    if size {
-        c.push(conn(4, "latent", 5, "latent"));
-    }
-    c
-}
 
-fn qwen_image21_text_to_image_template() -> Template {
-    Template {
-        id: "builtin-qwen-image21-text-to-image".into(),
-        builtin: true,
-        name: "Qwen-Image 2.1: Text to Image".into(),
-        description: "Промпт → Text Encoder (Qwen3-VL) → Sampler (40 шагов, без CFG, KV-кэш) → \
-             VAE Decode → PNG. Размер — FLUX Empty Latent (стороны кратны 32; родные 1024² и 2048²). \
-             В Checkpoint — qwen-image-2.1.syn."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: qwen_image21_base_nodes(
-            "A neon shop sign that reads \"QWEN IMAGE 2.1\", rainy night, reflections on wet pavement, cinematic",
-            Some((1024, 1024)),
-        ),
-        connections: qwen_image21_base_connections(true),
-        viewport: None,
-    }
-}
 
-/// Правка: Image(8) → Reference(9) — и в энкодер, и в сэмплер; размер — с
-/// картинки (разрешение чекпойнта, пропорции исходника).
-fn qwen_image21_edit_template() -> Template {
-    let mut nodes = qwen_image21_base_nodes(
-        "Replace the sky with a dramatic orange sunset; keep the buildings, people and lighting on them unchanged",
-        None,
-    );
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
-    nodes.push(node_plain(9, NodeKind::QwenImage21Reference, 520.0, 720.0));
-    let mut connections = qwen_image21_base_connections(false);
-    connections.extend([
-        conn(1, "model", 9, "model"),
-        conn(8, "image", 9, "image"),
-        conn(9, "references", 3, "references"),
-        conn(9, "references", 5, "references"),
-    ]);
-    Template {
-        id: "builtin-qwen-image21-edit".into(),
-        builtin: true,
-        name: "Qwen-Image 2.1: Edit Image".into(),
-        description: "Картинка → Reference (в энкодер Qwen3-VL и в сэмплер) + инструкция правки → \
-             Sampler → PNG в пропорциях исходника. Прозрачные PNG правятся с альфой. Пишите, что \
-             изменить и что оставить."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
-/// Несколько референсов цепочкой: Image(8) → Reference(9) → Reference(11) ←
-/// Image(10); в промпте — `<image1>`, `<image2>`.
-fn qwen_image21_multi_reference_template() -> Template {
-    let mut nodes = qwen_image21_base_nodes(
-        "The woman from <image1> is sitting at the café table from <image2>, holding a cup of coffee, natural daylight",
-        Some((1024, 1024)),
-    );
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
-    nodes.push(node_plain(9, NodeKind::QwenImage21Reference, 520.0, 720.0));
-    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1040.0));
-    nodes.push(node_plain(11, NodeKind::QwenImage21Reference, 520.0, 980.0));
-    let mut connections = qwen_image21_base_connections(true);
-    connections.extend([
-        conn(1, "model", 9, "model"),
-        conn(1, "model", 11, "model"),
-        conn(8, "image", 9, "image"),
-        conn(10, "image", 11, "image"),
-        conn(9, "references", 11, "references"),
-        conn(11, "references", 3, "references"),
-        conn(11, "references", 5, "references"),
-    ]);
-    Template {
-        id: "builtin-qwen-image21-multi-reference".into(),
-        builtin: true,
-        name: "Qwen-Image 2.1: Multi-Reference".into(),
-        description: "Две картинки → Reference → Reference (цепочкой, до 10) → энкодер и Sampler: \
-             человек, предмет или стиль с одной картинки в сцене другой. В промпте — <image1>, \
-             <image2> по порядку цепочки; размер — Empty Latent."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
-/// Прозрачная картинка: формат промпта из карточки модели, PNG с альфой.
-fn qwen_image21_transparent_template() -> Template {
-    Template {
-        id: "builtin-qwen-image21-transparent".into(),
-        builtin: true,
-        name: "Qwen-Image 2.1: Transparent RGBA".into(),
-        description: "Стикер, логотип или вырезанный объект без фона: промпт в формате карточки модели \
-             («This is an RGBA image with transparency … the background is transparent») → PNG с \
-             альфа-каналом. Image Save сохраняет прозрачность."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: qwen_image21_base_nodes(
-            "This is an RGBA image with transparency. A cute cartoon dragon sticker with bold outlines. The image has alpha channel and the background is transparent.",
-            Some((1024, 1024)),
-        ),
-        connections: qwen_image21_base_connections(true),
-        viewport: None,
-    }
-}
 
-const QWEN_IMAGE21_REWRITE_SYSTEM: &str = "You are an image prompt rewriting expert for Qwen-Image 2.1. \
-Turn the user's short image request into one long English paragraph that describes the finished image as if you \
-were looking at it. You are an observer reporting what is in the frame, not talking to the user.
 
-Rules:
-1. Keep everything the user fixed unchanged: every string of text they want shown (copy it character for \
-character, in its own script, in double quotes), every named object, count, colour, position and the aspect ratio.
-2. Decide everything they left open: subject, setting, time of day, lighting (quality, direction, colour), \
-materials and textures, camera and framing, palette. A three-word request still becomes a full description.
-3. Name colours with a modifier (deep navy, warm terracotta), give materials (brushed metal, coarse linen), \
-enumerate objects instead of summarising, describe people by their observable surface, keep shadows, reflections \
-and scale physically consistent.
-4. Text shown inside the image goes in double quotes exactly; do not add text the user did not ask for.
-5. Write in English whatever the language of the request; only quoted in-image text keeps its script.
-6. Output only the description paragraph — no JSON, no headings, no aspect ratio, no explanations.";
-
-/// Короткий промпт → LLM переписывает его в описание кадра по инструкции
-/// Qwen (Prompt Enhancer) → Text View (можно поправить) → Qwen-Image 2.1.
-fn qwen_image21_llm_rewrite_template() -> Template {
-    let llm = NodeStateData::Llm(LlmStateData {
-        model_path: None,
-        device_idx: crate::pages::node_editor::nodes::llm::default_device_idx(),
-        quant_idx: crate::pages::node_editor::nodes::llm::default_quant_idx(),
-        compute_idx: crate::pages::node_editor::nodes::llm::default_compute_idx(),
-        system_prompt: QWEN_IMAGE21_REWRITE_SYSTEM.into(),
-        context: 4096,
-        think: false,
-        max_tokens: 640,
-        temperature: 0.3,
-        top_k: 0,
-        top_p: 1.0,
-        min_p: 0.0,
-        repetition_penalty: 1.0,
-        seed: 0,
-    });
-    let checkpoint = NodeStateData::SynCheckpoint(SynCheckpointStateData {
-        model_path: None,
-        device_idx: 0,
-        storage_idx: 4,
-        compute_idx: 0,
-        resident: false,
-    });
-    let rewritten = NodeStateData::TextView(TextViewStateData { output_text: String::new(), width: 360.0, height: 260.0 });
-    Template {
-        id: "builtin-qwen-image21-llm-rewrite".into(),
-        builtin: true,
-        name: "Qwen-Image 2.1: LLM Prompt Rewrite".into(),
-        description: "Короткий промпт → LLM переписывает его в подробное описание кадра по инструкции \
-             Qwen (Prompt Enhancer: что зафиксировано — сохранить, остальное — додумать, надписи в кавычках) \
-             → Text View (можно поправить) → Qwen-Image 2.1 → PNG. В Syn Checkpoint — любая чат-LLM; \
-             «Держать в памяти» выключено, чтобы VRAM досталась DiT."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(
-                1,
-                NodeKind::QwenImage21Checkpoint,
-                60.0,
-                60.0,
-                NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData::default()),
-            ),
-            node_with_state(2, NodeKind::TextView, 60.0, 420.0, flux_prompt_state("кот читает газету в уличном кафе в Париже")),
-            node_with_state(8, NodeKind::SynCheckpoint, 60.0, 680.0, checkpoint),
-            node_with_state(9, NodeKind::Llm, 480.0, 420.0, llm),
-            node_with_state(10, NodeKind::TextView, 940.0, 420.0, rewritten),
-            node_plain(3, NodeKind::QwenImage21TextEncoder, 1380.0, 300.0),
-            node_with_state(
-                4,
-                NodeKind::FluxEmptyLatent,
-                1380.0,
-                560.0,
-                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
-            ),
-            node_with_state(
-                5,
-                NodeKind::QwenImage21Sampler,
-                1820.0,
-                300.0,
-                NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData::default()),
-            ),
-            node_plain(6, NodeKind::QwenImage21VaeDecode, 2260.0, 300.0),
-            node_plain(7, NodeKind::ImageSave, 2700.0, 300.0),
-        ],
-        connections: vec![
-            conn(2, "out", 9, "prompt"),
-            conn(8, "model", 9, "model"),
-            conn(9, "answer", 10, "in"),
-            conn(10, "out", 3, "prompt"),
-            conn(1, "model", 3, "model"),
-            conn(1, "model", 5, "model"),
-            conn(1, "model", 6, "model"),
-            conn(3, "conditioning", 5, "conditioning"),
-            conn(4, "latent", 5, "latent"),
-            conn(5, "latent", 6, "latent"),
-            conn(6, "image", 7, "image"),
-        ],
-        viewport: None,
-    }
-}
-
-/// Две картинки цепочкой (2509/2511): Image(8) → Reference(9) → Reference(11)
-/// ← Image(10); в промпте — «Picture 1», «Picture 2».
-fn qwen_image_multi_edit_template() -> Template {
-    let mut nodes = qwen_image_edit_nodes(
-        "The woman from Picture 1 is sitting at the café table from Picture 2, holding a cup of coffee, natural daylight",
-    );
-    nodes.push(node_plain(10, NodeKind::ImageLoad, 60.0, 1040.0));
-    nodes.push(node_plain(11, NodeKind::QwenImageReference, 520.0, 980.0));
-    let mut connections = qwen_image_edit_connections(11);
-    connections.extend([
-        conn(1, "model", 11, "model"),
-        conn(9, "references", 11, "references"),
-        conn(10, "image", 11, "image"),
-    ]);
-    Template {
-        id: "builtin-qwen-image-multi-edit".into(),
-        builtin: true,
-        name: "Qwen-Image: Multi-Image Edit".into(),
-        description: "Две картинки → Reference → Reference (цепочкой) → энкодер и Sampler: человек, \
-             предмет или стиль с одной картинки в сцене другой. Только Qwen-Image-Edit-2509/2511; \
-             в промпте — «Picture 1», «Picture 2» по порядку цепочки."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
 // ── SDXL ──────────────────────────────────────────────────────────────────
 
-/// SDXL txt2img: Checkpoint(1), промпт(2) и негатив(8) → Text Encoder(3),
-/// FLUX Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7).
-fn sdxl_base_nodes(prompt: &str) -> Vec<NodeData> {
-    vec![
-        node_with_state(
-            1,
-            NodeKind::SdxlCheckpoint,
-            60.0,
-            60.0,
-            NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData::default()),
-        ),
-        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
-        node_with_state(
-            8,
-            NodeKind::TextView,
-            60.0,
-            780.0,
-            flux_prompt_state("blurry, low quality, deformed, watermark, text"),
-        ),
-        node_plain(3, NodeKind::SdxlTextEncoder, 520.0, 420.0),
-        node_with_state(
-            4,
-            NodeKind::FluxEmptyLatent,
-            520.0,
-            640.0,
-            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1024, height: 1024, aspect_idx: 0 }),
-        ),
-        node_plain(5, NodeKind::SdxlSampler, 960.0, 420.0),
-        node_plain(6, NodeKind::SdxlVaeDecode, 1400.0, 420.0),
-        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
-    ]
-}
 
-fn sdxl_base_connections() -> Vec<ConnData> {
-    vec![
-        conn(1, "model", 3, "model"),
-        conn(1, "model", 5, "model"),
-        conn(1, "model", 6, "model"),
-        conn(2, "out", 3, "prompt"),
-        conn(8, "out", 3, "negative"),
-        conn(3, "conditioning", 5, "conditioning"),
-        conn(4, "latent", 5, "latent"),
-        conn(5, "latent", 6, "latent"),
-        conn(6, "image", 7, "image"),
-    ]
-}
 
-fn sdxl_text_to_image_template() -> Template {
-    Template {
-        id: "builtin-sdxl-text-to-image".into(),
-        builtin: true,
-        name: "SDXL: Text to Image".into(),
-        description: "Промпт и негатив → CLIP-L + bigG → Sampler (30 шагов, CFG 5) → VAE Decode → \
-             PNG 1024². В Checkpoint — sdxl-base-1.0.syn."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: sdxl_base_nodes(
-            "a lighthouse on a rocky cliff at golden hour, crashing waves, dramatic clouds, highly detailed photograph",
-        ),
-        connections: sdxl_base_connections(),
-        viewport: None,
-    }
-}
 
-fn sdxl_image_to_image_template() -> Template {
-    // Размер латента задаёт картинка (VAE Encode), Empty Latent не нужен.
-    let mut nodes: Vec<NodeData> = sdxl_base_nodes("the same scene as an oil painting, thick brush strokes, vivid colors")
-        .into_iter()
-        .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
-        .collect();
-    nodes.push(node_plain(9, NodeKind::ImageLoad, 60.0, 1040.0));
-    nodes.push(node_plain(10, NodeKind::SdxlVaeEncode, 520.0, 720.0));
-    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::SdxlSampler) {
-        n.state = Some(NodeStateData::SdxlSampler(SdxlSamplerStateData { denoise: 0.6, ..Default::default() }));
-    }
-    let mut connections: Vec<ConnData> = sdxl_base_connections().into_iter().filter(|c| c.from_node != 4).collect();
-    connections.extend([conn(1, "model", 10, "model"), conn(9, "image", 10, "image"), conn(10, "latent", 5, "latent")]);
-    Template {
-        id: "builtin-sdxl-image-to-image".into(),
-        builtin: true,
-        name: "SDXL: Image to Image".into(),
-        description: "Картинка → SDXL VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG (до 1 Мп, \
-             стороны кратны 64). Чем меньше denoise, тем ближе к исходнику."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
 // ── FLUX.1 ────────────────────────────────────────────────────────────────
 
-fn flux_prompt_state(text: &str) -> NodeStateData {
-    NodeStateData::TextView(TextViewStateData { output_text: text.into(), width: 300.0, height: 140.0 })
-}
 
-/// Цепочка FLUX txt2img: Checkpoint(1) → Text Encoder(3) ← промпт(2),
-/// Empty Latent(4) → Sampler(5) → VAE Decode(6) → Image Save(7).
-fn flux_base_nodes(prompt: &str, width: u32, height: u32, aspect_idx: usize) -> Vec<NodeData> {
-    vec![
-        node_plain(1, NodeKind::FluxCheckpoint, 60.0, 60.0),
-        node_with_state(2, NodeKind::TextView, 60.0, 520.0, flux_prompt_state(prompt)),
-        node_plain(3, NodeKind::FluxTextEncoder, 520.0, 420.0),
-        node_with_state(
-            4,
-            NodeKind::FluxEmptyLatent,
-            520.0,
-            640.0,
-            NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width, height, aspect_idx }),
-        ),
-        node_plain(5, NodeKind::FluxSampler, 960.0, 420.0),
-        node_plain(6, NodeKind::FluxVaeDecode, 1400.0, 420.0),
-        node_plain(7, NodeKind::ImageSave, 1840.0, 420.0),
-    ]
-}
 
-fn flux_base_connections() -> Vec<ConnData> {
-    let c = |from_node: u64, from_port: &str, to_node: u64, to_port: &str| ConnData {
-        from_node,
-        from_port: from_port.into(),
-        to_node,
-        to_port: to_port.into(),
-    };
-    vec![
-        c(1, "model", 3, "model"),
-        c(1, "model", 5, "model"),
-        c(1, "model", 6, "model"),
-        c(2, "out", 3, "prompt"),
-        c(3, "conditioning", 5, "conditioning"),
-        c(4, "latent", 5, "latent"),
-        c(5, "latent", 6, "latent"),
-        c(6, "image", 7, "image"),
-    ]
-}
 
-fn flux_text_to_image_template() -> Template {
-    Template {
-        id: "builtin-flux-text-to-image".into(),
-        builtin: true,
-        name: "FLUX: Text to Image".into(),
-        description: "Промпт → CLIP-L + T5-XXL → Sampler (28 шагов, guidance 3.5) → VAE Decode → \
-             PNG. В Checkpoint укажите бандл flux.1-dev.syn (или каталог diffusers); размер \
-             картинки — в Empty Latent."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes: flux_base_nodes(
-            "a red fox sitting in a snowy birch forest at golden hour, soft backlight, \
-             shallow depth of field, photograph",
-            1024,
-            1024,
-            0,
-        ),
-        connections: flux_base_connections(),
-        viewport: None,
-    }
-}
 
-fn flux_image_to_image_template() -> Template {
-    // Размер латента задаёт картинка (VAE Encode), Empty Latent не нужен.
-    let mut nodes: Vec<NodeData> = flux_base_nodes(
-        "the same scene as a watercolor painting, soft washes of color, paper texture",
-        1024,
-        1024,
-        0,
-    )
-    .into_iter()
-    .filter(|n| n.kind != NodeKind::FluxEmptyLatent)
-    .collect();
-    nodes.push(node_plain(8, NodeKind::ImageLoad, 60.0, 780.0));
-    nodes.push(node_plain(9, NodeKind::FluxVaeEncode, 520.0, 720.0));
-    for n in nodes.iter_mut().filter(|n| n.kind == NodeKind::FluxSampler) {
-        n.state = Some(NodeStateData::FluxSampler(FluxSamplerStateData { denoise: 0.6, ..Default::default() }));
-    }
-    let mut connections: Vec<ConnData> =
-        flux_base_connections().into_iter().filter(|c| c.from_node != 4).collect();
-    connections.extend([
-        ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-        ConnData { from_node: 8, from_port: "image".into(), to_node: 9, to_port: "image".into() },
-        ConnData { from_node: 9, from_port: "latent".into(), to_node: 5, to_port: "latent".into() },
-    ]);
-    Template {
-        id: "builtin-flux-image-to-image".into(),
-        builtin: true,
-        name: "FLUX: Image to Image".into(),
-        description: "Картинка → VAE Encode → Sampler с denoise 0.6 → VAE Decode → PNG. Чем \
-             меньше denoise, тем ближе к исходнику; 1.0 — рисовать заново в размере картинки."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
-/// Узлы и связи шаблона со сдвигом id и позиции — чтобы вставить готовый
-/// граф рядом с цепочкой FLUX, не переписывая его.
-fn shifted(t: Template, id_add: u64, dy: f32) -> (Vec<NodeData>, Vec<ConnData>) {
-    let nodes = t
-        .nodes
-        .into_iter()
-        .map(|mut n| {
-            n.id += id_add;
-            n.pos.y += dy;
-            n
-        })
-        .collect();
-    let conns = t
-        .connections
-        .into_iter()
-        .map(|mut c| {
-            c.from_node += id_add;
-            c.to_node += id_add;
-            c
-        })
-        .collect();
-    (nodes, conns)
-}
 
-fn set_prompt(nodes: &mut [NodeData], id: u64, text: &str) {
-    if let Some(n) = nodes.iter_mut().find(|n| n.id == id) {
-        if let Some(NodeStateData::TextView(tv)) = n.state.as_mut() {
-            tv.output_text = text.into();
-        }
-    }
-}
 
-fn ltx_flux_keyframe_template() -> Template {
-    let mut nodes = flux_base_nodes(
-        "a lone lighthouse on a rocky coast at dusk, waves crashing, dramatic clouds, \
-         cinematic wide shot, photograph",
-        1344,
-        768,
-        1,
-    );
-    let mut connections = flux_base_connections();
-    let (ltx_nodes, ltx_conns) = shifted(ltx_image_to_video_template(), 100, 1100.0);
-    nodes.extend(ltx_nodes);
-    connections.extend(ltx_conns);
-    set_prompt(
-        &mut nodes,
-        102,
-        "waves roll in and crash against the rocks, the lighthouse beam sweeps across the \
-         sky, clouds drift, slow push-in, sound of surf and wind",
-    );
-    // Кадр FLUX идёт в LTX Image проводом (файл в ноде не нужен).
-    connections.push(ConnData {
-        from_node: 6,
-        from_port: "image".into(),
-        to_node: 113,
-        to_port: "image".into(),
-    });
-    Template {
-        id: "builtin-ltx-flux-keyframe".into(),
-        builtin: true,
-        name: "LTX: FLUX Frame to Video".into(),
-        description: "FLUX рисует первый кадр по промпту (16:9, 1344×768) → LTX Image → \
-             LTX-2.3 image-to-video со звуком. Два промпта: верхний — что на кадре, нижний — \
-             что происходит в видео. В FLUX Checkpoint укажите flux.1-dev.syn, в LTX \
-             Checkpoint — чекпойнт, Gemma и upscaler."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
-fn h3_flux_keyframe_template() -> Template {
-    let mut nodes = flux_base_nodes(
-        "portrait of a street musician playing violin under a streetlamp at night, light \
-         rain, warm bokeh, cinematic photograph",
-        1344,
-        768,
-        1,
-    );
-    let mut connections = flux_base_connections();
-    let (h3_nodes, h3_conns) = shifted(h3_first_frame_template(), 100, 1100.0);
-    nodes.extend(h3_nodes);
-    connections.extend(h3_conns);
-    set_prompt(
-        &mut nodes,
-        102,
-        "the musician keeps playing, bow moving across the strings, raindrops glinting in \
-         the lamplight, slow dolly-in; violin melody, soft rain on the pavement",
-    );
-    // Первый кадр H3 — картинка FLUX (Keyframe берёт её с провода).
-    connections.push(ConnData {
-        from_node: 6,
-        from_port: "image".into(),
-        to_node: 110,
-        to_port: "image".into(),
-    });
-    Template {
-        id: "builtin-h3-flux-keyframe".into(),
-        builtin: true,
-        name: "H3: FLUX Frame to Video".into(),
-        description: "FLUX рисует первый кадр (16:9, 1344×768) → H3 Keyframe → MiniMax-H3 \
-             видео со звуком от этого кадра. Верхний промпт — кадр, нижний — действие и звук \
-             в формате H3. В FLUX Checkpoint укажите flux.1-dev.syn, в H3 Checkpoint — бандл \
-             MiniMax-H3."
-            .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
 fn ltx_a2v_template() -> Template {
     let prompt_state = NodeStateData::TextView(TextViewStateData {
@@ -1305,49 +442,6 @@ fn ltx_image_to_video_template() -> Template {
     }
 }
 
-fn h3_ref2va_template() -> Template {
-    let mut nodes = h3_base_nodes(
-        "subject_definitions:\n<Subject 1> is the person in <Picture 1>.\n\nsummary:\n\
-         <Subject 1> walks through a sunlit park toward the camera.\n\nretention_analysis:\n\
-         <Subject 1> (appears in [Shot 1]): fully_preserved - identity, hair and clothing are \
-         kept.\n\ndetailed_description:\n[Shot 1] <Subject 1> walks along a park path toward \
-         the camera, smiling, leaves moving in a light breeze.\n\noverall_soundscape:\n\
-         Footsteps on gravel, birdsong, distant voices.\n\nnon_diegetic_music:\nNone.",
-    );
-    nodes.push(node_plain(10, NodeKind::H3References, 60.0, 900.0));
-    let mut connections = h3_base_connections();
-    connections.push(ConnData {
-        from_node: 4,
-        from_port: "av_latent".into(),
-        to_node: 10,
-        to_port: "av_latent".into(),
-    });
-    for to in [3u64, 5u64] {
-        connections.push(ConnData {
-            from_node: 10,
-            from_port: "refs".into(),
-            to_node: to,
-            to_port: "refs".into(),
-        });
-    }
-    Template {
-        id: "builtin-h3-ref2va".into(),
-        builtin: true,
-        name: "H3: References to Video".into(),
-        description:
-            "Видео по референсам (чекпойнт Ref2VA): до 9 картинок, 3 видео и 3 аудио, всего до \
-             12, в ноде H3 References. Порядок списка задаёт метки <Picture i> / <Video k> / \
-             <Audio j> — нода показывает их у каждой строки, на них и ссылается промпт. \
-             Промпт — шесть секций (subject_definitions, summary, retention_analysis, \
-             detailed_description, overall_soundscape, non_diegetic_music). В Checkpoint нужен \
-             бандл Ref2VA: FL2VA референсов не понимает."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
 fn ltx_text_to_video_template() -> Template {
     let prompt_state = NodeStateData::TextView(TextViewStateData {
@@ -1852,178 +946,10 @@ fn omnivoice_voice_clone_template() -> Template {
 }
 
 
-fn h3_prompt_state(text: &str) -> NodeStateData {
-    NodeStateData::TextView(TextViewStateData {
-        output_text: text.into(),
-        width: 300.0,
-        height: 140.0,
-    })
-}
 
-fn h3_base_nodes(prompt: &str) -> Vec<NodeData> {
-    vec![
-        node_plain(1, NodeKind::H3Checkpoint, 60.0, 60.0),
-        node_with_state(2, NodeKind::TextView, 60.0, 620.0, h3_prompt_state(prompt)),
-        node_plain(3, NodeKind::H3TextEncoder, 520.0, 560.0),
-        node_plain(4, NodeKind::H3EmptyLatentAv, 520.0, 780.0),
-        node_plain(5, NodeKind::H3Sampler, 940.0, 560.0),
-        node_plain(6, NodeKind::H3VaeDecode, 1360.0, 420.0),
-        node_plain(7, NodeKind::H3AudioDecode, 1360.0, 800.0),
-        node_plain(8, NodeKind::H3VideoSave, 1800.0, 480.0),
-        node_plain(9, NodeKind::FfmpegPlayer, 1800.0, 760.0),
-    ]
-}
 
-fn h3_base_connections() -> Vec<ConnData> {
-    vec![
-        ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-        ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-        ConnData { from_node: 1, from_port: "model".into(), to_node: 6, to_port: "model".into() },
-        ConnData { from_node: 1, from_port: "model".into(), to_node: 7, to_port: "model".into() },
-        ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-        ConnData { from_node: 3, from_port: "conditioning".into(), to_node: 5, to_port: "conditioning".into() },
-        ConnData { from_node: 4, from_port: "av_latent".into(), to_node: 5, to_port: "av_latent".into() },
-        ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 6, to_port: "video_latent".into() },
-        ConnData { from_node: 5, from_port: "audio_latent".into(), to_node: 7, to_port: "audio_latent".into() },
-        ConnData { from_node: 6, from_port: "frames".into(), to_node: 8, to_port: "frames".into() },
-        ConnData { from_node: 7, from_port: "audio".into(), to_node: 8, to_port: "audio".into() },
-        ConnData { from_node: 6, from_port: "frames".into(), to_node: 9, to_port: "frames".into() },
-        ConnData { from_node: 7, from_port: "audio".into(), to_node: 9, to_port: "audio".into() },
-    ]
-}
 
-fn h3_text_to_video_template() -> Template {
-    Template {
-        id: "builtin-h3-text-to-video".into(),
-        builtin: true,
-        name: "H3: Text to Video + Audio".into(),
-        description:
-            "Промпт → Qwen3-VL Text Encoder → Sampler (совместный денойзинг видео и звука) → \
-             VAE Decode + Audio Decode → mp4 и плеер. В Checkpoint укажите .syn-бандл MiniMax-H3; \
-             энкодер подхватится из бандла. Оригинальный пайплайн: 20 шагов, CFG 5 — \
-             дефолты Sampler."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: h3_base_nodes(
-            "a woman in a cozy cafe, talking warmly to the camera, soft daylight, \
-             gentle background chatter and the clink of cups",
-        ),
-        connections: h3_base_connections(),
-        viewport: None,
-    }
-}
 
-fn h3_turbo_template() -> Template {
-    let mut nodes = h3_base_nodes(
-        "close-up of rain hitting a neon-lit window at night, droplets sliding down, \
-         distant thunder and soft synth pads",
-    );
-    // Sampler турбо-шаблона несёт свои параметры явно: 6 шагов без CFG.
-    nodes[4] = node_with_state(
-        5,
-        NodeKind::H3Sampler,
-        940.0,
-        560.0,
-        NodeStateData::H3Sampler(H3SamplerStateData { steps: 6, cfg_scale: 1.0, seed: 0 }),
-    );
-    Template {
-        id: "builtin-h3-turbo".into(),
-        builtin: true,
-        name: "H3: Turbo (6 шагов)".into(),
-        description:
-            "Тот же граф, что и Text to Video, но под Turbo LoRA: 6 шагов без CFG (задано в \
-             Sampler этого шаблона). Укажите minimax_h3_turbo_v4_step600_ema.safetensors \
-             в поле LoRA у Checkpoint — без неё на 6 шагах будет рябь."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections: h3_base_connections(),
-        viewport: None,
-    }
-}
-
-fn h3_first_frame_template() -> Template {
-    let mut nodes = h3_base_nodes(
-        "the person in the photo turns to the camera and smiles, hair moving in a light breeze, \
-         ambient street sound",
-    );
-    nodes.push(node_plain(10, NodeKind::H3Keyframe, 60.0, 900.0));
-    let mut connections = h3_base_connections();
-    connections.push(ConnData {
-        from_node: 10,
-        from_port: "keyframe".into(),
-        to_node: 3,
-        to_port: "keyframe".into(),
-    });
-    connections.push(ConnData {
-        from_node: 10,
-        from_port: "keyframe".into(),
-        to_node: 5,
-        to_port: "keyframe".into(),
-    });
-    Template {
-        id: "builtin-h3-first-frame".into(),
-        builtin: true,
-        name: "H3: First Frame to Video".into(),
-        description:
-            "Оживление изображения: Keyframe (слот «первый кадр») уходит и в Text Encoder \
-             (как <Picture 1> в презентации промпта), и в Sampler (VAE-энкод в cond-строки). \
-             Разрешение AV-латента задайте под пропорции исходника."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
-
-fn h3_first_last_template() -> Template {
-    let mut nodes = h3_base_nodes(
-        "a smooth cinematic transition between the two frames, steady camera, \
-         evolving ambient soundscape",
-    );
-    nodes.push(node_plain(10, NodeKind::H3Keyframe, 60.0, 900.0));
-    nodes.push(node_with_state(
-        11,
-        NodeKind::H3Keyframe,
-        60.0,
-        1120.0,
-        NodeStateData::H3Keyframe(H3KeyframeStateData {
-            image_path: None,
-            frame_slot_idx: 1,
-            resize_idx: 1,
-        }),
-    ));
-    let mut connections = h3_base_connections();
-    for (from, port) in [(10u64, "keyframe"), (11u64, "keyframe_last")] {
-        connections.push(ConnData {
-            from_node: from,
-            from_port: "keyframe".into(),
-            to_node: 3,
-            to_port: port.into(),
-        });
-        connections.push(ConnData {
-            from_node: from,
-            from_port: "keyframe".into(),
-            to_node: 5,
-            to_port: port.into(),
-        });
-    }
-    Template {
-        id: "builtin-h3-first-last".into(),
-        builtin: true,
-        name: "H3: First+Last Frame".into(),
-        description:
-            "Переход между двумя кадрами: у второй Keyframe-ноды уже выбран слот «последний \
-             кадр». Модель поддерживает якоря только на первом и последнем кадрах, середина \
-             отвергается на этапе сборки layout."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes,
-        connections,
-        viewport: None,
-    }
-}
 
 
 fn vibevoice_dialogue_template() -> Template {
@@ -2633,63 +1559,6 @@ mod tests {
         }
     }
 
-    /// Шаблоны FLUX: txt2img/img2img в разделе «Картинки», сцепки с видео —
-    /// в «Видео»; кадр FLUX идёт в LTX Image / H3 Keyframe проводом, id нод
-    /// после сдвига не пересекаются.
-    #[test]
-    fn flux_templates_wired_correctly() {
-        use crate::templates::TemplateCategory;
-        let all = all();
-        let get = |id: &str| all.iter().find(|t| t.id == id).unwrap_or_else(|| panic!("нет {id}"));
-        for id in ["builtin-flux-text-to-image", "builtin-flux-image-to-image"] {
-            assert_eq!(TemplateCategory::for_template(get(id)), TemplateCategory::Image, "{id}");
-        }
-        for (id, target) in [("builtin-ltx-flux-keyframe", NodeKind::LtxImage), ("builtin-h3-flux-keyframe", NodeKind::H3Keyframe)] {
-            let t = get(id);
-            assert_eq!(TemplateCategory::for_template(t), TemplateCategory::Video, "{id}");
-            let mut ids: Vec<u64> = t.nodes.iter().map(|n| n.id).collect();
-            ids.sort();
-            ids.dedup();
-            assert_eq!(ids.len(), t.nodes.len(), "{id}: id нод пересекаются");
-            assert!(
-                t.connections.iter().any(|c| t.kind_of(c.from_node) == Some(NodeKind::FluxVaeDecode)
-                    && c.from_port == "image"
-                    && t.kind_of(c.to_node) == Some(target)
-                    && c.to_port == "image"),
-                "{id}: нет провода FLUX VAE Decode → {target:?}"
-            );
-        }
-        // Апсемплинг: промпт идёт через LLM и правимый Text View в энкодер,
-        // LLM — с инструкцией BFL и без размышлений, модель не резидентна.
-        let up = get("builtin-flux2-llm-upsampling");
-        assert_eq!(TemplateCategory::for_template(up), TemplateCategory::Image);
-        let wired = |from: NodeKind, fp: &str, to: NodeKind, tp: &str| {
-            up.connections.iter().any(|c| {
-                up.kind_of(c.from_node) == Some(from) && c.from_port == fp && up.kind_of(c.to_node) == Some(to) && c.to_port == tp
-            })
-        };
-        assert!(wired(NodeKind::TextView, "out", NodeKind::Llm, "prompt"));
-        assert!(wired(NodeKind::SynCheckpoint, "model", NodeKind::Llm, "model"));
-        assert!(wired(NodeKind::Llm, "answer", NodeKind::TextView, "in"));
-        assert!(wired(NodeKind::TextView, "out", NodeKind::Flux2TextEncoder, "prompt"));
-        let llm = up.nodes.iter().find(|n| n.kind == NodeKind::Llm).unwrap();
-        match &llm.state {
-            Some(NodeStateData::Llm(s)) => {
-                assert!(s.system_prompt.contains("FLUX.2") && s.system_prompt.contains("Output only the revised prompt"));
-                assert!(!s.think);
-            }
-            other => panic!("апсемплинг: у LLM нет state: {other:?}"),
-        }
-        let ck = up.nodes.iter().find(|n| n.kind == NodeKind::SynCheckpoint).unwrap();
-        assert!(matches!(&ck.state, Some(NodeStateData::SynCheckpoint(s)) if !s.resident));
-
-        let i2i = get("builtin-flux-image-to-image");
-        let sampler = i2i.nodes.iter().find(|n| n.kind == NodeKind::FluxSampler).unwrap();
-        match &sampler.state {
-            Some(NodeStateData::FluxSampler(s)) => assert!((s.denoise - 0.6).abs() < 1e-6),
-            other => panic!("img2img: у Sampler нет denoise: {other:?}"),
-        }
-    }
 
     /// Оба voice-clone TTS-шаблона зарегистрированы, попадают в раздел
     /// «Речь» и все их связи ссылаются на валидные порты registry.

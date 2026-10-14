@@ -17,25 +17,103 @@ use syngui::core::{Color, Point, Size};
 use syngui::prelude::*;
 
 use super::model::{
-    AceStepCheckpointStateData, AceStepGenerateStateData,
-    Yue2CheckpointStateData, Yue2GenerateStateData, Yue2TranscribeStateData, Yue2VaeDecodeStateData,
-    AceStepVaeStateData, AsrGigaamStateData,
-    AudioFileStateData, AudioPlayerStateData, AudioRecorderStateData, ConnData, EqualizerStateData,
-    FfmpegPlayerStateData, FieldValueData, FilterStateData, Flux2CheckpointStateData,
-    Flux2SamplerStateData, FluxCheckpointStateData, QwenImageCheckpointStateData, QwenImageSamplerStateData,
-    QwenImage21CheckpointStateData, QwenImage21SamplerStateData,
-    SdxlCheckpointStateData, SdxlSamplerStateData,
-    FluxEmptyLatentStateData, FluxSamplerStateData, FluxTextEncoderStateData, FluxVaeEncodeStateData,
-    GainStateData, H3CheckpointStateData, ImageLoadStateData, ImageSaveStateData,
-    H3EmptyLatentAvStateData, H3KeyframeStateData, H3ReferenceItemData, H3ReferencesStateData,
-    H3SamplerStateData, LlmStateData,
-    LtxA2VStateData, LtxAudioInputStateData, LtxCheckpointStateData, LtxIcLoraStateData,
-    LtxImageStateData, LtxLipdubStateData, LtxNagPromptStateData, LtxRetakeStateData,
-    LtxSamplerStage1StateData, LtxSamplerStage2StateData, LtxTextEncoderStateData,
-    LtxVideoInputStateData, LtxVideoSaveStateData, SynCheckpointStateData,
-    MarkdownViewStateData, MixerStateData, NodeData, NodeStateData, NodeStyleData,
-    OmniVoiceStateData, PointData, ReverbStateData, SaveToFileStateData, Template,
-    TextViewStateData, VibeVoiceStateData, ViewportData, VoxCpm2StateData,
+
+    AceStepCheckpointStateData,
+
+    AceStepGenerateStateData,
+
+    Yue2CheckpointStateData,
+
+    Yue2GenerateStateData,
+
+    Yue2TranscribeStateData,
+
+    Yue2VaeDecodeStateData,
+
+    AceStepVaeStateData,
+
+    AsrGigaamStateData,
+
+    AudioFileStateData,
+
+    AudioPlayerStateData,
+
+    AudioRecorderStateData,
+
+    ConnData,
+
+    EqualizerStateData,
+
+    FfmpegPlayerStateData,
+
+    FieldValueData,
+
+    FilterStateData,
+
+    GainStateData,
+
+    ImageLoadStateData,
+
+    ImageSaveStateData,
+
+    LlmStateData,
+
+    LtxA2VStateData,
+
+    LtxAudioInputStateData,
+
+    LtxCheckpointStateData,
+
+    LtxIcLoraStateData,
+
+    LtxImageStateData,
+
+    LtxLipdubStateData,
+
+    LtxNagPromptStateData,
+
+    LtxRetakeStateData,
+
+    LtxSamplerStage1StateData,
+
+    LtxSamplerStage2StateData,
+
+    LtxTextEncoderStateData,
+
+    LtxVideoInputStateData,
+
+    LtxVideoSaveStateData,
+
+    SynCheckpointStateData,
+
+    MarkdownViewStateData,
+
+    MixerStateData,
+
+    NodeData,
+
+    NodeStateData,
+
+    NodeStyleData,
+
+    OmniVoiceStateData,
+
+    PointData,
+
+    ReverbStateData,
+
+    SaveToFileStateData,
+
+    Template,
+
+    TextViewStateData,
+
+    VibeVoiceStateData,
+
+    ViewportData,
+
+    VoxCpm2StateData,
+
 };
 use crate::pages::node_editor::registry::{default_fields, meta};
 use crate::pages::node_editor::state::NodeEditorCtx;
@@ -435,185 +513,6 @@ pub fn migrate_inline_models(t: &Template) -> Option<Template> {
 pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
     match rt {
         NodeRuntime::None | NodeRuntime::Flow(_) => None,
-        NodeRuntime::H3Checkpoint {
-            model_path,
-            encoder_path,
-            lora_path,
-            lora_strength,
-            variant_idx,
-            device_idx,
-            quant_dit_idx,
-            quant_enc_idx,
-            compute_idx,
-            memory_mode_idx,
-            resident,
-            ..
-        } => Some(NodeStateData::H3Checkpoint(H3CheckpointStateData {
-            model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-            encoder_path: encoder_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-            lora_path: lora_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-            lora_strength: lora_strength.get_untracked(),
-            variant_idx: variant_idx.get_untracked(),
-            device_idx: device_idx.get_untracked(),
-            quant_dit_idx: quant_dit_idx.get_untracked(),
-            quant_enc_idx: quant_enc_idx.get_untracked(),
-            compute_idx: compute_idx.get_untracked(),
-            memory_mode_idx: memory_mode_idx.get_untracked(),
-            resident: resident.get_untracked(),
-        })),
-        NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. } => {
-            Some(NodeStateData::H3Sampler(H3SamplerStateData {
-                steps: steps.get_untracked(),
-                cfg_scale: cfg_scale.get_untracked(),
-                seed: seed.get_untracked(),
-            }))
-        }
-        NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx } => {
-            Some(NodeStateData::H3EmptyLatentAv(H3EmptyLatentAvStateData {
-                width: width.get_untracked(),
-                height: height.get_untracked(),
-                duration_seconds: duration_seconds.get_untracked(),
-                aspect_idx: aspect_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, .. } => {
-            Some(NodeStateData::H3Keyframe(H3KeyframeStateData {
-                image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                frame_slot_idx: frame_slot_idx.get_untracked(),
-                resize_idx: resize_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::H3References { items, image_size_idx, .. } => {
-            Some(NodeStateData::H3References(H3ReferencesStateData {
-                items: items
-                    .get_untracked()
-                    .iter()
-                    .map(|e| H3ReferenceItemData {
-                        path: e.path.to_string_lossy().to_string(),
-                        use_audio: e.use_audio,
-                    })
-                    .collect(),
-                image_size_idx: image_size_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::H3TextEncoder { .. }
-        | NodeRuntime::H3VaeDecode { .. }
-        | NodeRuntime::H3AudioDecode { .. }
-        | NodeRuntime::H3VideoSave { .. } => None,
-        NodeRuntime::FluxCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
-            Some(NodeStateData::FluxCheckpoint(FluxCheckpointStateData {
-                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                device_idx: device_idx.get_untracked(),
-                quant_idx: quant_idx.get_untracked(),
-                memory_mode_idx: memory_mode_idx.get_untracked(),
-                resident: resident.get_untracked(),
-            }))
-        }
-        NodeRuntime::FluxTextEncoder { seq_len_idx, .. } => {
-            Some(NodeStateData::FluxTextEncoder(FluxTextEncoderStateData {
-                seq_len_idx: seq_len_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::FluxEmptyLatent { width, height, aspect_idx } => {
-            Some(NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData {
-                width: width.get_untracked(),
-                height: height.get_untracked(),
-                aspect_idx: aspect_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::FluxVaeEncode { resize_idx, .. } => {
-            Some(NodeStateData::FluxVaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
-        }
-        NodeRuntime::FluxSampler { steps, guidance, seed, denoise, .. } => {
-            Some(NodeStateData::FluxSampler(FluxSamplerStateData {
-                steps: steps.get_untracked(),
-                guidance: guidance.get_untracked(),
-                seed: seed.get_untracked(),
-                denoise: denoise.get_untracked(),
-            }))
-        }
-        NodeRuntime::FluxVaeDecode { .. } => None,
-        NodeRuntime::Flux2Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
-            Some(NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData {
-                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                device_idx: device_idx.get_untracked(),
-                quant_idx: quant_idx.get_untracked(),
-                memory_mode_idx: memory_mode_idx.get_untracked(),
-                resident: resident.get_untracked(),
-            }))
-        }
-        NodeRuntime::Flux2VaeEncode { resize_idx, .. } => {
-            Some(NodeStateData::Flux2VaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
-        }
-        NodeRuntime::Flux2Sampler { steps, guidance, seed, denoise, .. } => {
-            Some(NodeStateData::Flux2Sampler(Flux2SamplerStateData {
-                steps: steps.get_untracked(),
-                guidance: guidance.get_untracked(),
-                seed: seed.get_untracked(),
-                denoise: denoise.get_untracked(),
-            }))
-        }
-        NodeRuntime::Flux2TextEncoder { .. } | NodeRuntime::Flux2Reference { .. } | NodeRuntime::Flux2VaeDecode { .. } => None,
-        NodeRuntime::QwenImageCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. } => {
-            Some(NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData {
-                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                device_idx: device_idx.get_untracked(),
-                quant_idx: quant_idx.get_untracked(),
-                memory_mode_idx: memory_mode_idx.get_untracked(),
-                resident: resident.get_untracked(),
-            }))
-        }
-        NodeRuntime::QwenImageSampler { steps, cfg, seed, .. } => {
-            Some(NodeStateData::QwenImageSampler(QwenImageSamplerStateData {
-                steps: steps.get_untracked(),
-                cfg: cfg.get_untracked(),
-                seed: seed.get_untracked(),
-            }))
-        }
-        NodeRuntime::QwenImageTextEncoder { .. }
-        | NodeRuntime::QwenImageReference { .. }
-        | NodeRuntime::QwenImageVaeDecode { .. } => None,
-        NodeRuntime::QwenImage21Checkpoint {
-            model_path, device_idx, quant_idx, memory_mode_idx, resolution_idx, resident, ..
-        } => Some(NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData {
-            model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-            device_idx: device_idx.get_untracked(),
-            quant_idx: quant_idx.get_untracked(),
-            memory_mode_idx: memory_mode_idx.get_untracked(),
-            resolution_idx: resolution_idx.get_untracked(),
-            resident: resident.get_untracked(),
-        })),
-        NodeRuntime::QwenImage21Sampler { steps, cfg, seed, kv_cache, .. } => {
-            Some(NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData {
-                steps: steps.get_untracked(),
-                cfg: cfg.get_untracked(),
-                seed: seed.get_untracked(),
-                kv_cache: kv_cache.get_untracked(),
-            }))
-        }
-        NodeRuntime::QwenImage21TextEncoder { .. }
-        | NodeRuntime::QwenImage21Reference { .. }
-        | NodeRuntime::QwenImage21VaeDecode { .. } => None,
-        NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. } => {
-            Some(NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData {
-                model_path: model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                device_idx: device_idx.get_untracked(),
-                quant_idx: quant_idx.get_untracked(),
-                resident: resident.get_untracked(),
-            }))
-        }
-        NodeRuntime::SdxlVaeEncode { resize_idx, .. } => {
-            Some(NodeStateData::SdxlVaeEncode(FluxVaeEncodeStateData { resize_idx: resize_idx.get_untracked() }))
-        }
-        NodeRuntime::SdxlSampler { steps, guidance, seed, denoise, .. } => {
-            Some(NodeStateData::SdxlSampler(SdxlSamplerStateData {
-                steps: steps.get_untracked(),
-                guidance: guidance.get_untracked(),
-                seed: seed.get_untracked(),
-                denoise: denoise.get_untracked(),
-            }))
-        }
-        NodeRuntime::SdxlTextEncoder { .. } | NodeRuntime::SdxlVaeDecode { .. } => None,
         NodeRuntime::ImageLoad { path, .. } => Some(NodeStateData::ImageLoad(ImageLoadStateData {
             image_path: path.get_untracked().map(|p| p.to_string_lossy().to_string()),
         })),
@@ -1463,198 +1362,11 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             }
             hwaccel_idx.set(data.hwaccel_idx);
         }
-        (
-            NodeRuntime::H3Checkpoint {
-                model_path,
-                encoder_path,
-                lora_path,
-                lora_strength,
-                variant_idx,
-                device_idx,
-                quant_dit_idx,
-                quant_enc_idx,
-                compute_idx,
-                memory_mode_idx,
-                resident,
-                ..
-            },
-            NodeStateData::H3Checkpoint(data),
-        ) => {
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            encoder_path.set(data.encoder_path.as_ref().map(PathBuf::from));
-            lora_path.set(data.lora_path.as_ref().map(PathBuf::from));
-            lora_strength.set(data.lora_strength);
-            variant_idx.set(data.variant_idx);
-            device_idx.set(data.device_idx);
-            quant_dit_idx.set(data.quant_dit_idx);
-            quant_enc_idx.set(data.quant_enc_idx);
-            compute_idx.set(data.compute_idx);
-            memory_mode_idx.set(data.memory_mode_idx);
-            resident.set(data.resident);
-        }
-        (
-            NodeRuntime::H3Sampler { steps, cfg_scale, seed, .. },
-            NodeStateData::H3Sampler(data),
-        ) => {
-            steps.set(data.steps);
-            cfg_scale.set(data.cfg_scale);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx },
-            NodeStateData::H3EmptyLatentAv(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            aspect_idx.set(data.aspect_idx);
-        }
-        (
-            NodeRuntime::FluxCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
-            NodeStateData::FluxCheckpoint(data),
-        ) => {
-            use crate::pages::node_editor::nodes::flux;
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx.min(flux::DEVICE_OPTIONS.len() - 1));
-            quant_idx.set(data.quant_idx.min(flux::QUANT_OPTIONS.len() - 1));
-            memory_mode_idx.set(data.memory_mode_idx.min(flux::MEMORY_MODE_OPTIONS.len() - 1));
-            resident.set(data.resident);
-        }
-        (NodeRuntime::FluxTextEncoder { seq_len_idx, .. }, NodeStateData::FluxTextEncoder(data)) => {
-            seq_len_idx.set(data.seq_len_idx.min(crate::pages::node_editor::nodes::flux::SEQ_LEN_OPTIONS.len() - 1));
-        }
-        (
-            NodeRuntime::FluxEmptyLatent { width, height, aspect_idx },
-            NodeStateData::FluxEmptyLatent(data),
-        ) => {
-            use crate::pages::node_editor::nodes::flux::latent::{ASPECT_OPTIONS, DIM_MAX, DIM_MIN};
-            width.set(data.width.clamp(DIM_MIN, DIM_MAX));
-            height.set(data.height.clamp(DIM_MIN, DIM_MAX));
-            aspect_idx.set(data.aspect_idx.min(ASPECT_OPTIONS.len() - 1));
-        }
-        (NodeRuntime::FluxVaeEncode { resize_idx, .. }, NodeStateData::FluxVaeEncode(data)) => {
-            resize_idx.set(data.resize_idx.min(1));
-        }
-        (
-            NodeRuntime::FluxSampler { steps, guidance, seed, denoise, .. },
-            NodeStateData::FluxSampler(data),
-        ) => {
-            steps.set(data.steps.max(1));
-            guidance.set(data.guidance);
-            seed.set(data.seed);
-            denoise.set(data.denoise.clamp(0.0, 1.0));
-        }
-        (
-            NodeRuntime::Flux2Checkpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
-            NodeStateData::Flux2Checkpoint(data),
-        ) => {
-            use crate::pages::node_editor::nodes::flux2;
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx.min(flux2::DEVICE_OPTIONS.len() - 1));
-            quant_idx.set(data.quant_idx.min(flux2::QUANT_OPTIONS.len() - 1));
-            memory_mode_idx.set(data.memory_mode_idx.min(flux2::MEMORY_MODE_OPTIONS.len() - 1));
-            resident.set(data.resident);
-        }
-        (NodeRuntime::Flux2VaeEncode { resize_idx, .. }, NodeStateData::Flux2VaeEncode(data)) => {
-            resize_idx.set(data.resize_idx.min(1));
-        }
-        (NodeRuntime::Flux2Sampler { steps, guidance, seed, denoise, .. }, NodeStateData::Flux2Sampler(data)) => {
-            steps.set(data.steps.min(100));
-            guidance.set(data.guidance);
-            seed.set(data.seed);
-            denoise.set(data.denoise.clamp(0.0, 1.0));
-        }
-        (
-            NodeRuntime::QwenImageCheckpoint { model_path, device_idx, quant_idx, memory_mode_idx, resident, .. },
-            NodeStateData::QwenImageCheckpoint(data),
-        ) => {
-            use crate::pages::node_editor::nodes::qwen_image;
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx.min(qwen_image::DEVICE_OPTIONS.len() - 1));
-            quant_idx.set(data.quant_idx.min(qwen_image::QUANT_OPTIONS.len() - 1));
-            memory_mode_idx.set(data.memory_mode_idx.min(qwen_image::MEMORY_MODE_OPTIONS.len() - 1));
-            resident.set(data.resident);
-        }
-        (NodeRuntime::QwenImageSampler { steps, cfg, seed, .. }, NodeStateData::QwenImageSampler(data)) => {
-            steps.set(data.steps.min(100));
-            cfg.set(data.cfg.max(1.0));
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::QwenImage21Checkpoint {
-                model_path, device_idx, quant_idx, memory_mode_idx, resolution_idx, resident, ..
-            },
-            NodeStateData::QwenImage21Checkpoint(data),
-        ) => {
-            use crate::pages::node_editor::nodes::qwen_image21;
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx.min(qwen_image21::DEVICE_OPTIONS.len() - 1));
-            quant_idx.set(data.quant_idx.min(qwen_image21::QUANT_OPTIONS.len() - 1));
-            memory_mode_idx.set(data.memory_mode_idx.min(qwen_image21::MEMORY_MODE_OPTIONS.len() - 1));
-            resolution_idx.set(data.resolution_idx.min(qwen_image21::RESOLUTION_OPTIONS.len() - 1));
-            resident.set(data.resident);
-        }
-        (
-            NodeRuntime::QwenImage21Sampler { steps, cfg, seed, kv_cache, .. },
-            NodeStateData::QwenImage21Sampler(data),
-        ) => {
-            steps.set(data.steps.min(100));
-            cfg.set(data.cfg.max(1.0));
-            seed.set(data.seed);
-            kv_cache.set(data.kv_cache);
-        }
-        (
-            NodeRuntime::SdxlCheckpoint { model_path, device_idx, quant_idx, resident, .. },
-            NodeStateData::SdxlCheckpoint(data),
-        ) => {
-            use crate::pages::node_editor::nodes::sdxl;
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx.min(sdxl::DEVICE_OPTIONS.len() - 1));
-            quant_idx.set(data.quant_idx.min(sdxl::QUANT_OPTIONS.len() - 1));
-            resident.set(data.resident);
-        }
-        (NodeRuntime::SdxlVaeEncode { resize_idx, .. }, NodeStateData::SdxlVaeEncode(data)) => {
-            resize_idx.set(data.resize_idx.min(1));
-        }
-        (NodeRuntime::SdxlSampler { steps, guidance, seed, denoise, .. }, NodeStateData::SdxlSampler(data)) => {
-            steps.set(data.steps.clamp(1, 100));
-            guidance.set(data.guidance);
-            seed.set(data.seed);
-            denoise.set(data.denoise.clamp(0.0, 1.0));
-        }
         (NodeRuntime::ImageLoad { path, .. }, NodeStateData::ImageLoad(data)) => {
             path.set(data.image_path.as_ref().map(PathBuf::from));
         }
         (NodeRuntime::ImageSave { path, .. }, NodeStateData::ImageSave(data)) => {
             path.set(data.path.as_ref().map(PathBuf::from));
-        }
-        (
-            NodeRuntime::H3Keyframe { path, frame_slot_idx, resize_idx, .. },
-            NodeStateData::H3Keyframe(data),
-        ) => {
-            path.set(data.image_path.as_ref().map(PathBuf::from));
-            frame_slot_idx.set(data.frame_slot_idx.min(1));
-            resize_idx.set(data.resize_idx.min(1));
-        }
-        (
-            NodeRuntime::H3References { items, image_size_idx, error, .. },
-            NodeStateData::H3References(data),
-        ) => {
-            // Файл с незнакомым расширением не теряем молча: строка пропадёт
-            // из списка, а сдвиг меток без объяснения хуже явной ошибки.
-            let mut entries = Vec::with_capacity(data.items.len());
-            let mut unknown = Vec::new();
-            for it in &data.items {
-                match crate::pages::node_editor::types::H3RefEntry::probe(&it.path, it.use_audio) {
-                    Some(e) => entries.push(e),
-                    None => unknown.push(it.path.clone()),
-                }
-            }
-            items.set(entries);
-            image_size_idx.set(data.image_size_idx.min(1));
-            error.set((!unknown.is_empty()).then(|| {
-                tr!("node.minimax_h3_references.unknown_type", path = unknown.join(", "))
-            }));
         }
         (
             NodeRuntime::SynCheckpoint {
@@ -2525,336 +2237,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn roundtrip_flux_and_image_states() {
-        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
-            id,
-            kind,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(state),
-        };
-        let nodes = vec![
-            mk(
-                1,
-                NodeKind::FluxCheckpoint,
-                NodeStateData::FluxCheckpoint(FluxCheckpointStateData {
-                    model_path: Some("/models/flux.1-dev.syn".into()),
-                    device_idx: 0,
-                    quant_idx: 0,
-                    memory_mode_idx: 2,
-                    resident: true,
-                }),
-            ),
-            mk(2, NodeKind::FluxTextEncoder, NodeStateData::FluxTextEncoder(FluxTextEncoderStateData { seq_len_idx: 1 })),
-            mk(
-                3,
-                NodeKind::FluxEmptyLatent,
-                NodeStateData::FluxEmptyLatent(FluxEmptyLatentStateData { width: 1344, height: 752, aspect_idx: 1 }),
-            ),
-            mk(4, NodeKind::FluxVaeEncode, NodeStateData::FluxVaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
-            mk(
-                5,
-                NodeKind::FluxSampler,
-                NodeStateData::FluxSampler(FluxSamplerStateData { steps: 20, guidance: 4.5, seed: 77, denoise: 0.6 }),
-            ),
-            mk(6, NodeKind::ImageLoad, NodeStateData::ImageLoad(ImageLoadStateData { image_path: Some("/tmp/in.png".into()) })),
-            mk(7, NodeKind::ImageSave, NodeStateData::ImageSave(ImageSaveStateData { path: Some("/tmp/out.png".into()) })),
-        ];
-        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
-        let ctx = roundtrip(&make_template(nodes));
-        let got: Vec<Option<NodeStateData>> = ctx
-            .nodes
-            .get_untracked()
-            .iter()
-            .map(|n| runtime_to_state(&n.runtime.lock().unwrap()))
-            .collect();
-        assert_eq!(got, want);
-    }
 
-    #[test]
-    fn roundtrip_flux2_states() {
-        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
-            id,
-            kind,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(state),
-        };
-        let nodes = vec![
-            mk(
-                1,
-                NodeKind::Flux2Checkpoint,
-                NodeStateData::Flux2Checkpoint(Flux2CheckpointStateData {
-                    model_path: Some("/models/flux.2-klein-4b.syn".into()),
-                    device_idx: 0,
-                    quant_idx: 0,
-                    memory_mode_idx: 2,
-                    resident: true,
-                }),
-            ),
-            mk(
-                2,
-                NodeKind::Flux2Sampler,
-                NodeStateData::Flux2Sampler(Flux2SamplerStateData { steps: 28, guidance: 3.0, seed: 9, denoise: 0.55 }),
-            ),
-            mk(3, NodeKind::Flux2VaeEncode, NodeStateData::Flux2VaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
-        ];
-        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
-        let ctx = roundtrip(&make_template(nodes));
-        let got: Vec<Option<NodeStateData>> =
-            ctx.nodes.get_untracked().iter().map(|n| runtime_to_state(&n.runtime.lock().unwrap())).collect();
-        assert_eq!(got, want);
-    }
 
-    #[test]
-    fn roundtrip_qwen_image_and_sdxl_states() {
-        let mk = |id: u64, kind: NodeKind, state: NodeStateData| NodeData {
-            id,
-            kind,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(state),
-        };
-        let nodes = vec![
-            mk(
-                1,
-                NodeKind::QwenImageCheckpoint,
-                NodeStateData::QwenImageCheckpoint(QwenImageCheckpointStateData {
-                    model_path: Some("/models/qwen-image-edit-2511.syn".into()),
-                    device_idx: 0,
-                    quant_idx: 1,
-                    memory_mode_idx: 2,
-                    resident: true,
-                }),
-            ),
-            mk(
-                2,
-                NodeKind::QwenImageSampler,
-                NodeStateData::QwenImageSampler(QwenImageSamplerStateData { steps: 20, cfg: 2.5, seed: 7 }),
-            ),
-            mk(
-                6,
-                NodeKind::QwenImage21Checkpoint,
-                NodeStateData::QwenImage21Checkpoint(QwenImage21CheckpointStateData {
-                    model_path: Some("/models/qwen-image-2.1.syn".into()),
-                    device_idx: 0,
-                    quant_idx: 2,
-                    memory_mode_idx: 1,
-                    resolution_idx: 4,
-                    resident: true,
-                }),
-            ),
-            mk(
-                7,
-                NodeKind::QwenImage21Sampler,
-                NodeStateData::QwenImage21Sampler(QwenImage21SamplerStateData {
-                    steps: 12,
-                    cfg: 1.0,
-                    seed: 3,
-                    kv_cache: false,
-                }),
-            ),
-            mk(
-                3,
-                NodeKind::SdxlCheckpoint,
-                NodeStateData::SdxlCheckpoint(SdxlCheckpointStateData {
-                    model_path: Some("/models/sdxl-base-1.0.syn".into()),
-                    device_idx: 0,
-                    quant_idx: 2,
-                    resident: true,
-                }),
-            ),
-            mk(4, NodeKind::SdxlVaeEncode, NodeStateData::SdxlVaeEncode(FluxVaeEncodeStateData { resize_idx: 1 })),
-            mk(
-                5,
-                NodeKind::SdxlSampler,
-                NodeStateData::SdxlSampler(SdxlSamplerStateData { steps: 25, guidance: 7.0, seed: 3, denoise: 0.4 }),
-            ),
-        ];
-        let want: Vec<Option<NodeStateData>> = nodes.iter().map(|n| n.state.clone()).collect();
-        let ctx = roundtrip(&make_template(nodes));
-        let got: Vec<Option<NodeStateData>> =
-            ctx.nodes.get_untracked().iter().map(|n| runtime_to_state(&n.runtime.lock().unwrap())).collect();
-        assert_eq!(got, want);
-    }
 
-    #[test]
-    fn roundtrip_h3_checkpoint_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::H3Checkpoint,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::H3Checkpoint(H3CheckpointStateData {
-                model_path: Some("/models/minimax-h3-fl2va.syn".into()),
-                encoder_path: Some("/models/minimax-h3-qwen3vl-encoder.syn".into()),
-                lora_path: Some("/models/turbo.safetensors".into()),
-                lora_strength: 0.85,
-                variant_idx: 1,
-                device_idx: 0,
-                quant_dit_idx: 1,
-                quant_enc_idx: 2,
-                resident: false,
-                compute_idx: 1,
-                memory_mode_idx: 2,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::H3Checkpoint {
-                model_path,
-                encoder_path,
-                lora_path,
-                lora_strength,
-                variant_idx,
-                device_idx,
-                quant_dit_idx,
-                quant_enc_idx,
-                compute_idx,
-                memory_mode_idx,
-                ..
-            } => {
-                let path = |s: Option<PathBuf>| s.map(|p| p.to_string_lossy().to_string());
-                assert_eq!(
-                    path(model_path.get_untracked()),
-                    Some("/models/minimax-h3-fl2va.syn".into())
-                );
-                assert_eq!(
-                    path(encoder_path.get_untracked()),
-                    Some("/models/minimax-h3-qwen3vl-encoder.syn".into())
-                );
-                assert_eq!(
-                    path(lora_path.get_untracked()),
-                    Some("/models/turbo.safetensors".into())
-                );
-                assert!((lora_strength.get_untracked() - 0.85).abs() < 1e-6);
-                assert_eq!(variant_idx.get_untracked(), 1);
-                assert_eq!(device_idx.get_untracked(), 0);
-                assert_eq!(quant_dit_idx.get_untracked(), 1);
-                assert_eq!(quant_enc_idx.get_untracked(), 2);
-                assert_eq!(compute_idx.get_untracked(), 1);
-                assert_eq!(memory_mode_idx.get_untracked(), 2);
-            }
-            other => panic!("Expected H3Checkpoint runtime, got {other:?}"),
-        }
-    }
 
-    #[test]
-    fn roundtrip_h3_empty_latent_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::H3EmptyLatentAv,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::H3EmptyLatentAv(H3EmptyLatentAvStateData {
-                width: 768,
-                height: 1344,
-                duration_seconds: 10.0,
-                aspect_idx: 2,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::H3EmptyLatentAv { width, height, duration_seconds, aspect_idx } => {
-                assert_eq!(width.get_untracked(), 768);
-                assert_eq!(height.get_untracked(), 1344);
-                assert!((duration_seconds.get_untracked() - 10.0).abs() < 1e-6);
-                assert_eq!(aspect_idx.get_untracked(), 2);
-            }
-            other => panic!("Expected H3EmptyLatentAv runtime, got {other:?}"),
-        }
-    }
 
-    /// Состояние H3 Keyframe раньше не сериализовалось вовсе: шаблон терял
-    /// слот «последний кадр», а агент не мог подставить картинку.
-    #[test]
-    fn roundtrip_h3_keyframe_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::H3Keyframe,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::H3Keyframe(H3KeyframeStateData {
-                image_path: Some("/tmp/last.png".into()),
-                frame_slot_idx: 1,
-                resize_idx: 1,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd.clone()]));
-        let node = first_node(&ctx);
-        assert_eq!(runtime_to_state(&node.runtime.lock().unwrap()), nd.state);
-    }
 
-    /// Порядок и флаг дорожки переживают круг; тип берётся по расширению, а
-    /// файл с незнакомым расширением не теряется молча — нода показывает ошибку.
-    #[test]
-    fn roundtrip_h3_references_state() {
-        use crate::pages::node_editor::nodes::minimax_h3::references::labels_of;
-        let item = |path: &str, use_audio: bool| H3ReferenceItemData { path: path.into(), use_audio };
-        let state = H3ReferencesStateData {
-            items: vec![
-                item("/nonexistent/dance.mp4", false),
-                item("/nonexistent/hero.png", true),
-                item("/nonexistent/voice.wav", true),
-            ],
-            image_size_idx: 1,
-        };
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::H3References,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::H3References(state.clone())),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        assert_eq!(runtime_to_state(&rt), Some(NodeStateData::H3References(state)));
-        let NodeRuntime::H3References { items, error, .. } = &*rt else {
-            panic!("Expected H3References runtime, got {rt:?}");
-        };
-        assert_eq!(labels_of(&items.get_untracked()), ["<Video 1>", "<Picture 1>", "<Audio 1>"]);
-        assert!(error.get_untracked().is_none());
-        drop(rt);
-
-        let bad = NodeData {
-            id: 1,
-            kind: NodeKind::H3References,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::H3References(H3ReferencesStateData {
-                items: vec![item("/nonexistent/notes.txt", true)],
-                image_size_idx: 0,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![bad]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        let NodeRuntime::H3References { items, error, .. } = &*rt else { panic!() };
-        assert!(items.get_untracked().is_empty());
-        assert!(error.get_untracked().is_some());
-    }
 
     #[test]
     fn roundtrip_markdown_state() {

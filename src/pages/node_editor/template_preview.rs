@@ -90,46 +90,10 @@ fn endpoints(nodes: &[NodeData], c: &ConnData) -> Option<(PointData, PointData)>
 
 fn node_color(kind: NodeKind) -> Color {
     match kind {
-        NodeKind::H3Checkpoint => Color::new(0.55, 0.42, 0.92, 1.0),
-        NodeKind::H3TextEncoder => Color::new(0.48, 0.55, 0.95, 1.0),
-        NodeKind::H3EmptyLatentAv => Color::new(0.40, 0.62, 0.88, 1.0),
-        NodeKind::H3Keyframe => Color::new(0.92, 0.58, 0.36, 1.0),
-        NodeKind::H3References => Color::new(0.92, 0.58, 0.36, 1.0),
-        NodeKind::H3Sampler => Color::new(0.86, 0.36, 0.62, 1.0),
-        NodeKind::H3VaeDecode => Color::new(0.28, 0.76, 0.62, 1.0),
-        NodeKind::H3AudioDecode => Color::new(0.34, 0.72, 0.86, 1.0),
-        NodeKind::H3VideoSave => Color::new(0.18, 0.70, 0.52, 1.0),
         // FLUX — тёплая оранжевая гамма, картинки — в тон проводу `image`.
-        NodeKind::FluxCheckpoint
-        | NodeKind::FluxTextEncoder
-        | NodeKind::FluxEmptyLatent
-        | NodeKind::FluxVaeEncode
-        | NodeKind::FluxSampler
-        | NodeKind::FluxVaeDecode => Color::new(0.96, 0.52, 0.22, 1.0),
         // FLUX.2 — та же гамма, чуть холоднее.
-        NodeKind::Flux2Checkpoint
-        | NodeKind::Flux2TextEncoder
-        | NodeKind::Flux2Reference
-        | NodeKind::Flux2VaeEncode
-        | NodeKind::Flux2Sampler
-        | NodeKind::Flux2VaeDecode => Color::new(0.93, 0.44, 0.30, 1.0),
         // Qwen-Image — фиолетовый (цвет бренда Qwen), SDXL — янтарный.
-        NodeKind::QwenImageCheckpoint
-        | NodeKind::QwenImageTextEncoder
-        | NodeKind::QwenImageReference
-        | NodeKind::QwenImageSampler
-        | NodeKind::QwenImageVaeDecode => Color::new(0.58, 0.42, 0.93, 1.0),
         // Qwen-Image 2.1 — тот же фиолетовый, чуть светлее.
-        NodeKind::QwenImage21Checkpoint
-        | NodeKind::QwenImage21TextEncoder
-        | NodeKind::QwenImage21Reference
-        | NodeKind::QwenImage21Sampler
-        | NodeKind::QwenImage21VaeDecode => Color::new(0.66, 0.50, 0.95, 1.0),
-        NodeKind::SdxlCheckpoint
-        | NodeKind::SdxlTextEncoder
-        | NodeKind::SdxlVaeEncode
-        | NodeKind::SdxlSampler
-        | NodeKind::SdxlVaeDecode => Color::new(0.95, 0.66, 0.20, 1.0),
         NodeKind::ImageLoad | NodeKind::ImageSave => Color::new(0.98, 0.45, 0.09, 1.0),
         NodeKind::FlowText
         | NodeKind::FlowFile
@@ -147,6 +111,20 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::FlowFrame
         | NodeKind::FlowTrim
         | NodeKind::FlowStill => Color::new(0.20, 0.72, 0.86, 1.0),
+        // Стадии моделей в службе — гаммы прежних родных нод FLUX и H3.
+        NodeKind::FlowImageModel
+        | NodeKind::FlowImageEncode
+        | NodeKind::FlowImageRefs
+        | NodeKind::FlowImageLatent
+        | NodeKind::FlowImageToLatent
+        | NodeKind::FlowImageSample
+        | NodeKind::FlowImageDecode => Color::new(0.96, 0.52, 0.22, 1.0),
+        NodeKind::FlowH3Model
+        | NodeKind::FlowH3Latent
+        | NodeKind::FlowH3Encode
+        | NodeKind::FlowH3Sample
+        | NodeKind::FlowH3DecodeVideo
+        | NodeKind::FlowH3DecodeAudio => Color::new(0.55, 0.42, 0.92, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald

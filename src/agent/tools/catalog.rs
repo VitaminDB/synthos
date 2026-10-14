@@ -210,26 +210,24 @@ pub(super) fn build_all() -> Vec<Tool> {
                 region (Repaint), extend a track (Extend), morph toward a new \
                 prompt (Edit), variation (Retake); speech: TTS and voice clone \
                 (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \
-                (GigaAM), mixing/effects/recording; images: FLUX.1 text→image and \
-                image→image (builtin-flux-*; prompt format comes with open), FLUX.2 \
-                dev/klein text→image and editing by reference pictures \
-                (builtin-flux2-*: Image → FLUX.2 Reference → Sampler.references), \
-                instruction-based editing with Qwen-Image-Edit / 2511 (builtin-qwen-image-*: \
-                Image → Qwen-Image Reference → Text Encoder.references + Sampler.references), \
-                Qwen-Image 2.1 — one model for text→image, editing by up to 10 references and \
-                transparent RGBA output (builtin-qwen-image21-*: Text to Image, Edit Image, \
-                Multi-Reference, Transparent RGBA, LLM Prompt Rewrite; references go to both \
-                Text Encoder.references and Sampler.references, prompt refers to them as \
-                <image1>, <image2>…), \
-                SDXL text→image and image→image (builtin-sdxl-*), a FLUX \
-                frame straight into video (builtin-ltx-flux-keyframe, \
-                builtin-h3-flux-keyframe: FLUX VAE Decode.image → LTX Image / H3 \
-                Keyframe.image); video: LTX text/image→video, \
-                lip-dub, audio→video; MiniMax-H3 video with native audio — \
-                text→video, first/last frame (H3 Keyframe.image_path), and \
-                reference→video (template builtin-h3-ref2va: H3 References.items = \
-                ordered [{path, use_audio}] — images, videos, audio the user \
-                attached; open/apply answer with the <Picture/Video/Audio N> tags \
+                (GigaAM), mixing/effects/recording; images and MiniMax-H3 run as stages \
+                in the neural service (flow_* nodes, parameters in fields: set_state=[{node, \
+                fields: {name: value}}]; flow_image_model.model / flow_h3_model.model = a \
+                service model id from action=list): one chain for FLUX.1, FLUX.2, \
+                Qwen-Image Edit / 2511, Qwen-Image 2.1 and SDXL — Image Model → Prompt \
+                Encoder → (References: Image → flow_image_refs.images, chained via refs → \
+                Prompt Encoder.refs + Sampler.refs) → Empty Latent or Image to Latent \
+                (img2img) → Sampler → Image Decoder (builtin-flux-*, builtin-flux2-*, \
+                builtin-qwen-image-*, builtin-qwen-image21-* — Qwen-Image 2.1 refers to \
+                references as <image1>, <image2>…, builtin-sdxl-*; prompt format comes \
+                with open); a generated frame straight into video (builtin-ltx-flux-keyframe, \
+                builtin-h3-flux-keyframe: Image Decoder.image → LTX Image / H3 \
+                Encoder.first_frame); video: LTX text/image→video, lip-dub, audio→video; \
+                MiniMax-H3 video with native audio — H3 Model → H3 Video Size → H3 Encoder \
+                (first_frame/last_frame from flow_file.path, or refs from a flow_list whose \
+                fields.items = file paths, one per line — images, videos, audio the user \
+                attached; template builtin-h3-ref2va) → H3 Sampler → H3 Video/Audio \
+                Decoder → Mux; open/apply answer with the <Picture/Video/Audio N> tags \
                 and the prompt format — follow it). \
                 Typical workflow: 1) action=list — templates (built-in and \
                 custom) and chat attachments; 2) action=open with \

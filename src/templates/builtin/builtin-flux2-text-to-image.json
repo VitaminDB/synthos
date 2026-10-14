@@ -1,0 +1,188 @@
+{
+  "name": "FLUX.2: Text to Image",
+  "description": "Промпт → LLM-энкодер (Mistral-24B у dev, Qwen3 у klein) → Sampler (шаги по модели: dev 50, klein 4) → VAE Decode → PNG. В Checkpoint — flux.2-dev.syn, flux.2-klein-4b.syn или flux.2-klein-9b.syn; не влезшее в VRAM стримится.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_image_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "flux-2-klein-4b"
+        },
+        "quant": {
+          "type": "Choice",
+          "value": 2
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 520.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "A cozy reading nook by a rainy window at dusk: a ginger cat asleep on a chunky knitted blanket, a brass floor lamp casting warm light, raindrops on the glass, photograph",
+          "width": 300.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_image_encode",
+      "pos": {
+        "x": 520.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_image_latent",
+      "pos": {
+        "x": 520.0,
+        "y": 790.0
+      },
+      "fields": {
+        "height": {
+          "type": "Float",
+          "value": 1024.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1024.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_image_sample",
+      "pos": {
+        "x": 960.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_image_decode",
+      "pos": {
+        "x": 1400.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "image_save",
+      "pos": {
+        "x": 1840.0,
+        "y": 420.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 6,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 4,
+      "from_port": "latent",
+      "to_node": 5,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 6,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 6,
+      "from_port": "image",
+      "to_node": 7,
+      "to_port": "image"
+    }
+  ],
+  "viewport": null
+}

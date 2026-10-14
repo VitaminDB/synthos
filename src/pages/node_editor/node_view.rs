@@ -183,13 +183,7 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
         if matches!(kind, NodeKind::MarkdownView) {
             classes.push("markdown-node".to_string());
         }
-        if matches!(kind, NodeKind::OmniVoice) {
-            classes.push("omnivoice-node".to_string());
-        }
         match kind {
-            NodeKind::VoxCpm2 => classes.push("voxcpm-node".to_string()),
-            NodeKind::VibeVoice => classes.push("vibevoice-node".to_string()),
-            NodeKind::Llm => classes.push("llm-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
             _ => {}
         }

@@ -6,17 +6,7 @@
 //! Custom» через [`super::storage::duplicate_to_custom`] делает копию,
 //! которую уже можно править.
 
-use super::model::{
-    ConnData,
-    FieldValueData,
-    NodeData,
-    NodeStateData,
-    PointData,
-    Template,
-    TemplateKind,
-    TextViewStateData,
-    VibeVoiceStateData,
-};
+use super::model::{ConnData, FieldValueData, NodeData, PointData, Template, TemplateKind};
 use crate::pages::node_editor::types::NodeKind;
 
 /// Все встроенные шаблоны. Порядок ⇒ порядок отображения в панели.
@@ -24,6 +14,11 @@ use crate::pages::node_editor::types::NodeKind;
 /// SDXL, MiniMax-H3, LTX-2.3, ACE-Step, YuE2) — JSON: переведены из прежних родных нод
 /// [`super::native`].
 const STAGE_TEMPLATES: &[(&str, &str)] = &[
+    ("builtin-voice-clone-voxcpm", include_str!("builtin/builtin-voice-clone-voxcpm.json")),
+    ("builtin-voice-clone-omnivoice", include_str!("builtin/builtin-voice-clone-omnivoice.json")),
+    ("builtin-vibevoice-dialogue", include_str!("builtin/builtin-vibevoice-dialogue.json")),
+    ("builtin-vibevoice-single", include_str!("builtin/builtin-vibevoice-single.json")),
+    ("builtin-vibevoice-llm-podcast", include_str!("builtin/builtin-vibevoice-llm-podcast.json")),
     ("builtin-acestep-text2music", include_str!("builtin/builtin-acestep-text2music.json")),
     ("builtin-acestep-retake", include_str!("builtin/builtin-acestep-retake.json")),
     ("builtin-acestep-repaint", include_str!("builtin/builtin-acestep-repaint.json")),
@@ -83,11 +78,11 @@ pub fn all() -> Vec<Template> {
         save_to_file_template(),
         mix_two_sources_template(),
         mix_mic_and_file_template(),
-        voxcpm_voice_clone_template(),
-        omnivoice_voice_clone_template(),
-        vibevoice_dialogue_template(),
-        vibevoice_single_voice_template(),
-        vibevoice_llm_podcast_template(),
+        stage("builtin-voice-clone-voxcpm"),
+        stage("builtin-voice-clone-omnivoice"),
+        stage("builtin-vibevoice-dialogue"),
+        stage("builtin-vibevoice-single"),
+        stage("builtin-vibevoice-llm-podcast"),
         stage("builtin-acestep-text2music"),
         stage("builtin-acestep-retake"),
         stage("builtin-acestep-repaint"),
@@ -471,253 +466,6 @@ fn mix_two_sources_template() -> Template {
 // запуске пользователь не получал CPU-инференс по умолчанию. `model_path`
 // остаётся `None` — выбирается через file-picker в карточке ноды.
 
-/// Конструктор ноды без полей (`fields` пустой, `enabled=true`, дефолтный
-/// `style`). Используется для большинства ACE-Step builtin'ов — у нод
-/// нет registry-fields, всё состояние живёт в `state`.
-/// Voice-clone TTS на VoxCPM2: референс-голос (Audio File) + текст (Text) →
-/// VoxCPM2 (`ref_audio`) → плеер и сохранение в файл.
-fn voxcpm_voice_clone_template() -> Template {
-    let text_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "Привет! Это синтез моего голоса из короткого образца."
-            .into(),
-        width: 280.0,
-        height: 120.0,
-    });
-    Template {
-        id: "builtin-voice-clone-voxcpm".into(),
-        builtin: true,
-        name: "VoxCPM: Voice Clone".into(),
-        description:
-            "Референс-голос (Audio File) + текст (Text) → VoxCPM2 TTS (клон по ref_audio) → \
-             Audio Player и Save to File. Откройте короткий WAV с образцом голоса, впишите \
-             текст, укажите .syn-модель VoxCPM в ноде Syn Checkpoint и нажмите Run."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::TextView, 60.0, 60.0, text_state),
-            node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
-            node_plain(6, NodeKind::SynCheckpoint, 60.0, 560.0),
-            node_plain(3, NodeKind::VoxCpm2, 480.0, 140.0),
-            node_plain(4, NodeKind::AudioPlayer, 900.0, 60.0),
-            node_plain(5, NodeKind::SaveToFile, 900.0, 300.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 6, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "out".into(),   to_node: 3, to_port: "text".into() },
-            ConnData { from_node: 2, from_port: "out".into(),   to_node: 3, to_port: "ref_audio".into() },
-            ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
-            ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
-        ],
-        viewport: None,
-    }
-}
-
-/// Voice-clone TTS на OmniVoice с авто-транскрипцией референса через GigaAM:
-/// Audio File → GigaAM ASR → Text View (транскрипт, можно поправить) →
-/// `ref_text` OmniVoice; тот же Audio File → `ref_audio` (активирует
-/// Clone-mode). RunQueue сам дождётся GigaAM перед стартом OmniVoice.
-fn omnivoice_voice_clone_template() -> Template {
-    let text_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "Привет! Это синтез моего голоса из короткого образца."
-            .into(),
-        width: 280.0,
-        height: 120.0,
-    });
-    Template {
-        id: "builtin-voice-clone-omnivoice".into(),
-        builtin: true,
-        name: "OmniVoice: Voice Clone".into(),
-        description:
-            "Референс-голос (Audio File) → GigaAM ASR (авто-транскрипт → ref text) + текст (Text) → \
-             OmniVoice TTS (Clone-mode по ref_audio) → Audio Player и Save to File. Откройте WAV с \
-             образцом голоса, впишите текст, укажите .syn-модели в нодах Syn Checkpoint: GigaAM \
-             (gigaam-v3.syn) для ASR и OmniVoice (omnivoice.syn) для TTS, нажмите Run. Транскрипт \
-             в Text View можно поправить перед синтезом."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::TextView, 60.0, 60.0, text_state),
-            node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
-            node_plain(8, NodeKind::SynCheckpoint, 60.0, 560.0),
-            node_plain(6, NodeKind::AsrGigaam, 420.0, 320.0),
-            node_plain(7, NodeKind::TextView, 420.0, 580.0),
-            node_plain(9, NodeKind::SynCheckpoint, 420.0, 60.0),
-            node_plain(3, NodeKind::OmniVoice, 840.0, 140.0),
-            node_plain(4, NodeKind::AudioPlayer, 1280.0, 60.0),
-            node_plain(5, NodeKind::SaveToFile, 1280.0, 300.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 8, from_port: "model".into(), to_node: 6, to_port: "model".into() },
-            ConnData { from_node: 9, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "out".into(),   to_node: 3, to_port: "text".into() },
-            ConnData { from_node: 2, from_port: "out".into(),   to_node: 3, to_port: "ref_audio".into() },
-            ConnData { from_node: 2, from_port: "out".into(),   to_node: 6, to_port: "in".into() },
-            ConnData { from_node: 6, from_port: "out".into(),   to_node: 7, to_port: "in".into() },
-            ConnData { from_node: 7, from_port: "out".into(),   to_node: 3, to_port: "ref_text".into() },
-            ConnData { from_node: 3, from_port: "audio".into(), to_node: 4, to_port: "in".into() },
-            ConnData { from_node: 3, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn vibevoice_dialogue_template() -> Template {
-    let script_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "Speaker 1: Привет! Сегодня мы записываем первый выпуск.\n\
-                      Speaker 2: Отлично, начнём с главного вопроса."
-            .into(),
-        width: 320.0,
-        height: 140.0,
-    });
-    Template {
-        id: "builtin-vibevoice-dialogue".into(),
-        builtin: true,
-        name: "VibeVoice: диалог двух голосов".into(),
-        description:
-            "Сценарий вида «Speaker 1: …» / «Speaker 2: …» плюс два коротких WAV с образцами \
-             голосов → VibeVoice синтезирует сплошную дорожку диалога 24 кГц. Укажите \
-             vibevoice-1.5b.syn в ноде Syn Checkpoint и нажмите Run."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::TextView, 60.0, 60.0, script_state),
-            node_plain(2, NodeKind::AudioFile, 60.0, 340.0),
-            node_plain(3, NodeKind::AudioFile, 60.0, 520.0),
-            node_plain(4, NodeKind::SynCheckpoint, 60.0, 700.0),
-            node_with_state(5, NodeKind::VibeVoice, 520.0, 140.0, vibevoice_state()),
-            node_plain(6, NodeKind::AudioPlayer, 980.0, 60.0),
-            node_plain(7, NodeKind::SaveToFile, 980.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 4, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "out".into(),   to_node: 5, to_port: "script".into() },
-            ConnData { from_node: 2, from_port: "out".into(),   to_node: 5, to_port: "voice1".into() },
-            ConnData { from_node: 3, from_port: "out".into(),   to_node: 5, to_port: "voice2".into() },
-            ConnData { from_node: 5, from_port: "audio".into(), to_node: 6, to_port: "in".into() },
-            ConnData { from_node: 5, from_port: "audio".into(), to_node: 7, to_port: "in".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn vibevoice_single_voice_template() -> Template {
-    let script_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "Speaker 1: Это длинный текст, озвученный моим голосом из короткого образца."
-            .into(),
-        width: 320.0,
-        height: 120.0,
-    });
-    Template {
-        id: "builtin-vibevoice-single".into(),
-        builtin: true,
-        name: "VibeVoice: клон одного голоса".into(),
-        description:
-            "Один WAV с образцом голоса + текст → VibeVoice озвучивает его целиком (модель \
-             держит контекст на десятки минут). Модель — vibevoice-1.5b.syn или \
-             vibevoice-7b.syn в ноде Syn Checkpoint."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::TextView, 60.0, 60.0, script_state),
-            node_plain(2, NodeKind::AudioFile, 60.0, 320.0),
-            node_plain(3, NodeKind::SynCheckpoint, 60.0, 520.0),
-            node_with_state(4, NodeKind::VibeVoice, 520.0, 120.0, vibevoice_state()),
-            node_plain(5, NodeKind::AudioPlayer, 980.0, 60.0),
-            node_plain(6, NodeKind::SaveToFile, 980.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 3, from_port: "model".into(), to_node: 4, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "out".into(),   to_node: 4, to_port: "script".into() },
-            ConnData { from_node: 2, from_port: "out".into(),   to_node: 4, to_port: "voice1".into() },
-            ConnData { from_node: 4, from_port: "audio".into(), to_node: 5, to_port: "in".into() },
-            ConnData { from_node: 4, from_port: "audio".into(), to_node: 6, to_port: "in".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn vibevoice_llm_podcast_template() -> Template {
-    let topic_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "Напиши сценарий подкаста на 6 реплик о том, как работают нейросети.                       Формат строк строго «Speaker 1: …» и «Speaker 2: …», без заголовков."
-            .into(),
-        width: 320.0,
-        height: 140.0,
-    });
-    Template {
-        id: "builtin-vibevoice-llm-podcast".into(),
-        builtin: true,
-        name: "VibeVoice: подкаст из темы (LLM → голос)".into(),
-        description:
-            "Тема → LLM пишет сценарий строками «Speaker N: …» → Text View (правится вручную) \
-             → VibeVoice озвучивает двумя голосами → плеер и сохранение. Нужны два \
-             Syn Checkpoint: LLM-бандл и vibevoice-*.syn."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_with_state(1, NodeKind::TextView, 60.0, 60.0, topic_state),
-            node_plain(2, NodeKind::SynCheckpoint, 60.0, 340.0),
-            node_plain(3, NodeKind::Llm, 460.0, 60.0),
-            node_plain(4, NodeKind::TextView, 900.0, 60.0),
-            node_plain(5, NodeKind::AudioFile, 60.0, 560.0),
-            node_plain(6, NodeKind::AudioFile, 60.0, 740.0),
-            node_plain(7, NodeKind::SynCheckpoint, 460.0, 560.0),
-            node_with_state(8, NodeKind::VibeVoice, 900.0, 400.0, vibevoice_state()),
-            node_plain(9, NodeKind::AudioPlayer, 1360.0, 340.0),
-            node_plain(10, NodeKind::SaveToFile, 1360.0, 600.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 2, from_port: "model".into(),  to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "out".into(),    to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "answer".into(), to_node: 4, to_port: "in".into() },
-            ConnData { from_node: 4, from_port: "out".into(),    to_node: 8, to_port: "script".into() },
-            ConnData { from_node: 7, from_port: "model".into(),  to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 5, from_port: "out".into(),    to_node: 8, to_port: "voice1".into() },
-            ConnData { from_node: 6, from_port: "out".into(),    to_node: 8, to_port: "voice2".into() },
-            ConnData { from_node: 8, from_port: "audio".into(),  to_node: 9, to_port: "in".into() },
-            ConnData { from_node: 8, from_port: "audio".into(),  to_node: 10, to_port: "in".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn vibevoice_state() -> NodeStateData {
-    NodeStateData::VibeVoice(VibeVoiceStateData {
-        model_path: None,
-        device_idx: 0,
-        compute_idx: 0,
-        script: String::new(),
-        cfg_value: 1.3,
-        ddpm_steps: 20,
-        max_length_times: 2.0,
-        seed: 0,
-    })
-}
-
-fn node_with_state(id: u64, kind: NodeKind, x: f32, y: f32, state: NodeStateData) -> NodeData {
-    NodeData {
-        id,
-        kind,
-        pos: PointData { x, y },
-        fields: Default::default(),
-        style: Default::default(),
-        enabled: true,
-        state: Some(state),
-    }
-}
-
-/// Нода без `state` (Pack, AudioFile, AudioPlayer). `default_runtime` сам
-/// инициализирует значения по умолчанию.
-fn node_plain(id: u64, kind: NodeKind, x: f32, y: f32) -> NodeData {
-    NodeData {
-        id,
-        kind,
-        pos: PointData { x, y },
-        fields: Default::default(),
-        style: Default::default(),
-        enabled: true,
-        state: None,
-    }
-}
 
 
 /// Микрофон + audio-файл через Mixer → Player. Удобно для караоке-сценариев

@@ -50,57 +50,56 @@
       }
     },
     {
-      "id": 8,
-      "kind": "syn_checkpoint",
-      "pos": {
-        "x": 60.0,
-        "y": 680.0
-      },
-      "fields": {},
-      "style": {
-        "tint": null,
-        "shadow": true
-      },
-      "enabled": true,
-      "state": {
-        "kind": "SynCheckpoint",
-        "data": {
-          "model_path": null,
-          "device_idx": 0,
-          "storage_idx": 4,
-          "compute_idx": 0,
-          "resident": false
-        }
-      }
-    },
-    {
       "id": 9,
-      "kind": "llm",
+      "kind": "flow_llm",
       "pos": {
         "x": 480.0,
         "y": 420.0
       },
-      "fields": {},
+      "fields": {
+        "context": {
+          "type": "Float",
+          "value": 4096.0
+        },
+        "max_tokens": {
+          "type": "Float",
+          "value": 512.0
+        },
+        "min_p": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "repeat_penalty": {
+          "type": "Float",
+          "value": 1.0
+        },
+        "system": {
+          "type": "Text",
+          "value": "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. Rewrite user prompts to be more descriptive while strictly preserving their core subject and intent.\n\nGuidelines:\n1. Structure: Keep structured inputs structured (enhance within fields). Convert natural language to detailed paragraphs.\n2. Details: Add concrete visual specifics - form, scale, textures, materials, lighting (quality, direction, color), shadows, spatial relationships, and environmental context.\n3. Text in Images: Put ALL text in quotation marks, matching the prompt's language. Always provide explicit quoted text for objects that would contain text in reality (signs, labels, screens, etc.) - without it, the model generates gibberish.\n4. Language: Write the revised prompt in English, whatever the language of the request; only the quoted text that must appear in the image keeps its original language.\n\nOutput only the revised prompt and nothing else."
+        },
+        "temperature": {
+          "type": "Float",
+          "value": 0.15
+        },
+        "think": {
+          "type": "Bool",
+          "value": false
+        },
+        "top_k": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "top_p": {
+          "type": "Float",
+          "value": 1.0
+        }
+      },
       "style": {
         "tint": null,
         "shadow": true
       },
       "enabled": true,
-      "state": {
-        "kind": "Llm",
-        "data": {
-          "system_prompt": "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. Rewrite user prompts to be more descriptive while strictly preserving their core subject and intent.\n\nGuidelines:\n1. Structure: Keep structured inputs structured (enhance within fields). Convert natural language to detailed paragraphs.\n2. Details: Add concrete visual specifics - form, scale, textures, materials, lighting (quality, direction, color), shadows, spatial relationships, and environmental context.\n3. Text in Images: Put ALL text in quotation marks, matching the prompt's language. Always provide explicit quoted text for objects that would contain text in reality (signs, labels, screens, etc.) - without it, the model generates gibberish.\n4. Language: Write the revised prompt in English, whatever the language of the request; only the quoted text that must appear in the image keeps its original language.\n\nOutput only the revised prompt and nothing else.",
-          "context": 4096,
-          "think": false,
-          "max_tokens": 512,
-          "temperature": 0.15000000596046448,
-          "top_k": 0,
-          "top_p": 1.0,
-          "min_p": 0.0,
-          "repetition_penalty": 1.0,
-          "seed": 0
-        }
-      }
+      "state": null
     },
     {
       "id": 10,
@@ -217,14 +216,8 @@
       "to_port": "prompt"
     },
     {
-      "from_node": 8,
-      "from_port": "model",
-      "to_node": 9,
-      "to_port": "model"
-    },
-    {
       "from_node": 9,
-      "from_port": "answer",
+      "from_port": "text",
       "to_node": 10,
       "to_port": "in"
     },

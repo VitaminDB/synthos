@@ -214,12 +214,6 @@ pub struct Template {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum NodeStateData {
-    AsrGigaam(AsrGigaamStateData),
-    OmniVoice(OmniVoiceStateData),
-    VoxCpm2(VoxCpm2StateData),
-    VibeVoice(VibeVoiceStateData),
-    Llm(LlmStateData),
-    SortformerDiarizer(SortformerDiarizerStateData),
     MarkdownView(MarkdownViewStateData),
     TextView(TextViewStateData),
     Gain(GainStateData),
@@ -232,7 +226,6 @@ pub enum NodeStateData {
     AudioRecorder(AudioRecorderStateData),
     SaveToFile(SaveToFileStateData),
     FfmpegPlayer(FfmpegPlayerStateData),
-    SynCheckpoint(SynCheckpointStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
 }
@@ -249,36 +242,6 @@ pub struct ImageLoadStateData {
 pub struct ImageSaveStateData {
     #[serde(default)]
     pub path: Option<String>,
-}
-
-/// State универсальной «Syn Checkpoint»-ноды: путь + предпочтения
-/// device/storage/compute (индекс 0 = Auto) + резидентность.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SynCheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default)]
-    pub storage_idx: usize,
-    #[serde(default)]
-    pub compute_idx: usize,
-    /// Слотовое поведение (держать модель после прогона). Дефолт true —
-    /// исторически так вели себя все слот-ноды.
-    #[serde(default = "default_enabled_true")]
-    pub resident: bool,
-}
-
-impl Default for SynCheckpointStateData {
-    fn default() -> Self {
-        Self {
-            model_path: None,
-            device_idx: 0,
-            storage_idx: 0,
-            compute_idx: 0,
-            resident: true,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -299,206 +262,6 @@ fn default_ffmpeg_volume() -> f32 {
 
 fn default_ffmpeg_size() -> (f32, f32) {
     (320.0, 240.0)
-}
-
-/// State ноды диаризации Sortformer. `model_path` хранится как строка
-/// (`PathBuf::to_string_lossy`). `output_pretty`/`output_json` сохраняются,
-/// чтобы шаблон удерживал ранее полученный результат до следующего Play.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct SortformerDiarizerStateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub storage_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default = "default_sortformer_threshold")]
-    pub threshold: f32,
-    #[serde(default = "default_sortformer_allow_overlap")]
-    pub allow_overlap: bool,
-    #[serde(default)]
-    pub output_pretty: String,
-    #[serde(default)]
-    pub output_json: String,
-}
-
-fn default_sortformer_threshold() -> f32 {
-    0.5
-}
-fn default_sortformer_allow_overlap() -> bool {
-    true
-}
-
-/// State ASR-ноды GigaAM. `model_path` — `PathBuf::to_string_lossy()` на save,
-/// `PathBuf::from(s)` на load. `output_text` сохраняется, чтобы шаблон-снапшот
-/// удерживал ранее полученный транскрибат до повторного Play.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct AsrGigaamStateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub storage_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub output_text: String,
-}
-
-/// State TTS-ноды OmniVoice. Параметры sampling'а — те же, что
-/// `synaptix::facade::tts::core::GenerationConfig::default()` в качестве дефолтов.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct OmniVoiceStateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub storage_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub instruct: String,
-    /// Fallback ref-text если ref_text-порт не подключён.
-    #[serde(default)]
-    pub ref_text: String,
-    #[serde(default)]
-    pub language: String,
-    #[serde(default = "default_num_step")]
-    pub num_step: u32,
-    #[serde(default = "default_guidance_scale")]
-    pub guidance_scale: f32,
-    #[serde(default = "default_t_shift")]
-    pub t_shift: f32,
-    #[serde(default = "default_speed")]
-    pub speed: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
-
-/// State LLM-ноды (synaptix Qwen3 / Hybrid). Тяжёлый pipeline не
-/// сериализуется — грузится лениво на первый Run.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LlmStateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub quant_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub system_prompt: String,
-    #[serde(default = "default_context")]
-    pub context: u32,
-    #[serde(default)]
-    pub think: bool,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
-    #[serde(default)]
-    pub top_k: u32,
-    #[serde(default = "default_top_p")]
-    pub top_p: f32,
-    #[serde(default)]
-    pub min_p: f32,
-    #[serde(default = "default_repetition_penalty")]
-    pub repetition_penalty: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct VoxCpm2StateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub prompt_text: String,
-    #[serde(default = "default_guidance_scale")]
-    pub cfg_value: f32,
-    #[serde(default = "default_voxcpm_steps")]
-    pub n_timesteps: u32,
-    #[serde(default = "default_voxcpm_max_len")]
-    pub max_len: u32,
-    #[serde(default = "default_voxcpm_seed")]
-    pub seed: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct VibeVoiceStateData {
-    /// Legacy: модель жила в самой ноде. Читается только для миграции в
-    /// Syn Checkpoint (`convert::migrate_inline_models`), не пишется.
-    #[serde(default, skip_serializing)]
-    pub model_path: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub device_idx: usize,
-    #[serde(default, skip_serializing)]
-    pub compute_idx: usize,
-    #[serde(default)]
-    pub script: String,
-    #[serde(default = "default_vibevoice_cfg")]
-    pub cfg_value: f32,
-    #[serde(default = "default_vibevoice_steps")]
-    pub ddpm_steps: u32,
-    #[serde(default = "default_vibevoice_max_len_times")]
-    pub max_length_times: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
-
-fn default_vibevoice_cfg() -> f32 {
-    1.3
-}
-fn default_vibevoice_steps() -> u32 {
-    20
-}
-fn default_vibevoice_max_len_times() -> f32 {
-    2.0
-}
-
-fn default_voxcpm_steps() -> u32 {
-    10
-}
-fn default_voxcpm_max_len() -> u32 {
-    2000
-}
-fn default_voxcpm_seed() -> u64 {
-    1988
-}
-
-fn default_context() -> u32 {
-    4096
-}
-fn default_max_tokens() -> u32 {
-    512
-}
-fn default_temperature() -> f32 {
-    0.7
-}
-fn default_top_p() -> f32 {
-    1.0
-}
-fn default_repetition_penalty() -> f32 {
-    1.0
 }
 
 /// State `MarkdownView`-ноды: текст + размер карточки + edit-mode.
@@ -621,18 +384,6 @@ fn default_filter_cutoff() -> f32 {
     1_000.0
 }
 fn default_volume() -> f32 {
-    1.0
-}
-fn default_num_step() -> u32 {
-    32
-}
-fn default_guidance_scale() -> f32 {
-    2.0
-}
-fn default_t_shift() -> f32 {
-    0.1
-}
-fn default_speed() -> f32 {
     1.0
 }
 fn default_mixer_n_inputs() -> usize {

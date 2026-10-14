@@ -1,0 +1,174 @@
+{
+  "name": "OmniVoice: Voice Clone",
+  "description": "Референс-голос (Audio File) → GigaAM ASR (авто-транскрипт → ref text) + текст (Text) → OmniVoice TTS (Clone-mode по ref_audio) → Audio Player и Save to File. Откройте WAV с образцом голоса, впишите текст, укажите .syn-модели в нодах Syn Checkpoint: GigaAM (gigaam-v3.syn) для ASR и OmniVoice (omnivoice.syn) для TTS, нажмите Run. Транскрипт в Text View можно поправить перед синтезом.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "Привет! Это синтез моего голоса из короткого образца.",
+          "width": 280.0,
+          "height": 120.0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "kind": "audio_file",
+      "pos": {
+        "x": 60.0,
+        "y": 320.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_transcribe",
+      "pos": {
+        "x": 420.0,
+        "y": 320.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "gigaam-v3"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "text_view",
+      "pos": {
+        "x": 420.0,
+        "y": 580.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 3,
+      "kind": "flow_omnivoice",
+      "pos": {
+        "x": 840.0,
+        "y": 140.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "omnivoice"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "audio_player",
+      "pos": {
+        "x": 1280.0,
+        "y": 60.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "save_to_file",
+      "pos": {
+        "x": 1280.0,
+        "y": 300.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "text"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "ref_audio"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 6,
+      "to_port": "file"
+    },
+    {
+      "from_node": 6,
+      "from_port": "text",
+      "to_node": 7,
+      "to_port": "in"
+    },
+    {
+      "from_node": 7,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "ref_text"
+    },
+    {
+      "from_node": 3,
+      "from_port": "audio",
+      "to_node": 4,
+      "to_port": "in"
+    },
+    {
+      "from_node": 3,
+      "from_port": "audio",
+      "to_node": 5,
+      "to_port": "in"
+    }
+  ],
+  "viewport": null
+}

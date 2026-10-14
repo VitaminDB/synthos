@@ -2393,4 +2393,5 @@ notes.props.gantt.boards_hint = "Les cartes des tableaux sélectionnés qui ont 
 node.subcategory.flow_image = "Image models"
 node.subcategory.flow_h3 = "MiniMax H3"
 node.subcategory.flow_ltx = "LTX-2.3"
+node.subcategory.flow_speech = "Parole"
 node.subcategory.flow_music = "Musique"

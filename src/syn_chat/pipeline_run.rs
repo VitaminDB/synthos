@@ -173,42 +173,6 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         return Err(tr!("chat.pipeline.error.no_runnable_nodes"));
     }
 
-    // Пустые чекпойнты ловим ДО прогона (и до выгрузки LLM): нода всё равно
-    // упадёт, а агент потеряет ход и цикл unload/reload. Слот-нода без
-    // Syn Checkpoint на входе `model` модели не получит вовсе.
-    let conns = ctx.connections.get_untracked();
-    let mut missing: Vec<String> = Vec::new();
-    for n in &nodes {
-        if !n.enabled.get_untracked() {
-            continue;
-        }
-        let has_model_input = conns
-            .iter()
-            .any(|c| c.to_node == n.id && c.to_port == "model");
-        if let (Some(src), false) = (n.kind.model_input_source(), has_model_input) {
-            missing.push(tr!(
-                "chat.pipeline.error.missing_field",
-                node_id = n.id.0,
-                node_title = registry::meta(n.kind).title,
-                field = format!("model ← {src}")
-            ));
-        }
-        if let Ok(rt) = n.runtime.lock() {
-            for field in rt.missing_model_paths() {
-                missing.push(tr!(
-                    "chat.pipeline.error.missing_field",
-                    node_id = n.id.0,
-                    node_title = registry::meta(n.kind).title,
-                    field = field
-                ));
-            }
-        }
-    }
-
-    if !missing.is_empty() {
-        return Err(tr!("chat.pipeline.error.missing_paths", list = missing.join("\n")));
-    }
-
     let out_dir = outputs_dir().join(&chat_id).join(run_label);
     let mut planned = Vec::new();
     for n in &nodes {

@@ -53,7 +53,6 @@ pub fn log_worker_done<T, E: std::fmt::Display>(
     }
 }
 
-pub mod asr_gigaam;
 pub mod audio_equalizer;
 pub mod audio_file;
 pub mod audio_filter;
@@ -67,16 +66,10 @@ pub mod decode;
 pub mod ffmpeg_player;
 pub mod flow;
 pub mod image;
-pub mod llm;
 pub mod common;
 pub mod markdown_view;
-pub mod omnivoice;
 pub mod scalar;
-pub mod sortformer_diarizer;
-pub mod syn_checkpoint;
 pub mod text_view;
-pub mod vibevoice;
-pub mod voxcpm2;
 
 /// Хэндл «Syn Checkpoint», подключённый к входу `model` ноды `node_id`.
 /// Общий для всех слот-семейств (LLM/TTS/ASR/диаризация): если порт не

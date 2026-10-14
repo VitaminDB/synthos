@@ -324,7 +324,7 @@ mod tests {
 
     /// Связка «busy-сигнал ноды → её секундомер» из
     /// `state::NodeEditorCtx::install_node_timers`. Флипаем `running`
-    /// у runtime'а ASR-ноды напрямую — ровно это делает её worker.
+    /// у runtime'а ноды расшифровки напрямую — ровно это делает её worker.
     #[test]
     fn node_stopwatch_follows_busy_signal() {
         use super::super::registry;
@@ -333,7 +333,7 @@ mod tests {
         use syngui::core::Point;
 
         let ctx = NodeEditorCtx::new();
-        let id = ctx.add_node(NodeKind::AsrGigaam, Point::zero());
+        let id = ctx.add_node(NodeKind::FlowTranscribe, Point::zero());
         syngui::signal::drain_and_run_effects();
 
         let node = ctx.find_node(id).expect("нода добавлена");

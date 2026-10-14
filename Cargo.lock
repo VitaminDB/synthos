@@ -7158,14 +7158,11 @@ dependencies = [
 name = "synaptix-io"
 version = "0.1.1"
 dependencies = [
- "hound",
  "image",
  "memmap2",
- "rubato",
  "safetensors",
  "serde",
  "serde_json",
- "symphonia",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-gguf",
@@ -7417,40 +7414,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-tts-vibevoice"
-version = "0.1.1"
-dependencies = [
- "safetensors",
- "serde",
- "serde_json",
- "synaptix-audio",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-infer",
- "synaptix-io",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-tts-voxcpm"
-version = "0.1.1"
-dependencies = [
- "serde",
- "serde_json",
- "synaptix-audio",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-io",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "synaptix-video-minimax-h3"
 version = "0.1.1"
 dependencies = [
@@ -7678,12 +7641,8 @@ dependencies = [
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
  "synaptix-llm-common",
- "synaptix-llm-qwen3",
- "synaptix-llm-qwen3-next-hybrid",
  "synaptix-rag",
  "synaptix-tokenizer",
- "synaptix-tts-vibevoice",
- "synaptix-tts-voxcpm",
  "synaptix-video-minimax-h3",
  "synaptixd",
  "synassist",

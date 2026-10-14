@@ -375,14 +375,8 @@ fn ports_line(spec: PortsSpec) -> String {
 fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
         ffmpeg_player,
-        syn_checkpoint,
     };
     match kind {
-        NodeKind::SynCheckpoint => vec![
-            ("device_idx", syn_checkpoint::DEVICE_PREF_OPTIONS),
-            ("storage_idx", syn_checkpoint::STORAGE_PREF_OPTIONS),
-            ("compute_idx", syn_checkpoint::COMPUTE_PREF_OPTIONS),
-        ],
         NodeKind::FfmpegPlayer => vec![("hwaccel_idx", ffmpeg_player::HWACCEL_LABELS)],
         _ => Vec::new(),
     }
@@ -575,16 +569,6 @@ fn open_impl(v: &serde_json::Value) -> Result<String, String> {
     convert::load_into_ctx(&ctx, t);
     let mut out = format!("template \"{}\" loaded into the service tab\n", t.name);
     out.push_str(&graph_summary(&ctx)?);
-    // Чем заполнять граф — говорим сразу: встроенные шаблоны путей не несут,
-    // и агент иначе выясняет это только на pre-check прогона, потратив ходы.
-    let missing = missing_model_paths(&ctx);
-    if !missing.is_empty() {
-        out.push_str("model paths not filled in (apply set_state, paths — from action=list):\n");
-        for m in &missing {
-            out.push_str(m);
-            out.push('\n');
-        }
-    }
     out.push_str(&h3_reference_labels(&ctx));
     out.push_str(h3_prompt_guide(&ctx));
     out.push_str(flux_prompt_guide(&ctx));
@@ -691,36 +675,6 @@ fn h3_reference_labels(ctx: &NodeEditorCtx) -> String {
 
 
 
-/// Ноды графа с пустыми путями моделей — то же, что проверяет pre-check
-/// прогона (`pipeline_run::prepare`), но до `run`.
-fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
-    let nodes = ctx.nodes.get_untracked();
-    let conns = ctx.connections.get_untracked();
-    let mut out = Vec::new();
-    for n in &nodes {
-        if !n.enabled.get_untracked() {
-            continue;
-        }
-        // Слот-нода берёт модель только от SynCheckpoint на входе `model`.
-        let has_model_input = conns
-            .iter()
-            .any(|c| c.to_node == n.id && c.to_port == "model");
-        let Ok(rt) = n.runtime.lock() else { continue };
-        let mut fields: Vec<String> = rt.missing_model_paths().into_iter().map(String::from).collect();
-        if let (Some(src), false) = (n.kind.model_input_source(), has_model_input) {
-            fields.push(format!("model ← {src}"));
-        }
-        if !fields.is_empty() {
-            out.push(format!(
-                "node {} ({}): {}",
-                n.id.0,
-                registry::meta(n.kind).title,
-                fields.join(", ")
-            ));
-        }
-    }
-    out
-}
 
 fn graph_impl() -> Result<String, String> {
     match agent_ctx()? {
@@ -1677,18 +1631,18 @@ mod tests {
     /// `*_idx`-поля state расшифрованы: без этого агент выбирал квант вслепую.
     #[test]
     fn enum_hints_explain_quant_indices() {
-        let lines = enum_hints_lines(NodeKind::SynCheckpoint);
+        let lines = enum_hints_lines(NodeKind::FfmpegPlayer);
         let quant = lines
             .iter()
-            .find(|l| l.starts_with("storage_idx:"))
-            .expect("storage_idx расшифрован");
+            .find(|l| l.starts_with("hwaccel_idx:"))
+            .expect("hwaccel_idx расшифрован");
         assert!(quant.contains("0="), "{quant}");
         assert!(enum_hints_lines(NodeKind::Add).is_empty());
     }
 
     #[test]
     fn kind_slug_is_snake_case() {
-        assert_eq!(kind_slug(NodeKind::SynCheckpoint), "syn_checkpoint");
+        assert_eq!(kind_slug(NodeKind::FfmpegPlayer), "ffmpeg_player");
         assert_eq!(kind_slug(NodeKind::FlowAcestepGenerate), "flow_acestep_generate");
     }
 
@@ -1697,7 +1651,7 @@ mod tests {
     fn template_from_value_fills_defaults() {
         let graph = serde_json::json!({
             "nodes": [
-                { "kind": "syn_checkpoint" },
+                { "kind": "audio_file" },
                 {
                     "kind": "text_view",
                     "state": {
@@ -1707,14 +1661,14 @@ mod tests {
                 }
             ],
             "connections": [
-                { "from_node": 1, "from_port": "model", "to_node": 2, "to_port": "model" }
+                { "from_node": 1, "from_port": "out", "to_node": 2, "to_port": "in" }
             ]
         });
         let t = template_from_value(&graph).expect("parse");
         assert_eq!(t.nodes.len(), 2);
         assert_eq!(t.nodes[0].id, 1);
         assert_eq!(t.nodes[1].id, 2);
-        assert_eq!(t.nodes[0].kind, NodeKind::SynCheckpoint);
+        assert_eq!(t.nodes[0].kind, NodeKind::AudioFile);
         // pos проставлен сеткой.
         assert!(t.nodes[1].pos.x > t.nodes[0].pos.x);
         let state = t.nodes[1].state.as_ref().expect("state");
@@ -1742,18 +1696,6 @@ mod tests {
         assert!(warns.contains("text_view"), "{warns}");
     }
 
-    /// Дефолтные чекпойнты без путей — pre-check прогона это ловит.
-    #[test]
-    fn default_checkpoints_report_missing_paths() {
-        let rt = registry::default_runtime(NodeKind::SynCheckpoint);
-        let g = rt.lock().unwrap();
-        let miss = g.missing_model_paths();
-        assert!(miss.contains(&"model_path"), "{miss:?}");
-        drop(g);
-        // Реактивные ноды ничего не требуют.
-        let rt = registry::default_runtime(NodeKind::Add);
-        assert!(rt.lock().unwrap().missing_model_paths().is_empty());
-    }
 
     /// Инвентарь каталога моделей видит .syn на глубине и HF-каталоги.
     #[test]
@@ -1784,25 +1726,23 @@ mod tests {
     /// переживают точечную смену модели.
     #[test]
     fn merge_state_patch_keeps_unmentioned_fields() {
-        use crate::templates::model::SynCheckpointStateData;
-        let current = NodeStateData::SynCheckpoint(SynCheckpointStateData {
-            model_path: Some("/models/a.syn".into()),
-            device_idx: 1,
-            storage_idx: 2,
-            resident: true,
-            ..Default::default()
+        use crate::templates::model::FfmpegPlayerStateData;
+        let current = NodeStateData::FfmpegPlayer(FfmpegPlayerStateData {
+            source: Some("/v/a.mp4".into()),
+            volume: 0.5,
+            size: (640.0, 360.0),
+            hwaccel_idx: 2,
         });
         let patch = serde_json::json!({
-            "kind": "SynCheckpoint",
-            "data": { "model_path": "/models/b.syn" }
+            "kind": "FfmpegPlayer",
+            "data": { "source": "/v/b.mp4" }
         });
         let merged: NodeStateData =
             serde_json::from_value(merge_state_patch(Some(&current), patch)).expect("parse");
-        let NodeStateData::SynCheckpoint(d) = merged else { panic!("wrong variant") };
-        assert_eq!(d.model_path.as_deref(), Some("/models/b.syn"));
-        assert_eq!(d.device_idx, 1);
-        assert_eq!(d.storage_idx, 2);
-        assert!(d.resident);
+        let NodeStateData::FfmpegPlayer(d) = merged else { panic!("wrong variant") };
+        assert_eq!(d.source.as_deref(), Some("/v/b.mp4"));
+        assert_eq!(d.volume, 0.5);
+        assert_eq!(d.hwaccel_idx, 2);
     }
 
     /// Строка со склеенными аргументами: берём первое значение, про хвост
@@ -1848,9 +1788,9 @@ mod tests {
     /// берёт его из state-JSON, а не из slug'а.
     #[test]
     fn nodes_filter_matches_camel_case_kind() {
-        let v = serde_json::json!({ "filter": "SynCheckpoint TextView" });
+        let v = serde_json::json!({ "filter": "FfmpegPlayer TextView" });
         let out = nodes_impl(&v).expect("ok");
-        assert!(out.contains("--- syn_checkpoint"), "{out}");
+        assert!(out.contains("--- ffmpeg_player"), "{out}");
         assert!(out.contains("--- text_view"), "{out}");
         assert!(!out.contains("no nodes found"), "{out}");
     }
@@ -1875,7 +1815,7 @@ mod tests {
     /// иначе агент включает квант, увидев мало свободной VRAM.
     #[test]
     fn hardware_note_covers_checkpoint_nodes() {
-        assert!(hardware_note(NodeKind::SynCheckpoint).is_some());
+        assert!(hardware_note(NodeKind::FfmpegPlayer).is_none());
         assert!(hardware_note(NodeKind::TextView).is_none());
     }
 
@@ -1883,10 +1823,12 @@ mod tests {
     /// вариант и выдать ошибку, а не тихо применить поля текущего.
     #[test]
     fn merge_state_patch_leaves_foreign_kind_alone() {
-        use crate::templates::model::SynCheckpointStateData;
-        let current = NodeStateData::SynCheckpoint(SynCheckpointStateData {
-            device_idx: 1,
-            ..Default::default()
+        use crate::templates::model::FfmpegPlayerStateData;
+        let current = NodeStateData::FfmpegPlayer(FfmpegPlayerStateData {
+            source: None,
+            volume: 1.0,
+            size: (640.0, 360.0),
+            hwaccel_idx: 1,
         });
         let patch = serde_json::json!({ "kind": "TextView", "data": { "output_text": "x" } });
         let merged = merge_state_patch(Some(&current), patch.clone());
@@ -1898,9 +1840,9 @@ mod tests {
     /// Пример state снимается с default_runtime и несёт правильный тег.
     #[test]
     fn state_example_matches_kind() {
-        let js = state_example(NodeKind::SynCheckpoint).expect("state");
-        assert!(js.contains("\"SynCheckpoint\""), "{js}");
-        assert!(js.contains("device_idx"), "{js}");
+        let js = state_example(NodeKind::FfmpegPlayer).expect("state");
+        assert!(js.contains("\"FfmpegPlayer\""), "{js}");
+        assert!(js.contains("hwaccel_idx"), "{js}");
         // Реактивные ноды без state.
         assert!(state_example(NodeKind::Add).is_none());
     }
@@ -1910,8 +1852,8 @@ mod tests {
     #[test]
     fn normalize_state_shape_wraps_flat_forms() {
         use serde_json::json;
-        let flat = normalize_state_shape(Some("SynCheckpoint"), json!({"model_path": "/m/x.syn"}));
-        assert_eq!(flat, json!({"kind": "SynCheckpoint", "data": {"model_path": "/m/x.syn"}}));
+        let flat = normalize_state_shape(Some("FfmpegPlayer"), json!({"source": "/m/x.mp4"}));
+        assert_eq!(flat, json!({"kind": "FfmpegPlayer", "data": {"source": "/m/x.mp4"}}));
         let no_kind = normalize_state_shape(Some("TextView"), json!({"data": {"output_text": "a"}}));
         assert_eq!(no_kind, json!({"kind": "TextView", "data": {"output_text": "a"}}));
         let beside = normalize_state_shape(Some("TextView"), json!({"kind": "TextView", "output_text": "a"}));
@@ -1922,20 +1864,14 @@ mod tests {
         assert_eq!(foreign["kind"], "AudioFile");
     }
 
-    /// Ответ apply называет вариант индекса и предупреждает о переезде на CPU.
+    /// Ответ apply называет вариант индекса.
     #[test]
-    fn describe_changes_labels_indices_and_warns_on_cpu() {
+    fn describe_changes_labels_indices() {
         use serde_json::json;
-        let cpu = json!({"kind": "SynCheckpoint", "data": {"device_idx": 2, "model_path": "/m"}});
-        let fields = vec!["device_idx".to_string(), "model_path".to_string()];
-        let (lines, warning) = describe_changes(NodeKind::SynCheckpoint, &cpu, &fields);
-        assert_eq!(lines, vec!["device_idx=2 (CPU)", "model_path"]);
-        assert!(warning.expect("warning").contains("CPU"));
-
-        let gpu = json!({"kind": "SynCheckpoint", "data": {"device_idx": 1}});
-        let (lines, warning) =
-            describe_changes(NodeKind::SynCheckpoint, &gpu, &["device_idx".to_string()]);
-        assert_eq!(lines, vec!["device_idx=1 (CUDA)"]);
+        let hw = json!({"kind": "FfmpegPlayer", "data": {"hwaccel_idx": 2, "source": "/m"}});
+        let fields = vec!["hwaccel_idx".to_string(), "source".to_string()];
+        let (lines, warning) = describe_changes(NodeKind::FfmpegPlayer, &hw, &fields);
+        assert_eq!(lines, vec!["hwaccel_idx=2 (VAAPI)", "source"]);
         assert!(warning.is_none());
     }
 

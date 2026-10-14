@@ -145,6 +145,10 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::FlowYue2Generate
         | NodeKind::FlowYue2Decode
         | NodeKind::FlowYue2Transcribe => Color::new(0.85, 0.45, 0.80, 1.0),
+        NodeKind::FlowOmnivoice
+        | NodeKind::FlowVoxcpm
+        | NodeKind::FlowVibevoice
+        | NodeKind::FlowDiarize => Color::new(0.30, 0.78, 0.60, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald
@@ -161,14 +165,7 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::Equalizer30 => Color::new(0.95, 0.55, 0.78, 1.0), // pink
         NodeKind::Mixer => Color::new(0.55, 0.85, 0.62, 1.0),         // mint
         NodeKind::MarkdownView => Color::new(0.72, 0.74, 0.82, 1.0),  // slate (декоративная)
-        NodeKind::AsrGigaam => Color::new(0.78, 0.46, 0.92, 1.0),      // orchid (ASR/нейро)
         NodeKind::TextView => Color::new(0.92, 0.70, 0.20, 1.0),       // amber (текст)
-        NodeKind::OmniVoice => Color::new(0.55, 0.42, 0.92, 1.0),      // indigo (TTS/нейро)
-        NodeKind::VoxCpm2 => Color::new(0.62, 0.50, 0.92, 1.0),        // lavender (TTS/нейро)
-        NodeKind::VibeVoice => Color::new(0.44, 0.58, 0.96, 1.0),      // cornflower (диалоги/нейро)
-        NodeKind::Llm => Color::new(0.40, 0.80, 0.66, 1.0),            // teal-green (LLM/нейро)
-        NodeKind::SynCheckpoint => Color::new(0.68, 0.56, 0.90, 1.0),  // violet (источник модели)
-        NodeKind::SortformerDiarizer => Color::new(0.31, 0.78, 0.94, 1.0), // cyan (диаризация)
         // ACE-Step семейство — единая палитра в фиолетово-розовой гамме,
         // так визуально граф «AceStep — Text2Music» легко выделить.
         // YuE2 — та же «музыкальная» гамма, но холоднее: рядом на полотне

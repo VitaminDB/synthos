@@ -41,7 +41,7 @@ use super::super::types::{
 use super::common::field_row;
 use super::{log_worker_done, log_worker_start};
 use crate::icons::{
-    MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_CROP_SQUARE, MI_EDIT_NOTE, MI_FOLDER_OPEN, MI_GRAPHIC_EQ,
+    MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_CROP_SQUARE, MI_EDIT_NOTE, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
     MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LAYERS, MI_LIBRARY_MUSIC, MI_MERGE_TYPE, MI_MIC, MI_MOVIE, MI_PALETTE,
     MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_TRANSLATE, MI_TUNE,
 };
@@ -97,6 +97,10 @@ const KINDS: &[(NodeKind, &str, &str, &str)] = &[
     (NodeKind::FlowYue2Generate, "yue2_generate", "YuE2 Song", MI_LIBRARY_MUSIC),
     (NodeKind::FlowYue2Decode, "yue2_decode", "YuE2 Decoder", MI_GRAPHIC_EQ),
     (NodeKind::FlowYue2Transcribe, "yue2_transcribe", "Audio to Score", MI_EDIT_NOTE),
+    (NodeKind::FlowOmnivoice, "omnivoice", "OmniVoice", MI_RECORD_VOICE_OVER),
+    (NodeKind::FlowVoxcpm, "voxcpm", "VoxCPM2", MI_RECORD_VOICE_OVER),
+    (NodeKind::FlowVibevoice, "vibevoice", "VibeVoice", MI_GROUPS),
+    (NodeKind::FlowDiarize, "diarize", "Who Speaks", MI_GRAPHIC_EQ),
 ];
 
 /// Подкатегория палитры по разделу ядра (ключ `node.subcategory.*`).
@@ -106,6 +110,7 @@ fn subcategory(spec: &sf::NodeSpec) -> Option<&'static str> {
         "MiniMax-H3" => Some("flow_h3"),
         "LTX-2.3" => Some("flow_ltx"),
         "Музыка" => Some("flow_music"),
+        "Речь" => Some("flow_speech"),
         _ => None,
     }
 }
@@ -493,8 +498,15 @@ fn model_kind(fk: &str) -> Option<(synaptixd::ModelKind, Option<&'static str>)> 
         "h3_model" => (K::Video, Some("h3")),
         "ltx_model" => (K::Video, Some("ltx")),
         "music" => (K::Music, None),
+        "acestep_model" => (K::Music, Some("acestep")),
+        "yue2_model" => (K::Music, Some("yue")),
         "llm" => (K::Llm, None),
         "speak" => (K::Tts, None),
+        "omnivoice" => (K::Tts, Some("omnivoice")),
+        "voxcpm" => (K::Tts, Some("voxcpm")),
+        "vibevoice" => (K::Tts, Some("vibevoice")),
+        "transcribe" => (K::Asr, None),
+        "diarize" => (K::Diarize, None),
         _ => return None,
     })
 }

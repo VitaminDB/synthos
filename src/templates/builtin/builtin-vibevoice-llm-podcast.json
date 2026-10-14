@@ -1,0 +1,200 @@
+{
+  "name": "VibeVoice: подкаст из темы (LLM → голос)",
+  "description": "Тема → LLM пишет сценарий строками «Speaker N: …» → Text View (правится вручную) → VibeVoice озвучивает двумя голосами → плеер и сохранение. Нужны два Syn Checkpoint: LLM-бандл и vibevoice-*.syn.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "Напиши сценарий подкаста на 6 реплик о том, как работают нейросети.                       Формат строк строго «Speaker 1: …» и «Speaker 2: …», без заголовков.",
+          "width": 320.0,
+          "height": 140.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_llm",
+      "pos": {
+        "x": 460.0,
+        "y": 60.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "text_view",
+      "pos": {
+        "x": 900.0,
+        "y": 60.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "audio_file",
+      "pos": {
+        "x": 60.0,
+        "y": 560.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "audio_file",
+      "pos": {
+        "x": 60.0,
+        "y": 740.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 8,
+      "kind": "flow_vibevoice",
+      "pos": {
+        "x": 900.0,
+        "y": 400.0
+      },
+      "fields": {
+        "guidance": {
+          "type": "Float",
+          "value": 1.3
+        },
+        "max_length_times": {
+          "type": "Float",
+          "value": 2.0
+        },
+        "model": {
+          "type": "Text",
+          "value": "vibevoice-1-5b"
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "steps": {
+          "type": "Float",
+          "value": 20.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 9,
+      "kind": "audio_player",
+      "pos": {
+        "x": 1360.0,
+        "y": 340.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 10,
+      "kind": "save_to_file",
+      "pos": {
+        "x": 1360.0,
+        "y": 600.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 3,
+      "from_port": "text",
+      "to_node": 4,
+      "to_port": "in"
+    },
+    {
+      "from_node": 4,
+      "from_port": "out",
+      "to_node": 8,
+      "to_port": "script"
+    },
+    {
+      "from_node": 5,
+      "from_port": "out",
+      "to_node": 8,
+      "to_port": "voice1"
+    },
+    {
+      "from_node": 6,
+      "from_port": "out",
+      "to_node": 8,
+      "to_port": "voice2"
+    },
+    {
+      "from_node": 8,
+      "from_port": "audio",
+      "to_node": 9,
+      "to_port": "in"
+    },
+    {
+      "from_node": 8,
+      "from_port": "audio",
+      "to_node": 10,
+      "to_port": "in"
+    }
+  ],
+  "viewport": null
+}

@@ -12,16 +12,15 @@ use syngui::audio::{Biquad, BiquadMode, SchroederReverb};
 
 use crate::icons::{
     MI_ADD, MI_APPS, MI_ARTICLE, MI_AUTO_AWESOME, MI_BLUR_ON,
-    MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
-    MI_HUB, MI_IMAGE_ICON, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
+    MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, 
+    MI_HUB, MI_IMAGE_ICON, MI_LANGUAGE, MI_LIBRARY_MUSIC, 
     MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
-    MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_SAVE,
+    MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_SAVE,
     MI_TUNE,
 };
 
 use super::eval::NodeExecutor;
 use super::nodes::{
-    asr_gigaam,
     flow,
     audio_equalizer,
     audio_file,
@@ -34,15 +33,9 @@ use super::nodes::{
     audio_save,
     ffmpeg_player,
     image,
-    llm,
     markdown_view,
-    omnivoice,
     scalar,
-    sortformer_diarizer,
-    syn_checkpoint,
     text_view,
-    vibevoice,
-    voxcpm2,
 };
 use super::types::{
     FieldSchema, FieldType, FieldValue, FilterMode, NodeInstance, NodeKind, NodeRuntime, PortKind,
@@ -195,17 +188,8 @@ static SAVE_TO_FILE_EXEC: audio_save::SaveToFileExec = audio_save::SaveToFileExe
 static EQUALIZER_EXEC: audio_equalizer::EqualizerExec = audio_equalizer::EqualizerExec;
 static MIXER_EXEC: audio_mixer::MixerExec = audio_mixer::MixerExec;
 static MARKDOWN_VIEW_EXEC: markdown_view::MarkdownViewExec = markdown_view::MarkdownViewExec;
-static ASR_GIGAAM_EXEC: asr_gigaam::AsrGigaamExec = asr_gigaam::AsrGigaamExec;
 static TEXT_VIEW_EXEC: text_view::TextViewExec = text_view::TextViewExec;
-static OMNIVOICE_EXEC: omnivoice::OmniVoiceExec = omnivoice::OmniVoiceExec;
-static VOXCPM2_EXEC: voxcpm2::VoxCpm2Exec = voxcpm2::VoxCpm2Exec;
-static VIBEVOICE_EXEC: vibevoice::VibeVoiceExec = vibevoice::VibeVoiceExec;
-static LLM_EXEC: llm::LlmExec = llm::LlmExec;
-static SORTFORMER_DIARIZER_EXEC: sortformer_diarizer::SortformerDiarizerExec =
-    sortformer_diarizer::SortformerDiarizerExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
-static SYN_CHECKPOINT_EXEC: syn_checkpoint::SynCheckpointExec =
-    syn_checkpoint::SynCheckpointExec;
 static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
 static IMAGE_SAVE_EXEC: image::ImageSaveExec = image::ImageSaveExec;
 
@@ -257,60 +241,14 @@ const SAVE_TO_FILE_INPUTS: &[PortSchema] = &[
 ];
 
 // ── ASR / Транскрибация ──────────────────────────────────────────────────
-const ASR_GIGAAM_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "in", label: "audio", kind: PortKind::Audio },
-];
-const ASR_GIGAAM_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "out", label: "text", kind: PortKind::Text },
-];
 
 // ── Syn Checkpoint: универсальный источник модели для слот-семейств ──────
-const SYN_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-];
 
 // ── LLM (synaptix Qwen3 / Hybrid): prompt + system? → answer (Text) ──────
-const LLM_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
-    PortSchema { name: "system", label: "system", kind: PortKind::Text },
-];
-const LLM_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "answer", label: "answer", kind: PortKind::Text },
-];
 
-const VOXCPM2_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "text", label: "text", kind: PortKind::Text },
-    PortSchema { name: "ref_audio", label: "ref audio", kind: PortKind::Audio },
-    PortSchema { name: "prompt_audio", label: "prompt audio", kind: PortKind::Audio },
-    PortSchema { name: "prompt_text", label: "prompt text", kind: PortKind::Text },
-];
-const VOXCPM2_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
 
-const VIBEVOICE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "script", label: "script", kind: PortKind::Text },
-    PortSchema { name: "voice1", label: "voice 1", kind: PortKind::Audio },
-    PortSchema { name: "voice2", label: "voice 2", kind: PortKind::Audio },
-    PortSchema { name: "voice3", label: "voice 3", kind: PortKind::Audio },
-    PortSchema { name: "voice4", label: "voice 4", kind: PortKind::Audio },
-];
-const VIBEVOICE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
 
 // ── Диаризация спикеров (Sortformer): Audio → Text(JSON) ─────────────────
-const SORTFORMER_DIARIZER_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "in", label: "audio", kind: PortKind::Audio },
-];
-const SORTFORMER_DIARIZER_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "out", label: "json", kind: PortKind::Text },
-];
 
 // ── Editable text-view ───────────────────────────────────────────────────
 const TEXT_VIEW_INPUTS: &[PortSchema] = &[
@@ -325,15 +263,6 @@ const TEXT_VIEW_OUTPUTS: &[PortSchema] = &[
 // `text` — основной таргет; `ref_audio` + `ref_text` (опциональные)
 // активируют Clone-mode (voice cloning). Если ref_audio нет — mode
 // определяется наличием instruct (Design) или авто-голосом (Auto).
-const OMNIVOICE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",     label: "model",     kind: PortKind::Data },
-    PortSchema { name: "text",      label: "text",      kind: PortKind::Text },
-    PortSchema { name: "ref_audio", label: "ref audio", kind: PortKind::Audio },
-    PortSchema { name: "ref_text",  label: "ref text",  kind: PortKind::Text },
-];
-const OMNIVOICE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
 
 // ── ACE-Step ─────────────────────────────────────────────────────────────
 
@@ -680,28 +609,6 @@ const MARKDOWN_VIEW: NodeKindMeta = NodeKindMeta {
 // кнопка, editable MultilineTextEdit. Категория «Нейро» → подкатегория
 // «Транскрибация» — задел под будущие LLM/TTS/embedding-ноды этой же
 // категории.
-const ASR_GIGAAM: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::AsrGigaam,
-    icon: MI_RECORD_VOICE_OVER,
-    title: "GigaAM ASR",
-    category: NodeCategory::Neuro,
-    subcategory: Some("transcription"),
-    inputs: PortsSpec::Static(ASR_GIGAAM_INPUTS),
-    outputs: PortsSpec::Static(ASR_GIGAAM_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::asr_gigaam::body),
-    // Стандартная раскладка как у Demo: port-row сверху + body снизу.
-    // Body — field-like rows (label слева, control справа); транскрибат
-    // не отображается в карточке (уходит в output → подключайте TextView).
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &ASR_GIGAAM_EXEC,
-    // Запускается по глобальному «Run» из run_controls — для каждой
-    // AsrGigaam-ноды стартует фоновый воркер транскрибации (то же что и
-    // нажатие Per-node Play в строке «Запуск»).
-    on_run: Some(asr_gigaam::on_run),
-    busy_signal: Some(asr_gigaam::busy_signal),
-};
 
 // ── TextView: Text in → editable text → Text out (passthrough) ───────────
 //
@@ -732,56 +639,8 @@ const TEXT_VIEW: NodeKindMeta = NodeKindMeta {
 // для cfg/steps/t_shift/speed/seed. Mode выбирается автоматически:
 //   ref_audio есть → Clone; иначе instruct непуст → Design; иначе Auto.
 // Pipeline загружается лениво при первом Run (~30 c на CPU) и кэшируется.
-const OMNIVOICE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::OmniVoice,
-    icon: MI_CAMPAIGN,
-    title: "OmniVoice TTS",
-    category: NodeCategory::Neuro,
-    subcategory: Some("tts"),
-    inputs: PortsSpec::Static(OMNIVOICE_INPUTS),
-    outputs: PortsSpec::Static(OMNIVOICE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::omnivoice::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &OMNIVOICE_EXEC,
-    on_run: Some(omnivoice::on_run),
-    busy_signal: Some(omnivoice::busy_signal),
-};
 
-const VOXCPM2: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::VoxCpm2,
-    icon: MI_RECORD_VOICE_OVER,
-    title: "VoxCPM2 TTS (synaptix)",
-    category: NodeCategory::Neuro,
-    subcategory: Some("tts"),
-    inputs: PortsSpec::Static(VOXCPM2_INPUTS),
-    outputs: PortsSpec::Static(VOXCPM2_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::voxcpm2::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &VOXCPM2_EXEC,
-    on_run: Some(voxcpm2::on_run),
-    busy_signal: Some(voxcpm2::busy_signal),
-};
 
-const VIBEVOICE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::VibeVoice,
-    icon: MI_CAMPAIGN,
-    title: "VibeVoice (dialogue)",
-    category: NodeCategory::Neuro,
-    subcategory: Some("tts"),
-    inputs: PortsSpec::Static(VIBEVOICE_INPUTS),
-    outputs: PortsSpec::Static(VIBEVOICE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::vibevoice::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &VIBEVOICE_EXEC,
-    on_run: Some(vibevoice::on_run),
-    busy_signal: Some(vibevoice::busy_signal),
-};
 
 // ── LLM (synaptix): prompt + system? → answer (Text) ─────────────────────
 //
@@ -791,22 +650,6 @@ const VIBEVOICE: NodeKindMeta = NodeKindMeta {
 // temperature / seed, кнопка отмены, статус. Ответ стримится по токенам в
 // порт `answer` — подключайте к TextView. Pipeline грузится лениво при Run
 // и кэшируется в runtime.
-const LLM: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::Llm,
-    icon: MI_AUTO_AWESOME,
-    title: "LLM (synaptix)",
-    category: NodeCategory::Neuro,
-    subcategory: Some("llm"),
-    inputs: PortsSpec::Static(LLM_INPUTS),
-    outputs: PortsSpec::Static(LLM_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::llm::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LLM_EXEC,
-    on_run: Some(llm::on_run),
-    busy_signal: Some(llm::busy_signal),
-};
 
 // ── Syn Checkpoint: путь + предпочтения + резидентность → SynModelHandle ─
 //
@@ -815,22 +658,6 @@ const LLM: NodeKindMeta = NodeKindMeta {
 // Sortformer (у них появился вход `model`; без него работают от своих
 // полей — legacy-графы не ломаются). Чекбокс «Держать в памяти» —
 // слотовое поведение (модель живёт между прогонами).
-const SYN_CHECKPOINT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::SynCheckpoint,
-    icon: MI_MEMORY,
-    title: "Syn Checkpoint",
-    category: NodeCategory::Neuro,
-    subcategory: None,
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(SYN_CHECKPOINT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::syn_checkpoint::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &SYN_CHECKPOINT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
 // ── Sortformer диаризация: Audio → Text(JSON) ────────────────────────────
 //
@@ -838,22 +665,6 @@ const SYN_CHECKPOINT: NodeKindMeta = NodeKindMeta {
 // Body — file picker + dropdown'ы device/storage/compute + threshold slider
 // + Allow-overlap switch + статус. Live-stream пока не поддерживается
 // (фаза 2 — streaming через KV-cache).
-const SORTFORMER_DIARIZER: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::SortformerDiarizer,
-    icon: MI_GROUPS,
-    title: "Sortformer Diarization",
-    category: NodeCategory::Neuro,
-    subcategory: Some("diarization"),
-    inputs: PortsSpec::Static(SORTFORMER_DIARIZER_INPUTS),
-    outputs: PortsSpec::Static(SORTFORMER_DIARIZER_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(super::nodes::sortformer_diarizer::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &SORTFORMER_DIARIZER_EXEC,
-    on_run: Some(sortformer_diarizer::on_run),
-    busy_signal: Some(sortformer_diarizer::busy_signal),
-};
 
 // ── ACE-Step v1.5 (8 нод) ────────────────────────────────────────────────
 
@@ -1005,14 +816,7 @@ const BUILTIN: &[NodeKindMeta] = &[
     MIXER,
     SAVE_TO_FILE,
     MARKDOWN_VIEW,
-    ASR_GIGAAM,
-    SORTFORMER_DIARIZER,
     TEXT_VIEW,
-    OMNIVOICE,
-    VOXCPM2,
-    VIBEVOICE,
-    LLM,
-    SYN_CHECKPOINT,
     FFMPEG_PLAYER,
     IMAGE_LOAD,
     IMAGE_SAVE,
@@ -1242,19 +1046,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
                 size: use_signal(Size::new(320.0, 200.0)),
             }
         }
-        NodeKind::AsrGigaam => {
-            use crate::pages::node_editor::types::PrevSource;
-            NodeRuntime::AsrGigaam {
-                transcriber: Arc::new(Mutex::new(None)),
-                loaded_cfg: Arc::new(Mutex::new(None)),
-                running: use_signal(false),
-                error: use_signal(None),
-                loaded_name: use_signal(None),
-                output_text: use_signal(String::new()),
-                text_version: use_signal(0_u32),
-                last_input_kind: PrevSource::None,
-            }
-        }
         NodeKind::TextView => {
             use syngui::core::Size;
             NodeRuntime::TextView {
@@ -1265,101 +1056,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
                 // 280×360 — вертикалка под одну колонку транскрипта. Пользователь
                 // может изменить размер через ContextMenu → «Изменить размер».
                 size: use_signal(Size::new(280.0, 360.0)),
-            }
-        }
-        NodeKind::OmniVoice => NodeRuntime::OmniVoice {
-            instruct: use_signal(String::new()),
-            ref_text_field: use_signal(String::new()),
-            // GigaAM — RU-моноязычная; OmniVoice мультиязычная, но дефолт
-            // совпадает с типичным workflow synthos.
-            language: use_signal("ru".to_string()),
-            // Дефолты из synaptix::facade::tts::core::GenerationConfig::default()
-            // (см. synaptix omnivoice config).
-            num_step: use_signal(32_u32),
-            guidance_scale: use_signal(2.0_f32),
-            t_shift: use_signal(0.1_f32),
-            speed: use_signal(1.0_f32),
-            seed: use_signal(0_u64),
-            pipeline: Arc::new(Mutex::new(None)),
-            loaded_cfg: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            output_buf: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::VoxCpm2 => NodeRuntime::VoxCpm2 {
-            prompt_text_field: use_signal(String::new()),
-            cfg_value: use_signal(2.0_f32),
-            n_timesteps: use_signal(10_u32),
-            max_len: use_signal(2000_u32),
-            seed: use_signal(1988_u64),
-            pipeline: Arc::new(Mutex::new(None)),
-            loaded_cfg: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            output_buf: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::VibeVoice => NodeRuntime::VibeVoice {
-            script_field: use_signal(String::new()),
-            cfg_value: use_signal(1.3_f32),
-            ddpm_steps: use_signal(20_u32),
-            max_length_times: use_signal(2.0_f32),
-            seed: use_signal(0_u64),
-            pipeline: Arc::new(Mutex::new(None)),
-            loaded_cfg: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            progress: use_signal(0_u32),
-            output_buf: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::SynCheckpoint => NodeRuntime::SynCheckpoint {
-            model_path: use_signal(None),
-            device_idx: use_signal(0_usize),
-            storage_idx: use_signal(0_usize),
-            compute_idx: use_signal(0_usize),
-            // Дефолт — слотовое поведение: так слот-ноды жили всегда.
-            resident: use_signal(true),
-            handle_cache: Arc::new(Mutex::new(None)),
-        },
-        NodeKind::Llm => NodeRuntime::Llm {
-            system_prompt: use_signal(String::new()),
-            context: use_signal(4096_u32),
-            think: use_signal(false),
-            max_tokens: use_signal(512_u32),
-            temperature: use_signal(0.7_f32),
-            top_k: use_signal(0_u32),
-            top_p: use_signal(1.0_f32),
-            min_p: use_signal(0.0_f32),
-            repetition_penalty: use_signal(1.0_f32),
-            seed: use_signal(0_u64),
-            pipeline: Arc::new(Mutex::new(None)),
-            loaded_cfg: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            loaded_name: use_signal(None),
-            output_text: use_signal(String::new()),
-            text_version: use_signal(0_u32),
-            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        },
-        NodeKind::SortformerDiarizer => {
-            use crate::pages::node_editor::types::PrevSource;
-            NodeRuntime::SortformerDiarizer {
-                threshold: use_signal(0.5_f32),
-                allow_overlap: use_signal(true),
-                diarizer: Arc::new(Mutex::new(None)),
-                loaded_cfg: Arc::new(Mutex::new(None)),
-                running: use_signal(false),
-                error: use_signal(None),
-                loaded_name: use_signal(None),
-                output_pretty: use_signal(String::new()),
-                output_json: use_signal(String::new()),
-                text_version: use_signal(0_u32),
-                last_input_kind: PrevSource::None,
             }
         }
         NodeKind::FfmpegPlayer => NodeRuntime::FfmpegPlayer {

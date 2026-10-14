@@ -207,45 +207,11 @@ pub enum NodeKind {
     /// resize-handle'ы (`TransformBox`). Видимость handle'ов и режим
     /// редактирования переключаются через ContextMenu по правому клику.
     MarkdownView,
-    /// Нода распознавания речи на базе модели **GigaAM** (CTC).
-    /// Audio in → Text out. Параметры (путь к `.syn`, device, storage/compute
-    /// dtype) выбираются в body ноды; модель загружается лениво при первом
-    /// нажатии Play и кэшируется в runtime до удаления ноды или смены
-    /// настроек.
-    AsrGigaam,
     /// Editable text-display нода. Text in → Text out (passthrough).
     /// Body — `MultilineTextEdit`. При смене upstream Text заменяет
     /// содержимое (bump `text_version` → Reactive rebuild). Ручные правки
     /// пользователя сохраняются до следующего изменения upstream'а.
     TextView,
-    /// TTS-нода на базе **OmniVoice** (Qwen3-1B LM + Higgs-Audio codec +
-    /// discrete mask-diffusion). Принимает текст и опциональные ref-audio /
-    /// ref-text для voice-clone; параметры (cfg, num_step, t_shift, speed,
-    /// seed) выбираются в body ноды. Pipeline загружается лениво при первом
-    /// Play и кэшируется в runtime до удаления ноды или смены настроек.
-    OmniVoice,
-    VoxCpm2,
-    VibeVoice,
-    /// Универсальный чекпойнт .syn/HF для слот-семейств (LLM/TTS/ASR/
-    /// диаризация): публикует [`SynModelHandle`] в порт `model`.
-    SynCheckpoint,
-    /// Нода диаризации спикеров на базе NVIDIA Streaming Sortformer v2.1
-    /// (FastConformer encoder + Sortformer head, до 4 спикеров). Audio in
-    /// → Text(JSON) out. Параметры (`.syn`, device, storage/compute, threshold,
-    /// allow_overlap) выбираются в body. Sortformer загружается лениво при
-    /// первом Play и кэшируется в runtime. Live-stream пока не поддерживается
-    /// (фаза 2 — streaming с KV-cache).
-    SortformerDiarizer,
-    /// LLM-нода на нативном **synaptix**-стеке (Qwen3 dense/MoE либо
-    /// Qwen3-Next-Hybrid — арх детектится из `config.json`). Входы: `prompt`
-    /// (вопрос, Text) и опциональный `system` (Text, переопределяет
-    /// system-fallback из body). Выход: `answer` (Text) — подключается к
-    /// `TextView`. Параметры (`.syn`/HF-каталог, device, quant, compute,
-    /// system-промпт, max_tokens, temperature, seed) задаются в body; pipeline
-    /// грузится лениво при первом Run и кэшируется в runtime. Ответ стримится
-    /// по токенам (StreamSink) — `answer`/`output_text` обновляются на лету;
-    /// `cancel`-флаг прерывает генерацию (sink → false).
-    Llm,
 
     // ── ACE-Step v1.5 (Нейро → ACE-Step) ──
 
@@ -322,34 +288,13 @@ pub enum NodeKind {
     FlowYue2Generate,
     FlowYue2Decode,
     FlowYue2Transcribe,
+    FlowOmnivoice,
+    FlowVoxcpm,
+    FlowVibevoice,
+    FlowDiarize,
 }
 
 impl NodeKind {
-    /// Слот-семейства, чья модель приходит только из Syn-чекпойнта на входе
-    /// `model`: своих полей модели/device/точности у этих нод нет.
-    pub fn needs_syn_checkpoint(self) -> bool {
-        self.model_input_source() == Some("SynCheckpoint")
-    }
-
-    /// Какой чекпойнт обязан висеть на входе `model`, чтобы нода вообще
-    /// получила модель (своего выбора модели у неё нет). `None` — у ноды
-    /// либо нет такого входа, либо его отсутствие ловит сама нода.
-    pub fn model_input_source(self) -> Option<&'static str> {
-        self.slot_family().then_some("SynCheckpoint")
-    }
-
-    fn slot_family(self) -> bool {
-        matches!(
-            self,
-            NodeKind::Llm
-                | NodeKind::AsrGigaam
-                | NodeKind::OmniVoice
-                | NodeKind::VoxCpm2
-                | NodeKind::VibeVoice
-                | NodeKind::SortformerDiarizer
-        )
-    }
-
     pub const ALL: &'static [NodeKind] = &[
         NodeKind::Number,
         NodeKind::Add,
@@ -367,14 +312,7 @@ impl NodeKind {
         NodeKind::Equalizer30,
         NodeKind::Mixer,
         NodeKind::MarkdownView,
-        NodeKind::AsrGigaam,
         NodeKind::TextView,
-        NodeKind::OmniVoice,
-        NodeKind::VoxCpm2,
-        NodeKind::VibeVoice,
-        NodeKind::SynCheckpoint,
-        NodeKind::SortformerDiarizer,
-        NodeKind::Llm,
         NodeKind::FfmpegPlayer,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
@@ -427,6 +365,10 @@ impl NodeKind {
         NodeKind::FlowYue2Generate,
         NodeKind::FlowYue2Decode,
         NodeKind::FlowYue2Transcribe,
+        NodeKind::FlowOmnivoice,
+        NodeKind::FlowVoxcpm,
+        NodeKind::FlowVibevoice,
+        NodeKind::FlowDiarize,
     ];
 }
 
@@ -1150,216 +1092,6 @@ pub enum NodeRuntime {
         /// `TransformBox.size_signal`.
         size: RwSignal<Size>,
     },
-    AsrGigaam {
-        /// Закэшированный экземпляр модели. Lock короткий: только swap
-        /// при load/unload; transcribe держит lock на всё время инференса.
-        ///
-        /// Lock — `syngui::core::sync::Mutex` (на native — `std::sync::Mutex`).
-        transcriber: Arc<Mutex<Option<synaptix::facade::asr::Transcriber>>>,
-        /// Конфиг, с которым модель сейчас загружена. Если перед Play любое
-        /// из (model_path/device/storage/compute) изменилось — модель
-        /// перезагружается.
-        loaded_cfg: Arc<Mutex<Option<AsrLoadedCfg>>>,
-        /// Идёт ли в данный момент загрузка или транскрибация.
-        running: RwSignal<bool>,
-        /// Сообщение об ошибке последней операции. None = OK.
-        error: RwSignal<Option<String>>,
-        /// Имя загруженной модели — для UI-баджа после успешной загрузки.
-        loaded_name: RwSignal<Option<String>>,
-        /// Текст транскрибата. Редактируется пользователем; output порта
-        /// тоже отражает текущее значение этого сигнала.
-        output_text: RwSignal<String>,
-        /// Bump'ится после транскрибации → Reactive пересоздаёт
-        /// `MultilineTextEdit` с новым initial text. На user-edit НЕ
-        /// меняется → курсор не прыгает на каждое нажатие клавиши.
-        text_version: RwSignal<u32>,
-        /// Detect нового input audio (как у Gain/Reverb). Сейчас не
-        /// используется напрямую, но оставлен для будущей авто-инвалидации
-        /// текста при смене upstream-источника.
-        last_input_kind: PrevSource,
-    },
-    /// Runtime TTS-ноды на базе OmniVoice (Qwen3-1B LM + Higgs-Audio codec +
-    /// discrete mask-diffusion).
-    ///
-    /// Жизненный цикл (аналог AsrGigaam):
-    /// - UI выбирает `.syn` bundle + dropdown'ы device/storage/compute +
-    ///   параметры генерации; пока pipeline не загружен — `pipeline` хранит `None`.
-    /// - На Play body-builder читает текущий `PortValue::Text` с порта `text`,
-    ///   опционально `PortValue::Audio` с `ref_audio`, `PortValue::Text` с
-    ///   `ref_text` (fallback на `ref_text_field`). Mode выбирается автоматически:
-    ///     - ref_audio есть → `Clone(VoiceClonePrompt)`,
-    ///     - иначе instruct непуст → `Design{instruct}`,
-    ///     - иначе → `Auto`.
-    /// - Worker-thread: при несовпадении `loaded_cfg` грузит pipeline
-    ///   (`OmniVoicePipeline::from_syn` ~30 c на CPU), затем `pipeline.synthesize`,
-    ///   результат в `output_buf` + bump `output_version` через
-    ///   `run_on_main_thread` — Reactive в downstream-нодах перечитывает порт.
-    /// - Output порт `audio`: `OmniVoiceExec::evaluate` копирует
-    ///   `output_buf` в `PortValue::Audio(Arc<AudioBuffer>)`.
-    OmniVoice {
-        /// Voice-Design instruct (textfield). Используется когда нет
-        /// ref_audio: mode становится `Design{instruct}`.
-        instruct: RwSignal<String>,
-        /// Fallback-textfield для ref_text, когда соответствующий порт
-        /// не подключён.
-        ref_text_field: RwSignal<String>,
-        /// Язык ref-аудио (подсказка для phonemization). Default — "ru".
-        language: RwSignal<String>,
-        /// Число шагов diffusion-сэмплера. Default = 32 (range [8, 64]).
-        num_step: RwSignal<u32>,
-        /// CFG / guidance_scale. Default = 2.0 (range [0.0, 5.0]).
-        guidance_scale: RwSignal<f32>,
-        /// Timestep-shift. Default = 0.1 (range [0.0, 1.0]).
-        t_shift: RwSignal<f32>,
-        /// Speech speed multiplier. Default = 1.0 (range [0.5, 2.0]).
-        speed: RwSignal<f32>,
-        /// Random seed для SplitMix64 в sampler'е. Default = 0.
-        seed: RwSignal<u64>,
-        /// Закэшированный pipeline. Lock короткий: только swap при load;
-        /// `synthesize` держит lock на всё время инференса (sync API).
-        pipeline: Arc<Mutex<Option<synaptix::facade::tts::TtsPipeline>>>,
-        /// Конфиг, с которым pipeline сейчас загружен. Если любое из полей
-        /// snapshot'а изменилось перед Play — pipeline сбрасывается и
-        /// перезагружается.
-        loaded_cfg: Arc<Mutex<Option<OmniLoadedCfg>>>,
-        /// Идёт ли в данный момент загрузка или синтез.
-        running: RwSignal<bool>,
-        /// Сообщение об ошибке последней операции. None = OK.
-        error: RwSignal<Option<String>>,
-        /// Имя каталога загруженной модели — для UI после load.
-        loaded_name: RwSignal<Option<String>>,
-        /// Синтезированный AudioBuffer (24 kHz mono PCM). `evaluate`
-        /// читает через lock и пробрасывает в `PortValue::Audio`.
-        output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        /// Bump'ится worker'ом после успешного синтеза → подписанный
-        /// graph-executor пересчитывает `audio`-порт. На user-edit
-        /// настроек НЕ меняется.
-        output_version: RwSignal<u32>,
-    },
-    VoxCpm2 {
-        prompt_text_field: RwSignal<String>,
-        cfg_value: RwSignal<f32>,
-        n_timesteps: RwSignal<u32>,
-        max_len: RwSignal<u32>,
-        seed: RwSignal<u64>,
-        pipeline: Arc<Mutex<Option<synaptix_tts_voxcpm::VoxCpmPipeline>>>,
-        loaded_cfg: Arc<Mutex<Option<VoxCpm2LoadedCfg>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        output_version: RwSignal<u32>,
-    },
-    VibeVoice {
-        script_field: RwSignal<String>,
-        cfg_value: RwSignal<f32>,
-        ddpm_steps: RwSignal<u32>,
-        max_length_times: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        pipeline: Arc<Mutex<Option<synaptix_tts_vibevoice::VibeVoicePipeline>>>,
-        loaded_cfg: Arc<Mutex<Option<VibeVoiceLoadedCfg>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        progress: RwSignal<u32>,
-        output_buf: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        output_version: RwSignal<u32>,
-    },
-    /// Runtime ноды диаризации (NVIDIA Streaming Sortformer v2.1).
-    ///
-    /// Жизненный цикл — близкая копия `AsrGigaam`:
-    /// - UI выбирает `.syn` bundle + dropdown'ы device/storage/compute +
-    ///   threshold + allow_overlap;
-    /// - На Play worker лениво грузит `Diarizer` (если loaded_cfg изменился),
-    ///   читает аудио на входе, вызывает `diarize_pcm` → DiarizationResult,
-    ///   пишет JSON в `output_json` (идёт в порт) и pretty-text в `output_pretty`;
-    /// - `text_version` бампается через `run_on_main_thread`, Reactive в
-    ///   body пересоздаёт статус-строку.
-    /// Универсальная «Syn Checkpoint»-нода: не грузит веса, публикует
-    /// [`SynModelHandle`] (путь + предпочтения + резидентность) в порт
-    /// `model`. Потребители — слот-семейства (LLM/TTS/ASR/диаризация).
-    SynCheckpoint {
-        /// .syn-бандл или HF-каталог (LLM-нода умеет оба).
-        model_path: RwSignal<Option<PathBuf>>,
-        /// Индексы по спискам `nodes::syn_checkpoint::*_PREF_OPTIONS`.
-        device_idx: RwSignal<usize>,
-        storage_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
-        /// Держать модель в памяти после прогона (слотовое поведение).
-        resident: RwSignal<bool>,
-        /// Стабильный Arc, пока параметры не менялись (ptr_eq downstream).
-        handle_cache: Arc<Mutex<Option<Arc<SynModelHandle>>>>,
-    },
-    SortformerDiarizer {
-        /// Порог бинаризации probability → активность (0.1..0.9).
-        threshold: RwSignal<f32>,
-        /// Разрешать overlap'ы спикеров (Sortformer multi-label).
-        allow_overlap: RwSignal<bool>,
-        /// Закэшированный экземпляр модели.
-        diarizer: Arc<Mutex<Option<synaptix::facade::diarization::Diarizer>>>,
-        loaded_cfg: Arc<Mutex<Option<SortformerLoadedCfg>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        /// Human-readable текст диаризации для UI карточки.
-        output_pretty: RwSignal<String>,
-        /// Machine-readable JSON, отдаётся в порт `out`.
-        output_json: RwSignal<String>,
-        text_version: RwSignal<u32>,
-        last_input_kind: PrevSource,
-    },
-    /// Runtime LLM-ноды на нативном synaptix-стеке (Qwen3 / Qwen3-Next-Hybrid).
-    ///
-    /// Жизненный цикл (аналог `OmniVoice`, движок — synaptix):
-    /// - UI выбирает каталог модели (HF-дир или `.syn`) + dropdown'ы
-    ///   device/quant/compute + system-fallback + max_tokens/temperature/seed;
-    ///   пока pipeline не загружен — `pipeline` хранит `None`.
-    /// - На Run worker лениво грузит `LlmPipeline` (детект арх по `config.json`),
-    ///   собирает чат-промпт ([system?, user(prompt)]) через `ChatTemplate`,
-    ///   стримит ответ `generate_streaming` — sink декодит накопленные токены и
-    ///   пишет их в `output_text` на лету (TextView обновляется в реальном
-    ///   времени). `cancel` прерывает генерацию (sink → false).
-    /// - `output_text` отдаётся в порт `answer`; `text_version` бампается для
-    ///   Reactive-rebuild статус-строки body.
-    Llm {
-        /// System-промпт fallback. Порт `system` переопределяет его, если
-        /// подключён и непуст.
-        system_prompt: RwSignal<String>,
-        /// Размер контекста (max_seq): preallocated KV-буфер + RoPE capacity.
-        context: RwSignal<u32>,
-        /// Thinking-режим (Qwen3 `<think>`): true → enable_thinking в чат-шаблоне.
-        think: RwSignal<bool>,
-        /// Лимит новых токенов генерации.
-        max_tokens: RwSignal<u32>,
-        /// Температура сэмплинга (0 = greedy).
-        temperature: RwSignal<f32>,
-        /// top-k (0 = выкл).
-        top_k: RwSignal<u32>,
-        /// top-p nucleus (1.0 = выкл).
-        top_p: RwSignal<f32>,
-        /// min-p (0.0 = выкл).
-        min_p: RwSignal<f32>,
-        /// Штраф повторов (1.0 = выкл).
-        repetition_penalty: RwSignal<f32>,
-        /// Seed RNG сэмплинга.
-        seed: RwSignal<u64>,
-        /// Закэшированный pipeline (enum Qwen3/Hybrid). Lock короткий на
-        /// swap при load; generate держит lock на всё время инференса.
-        pipeline: Arc<Mutex<Option<crate::pages::node_editor::nodes::llm::LlmPipeline>>>,
-        /// Конфиг, с которым pipeline сейчас загружен — для invalidation.
-        loaded_cfg: Arc<Mutex<Option<LlmLoadedCfg>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        loaded_name: RwSignal<Option<String>>,
-        /// Сгенерированный ответ. Стримится по токенам; output порта `answer`
-        /// отражает текущее значение.
-        output_text: RwSignal<String>,
-        /// Bump после каждого инкремента стрима → Reactive пересоздаёт
-        /// статус-строку.
-        text_version: RwSignal<u32>,
-        /// Флаг отмены — sink возвращает false → генерация прерывается.
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-    },
 
     // ── ACE-Step v1.5 (Нейро → ACE-Step) ──
     //
@@ -1423,12 +1155,6 @@ impl NodeRuntime {
     pub fn run_error_signal(&self) -> Option<RwSignal<Option<String>>> {
         use NodeRuntime as R;
         match self {
-            R::AsrGigaam { error, .. }
-            | R::OmniVoice { error, .. }
-            | R::VoxCpm2 { error, .. }
-            | R::VibeVoice { error, .. }
-            | R::SortformerDiarizer { error, .. }
-            | R::Llm { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             R::Flow(f) => Some(f.error),
@@ -1437,20 +1163,6 @@ impl NodeRuntime {
     }
 
 
-    pub fn missing_model_paths(&self) -> Vec<&'static str> {
-        use NodeRuntime as R;
-        let empty = |p: &RwSignal<Option<PathBuf>>| p.get_untracked().is_none();
-        match self {
-            R::SynCheckpoint { model_path, .. } => {
-                if empty(model_path) {
-                    vec!["model_path"]
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => Vec::new(),
-        }
-    }
 
     /// Сигнал прогресса воркера (0..1) — для живой карточки прогона в чате.
     /// Стадии службы сообщают шаги не всегда — потребитель должен
@@ -1468,8 +1180,7 @@ impl NodeRuntime {
     pub fn run_cancel_flag(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         use NodeRuntime as R;
         match self {
-            R::SaveToFile { cancel, .. }
-            | R::Llm { cancel, .. } => Some(cancel.clone()),
+            R::SaveToFile { cancel, .. } => Some(cancel.clone()),
             R::Flow(f) => Some(f.cancel.clone()),
             _ => None,
         }
@@ -1500,30 +1211,8 @@ pub struct OmniLoadedCfg {
     pub compute_idx: usize,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct VoxCpm2LoadedCfg {
-    pub bundle_path: PathBuf,
-    pub device_idx: usize,
-    pub compute_idx: usize,
-}
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct VibeVoiceLoadedCfg {
-    pub bundle_path: PathBuf,
-    pub device_idx: usize,
-    pub compute_idx: usize,
-}
 
-/// Снимок конфига, с которым загружен synaptix `LlmPipeline` LLM-ноды.
-/// Сравнивается перед каждым Run: если путь/device/quant/compute изменились —
-/// pipeline сбрасывается и перезагружается.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LlmLoadedCfg {
-    pub model_path: PathBuf,
-    pub device_idx: usize,
-    pub quant_idx: usize,
-    pub compute_idx: usize,
-}
 
 /// Снимок конфига, с которым в данный момент загружен `Diarizer` ноды
 /// `SortformerDiarizer`. Если изменилось — модель сбрасывается и
@@ -1557,47 +1246,9 @@ impl std::fmt::Debug for NodeRuntime {
                 write!(f, "NodeRuntime::Mixer{{n_inputs={n}}}")
             }
             NodeRuntime::MarkdownView { .. } => f.write_str("NodeRuntime::MarkdownView{..}"),
-            NodeRuntime::AsrGigaam { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::AsrGigaam{{name={name}, running={run}}}")
-            }
             NodeRuntime::TextView { output_text, .. } => {
                 let len = output_text.get_untracked().chars().count();
                 write!(f, "NodeRuntime::TextView{{chars={len}}}")
-            }
-            NodeRuntime::OmniVoice { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::OmniVoice{{name={name}, running={run}}}")
-            }
-            NodeRuntime::VibeVoice { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "—".into());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::VibeVoice{{name={name}, running={run}}}")
-            }
-            NodeRuntime::VoxCpm2 { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::VoxCpm2{{name={name}, running={run}}}")
-            }
-            NodeRuntime::SortformerDiarizer { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::SortformerDiarizer{{name={name}, running={run}}}")
-            }
-            NodeRuntime::SynCheckpoint { model_path, resident, .. } => {
-                let p = model_path
-                    .get_untracked()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                let r = resident.get_untracked();
-                write!(f, "NodeRuntime::SynCheckpoint{{path={p}, resident={r}}}")
-            }
-            NodeRuntime::Llm { loaded_name, running, .. } => {
-                let name = loaded_name.get_untracked().unwrap_or_else(|| "-".to_string());
-                let run = running.get_untracked();
-                write!(f, "NodeRuntime::Llm{{name={name}, running={run}}}")
             }
             NodeRuntime::FfmpegPlayer { is_playing, current_path, .. } => {
                 let path = current_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());

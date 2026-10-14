@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.309"
+version = "0.2.310"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -133,18 +133,7 @@ synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
 synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = false, features = ["image"] }
 # synaptix-audio — sinc-ресемплинг в Mixer-ноде (несовпадающие частоты входов).
 synaptix-audio = { path = "../synaptix/crates/synaptix-audio" }
-# Нативный synaptix-порт VoxCPM2 для TTS-ноды (node_editor/nodes/voxcpm2).
-synaptix-tts-voxcpm = { path = "../synaptix/crates/synaptix-models/tts/voxcpm", default-features = false }
-# Нативный synaptix-порт VibeVoice — многоголосый длинный синтез
-# (node_editor/nodes/vibevoice). audio-decode нужен для mp3/ogg/flac-референсов.
-synaptix-tts-vibevoice = { path = "../synaptix/crates/synaptix-models/tts/vibevoice" }
-
-# Нативный synaptix-LLM-стек для LLM-ноды (node_editor/nodes/llm). qwen3 —
-# dense/MoE Qwen3, qwen3-next-hybrid — GatedDeltaNet+full-attn (model_type
-# qwen3_next/5/6); common — GenerationConfig/StreamSink; tokenizer —
-# ChatTemplate/SpecialTokens; bundle — детект арх из .syn (config.json).
-synaptix-llm-qwen3 = { path = "../synaptix/crates/synaptix-models/llm/qwen3", default-features = false }
-synaptix-llm-qwen3-next-hybrid = { path = "../synaptix/crates/synaptix-models/llm/qwen3_next_hybrid", default-features = false }
+# common — MoE для отладочного moe_smoke; tokenizer — ChatTemplate/SpecialTokens.
 synaptix-llm-common = { path = "../synaptix/crates/synaptix-models/llm/common", default-features = false }
 synaptix-tokenizer = { path = "../synaptix/crates/synaptix-tokenizer" }
 # sha256/blake3 — контрольные суммы чанков, доступные в режиме эксперта

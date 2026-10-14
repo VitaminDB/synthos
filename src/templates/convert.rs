@@ -18,8 +18,6 @@ use syngui::prelude::*;
 
 use super::model::{
 
-    AsrGigaamStateData,
-
     AudioFileStateData,
 
     AudioPlayerStateData,
@@ -42,10 +40,6 @@ use super::model::{
 
     ImageSaveStateData,
 
-    LlmStateData,
-
-    SynCheckpointStateData,
-
     MarkdownViewStateData,
 
     MixerStateData,
@@ -55,8 +49,6 @@ use super::model::{
     NodeStateData,
 
     NodeStyleData,
-
-    OmniVoiceStateData,
 
     PointData,
 
@@ -68,11 +60,7 @@ use super::model::{
 
     TextViewStateData,
 
-    VibeVoiceStateData,
-
     ViewportData,
-
-    VoxCpm2StateData,
 
 };
 use crate::pages::node_editor::registry::{default_fields, meta};
@@ -167,8 +155,6 @@ pub fn load_into_ctx(ctx: &NodeEditorCtx, t: &Template) {
 /// `offset` (для merge / drag-and-drop). Назначает свежие id, чтобы не
 /// конфликтовать с существующими.
 pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
-    let migrated = migrate_inline_models(t);
-    let t = migrated.as_ref().unwrap_or(t);
     // local-id (внутри шаблона) → глобальный id (в ctx).
     let mut id_map: HashMap<u64, NodeId> = HashMap::new();
 
@@ -237,129 +223,6 @@ pub fn apply_to_ctx(ctx: &NodeEditorCtx, t: &Template, offset: Point) {
     ctx.connections.set(conns_vec);
 }
 
-/// Старые графы: слот-ноды (LLM/TTS/ASR/диаризация) держали путь модели и
-/// device/точность у себя. Теперь модель приходит только из Syn Checkpoint —
-/// для каждой такой ноды с путём и без входа `model` рядом ставится
-/// чекпойнт с теми же настройками (резидентным: слот держал модель всегда).
-/// Так же семейные ноды: ACE-Step VAE Encode получает вход `model` от
-/// ACE-Step Checkpoint, свой декодер YuE2 VAE Decode уезжает в копию
-/// YuE2 Checkpoint, depth-модель IC-LoRA — в подключённый LTX Checkpoint.
-/// `None` — мигрировать нечего.
-pub fn migrate_inline_models(t: &Template) -> Option<Template> {
-    // Индексы предпочтений чекпойнта: device 0=Auto,1=CUDA,2=CPU;
-    // storage 0=Auto,1=F16,2=BF16,3=FP8,4=NVFP4; compute 0=Auto,1=F16,2=BF16,3=F32.
-    fn cuda_cpu(i: usize) -> usize {
-        if i == 1 { 2 } else { 1 }
-    }
-    fn cpu_gpu(i: usize) -> usize {
-        if i == 0 { 2 } else { 1 }
-    }
-    fn bf16_f16_f32(i: usize) -> usize {
-        match i {
-            0 => 2,
-            1 => 1,
-            2 => 3,
-            _ => 0,
-        }
-    }
-    // Семейства ASR/Omni/Sortformer: f16, bf16, f32, nvfp4, mxfp8.
-    fn f16_list_storage(i: usize) -> usize {
-        match i {
-            0 => 1,
-            1 => 2,
-            3 => 4,
-            4 => 3,
-            _ => 0,
-        }
-    }
-    fn f16_list_compute(i: usize) -> usize {
-        match i {
-            0 => 1,
-            1 => 2,
-            2 => 3,
-            _ => 0,
-        }
-    }
-    let ck = |path: &Option<String>, device_idx, storage_idx, compute_idx| {
-        path.clone().map(|p| SynCheckpointStateData {
-            model_path: Some(p),
-            device_idx,
-            storage_idx,
-            compute_idx,
-            resident: true,
-        })
-    };
-    let mut out: Option<Template> = None;
-    let mut next_id = t.nodes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
-    for nd in &t.nodes {
-        if !nd.kind.needs_syn_checkpoint()
-            || t.connections.iter().any(|c| c.to_node == nd.id && c.to_port == "model")
-        {
-            continue;
-        }
-        let data = match &nd.state {
-            Some(NodeStateData::Llm(d)) => ck(
-                &d.model_path,
-                cuda_cpu(d.device_idx),
-                match d.quant_idx {
-                    1 => 4,
-                    2 => 3,
-                    _ => 0,
-                },
-                bf16_f16_f32(d.compute_idx),
-            ),
-            Some(NodeStateData::VibeVoice(d)) => {
-                ck(&d.model_path, cuda_cpu(d.device_idx), 0, bf16_f16_f32(d.compute_idx))
-            }
-            Some(NodeStateData::VoxCpm2(d)) => {
-                ck(&d.model_path, cuda_cpu(d.device_idx), 0, bf16_f16_f32(d.compute_idx))
-            }
-            Some(NodeStateData::OmniVoice(d)) => ck(
-                &d.model_path,
-                cpu_gpu(d.device_idx),
-                f16_list_storage(d.storage_idx),
-                f16_list_compute(d.compute_idx),
-            ),
-            Some(NodeStateData::AsrGigaam(d)) => ck(
-                &d.model_path,
-                cpu_gpu(d.device_idx),
-                f16_list_storage(d.storage_idx),
-                f16_list_compute(d.compute_idx),
-            ),
-            Some(NodeStateData::SortformerDiarizer(d)) => ck(
-                &d.model_path,
-                cpu_gpu(d.device_idx),
-                f16_list_storage(d.storage_idx),
-                f16_list_compute(d.compute_idx),
-            ),
-            _ => None,
-        };
-        let Some(data) = data else { continue };
-        let m = out.get_or_insert_with(|| t.clone());
-        m.nodes.push(NodeData {
-            id: next_id,
-            kind: NodeKind::SynCheckpoint,
-            pos: PointData {
-                x: nd.pos.x - 320.0,
-                y: nd.pos.y,
-            },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: nd.enabled,
-            state: Some(NodeStateData::SynCheckpoint(data)),
-        });
-        m.connections.push(ConnData {
-            from_node: next_id,
-            from_port: "model".into(),
-            to_node: nd.id,
-            to_port: "model".into(),
-        });
-        next_id += 1;
-    }
-
-    out
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // NodeRuntime ↔ NodeStateData
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,89 +263,6 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 (s.width, s.height)
             },
             hwaccel_idx: hwaccel_idx.get_untracked(),
-        })),
-        NodeRuntime::AsrGigaam {
-            output_text,
-            ..
-        } => Some(NodeStateData::AsrGigaam(AsrGigaamStateData {
-            output_text: output_text.get_untracked(),
-            ..Default::default()
-        })),
-        NodeRuntime::OmniVoice {
-            instruct,
-            ref_text_field,
-            language,
-            num_step,
-            guidance_scale,
-            t_shift,
-            speed,
-            seed,
-            ..
-        } => Some(NodeStateData::OmniVoice(OmniVoiceStateData {
-            instruct: instruct.get_untracked(),
-            ref_text: ref_text_field.get_untracked(),
-            language: language.get_untracked(),
-            num_step: num_step.get_untracked(),
-            guidance_scale: guidance_scale.get_untracked(),
-            t_shift: t_shift.get_untracked(),
-            speed: speed.get_untracked(),
-            seed: seed.get_untracked(),
-            ..Default::default()
-        })),
-        NodeRuntime::Llm {
-            system_prompt,
-            context,
-            think,
-            max_tokens,
-            temperature,
-            top_k,
-            top_p,
-            min_p,
-            repetition_penalty,
-            seed,
-            ..
-        } => Some(NodeStateData::Llm(LlmStateData {
-            system_prompt: system_prompt.get_untracked(),
-            context: context.get_untracked(),
-            think: think.get_untracked(),
-            max_tokens: max_tokens.get_untracked(),
-            temperature: temperature.get_untracked(),
-            top_k: top_k.get_untracked(),
-            top_p: top_p.get_untracked(),
-            min_p: min_p.get_untracked(),
-            repetition_penalty: repetition_penalty.get_untracked(),
-            seed: seed.get_untracked(),
-            ..Default::default()
-        })),
-        NodeRuntime::VoxCpm2 {
-            prompt_text_field,
-            cfg_value,
-            n_timesteps,
-            max_len,
-            seed,
-            ..
-        } => Some(NodeStateData::VoxCpm2(VoxCpm2StateData {
-            prompt_text: prompt_text_field.get_untracked(),
-            cfg_value: cfg_value.get_untracked(),
-            n_timesteps: n_timesteps.get_untracked(),
-            max_len: max_len.get_untracked(),
-            seed: seed.get_untracked(),
-            ..Default::default()
-        })),
-        NodeRuntime::VibeVoice {
-            script_field,
-            cfg_value,
-            ddpm_steps,
-            max_length_times,
-            seed,
-            ..
-        } => Some(NodeStateData::VibeVoice(VibeVoiceStateData {
-            script: script_field.get_untracked(),
-            cfg_value: cfg_value.get_untracked(),
-            ddpm_steps: ddpm_steps.get_untracked(),
-            max_length_times: max_length_times.get_untracked(),
-            seed: seed.get_untracked(),
-            ..Default::default()
         })),
         NodeRuntime::MarkdownView {
             content,
@@ -547,41 +327,10 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
                 path: path.get_untracked(),
             }))
         }
-        NodeRuntime::SortformerDiarizer {
-            threshold,
-            allow_overlap,
-            output_pretty,
-            output_json,
-            ..
-        } => Some(NodeStateData::SortformerDiarizer(
-            crate::templates::model::SortformerDiarizerStateData {
-                threshold: threshold.get_untracked(),
-                allow_overlap: allow_overlap.get_untracked(),
-                output_pretty: output_pretty.get_untracked(),
-                output_json: output_json.get_untracked(),
-                ..Default::default()
-            },
-        )),
         // ACE-Step семейство. `loaded_cfg`/`output_buf`/`output_version`/
         // `running`/`error`/`loaded_name`/`progress_pct` НЕ сериализуем —
         // это операционное состояние и тяжёлые тензоры, восстанавливаются
         // лениво на следующий Play.
-        NodeRuntime::SynCheckpoint {
-            model_path,
-            device_idx,
-            storage_idx,
-            compute_idx,
-            resident,
-            ..
-        } => Some(NodeStateData::SynCheckpoint(SynCheckpointStateData {
-            model_path: model_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            device_idx: device_idx.get_untracked(),
-            storage_idx: storage_idx.get_untracked(),
-            compute_idx: compute_idx.get_untracked(),
-            resident: resident.get_untracked(),
-        })),
     }
 }
 
@@ -596,103 +345,6 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
 /// pub — используется агентским инструментом `pipelines` (set_state).
 pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
     match (rt, state) {
-        (
-            NodeRuntime::AsrGigaam {
-                output_text,
-                text_version,
-                ..
-            },
-            NodeStateData::AsrGigaam(data),
-        ) => {
-            output_text.set(data.output_text.clone());
-            // Bump version → Reactive в body перестраивает MultilineTextEdit
-            // с новым initial-text (как после успешного транскрибата).
-            text_version.set(text_version.get_untracked().wrapping_add(1));
-        }
-        (
-            NodeRuntime::OmniVoice {
-                instruct,
-                ref_text_field,
-                language,
-                num_step,
-                guidance_scale,
-                t_shift,
-                speed,
-                seed,
-                ..
-            },
-            NodeStateData::OmniVoice(data),
-        ) => {
-            instruct.set(data.instruct.clone());
-            ref_text_field.set(data.ref_text.clone());
-            language.set(data.language.clone());
-            num_step.set(data.num_step);
-            guidance_scale.set(data.guidance_scale);
-            t_shift.set(data.t_shift);
-            speed.set(data.speed);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::Llm {
-                system_prompt,
-                context,
-                think,
-                max_tokens,
-                temperature,
-                top_k,
-                top_p,
-                min_p,
-                repetition_penalty,
-                seed,
-                ..
-            },
-            NodeStateData::Llm(data),
-        ) => {
-            system_prompt.set(data.system_prompt.clone());
-            context.set(data.context);
-            think.set(data.think);
-            max_tokens.set(data.max_tokens);
-            temperature.set(data.temperature);
-            top_k.set(data.top_k);
-            top_p.set(data.top_p);
-            min_p.set(data.min_p);
-            repetition_penalty.set(data.repetition_penalty);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::VoxCpm2 {
-                prompt_text_field,
-                cfg_value,
-                n_timesteps,
-                max_len,
-                seed,
-                ..
-            },
-            NodeStateData::VoxCpm2(data),
-        ) => {
-            prompt_text_field.set(data.prompt_text.clone());
-            cfg_value.set(data.cfg_value);
-            n_timesteps.set(data.n_timesteps);
-            max_len.set(data.max_len);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::VibeVoice {
-                script_field,
-                cfg_value,
-                ddpm_steps,
-                max_length_times,
-                seed,
-                ..
-            },
-            NodeStateData::VibeVoice(data),
-        ) => {
-            script_field.set(data.script.clone());
-            cfg_value.set(data.cfg_value);
-            ddpm_steps.set(data.ddpm_steps);
-            max_length_times.set(data.max_length_times);
-            seed.set(data.seed);
-        }
         (
             NodeRuntime::MarkdownView {
                 content,
@@ -833,23 +485,6 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             path.set(data.path.clone());
         }
         (
-            NodeRuntime::SortformerDiarizer {
-                threshold,
-                allow_overlap,
-                output_pretty,
-                output_json,
-                text_version,
-                ..
-            },
-            NodeStateData::SortformerDiarizer(data),
-        ) => {
-            threshold.set(data.threshold);
-            allow_overlap.set(data.allow_overlap);
-            output_pretty.set(data.output_pretty.clone());
-            output_json.set(data.output_json.clone());
-            text_version.set(text_version.get_untracked().wrapping_add(1));
-        }
-        (
             NodeRuntime::FfmpegPlayer {
                 current_path,
                 volume,
@@ -872,23 +507,6 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
         }
         (NodeRuntime::ImageSave { path, .. }, NodeStateData::ImageSave(data)) => {
             path.set(data.path.as_ref().map(PathBuf::from));
-        }
-        (
-            NodeRuntime::SynCheckpoint {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
-                resident,
-                ..
-            },
-            NodeStateData::SynCheckpoint(data),
-        ) => {
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            device_idx.set(data.device_idx);
-            storage_idx.set(data.storage_idx);
-            compute_idx.set(data.compute_idx);
-            resident.set(data.resident);
         }
         _ => {}
     }
@@ -1038,297 +656,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn roundtrip_syn_checkpoint_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::SynCheckpoint,
-            pos: PointData { x: 10.0, y: 20.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::SynCheckpoint(SynCheckpointStateData {
-                model_path: Some("/tmp/qwen3.syn".into()),
-                device_idx: 1,
-                storage_idx: 4,
-                compute_idx: 2,
-                resident: false,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::SynCheckpoint {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
-                resident,
-                ..
-            } => {
-                assert_eq!(
-                    model_path.get_untracked().map(|p| p.to_string_lossy().to_string()),
-                    Some("/tmp/qwen3.syn".into())
-                );
-                assert_eq!(device_idx.get_untracked(), 1);
-                assert_eq!(storage_idx.get_untracked(), 4);
-                assert_eq!(compute_idx.get_untracked(), 2);
-                assert!(!resident.get_untracked());
-            }
-            other => panic!("не SynCheckpoint: {other:?}"),
-        }
-    }
 
-    #[test]
-    fn roundtrip_vibevoice_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::VibeVoice,
-            pos: PointData { x: 10.0, y: 20.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::VibeVoice(VibeVoiceStateData {
-                model_path: Some("/tmp/vibevoice-1.5b.syn".into()),
-                device_idx: 1,
-                compute_idx: 2,
-                script: "Speaker 1: Привет.".into(),
-                cfg_value: 1.7,
-                ddpm_steps: 12,
-                max_length_times: 3.5,
-                seed: 99,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::VibeVoice {
-                script_field,
-                cfg_value,
-                ddpm_steps,
-                max_length_times,
-                seed,
-                ..
-            } => {
-                assert_eq!(script_field.get_untracked(), "Speaker 1: Привет.");
-                assert!((cfg_value.get_untracked() - 1.7).abs() < 1e-6);
-                assert_eq!(ddpm_steps.get_untracked(), 12);
-                assert!((max_length_times.get_untracked() - 3.5).abs() < 1e-6);
-                assert_eq!(seed.get_untracked(), 99);
-            }
-            other => panic!("не VibeVoice: {other:?}"),
-        }
-    }
 
-    /// Старый JSON без поля resident получает дефолт true (слотовое
-    /// поведение).
-    #[test]
-    fn syn_checkpoint_state_resident_defaults_true() {
-        let json = r#"{ "kind": "SynCheckpoint", "data": { "model_path": "/x.syn" } }"#;
-        let s: NodeStateData = serde_json::from_str(json).unwrap();
-        match s {
-            NodeStateData::SynCheckpoint(d) => assert!(d.resident),
-            other => panic!("не SynCheckpoint: {other:?}"),
-        }
-    }
 
-    /// Старый граф: LLM-нода с моделью в себе. При загрузке рядом появляется
-    /// Syn Checkpoint с тем же путём и предпочтениями, подключённый к
-    /// `model`; при сохранении путь у LLM больше не пишется.
-    #[test]
-    fn legacy_inline_model_migrates_to_syn_checkpoint() {
-        let json = r#"{
-            "name": "old", "kind": "full",
-            "nodes": [{
-                "id": 7, "kind": "llm", "pos": { "x": 500.0, "y": 100.0 },
-                "state": { "kind": "Llm", "data": {
-                    "model_path": "/m/qwen.syn", "device_idx": 0, "quant_idx": 1, "compute_idx": 1
-                } }
-            }]
-        }"#;
-        let t: Template = serde_json::from_str(json).unwrap();
-        let ctx = NodeEditorCtx::new();
-        ctx.nodes.set(Vec::new());
-        ctx.connections.set(Vec::new());
-        super::load_into_ctx(&ctx, &t);
-        let nodes = ctx.nodes.get_untracked();
-        assert_eq!(nodes.len(), 2);
-        let llm = nodes.iter().find(|n| n.kind == NodeKind::Llm).unwrap();
-        let ck = nodes.iter().find(|n| n.kind == NodeKind::SynCheckpoint).unwrap();
-        match &*ck.runtime.lock().unwrap() {
-            NodeRuntime::SynCheckpoint {
-                model_path,
-                device_idx,
-                storage_idx,
-                compute_idx,
-                resident,
-                ..
-            } => {
-                assert_eq!(model_path.get_untracked(), Some(PathBuf::from("/m/qwen.syn")));
-                assert_eq!(device_idx.get_untracked(), 1); // CUDA
-                assert_eq!(storage_idx.get_untracked(), 4); // NVFP4
-                assert_eq!(compute_idx.get_untracked(), 1); // F16
-                assert!(resident.get_untracked());
-            }
-            other => panic!("не SynCheckpoint: {other:?}"),
-        }
-        assert!(ctx
-            .connections
-            .get_untracked()
-            .iter()
-            .any(|c| c.from_node == ck.id && c.to_node == llm.id && c.to_port == "model"));
 
-        // Повторная загрузка сохранённого графа второго чекпойнта не добавляет.
-        let (nodes_data, conns_data, _) = super::snapshot(&ctx);
-        let saved = serde_json::to_string(&nodes_data).unwrap();
-        assert_eq!(saved.matches("/m/qwen.syn").count(), 1, "{saved}");
-        let t2 = Template { nodes: nodes_data, connections: conns_data, ..t };
-        let ctx2 = roundtrip(&t2);
-        assert_eq!(ctx2.nodes.get_untracked().len(), 2);
-    }
 
-    #[test]
-    fn roundtrip_asr_gigaam_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::AsrGigaam,
-            pos: PointData { x: 50.0, y: 60.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::AsrGigaam(AsrGigaamStateData {
-                model_path: Some("/tmp/test.syn".into()),
-                device_idx: 1,
-                storage_idx: 2,
-                compute_idx: 3,
-                output_text: "hello world".into(),
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::AsrGigaam {
-                output_text,
-                ..
-            } => {
-                assert_eq!(output_text.get_untracked(), "hello world");
-            }
-            other => panic!("Expected AsrGigaam runtime, got {other:?}"),
-        }
-    }
 
-    #[test]
-    fn roundtrip_omnivoice_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::OmniVoice,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::OmniVoice(OmniVoiceStateData {
-                model_path: Some("/tmp/omni.syn".into()),
-                device_idx: 1,
-                storage_idx: 4,
-                compute_idx: 2,
-                instruct: "soft female voice".into(),
-                ref_text: "the quick fox".into(),
-                language: "en".into(),
-                num_step: 48,
-                guidance_scale: 3.0,
-                t_shift: 0.2,
-                speed: 1.25,
-                seed: 42,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::OmniVoice {
-                instruct,
-                ref_text_field,
-                language,
-                num_step,
-                guidance_scale,
-                t_shift,
-                speed,
-                seed,
-                ..
-            } => {
-                assert_eq!(instruct.get_untracked(), "soft female voice");
-                assert_eq!(ref_text_field.get_untracked(), "the quick fox");
-                assert_eq!(language.get_untracked(), "en");
-                assert_eq!(num_step.get_untracked(), 48);
-                assert!((guidance_scale.get_untracked() - 3.0).abs() < 1e-6);
-                assert!((t_shift.get_untracked() - 0.2).abs() < 1e-6);
-                assert!((speed.get_untracked() - 1.25).abs() < 1e-6);
-                assert_eq!(seed.get_untracked(), 42);
-            }
-            other => panic!("Expected OmniVoice runtime, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_llm_state() {
-        let nd = NodeData {
-            id: 1,
-            kind: NodeKind::Llm,
-            pos: PointData { x: 0.0, y: 0.0 },
-            fields: Default::default(),
-            style: Default::default(),
-            enabled: true,
-            state: Some(NodeStateData::Llm(LlmStateData {
-                model_path: Some("/tmp/qwen3".into()),
-                device_idx: 1,
-                quant_idx: 2,
-                compute_idx: 1,
-                system_prompt: "Ты лаконичный ассистент.".into(),
-                context: 8192,
-                think: true,
-                max_tokens: 256,
-                temperature: 0.3,
-                top_k: 40,
-                top_p: 0.9,
-                min_p: 0.05,
-                repetition_penalty: 1.1,
-                seed: 7,
-            })),
-        };
-        let ctx = roundtrip(&make_template(vec![nd]));
-        let node = first_node(&ctx);
-        let rt = node.runtime.lock().unwrap();
-        match &*rt {
-            NodeRuntime::Llm {
-                system_prompt,
-                context,
-                think,
-                max_tokens,
-                temperature,
-                top_k,
-                top_p,
-                min_p,
-                repetition_penalty,
-                seed,
-                ..
-            } => {
-                assert_eq!(system_prompt.get_untracked(), "Ты лаконичный ассистент.");
-                assert_eq!(context.get_untracked(), 8192);
-                assert!(think.get_untracked());
-                assert_eq!(max_tokens.get_untracked(), 256);
-                assert!((temperature.get_untracked() - 0.3).abs() < 1e-6);
-                assert_eq!(top_k.get_untracked(), 40);
-                assert!((top_p.get_untracked() - 0.9).abs() < 1e-6);
-                assert!((min_p.get_untracked() - 0.05).abs() < 1e-6);
-                assert!((repetition_penalty.get_untracked() - 1.1).abs() < 1e-6);
-                assert_eq!(seed.get_untracked(), 7);
-            }
-            other => panic!("Expected Llm runtime, got {other:?}"),
-        }
-    }
 
 
 
@@ -1495,24 +828,20 @@ mod tests {
 
     #[test]
     fn snapshot_apply_roundtrip_preserves_state() {
-        // Создаём ctx с ASR-нодой, выставляем runtime → snapshot → apply →
+        // Создаём ctx с текстовой нодой, выставляем runtime → snapshot → apply →
         // проверяем что во втором ctx значения те же.
         let ctx_src = NodeEditorCtx::new();
         ctx_src.nodes.set(Vec::new());
         ctx_src.connections.set(Vec::new());
-        let id = ctx_src.add_node(NodeKind::AsrGigaam, Point::new(10.0, 20.0));
+        let id = ctx_src.add_node(NodeKind::TextView, Point::new(10.0, 20.0));
         {
             let nodes = ctx_src.nodes.get_untracked();
             let n = nodes.iter().find(|n| n.id == id).unwrap();
             let rt = n.runtime.lock().unwrap();
-            if let NodeRuntime::AsrGigaam {
-                output_text,
-                ..
-            } = &*rt
-            {
+            if let NodeRuntime::TextView { output_text, .. } = &*rt {
                 output_text.set("проверка".into());
             } else {
-                panic!("expected AsrGigaam");
+                panic!("expected TextView");
             }
         }
 
@@ -1532,13 +861,8 @@ mod tests {
         let node = first_node(&ctx_dst);
         let rt = node.runtime.lock().unwrap();
         match &*rt {
-            NodeRuntime::AsrGigaam {
-                output_text,
-                ..
-            } => {
-                assert_eq!(output_text.get_untracked(), "проверка");
-            }
-            other => panic!("Expected AsrGigaam runtime, got {other:?}"),
+            NodeRuntime::TextView { output_text, .. } => assert_eq!(output_text.get_untracked(), "проверка"),
+            other => panic!("Expected TextView runtime, got {other:?}"),
         }
     }
 

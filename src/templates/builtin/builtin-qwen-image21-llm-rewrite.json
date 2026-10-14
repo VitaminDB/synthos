@@ -50,57 +50,56 @@
       }
     },
     {
-      "id": 8,
-      "kind": "syn_checkpoint",
-      "pos": {
-        "x": 60.0,
-        "y": 680.0
-      },
-      "fields": {},
-      "style": {
-        "tint": null,
-        "shadow": true
-      },
-      "enabled": true,
-      "state": {
-        "kind": "SynCheckpoint",
-        "data": {
-          "model_path": null,
-          "device_idx": 0,
-          "storage_idx": 4,
-          "compute_idx": 0,
-          "resident": false
-        }
-      }
-    },
-    {
       "id": 9,
-      "kind": "llm",
+      "kind": "flow_llm",
       "pos": {
         "x": 480.0,
         "y": 420.0
       },
-      "fields": {},
+      "fields": {
+        "context": {
+          "type": "Float",
+          "value": 4096.0
+        },
+        "max_tokens": {
+          "type": "Float",
+          "value": 640.0
+        },
+        "min_p": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "repeat_penalty": {
+          "type": "Float",
+          "value": 1.0
+        },
+        "system": {
+          "type": "Text",
+          "value": "You are an image prompt rewriting expert for Qwen-Image 2.1. Turn the user's short image request into one long English paragraph that describes the finished image as if you were looking at it. You are an observer reporting what is in the frame, not talking to the user.\n\nRules:\n1. Keep everything the user fixed unchanged: every string of text they want shown (copy it character for character, in its own script, in double quotes), every named object, count, colour, position and the aspect ratio.\n2. Decide everything they left open: subject, setting, time of day, lighting (quality, direction, colour), materials and textures, camera and framing, palette. A three-word request still becomes a full description.\n3. Name colours with a modifier (deep navy, warm terracotta), give materials (brushed metal, coarse linen), enumerate objects instead of summarising, describe people by their observable surface, keep shadows, reflections and scale physically consistent.\n4. Text shown inside the image goes in double quotes exactly; do not add text the user did not ask for.\n5. Write in English whatever the language of the request; only quoted in-image text keeps its script.\n6. Output only the description paragraph — no JSON, no headings, no aspect ratio, no explanations."
+        },
+        "temperature": {
+          "type": "Float",
+          "value": 0.3
+        },
+        "think": {
+          "type": "Bool",
+          "value": false
+        },
+        "top_k": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "top_p": {
+          "type": "Float",
+          "value": 1.0
+        }
+      },
       "style": {
         "tint": null,
         "shadow": true
       },
       "enabled": true,
-      "state": {
-        "kind": "Llm",
-        "data": {
-          "system_prompt": "You are an image prompt rewriting expert for Qwen-Image 2.1. Turn the user's short image request into one long English paragraph that describes the finished image as if you were looking at it. You are an observer reporting what is in the frame, not talking to the user.\n\nRules:\n1. Keep everything the user fixed unchanged: every string of text they want shown (copy it character for character, in its own script, in double quotes), every named object, count, colour, position and the aspect ratio.\n2. Decide everything they left open: subject, setting, time of day, lighting (quality, direction, colour), materials and textures, camera and framing, palette. A three-word request still becomes a full description.\n3. Name colours with a modifier (deep navy, warm terracotta), give materials (brushed metal, coarse linen), enumerate objects instead of summarising, describe people by their observable surface, keep shadows, reflections and scale physically consistent.\n4. Text shown inside the image goes in double quotes exactly; do not add text the user did not ask for.\n5. Write in English whatever the language of the request; only quoted in-image text keeps its script.\n6. Output only the description paragraph — no JSON, no headings, no aspect ratio, no explanations.",
-          "context": 4096,
-          "think": false,
-          "max_tokens": 640,
-          "temperature": 0.30000001192092896,
-          "top_k": 0,
-          "top_p": 1.0,
-          "min_p": 0.0,
-          "repetition_penalty": 1.0,
-          "seed": 0
-        }
-      }
+      "state": null
     },
     {
       "id": 10,
@@ -230,14 +229,8 @@
       "to_port": "prompt"
     },
     {
-      "from_node": 8,
-      "from_port": "model",
-      "to_node": 9,
-      "to_port": "model"
-    },
-    {
       "from_node": 9,
-      "from_port": "answer",
+      "from_port": "text",
       "to_node": 10,
       "to_port": "in"
     },

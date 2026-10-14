@@ -11,7 +11,8 @@
 //! провод идёт прямо от картинки), референсы — списком файлов, сохранение
 //! ролика — наложением звука. Музыка: ACE-Step (чекпойнт, запись в латент,
 //! генерация) и YuE2 (чекпойнт, песня, декодер, транскрипция) — те же
-//! ноды стадиями.
+//! ноды стадиями. Речь (OmniVoice, VoxCPM2, VibeVoice, GigaAM, Sortformer) и
+//! LLM — ноды службы; Syn Checkpoint уходит, его файл — поле «Модель».
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -386,6 +387,73 @@ fn plan(kind: &str, state: &Value) -> Option<Plan> {
             }
             p("flow_yue2_transcribe", f, &[("model", "model"), ("audio", "audio")], &[("score", "score")])
         }
+        "omni_voice" | "vox_cpm2" | "vibe_voice" | "asr_gigaam" | "sortformer_diarizer" | "llm" => {
+            // Модель: файл Syn Checkpoint на входе (`__model`, см. [`migrate`]),
+            // своя прежняя, иначе модель библиотеки по умолчанию.
+            let model = ["__model", "model_path"]
+                .iter()
+                .find_map(|k| state.get(*k).and_then(Value::as_str).filter(|m| !m.is_empty()))
+                .unwrap_or(match kind {
+                    "omni_voice" => "omnivoice",
+                    "vox_cpm2" => "voxcpm2",
+                    "vibe_voice" => "vibevoice-1-5b",
+                    "asr_gigaam" => "gigaam-v3",
+                    _ => "",
+                });
+            if !model.is_empty() {
+                f.insert("model".into(), text(model));
+            }
+            let (texts, nums, bools): (&[(&str, &str)], &[(&str, &str)], &[(&str, &str)]) = match kind {
+                "omni_voice" => (
+                    &[("instruct", "instruct"), ("ref_text", "ref_text"), ("language", "language")],
+                    &[("num_step", "steps"), ("guidance_scale", "guidance"), ("t_shift", "t_shift"), ("speed", "speed"), ("seed", "seed")],
+                    &[],
+                ),
+                "vox_cpm2" => (&[("prompt_text", "prompt_text")], &[("cfg_value", "guidance"), ("n_timesteps", "steps"), ("max_len", "max_len"), ("seed", "seed")], &[]),
+                "vibe_voice" => (&[("script", "script")], &[("cfg_value", "guidance"), ("ddpm_steps", "steps"), ("max_length_times", "max_length_times"), ("seed", "seed")], &[]),
+                "sortformer_diarizer" => (&[], &[("threshold", "threshold")], &[("allow_overlap", "overlap")]),
+                "llm" => (
+                    &[("system_prompt", "system")],
+                    &[("context", "context"), ("max_tokens", "max_tokens"), ("temperature", "temperature"), ("top_k", "top_k"), ("top_p", "top_p"), ("min_p", "min_p"), ("repetition_penalty", "repeat_penalty")],
+                    &[("think", "think")],
+                ),
+                _ => (&[], &[], &[]),
+            };
+            for (from, to) in texts {
+                if let Some(v) = state.get(*from).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+                    f.insert((*to).into(), text(v));
+                }
+            }
+            for (from, to) in nums {
+                if let Some(v) = num(state, from) {
+                    f.insert((*to).into(), float(v));
+                }
+            }
+            for (from, to) in bools {
+                if let Some(v) = state.get(*from).and_then(Value::as_bool) {
+                    f.insert((*to).into(), boolean(v));
+                }
+            }
+            match kind {
+                "omni_voice" => p("flow_omnivoice", f, &[("text", "text"), ("ref_audio", "ref_audio"), ("ref_text", "ref_text")], &[("audio", "audio")]),
+                "vox_cpm2" => p("flow_voxcpm", f, &[("text", "text"), ("ref_audio", "ref_audio"), ("prompt_audio", "prompt_audio"), ("prompt_text", "prompt_text")], &[("audio", "audio")]),
+                "vibe_voice" => p(
+                    "flow_vibevoice",
+                    f,
+                    &[("script", "script"), ("voice1", "voice1"), ("voice2", "voice2"), ("voice3", "voice3"), ("voice4", "voice4")],
+                    &[("audio", "audio")],
+                ),
+                "asr_gigaam" => p("flow_transcribe", f, &[("in", "file")], &[("out", "text")]),
+                "sortformer_diarizer" => p("flow_diarize", f, &[("in", "audio")], &[("out", "json")]),
+                _ => {
+                    // Сид 0 прежней ноды — случайный; у ядра это -1.
+                    if num(state, "seed").is_some_and(|v| v > 0.0) {
+                        f.insert("seed".into(), float(num(state, "seed").unwrap_or(0.0)));
+                    }
+                    p("flow_llm", f, &[("prompt", "prompt"), ("system", "system")], &[("answer", "text")])
+                }
+            }
+        }
         _ => None,
     }
 }
@@ -405,8 +473,32 @@ fn conn(from: u64, fp: &str, to: u64, tp: &str) -> Value {
 /// Перевести родные ноды графа. `true` — что-то изменилось.
 pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
     let kinds: HashMap<u64, String> = nodes.iter().filter_map(|n| Some((id_of(n, "id")?, str_of(n, "kind").to_string()))).collect();
-    if !kinds.values().any(|k| plan(k, &Value::Null).is_some()) {
+    if !kinds.values().any(|k| k == "syn_checkpoint" || plan(k, &Value::Null).is_some()) {
         return false;
+    }
+    // Syn Checkpoint больше нет: его файл становится полем «Модель» нод на его
+    // выходе, сам он уходит из графа.
+    let checkpoint: HashMap<u64, String> = nodes
+        .iter()
+        .filter(|n| str_of(n, "kind") == "syn_checkpoint")
+        .filter_map(|n| Some((id_of(n, "id")?, n["state"]["data"].get("model_path").and_then(Value::as_str).unwrap_or("").to_string())))
+        .collect();
+    if !checkpoint.is_empty() {
+        for c in conns.iter() {
+            let (Some(from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { continue };
+            let Some(path) = checkpoint.get(&from).filter(|p| !p.is_empty()) else { continue };
+            if let Some(n) = nodes.iter_mut().find(|n| id_of(n, "id") == Some(to)) {
+                if !n["state"].is_object() {
+                    n["state"] = json!({"data": {}});
+                }
+                if !n["state"]["data"].is_object() {
+                    n["state"]["data"] = json!({});
+                }
+                n["state"]["data"]["__model"] = json!(path);
+            }
+        }
+        nodes.retain(|n| str_of(n, "kind") != "syn_checkpoint");
+        conns.retain(|c| id_of(c, "from_node").is_none_or(|f| !checkpoint.contains_key(&f)) && id_of(c, "to_node").is_none_or(|t| !checkpoint.contains_key(&t)));
     }
     // Ключевой кадр H3 с проводом картинки — сам провод идёт дальше.
     let mut bypass: HashMap<u64, (u64, String)> = HashMap::new();
@@ -732,5 +824,42 @@ mod tests {
         assert_eq!(n(6)["fields"]["mode"]["value"], 1);
         assert_eq!(n(7)["fields"]["cot"]["value"], 1);
         assert_eq!(n(7)["fields"]["steps"]["value"], 16.0);
+    }
+
+    #[test]
+    fn speech_chain() {
+        let mut g = json!({
+            "nodes": [
+                node(1, "syn_checkpoint", json!({"kind": "SynCheckpoint", "data": {"model_path": "/m/vibevoice-7b.syn"}})),
+                node(2, "vibe_voice", json!({"kind": "VibeVoice", "data": {"script": "Speaker 1: hi", "cfg_value": 1.5, "ddpm_steps": 30}})),
+                node(3, "audio_file", Value::Null),
+                node(4, "syn_checkpoint", Value::Null),
+                node(5, "llm", json!({"kind": "Llm", "data": {"system_prompt": "be brief", "think": true, "seed": 0, "temperature": 0.3}})),
+                node(6, "asr_gigaam", Value::Null),
+                node(7, "sortformer_diarizer", json!({"kind": "SortformerDiarizer", "data": {"threshold": 0.4, "allow_overlap": false}}))
+            ],
+            "connections": [
+                conn(1, "model", 2, "model"), conn(3, "out", 2, "voice1"), conn(4, "model", 5, "model"),
+                conn(5, "answer", 2, "script"), conn(3, "out", 6, "in"), conn(3, "out", 7, "in")
+            ]
+        });
+        assert!(migrate_graph(&mut g));
+        let ns = g["nodes"].as_array().unwrap();
+        assert!(!ns.iter().any(|n| n["kind"] == "syn_checkpoint"));
+        let n = |id: u64| ns.iter().find(|n| n["id"] == id).unwrap().clone();
+        assert_eq!(n(2)["kind"], "flow_vibevoice");
+        assert_eq!(n(2)["fields"]["model"]["value"], "/m/vibevoice-7b.syn");
+        assert_eq!(n(2)["fields"]["steps"]["value"], 30.0);
+        assert_eq!(n(5)["kind"], "flow_llm");
+        assert!(n(5)["fields"].get("model").is_none());
+        assert!(n(5)["fields"].get("seed").is_none());
+        assert_eq!(n(5)["fields"]["think"]["value"], true);
+        assert_eq!(n(6)["fields"]["model"]["value"], "gigaam-v3");
+        assert_eq!(n(7)["fields"]["overlap"]["value"], false);
+        let c = g["connections"].as_array().unwrap();
+        assert!(c.contains(&conn(5, "text", 2, "script")));
+        assert!(c.contains(&conn(3, "out", 6, "file")));
+        assert!(c.contains(&conn(3, "out", 7, "audio")));
+        assert!(!c.iter().any(|x| x["to_port"] == "model"));
     }
 }

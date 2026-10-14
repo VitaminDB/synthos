@@ -7072,15 +7072,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-depth-anything"
-version = "0.1.0"
-dependencies = [
- "synaptix-core",
- "synaptix-io",
- "synaptix-ops",
-]
-
-[[package]]
 name = "synaptix-diarization-sortformer"
 version = "0.1.1"
 dependencies = [
@@ -7512,23 +7503,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synaptix-video-ltx23"
-version = "0.1.1"
-dependencies = [
- "cudarc",
- "serde",
- "serde_json",
- "synaptix-audio",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-io",
- "synaptix-nn",
- "synaptix-ops",
- "synaptix-tokenizer",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "synaptix-video-minimax-h3"
 version = "0.1.1"
 dependencies = [
@@ -7718,7 +7692,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.305"
+version = "0.2.306"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -7750,14 +7724,12 @@ dependencies = [
  "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-depth-anything",
  "synaptix-flow",
  "synaptix-gguf",
  "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
  "synaptix-llm-common",
- "synaptix-llm-gemma3",
  "synaptix-llm-qwen3",
  "synaptix-llm-qwen3-next-hybrid",
  "synaptix-music-acestep",
@@ -7767,7 +7739,6 @@ dependencies = [
  "synaptix-tokenizer",
  "synaptix-tts-vibevoice",
  "synaptix-tts-voxcpm",
- "synaptix-video-ltx23",
  "synaptix-video-minimax-h3",
  "synaptixd",
  "synassist",

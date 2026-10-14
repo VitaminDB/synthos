@@ -116,7 +116,7 @@ impl AvScrubber {
 }
 
 pub fn node_av_scrubber(
-    frames: Option<Arc<crate::pages::node_editor::types::LtxFrames>>,
+    frames: Option<Arc<crate::pages::node_editor::types::MemFrames>>,
     audio: Option<Arc<AudioBuffer>>,
 ) -> Box<dyn Widget> {
     match frames {

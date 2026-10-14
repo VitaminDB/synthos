@@ -1,0 +1,268 @@
+{
+  "name": "LTX: Retake",
+  "description": "Исходное видео (LTX Video Input) + промпт → Text Encoder → Retake (регенерация региона [начало,конец] сек, остальное frozen) → VAE Decode + Audio Decode → Видеоплеер / Save. Одностадийно (без upscale). В Checkpoint укажите чекпойнт LTX-2.3 и Gemma; в Video Input — видео.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_ltx_model",
+      "pos": {
+        "x": 60.0,
+        "y": 60.0
+      },
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "ltx-2-3-22b-distilled-1-1"
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "text_view",
+      "pos": {
+        "x": 60.0,
+        "y": 560.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": {
+        "kind": "TextView",
+        "data": {
+          "output_text": "same scene, smooth natural motion",
+          "width": 280.0,
+          "height": 90.0
+        }
+      }
+    },
+    {
+      "id": 3,
+      "kind": "flow_ltx_encode",
+      "pos": {
+        "x": 480.0,
+        "y": 360.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 13,
+      "kind": "flow_file",
+      "pos": {
+        "x": 480.0,
+        "y": 60.0
+      },
+      "fields": {
+        "path": {
+          "type": "Text",
+          "value": ""
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_ltx_retake",
+      "pos": {
+        "x": 920.0,
+        "y": 160.0
+      },
+      "fields": {
+        "end": {
+          "type": "Float",
+          "value": 2.0
+        },
+        "fps": {
+          "type": "Choice",
+          "value": 0
+        },
+        "height": {
+          "type": "Float",
+          "value": 576.0
+        },
+        "seconds": {
+          "type": "Float",
+          "value": 10.0
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "start": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1024.0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 8,
+      "kind": "flow_ltx_decode_video",
+      "pos": {
+        "x": 1380.0,
+        "y": 80.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 9,
+      "kind": "flow_ltx_decode_audio",
+      "pos": {
+        "x": 1380.0,
+        "y": 440.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 11,
+      "kind": "flow_mux",
+      "pos": {
+        "x": 1820.0,
+        "y": 60.0
+      },
+      "fields": {
+        "mode": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 12,
+      "kind": "ffmpeg_player",
+      "pos": {
+        "x": 1820.0,
+        "y": 320.0
+      },
+      "fields": {},
+      "style": {
+        "tint": null,
+        "shadow": true
+      },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 3,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 5,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 8,
+      "to_port": "model"
+    },
+    {
+      "from_node": 1,
+      "from_port": "model",
+      "to_node": 9,
+      "to_port": "model"
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "prompt"
+    },
+    {
+      "from_node": 3,
+      "from_port": "cond",
+      "to_node": 5,
+      "to_port": "cond"
+    },
+    {
+      "from_node": 13,
+      "from_port": "file",
+      "to_node": 5,
+      "to_port": "video"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 8,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 5,
+      "from_port": "latent",
+      "to_node": 9,
+      "to_port": "latent"
+    },
+    {
+      "from_node": 8,
+      "from_port": "video",
+      "to_node": 11,
+      "to_port": "video"
+    },
+    {
+      "from_node": 9,
+      "from_port": "audio",
+      "to_node": 11,
+      "to_port": "audio"
+    },
+    {
+      "from_node": 11,
+      "from_port": "video",
+      "to_node": 12,
+      "to_port": "source"
+    }
+  ],
+  "viewport": null
+}

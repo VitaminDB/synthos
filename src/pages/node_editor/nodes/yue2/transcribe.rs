@@ -272,7 +272,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
                 "acestep-node-running",
             ),
         ),
-        field_row(&tr!("app.cancel"), super::super::ltx::cancel_button(s.running, s.cancel.clone())),
+        field_row(&tr!("app.cancel"), super::super::common::cancel_button(s.running, s.cancel.clone())),
     ];
     Box::new(
         Column::new()

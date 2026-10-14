@@ -11,12 +11,12 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32};
 use syngui::audio::{Biquad, BiquadMode, SchroederReverb};
 
 use crate::icons::{
-    MI_ADD, MI_APPS, MI_ARTICLE, MI_ASPECT_RATIO, MI_AUDIOTRACK, MI_AUTORENEW, MI_AUTO_AWESOME, MI_BLUR_ON,
+    MI_ADD, MI_APPS, MI_ARTICLE, MI_AUDIOTRACK, MI_AUTO_AWESOME, MI_BLUR_ON,
     MI_CAMPAIGN, MI_EDIT_NOTE, MI_FILTER_ALT, MI_FOLDER_OPEN, MI_GRAPHIC_EQ, MI_GROUPS,
     MI_HUB, MI_IMAGE_ICON, MI_INVENTORY_2, MI_LANGUAGE, MI_LIBRARY_MUSIC, MI_MEMORY,
     MI_MERGE_TYPE, MI_MIC, MI_MOVIE,
-    MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_REMOVE_CIRCLE_OUTLINE, MI_SAVE,
-    MI_TRANSLATE, MI_TUNE,
+    MI_PLAY_ARROW, MI_PSYCHOLOGY, MI_RECORD_VOICE_OVER, MI_SAVE,
+    MI_TUNE,
 };
 
 use super::eval::NodeExecutor;
@@ -36,7 +36,6 @@ use super::nodes::{
     ffmpeg_player,
     image,
     llm,
-    ltx,
     markdown_view,
     omnivoice,
     scalar,
@@ -216,26 +215,6 @@ static YUE2_GENERATE_EXEC: yue2::generate::GenerateExec = yue2::generate::Genera
 static YUE2_VAE_DECODE_EXEC: yue2::vae_decode::VaeDecodeExec = yue2::vae_decode::VaeDecodeExec;
 static YUE2_TRANSCRIBE_EXEC: yue2::transcribe::TranscribeExec = yue2::transcribe::TranscribeExec;
 static FFMPEG_PLAYER_EXEC: ffmpeg_player::FfmpegPlayerExec = ffmpeg_player::FfmpegPlayerExec;
-static LTX_CHECKPOINT_EXEC: ltx::checkpoint::CheckpointExec = ltx::checkpoint::CheckpointExec;
-static LTX_TEXT_ENCODER_EXEC: ltx::text_encoder::TextEncoderExec =
-    ltx::text_encoder::TextEncoderExec;
-static LTX_NAG_PROMPT_EXEC: ltx::nag::NagPromptExec = ltx::nag::NagPromptExec;
-static LTX_SAMPLER_STAGE1_EXEC: ltx::sampler_stage1::SamplerStage1Exec =
-    ltx::sampler_stage1::SamplerStage1Exec;
-static LTX_UPSCALE_EXEC: ltx::upscale::UpscaleExec = ltx::upscale::UpscaleExec;
-static LTX_SAMPLER_STAGE2_EXEC: ltx::sampler_stage2::SamplerStage2Exec =
-    ltx::sampler_stage2::SamplerStage2Exec;
-static LTX_VAE_DECODE_EXEC: ltx::vae_decode::VaeDecodeExec = ltx::vae_decode::VaeDecodeExec;
-static LTX_AUDIO_DECODE_EXEC: ltx::audio_decode::AudioDecodeExec =
-    ltx::audio_decode::AudioDecodeExec;
-static LTX_VIDEO_SAVE_EXEC: ltx::video_save::VideoSaveExec = ltx::video_save::VideoSaveExec;
-static LTX_IMAGE_EXEC: ltx::image::ImageExec = ltx::image::ImageExec;
-static LTX_VIDEO_INPUT_EXEC: ltx::video_input::VideoInputExec = ltx::video_input::VideoInputExec;
-static LTX_RETAKE_EXEC: ltx::retake::RetakeExec = ltx::retake::RetakeExec;
-static LTX_IC_LORA_EXEC: ltx::ic_lora::IcLoraExec = ltx::ic_lora::IcLoraExec;
-static LTX_AUDIO_INPUT_EXEC: ltx::audio_input::AudioInputExec = ltx::audio_input::AudioInputExec;
-static LTX_LIPDUB_EXEC: ltx::lipdub::LipdubExec = ltx::lipdub::LipdubExec;
-static LTX_A2V_EXEC: ltx::a2v::A2vExec = ltx::a2v::A2vExec;
 static SYN_CHECKPOINT_EXEC: syn_checkpoint::SynCheckpointExec =
     syn_checkpoint::SynCheckpointExec;
 static IMAGE_LOAD_EXEC: image::ImageLoadExec = image::ImageLoadExec;
@@ -434,9 +413,6 @@ const FFMPEG_PLAYER_OUTPUTS: &[PortSchema] = &[
     PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
 ];
 
-const LTX_CHECKPOINT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-];
 
 /// Необязательный вход картинки у LTX Image / H3 Keyframe: провод важнее файла.
 const IMAGE_IN: &[PortSchema] = &[
@@ -450,133 +426,20 @@ const IMAGE_SAVE_OUTPUTS: &[PortSchema] = &[
 ];
 
 
-const LTX_TEXT_ENCODER_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",  label: "model",  kind: PortKind::Data },
-    PortSchema { name: "prompt", label: "prompt", kind: PortKind::Text },
-];
-const LTX_TEXT_ENCODER_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_encoding", label: "video enc", kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc", kind: PortKind::Data },
-];
 
-const LTX_NAG_PROMPT_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model", label: "model", kind: PortKind::Data },
-    PortSchema { name: "text",  label: "text",  kind: PortKind::Text },
-];
-const LTX_NAG_PROMPT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "nag", label: "nag", kind: PortKind::Data },
-];
 
-const LTX_SAMPLER_STAGE1_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",      kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc",  kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc",  kind: PortKind::Data },
-    PortSchema { name: "nag",            label: "nag",        kind: PortKind::Data },
-    PortSchema { name: "image_cond",     label: "image",      kind: PortKind::Data },
-];
 
-const LTX_IMAGE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "image_cond", label: "image", kind: PortKind::Data },
-];
 
-const LTX_VIDEO_INPUT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video", label: "video", kind: PortKind::Data },
-];
 
-const LTX_RETAKE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",     kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc", kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc", kind: PortKind::Data },
-    PortSchema { name: "video",          label: "video",     kind: PortKind::Data },
-];
-const LTX_RETAKE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
 
-const LTX_IC_LORA_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",     kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc", kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc", kind: PortKind::Data },
-    PortSchema { name: "ref_video",      label: "ref video", kind: PortKind::Data },
-];
-const LTX_IC_LORA_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
 
-const LTX_AUDIO_INPUT_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Data },
-];
 
-const LTX_LIPDUB_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",     kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc", kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc", kind: PortKind::Data },
-    PortSchema { name: "ref_video",      label: "ref video", kind: PortKind::Data },
-    PortSchema { name: "audio",          label: "audio",     kind: PortKind::Data },
-];
-const LTX_LIPDUB_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
 
-const LTX_A2V_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",     kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc", kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc", kind: PortKind::Data },
-    PortSchema { name: "audio",          label: "audio",     kind: PortKind::Data },
-];
-const LTX_A2V_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
-const LTX_SAMPLER_STAGE1_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
 
-const LTX_UPSCALE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",        label: "model",        kind: PortKind::Data },
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-];
-const LTX_UPSCALE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent ×2", kind: PortKind::Data },
-];
 
-const LTX_SAMPLER_STAGE2_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",          label: "model",        kind: PortKind::Data },
-    PortSchema { name: "video_latent",   label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens",   label: "audio tokens", kind: PortKind::Data },
-    PortSchema { name: "video_encoding", label: "video enc",    kind: PortKind::Data },
-    PortSchema { name: "audio_encoding", label: "audio enc",    kind: PortKind::Data },
-    PortSchema { name: "image_cond",     label: "image",        kind: PortKind::Data },
-];
-const LTX_SAMPLER_STAGE2_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
 
-const LTX_VAE_DECODE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",        label: "model",        kind: PortKind::Data },
-    PortSchema { name: "video_latent", label: "video latent", kind: PortKind::Data },
-];
-const LTX_VAE_DECODE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "frames", label: "frames", kind: PortKind::Video },
-];
 
-const LTX_AUDIO_DECODE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "model",        label: "model",        kind: PortKind::Data },
-    PortSchema { name: "audio_tokens", label: "audio tokens", kind: PortKind::Data },
-];
-const LTX_AUDIO_DECODE_OUTPUTS: &[PortSchema] = &[
-    PortSchema { name: "audio", label: "audio", kind: PortKind::Audio },
-];
 
-const LTX_VIDEO_SAVE_INPUTS: &[PortSchema] = &[
-    PortSchema { name: "frames", label: "frames", kind: PortKind::Video },
-    PortSchema { name: "audio",  label: "audio",  kind: PortKind::Audio },
-];
 
 const NUMBER: NodeKindMeta = NodeKindMeta {
     kind: NodeKind::Number,
@@ -1198,9 +1061,6 @@ const FFMPEG_PLAYER: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(ffmpeg_player::busy_signal),
 };
 
-/// Стабильный ключ каталога строк — отображаемое имя см.
-/// `node.subcategory.ltx_video`.
-const LTX_SUBCATEGORY: &str = "ltx_video";
 
 
 
@@ -1286,277 +1146,21 @@ const IMAGE_SAVE: NodeKindMeta = NodeKindMeta {
     busy_signal: Some(image::save_busy_signal),
 };
 
-const LTX_CHECKPOINT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxCheckpoint,
-    icon: MI_INVENTORY_2,
-    title: "LTX Checkpoint",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(LTX_CHECKPOINT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::checkpoint::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_CHECKPOINT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const LTX_TEXT_ENCODER: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxTextEncoder,
-    icon: MI_TRANSLATE,
-    title: "LTX Text Encoder",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_TEXT_ENCODER_INPUTS),
-    outputs: PortsSpec::Static(LTX_TEXT_ENCODER_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::text_encoder::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_TEXT_ENCODER_EXEC,
-    on_run: Some(ltx::text_encoder::on_run),
-    busy_signal: Some(ltx::text_encoder::busy_signal),
-};
 
-const LTX_NAG_PROMPT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxNagPrompt,
-    icon: MI_REMOVE_CIRCLE_OUTLINE,
-    title: "LTX NAG Prompt",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_NAG_PROMPT_INPUTS),
-    outputs: PortsSpec::Static(LTX_NAG_PROMPT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::nag::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_NAG_PROMPT_EXEC,
-    on_run: Some(ltx::nag::on_run),
-    busy_signal: Some(ltx::nag::busy_signal),
-};
 
-const LTX_SAMPLER_STAGE1: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxSamplerStage1,
-    icon: MI_BLUR_ON,
-    title: "LTX Sampler Stage1",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_SAMPLER_STAGE1_INPUTS),
-    outputs: PortsSpec::Static(LTX_SAMPLER_STAGE1_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::sampler_stage1::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_SAMPLER_STAGE1_EXEC,
-    on_run: Some(ltx::sampler_stage1::on_run),
-    busy_signal: Some(ltx::sampler_stage1::busy_signal),
-};
 
-const LTX_UPSCALE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxUpscale,
-    icon: MI_ASPECT_RATIO,
-    title: "LTX Upscale ×2",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_UPSCALE_INPUTS),
-    outputs: PortsSpec::Static(LTX_UPSCALE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::upscale::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_UPSCALE_EXEC,
-    on_run: Some(ltx::upscale::on_run),
-    busy_signal: Some(ltx::upscale::busy_signal),
-};
 
-const LTX_SAMPLER_STAGE2: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxSamplerStage2,
-    icon: MI_TUNE,
-    title: "LTX Sampler Stage2",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_SAMPLER_STAGE2_INPUTS),
-    outputs: PortsSpec::Static(LTX_SAMPLER_STAGE2_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::sampler_stage2::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_SAMPLER_STAGE2_EXEC,
-    on_run: Some(ltx::sampler_stage2::on_run),
-    busy_signal: Some(ltx::sampler_stage2::busy_signal),
-};
 
-const LTX_VAE_DECODE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxVaeDecode,
-    icon: MI_MOVIE,
-    title: "LTX VAE Decode",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_VAE_DECODE_INPUTS),
-    outputs: PortsSpec::Static(LTX_VAE_DECODE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::vae_decode::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_VAE_DECODE_EXEC,
-    on_run: Some(ltx::vae_decode::on_run),
-    busy_signal: Some(ltx::vae_decode::busy_signal),
-};
 
-const LTX_AUDIO_DECODE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxAudioDecode,
-    icon: MI_GRAPHIC_EQ,
-    title: "LTX Audio Decode",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_AUDIO_DECODE_INPUTS),
-    outputs: PortsSpec::Static(LTX_AUDIO_DECODE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::audio_decode::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_AUDIO_DECODE_EXEC,
-    on_run: Some(ltx::audio_decode::on_run),
-    busy_signal: Some(ltx::audio_decode::busy_signal),
-};
 
-const LTX_VIDEO_SAVE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxVideoSave,
-    icon: MI_SAVE,
-    title: "LTX Video Save",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_VIDEO_SAVE_INPUTS),
-    outputs: PortsSpec::Static(&[]),
-    fields: NO_FIELDS,
-    body: Some(ltx::video_save::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_VIDEO_SAVE_EXEC,
-    on_run: Some(ltx::video_save::on_run),
-    busy_signal: Some(ltx::video_save::busy_signal),
-};
 
-const LTX_IMAGE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxImage,
-    icon: MI_IMAGE_ICON,
-    title: "LTX Image",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(IMAGE_IN),
-    outputs: PortsSpec::Static(LTX_IMAGE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::image::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_IMAGE_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const LTX_VIDEO_INPUT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxVideoInput,
-    icon: MI_MOVIE,
-    title: "LTX Video Input",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(LTX_VIDEO_INPUT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::video_input::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_VIDEO_INPUT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const LTX_RETAKE: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxRetake,
-    icon: MI_AUTORENEW,
-    title: "LTX Retake",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_RETAKE_INPUTS),
-    outputs: PortsSpec::Static(LTX_RETAKE_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::retake::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_RETAKE_EXEC,
-    on_run: Some(ltx::retake::on_run),
-    busy_signal: Some(ltx::retake::busy_signal),
-};
 
-const LTX_IC_LORA: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxIcLora,
-    icon: MI_HUB,
-    title: "LTX IC-LoRA",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_IC_LORA_INPUTS),
-    outputs: PortsSpec::Static(LTX_IC_LORA_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::ic_lora::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_IC_LORA_EXEC,
-    on_run: Some(ltx::ic_lora::on_run),
-    busy_signal: Some(ltx::ic_lora::busy_signal),
-};
 
-const LTX_AUDIO_INPUT: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxAudioInput,
-    icon: MI_AUDIOTRACK,
-    title: "LTX Audio Input",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(&[]),
-    outputs: PortsSpec::Static(LTX_AUDIO_INPUT_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::audio_input::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_AUDIO_INPUT_EXEC,
-    on_run: None,
-    busy_signal: None,
-};
 
-const LTX_LIPDUB: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxLipdub,
-    icon: MI_RECORD_VOICE_OVER,
-    title: "LTX Lipdub",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_LIPDUB_INPUTS),
-    outputs: PortsSpec::Static(LTX_LIPDUB_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::lipdub::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_LIPDUB_EXEC,
-    on_run: Some(ltx::lipdub::on_run),
-    busy_signal: Some(ltx::lipdub::busy_signal),
-};
 
-const LTX_A2V: NodeKindMeta = NodeKindMeta {
-    kind: NodeKind::LtxA2V,
-    icon: MI_GRAPHIC_EQ,
-    title: "LTX A2V",
-    category: NodeCategory::Neuro,
-    subcategory: Some(LTX_SUBCATEGORY),
-    inputs: PortsSpec::Static(LTX_A2V_INPUTS),
-    outputs: PortsSpec::Static(LTX_A2V_OUTPUTS),
-    fields: NO_FIELDS,
-    body: Some(ltx::a2v::body),
-    ports_layout: PortsLayout::Rows,
-    port_row_extra: None,
-    executor: &LTX_A2V_EXEC,
-    on_run: Some(ltx::a2v::on_run),
-    busy_signal: Some(ltx::a2v::busy_signal),
-};
 
 /// Встроенные типы нод (без нод ядра synaptix-flow — их метаданные
 /// строятся по схемам ядра при первом обращении, см. [`registry`]).
@@ -1593,22 +1197,6 @@ const BUILTIN: &[NodeKindMeta] = &[
     YUE2_VAE_DECODE,
     YUE2_TRANSCRIBE,
     FFMPEG_PLAYER,
-    LTX_CHECKPOINT,
-    LTX_TEXT_ENCODER,
-    LTX_NAG_PROMPT,
-    LTX_SAMPLER_STAGE1,
-    LTX_UPSCALE,
-    LTX_SAMPLER_STAGE2,
-    LTX_VAE_DECODE,
-    LTX_AUDIO_DECODE,
-    LTX_VIDEO_SAVE,
-    LTX_IMAGE,
-    LTX_VIDEO_INPUT,
-    LTX_RETAKE,
-    LTX_IC_LORA,
-    LTX_AUDIO_INPUT,
-    LTX_LIPDUB,
-    LTX_A2V,
     IMAGE_LOAD,
     IMAGE_SAVE,
 ];
@@ -2000,171 +1588,6 @@ pub fn default_runtime(kind: NodeKind) -> Arc<Mutex<NodeRuntime>> {
             saved: use_signal(None),
             preview: Arc::new(Mutex::new(None)),
             preview_version: use_signal(0_u32),
-        },
-        NodeKind::LtxCheckpoint => NodeRuntime::LtxCheckpoint {
-            model_path: use_signal(None),
-            gemma_dir: use_signal(None),
-            upscaler_path: use_signal(None),
-            depth_model_path: use_signal(None),
-            lora_path: use_signal(None),
-            lora_strength: use_signal(1.0_f32),
-            device_idx: use_signal(0_usize),
-            quant_dit_idx: use_signal(0_usize),
-            quant_enc_idx: use_signal(0_usize),
-            compute_idx: use_signal(0_usize),
-            // Резидентность по умолчанию выключена — прежнее weak-поведение.
-            resident: use_signal(false),
-            handle_cache: Arc::new(Mutex::new(None)),
-        },
-        NodeKind::LtxTextEncoder => NodeRuntime::LtxTextEncoder {
-            prompt_field: use_signal(String::new()),
-            keep_gemma: use_signal(false),
-            gemma_keep: Arc::new(Mutex::new(None)),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxNagPrompt => NodeRuntime::LtxNagPrompt {
-            prompt_field: use_signal(
-                synaptix_video_ltx23::pipeline::DEFAULT_NAG_PROMPT.to_string(),
-            ),
-            scale: use_signal(synaptix_video_ltx23::pipeline::NAG_DEFAULT_SCALE),
-            alpha: use_signal(synaptix_video_ltx23::pipeline::NAG_DEFAULT_ALPHA),
-            tau: use_signal(synaptix_video_ltx23::pipeline::NAG_DEFAULT_TAU),
-            running: use_signal(false),
-            error: use_signal(None),
-            out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxSamplerStage1 => NodeRuntime::LtxSamplerStage1 {
-            width: use_signal(1024_u32),
-            height: use_signal(576_u32),
-            duration_seconds: use_signal(10.0_f32),
-            fps_idx: use_signal(0_usize),
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxUpscale => NodeRuntime::LtxUpscale {
-            running: use_signal(false),
-            error: use_signal(None),
-            out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxSamplerStage2 => NodeRuntime::LtxSamplerStage2 {
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxVaeDecode => NodeRuntime::LtxVaeDecode {
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            frames_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-            preview_version: use_signal(0_u32),
-        },
-        NodeKind::LtxAudioDecode => NodeRuntime::LtxAudioDecode {
-            running: use_signal(false),
-            error: use_signal(None),
-            out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxVideoSave => NodeRuntime::LtxVideoSave {
-            path: use_signal(String::new()),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            status: use_signal(SaveStatus::Idle),
-        },
-        NodeKind::LtxImage => NodeRuntime::LtxImage {
-            image_path: use_signal(None),
-            strength: use_signal(1.0_f32),
-            frame_idx: use_signal(0_u32),
-            error: use_signal(None),
-            cache: Arc::new(Mutex::new(None)),
-        },
-        NodeKind::LtxVideoInput => NodeRuntime::LtxVideoInput {
-            video_path: use_signal(None),
-        },
-        NodeKind::LtxRetake => NodeRuntime::LtxRetake {
-            width: use_signal(1024_u32),
-            height: use_signal(576_u32),
-            duration_seconds: use_signal(10.0_f32),
-            fps_idx: use_signal(0_usize),
-            retake_start: use_signal(0.0_f32),
-            retake_end: use_signal(2.0_f32),
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxIcLora => NodeRuntime::LtxIcLora {
-            width: use_signal(1024_u32),
-            height: use_signal(576_u32),
-            duration_seconds: use_signal(10.0_f32),
-            fps_idx: use_signal(0_usize),
-            downscale: use_signal(2_u32),
-            ref_strength: use_signal(1.0_f32),
-            control_idx: use_signal(0_usize),
-            canny_low: use_signal(0.1_f32),
-            canny_high: use_signal(0.3_f32),
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxAudioInput => NodeRuntime::LtxAudioInput {
-            audio_path: use_signal(None),
-        },
-        NodeKind::LtxLipdub => NodeRuntime::LtxLipdub {
-            width: use_signal(1024_u32),
-            height: use_signal(576_u32),
-            duration_seconds: use_signal(10.0_f32),
-            fps_idx: use_signal(0_usize),
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
-        },
-        NodeKind::LtxA2V => NodeRuntime::LtxA2V {
-            width: use_signal(1024_u32),
-            height: use_signal(576_u32),
-            duration_seconds: use_signal(10.0_f32),
-            fps_idx: use_signal(0_usize),
-            seed: use_signal(0_u64),
-            running: use_signal(false),
-            error: use_signal(None),
-            progress_pct: use_signal(0.0_f32),
-            cancel: Arc::new(AtomicBool::new(false)),
-            v_out: Arc::new(Mutex::new(None)),
-            a_out: Arc::new(Mutex::new(None)),
-            output_version: use_signal(0_u32),
         },
         NodeKind::Yue2Checkpoint => NodeRuntime::Yue2Checkpoint {
             // Каталог моделей приложения — нода из меню сразу находит бандлы

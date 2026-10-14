@@ -70,7 +70,7 @@ pub mod ffmpeg_player;
 pub mod flow;
 pub mod image;
 pub mod llm;
-pub mod ltx;
+pub mod common;
 pub mod markdown_view;
 pub mod omnivoice;
 pub mod scalar;

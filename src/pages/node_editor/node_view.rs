@@ -194,22 +194,6 @@ fn node_card(node: NodeInstance, meta: &'static NodeKindMeta) -> impl Widget {
             NodeKind::AceStepCheckpoint => classes.push("acestep-checkpoint-node".to_string()),
             NodeKind::AceStepGenerate => classes.push("acestep-generate-node".to_string()),
             NodeKind::ImageLoad | NodeKind::ImageSave => classes.push("image-node".to_string()),
-            NodeKind::LtxCheckpoint => classes.push("ltx-checkpoint-node".to_string()),
-            NodeKind::LtxTextEncoder => classes.push("ltx-text-encoder-node".to_string()),
-            NodeKind::LtxNagPrompt => classes.push("ltx-nag-node".to_string()),
-            NodeKind::LtxSamplerStage1 => classes.push("ltx-sampler1-node".to_string()),
-            NodeKind::LtxUpscale => classes.push("ltx-upscale-node".to_string()),
-            NodeKind::LtxSamplerStage2 => classes.push("ltx-sampler2-node".to_string()),
-            NodeKind::LtxVaeDecode => classes.push("ltx-vae-decode-node".to_string()),
-            NodeKind::LtxAudioDecode => classes.push("ltx-audio-decode-node".to_string()),
-            NodeKind::LtxVideoSave => classes.push("ltx-video-save-node".to_string()),
-            NodeKind::LtxImage => classes.push("ltx-image-node".to_string()),
-            NodeKind::LtxVideoInput => classes.push("ltx-video-input-node".to_string()),
-            NodeKind::LtxRetake => classes.push("ltx-retake-node".to_string()),
-            NodeKind::LtxIcLora => classes.push("ltx-iclora-node".to_string()),
-            NodeKind::LtxAudioInput => classes.push("ltx-audio-input-node".to_string()),
-            NodeKind::LtxLipdub => classes.push("ltx-lipdub-node".to_string()),
-            NodeKind::LtxA2V => classes.push("ltx-a2v-node".to_string()),
             _ => {}
         }
         if !enabled {

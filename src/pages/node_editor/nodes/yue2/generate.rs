@@ -503,7 +503,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
             ),
         ),
         // Кнопка появляется только во время прогона.
-        field_row(&tr!("app.cancel"), super::super::ltx::cancel_button(s.running, s.cancel.clone())),
+        field_row(&tr!("app.cancel"), super::super::common::cancel_button(s.running, s.cancel.clone())),
     ];
     Box::new(
         Column::new()

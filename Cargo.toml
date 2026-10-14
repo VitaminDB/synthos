@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.305"
+version = "0.2.306"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -125,9 +125,7 @@ synassist = { path = "../synshell/crates/synassist" }
 synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
 # Клиент службы нейросетей: графы ядра (стадии моделей, генерация) исполняет она.
 synaptixd = { path = "../synshell/crates/synaptixd", default-features = false }
-synaptix-video-ltx23 = { path = "../synaptix/crates/synaptix-models/video/ltx23" }
 synaptix-video-minimax-h3 = { path = "../synaptix/crates/synaptix-models/video/minimax_h3" }
-synaptix-llm-gemma3 = { path = "../synaptix/crates/synaptix-models/llm/gemma3" }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
 synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
 # synaptix-io (feature image) — load_image/resize_bilinear для LTX Image ноды
@@ -135,8 +133,6 @@ synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
 synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = false, features = ["image"] }
 # synaptix-audio — sinc-ресемплинг в Mixer-ноде (несовпадающие частоты входов).
 synaptix-audio = { path = "../synaptix/crates/synaptix-audio" }
-# Depth Anything V2 — depth-map control-сигнал для LTX IC-LoRA ноды.
-synaptix-depth-anything = { path = "../synaptix/crates/synaptix-models/image/depth_anything", default-features = false }
 # Нативный synaptix-порт VoxCPM2 для TTS-ноды (node_editor/nodes/voxcpm2).
 synaptix-tts-voxcpm = { path = "../synaptix/crates/synaptix-models/tts/voxcpm", default-features = false }
 # Нативный synaptix-порт VibeVoice — многоголосый длинный синтез

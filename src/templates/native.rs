@@ -23,6 +23,7 @@ fn default_model(kind: &str, state: &Value) -> &'static str {
         "qwen_image_checkpoint" => "qwen-image-edit-2511",
         "qwen_image21_checkpoint" => "qwen-image-2-1",
         "sdxl_checkpoint" => "sdxl-base-1-0",
+        "ltx_checkpoint" => "ltx-2-3-22b-distilled-1-1",
         _ if state.get("variant_idx").and_then(Value::as_u64) == Some(1) => "minimax-h3-ref2va",
         _ => "minimax-h3-fl2va",
     }
@@ -147,6 +148,95 @@ fn plan(kind: &str, state: &Value) -> Option<Plan> {
             f.insert("mode".into(), choice(0));
             p("flow_mux", f, &[("frames", "video"), ("audio", "audio")], &[("path", "video")])
         }
+        "ltx_checkpoint" => {
+            let model = state.get("model_path").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| default_model(kind, state).into());
+            f.insert("model".into(), text(model));
+            if let Some(q) = num(state, "quant_dit_idx") {
+                f.insert("quant".into(), choice(option(QUANTS, quant(kind, q as u64))));
+            }
+            for (from, to) in [("lora_path", "lora"), ("depth_model_path", "depth")] {
+                if let Some(v) = state.get(from).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+                    f.insert(to.into(), text(v));
+                }
+            }
+            if let Some(v) = num(state, "lora_strength") {
+                f.insert("lora_strength".into(), float(v));
+            }
+            p("flow_ltx_model", f, &[], &[("model", "model")])
+        }
+        "ltx_text_encoder" => {
+            if let Some(t) = state.get("prompt").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+                f.insert("prompt".into(), text(t));
+            }
+            p("flow_ltx_encode", f, &[("model", "model"), ("prompt", "prompt")], &[("video_encoding", "cond"), ("audio_encoding", "cond")])
+        }
+        "ltx_nag_prompt" => {
+            if let Some(t) = state.get("prompt").and_then(Value::as_str) {
+                f.insert("prompt".into(), text(t));
+            }
+            for k in ["scale", "alpha", "tau"] {
+                if let Some(v) = num(state, k) {
+                    f.insert(k.into(), float(v));
+                }
+            }
+            p("flow_ltx_nag", f, &[("model", "model"), ("text", "prompt")], &[("nag", "nag")])
+        }
+        "ltx_image" => {
+            if let Some(v) = num(state, "strength") {
+                f.insert("strength".into(), float(v));
+            }
+            if let Some(v) = num(state, "frame_idx") {
+                f.insert("frame".into(), float(v));
+            }
+            p("flow_ltx_image", f, &[("image", "image")], &[("image_cond", "image")])
+        }
+        "ltx_video_input" | "ltx_audio_input" => {
+            let key = if kind == "ltx_video_input" { "video_path" } else { "audio_path" };
+            f.insert("path".into(), text(state.get(key).and_then(Value::as_str).unwrap_or("")));
+            p("flow_file", f, &[], &[("video", "file"), ("audio", "file")])
+        }
+        "ltx_sampler_stage1" | "ltx_retake" | "ltx_ic_lora" | "ltx_lipdub" | "ltx_a2v" | "ltx_a2_v" => {
+            for (from, to) in [("width", "width"), ("height", "height"), ("duration_seconds", "seconds"), ("seed", "seed"), ("retake_start", "start"), ("retake_end", "end"), ("downscale", "downscale"), ("ref_strength", "strength"), ("canny_low", "canny_low"), ("canny_high", "canny_high")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), float(v));
+                }
+            }
+            for (from, to) in [("fps_idx", "fps"), ("control_idx", "control")] {
+                if let Some(v) = num(state, from) {
+                    f.insert(to.into(), choice(v as usize));
+                }
+            }
+            if kind == "ltx_lipdub" {
+                f.remove("seed");
+            }
+            let flow = match kind {
+                "ltx_sampler_stage1" => "flow_ltx_stage1",
+                "ltx_retake" => "flow_ltx_retake",
+                "ltx_ic_lora" => "flow_ltx_ic_lora",
+                "ltx_lipdub" => "flow_ltx_lipdub",
+                _ => "flow_ltx_a2v",
+            };
+            p(
+                flow,
+                f,
+                &[("model", "model"), ("video_encoding", "cond"), ("audio_encoding", "cond"), ("nag", "nag"), ("image_cond", "image"), ("video", "video"), ("ref_video", "video"), ("audio", "audio")],
+                &[("video_latent", "latent"), ("audio_tokens", "latent")],
+            )
+        }
+        "ltx_upscale" => p("flow_ltx_upscale", f, &[("model", "model"), ("video_latent", "latent")], &[("video_latent", "latent")]),
+        "ltx_sampler_stage2" => {
+            if let Some(v) = num(state, "seed") {
+                f.insert("seed".into(), float(v));
+            }
+            // Звуковые токены Stage1 едут в латенте апскейла.
+            p("flow_ltx_stage2", f, &[("model", "model"), ("video_latent", "latent"), ("video_encoding", "cond"), ("audio_encoding", "cond"), ("image_cond", "image")], &[("video_latent", "latent"), ("audio_tokens", "latent")])
+        }
+        "ltx_vae_decode" => p("flow_ltx_decode_video", f, &[("model", "model"), ("video_latent", "latent")], &[("frames", "video")]),
+        "ltx_audio_decode" => p("flow_ltx_decode_audio", f, &[("model", "model"), ("audio_tokens", "latent")], &[("audio", "audio")]),
+        "ltx_video_save" => {
+            f.insert("mode".into(), choice(0));
+            p("flow_mux", f, &[("frames", "video"), ("audio", "audio")], &[("path", "video")])
+        }
         _ => None,
     }
 }
@@ -200,12 +290,28 @@ pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
             }
         }
     }
-    // Проигрыватель кадров H3 → готовый ролик: сохранение (наложение звука)
+    // Кадр-условие LTX с файлом — нода «Файл» перед ним.
+    let mut next_id = kinds.keys().max().copied().unwrap_or(0) + 1;
+    let mut new_nodes = Vec::new();
+    for n in nodes.iter() {
+        let (Some(id), "ltx_image") = (id_of(n, "id"), str_of(n, "kind")) else { continue };
+        let wired = conns.iter().any(|c| id_of(c, "to_node") == Some(id) && str_of(c, "to_port") == "image");
+        let path = n["state"]["data"].get("image_path").and_then(Value::as_str).unwrap_or("");
+        if wired {
+            continue;
+        }
+        let (x, y) = (n["pos"]["x"].as_f64().unwrap_or(0.0), n["pos"]["y"].as_f64().unwrap_or(0.0));
+        new_nodes.push(json!({"id": next_id, "kind": "flow_file", "pos": {"x": x - 380.0, "y": y}, "fields": {"path": text(path)}, "state": null}));
+        conns.push(conn(next_id, "file", id, "image"));
+        next_id += 1;
+    }
+    nodes.extend(new_nodes);
+    // Проигрыватель кадров H3/LTX → готовый ролик: сохранение (наложение звука)
     // тех же декодеров или ролик декодера.
     let mut save_of: HashMap<u64, u64> = HashMap::new();
     for c in conns.iter() {
         let (Some(from), Some(to)) = (id_of(c, "from_node"), id_of(c, "to_node")) else { continue };
-        if kinds.get(&to).map(String::as_str) == Some("h3_video_save") && kinds.get(&from).map(String::as_str) == Some("h3_vae_decode") {
+        if matches!(kinds.get(&to).map(String::as_str), Some("h3_video_save" | "ltx_video_save")) && matches!(kinds.get(&from).map(String::as_str), Some("h3_vae_decode" | "ltx_vae_decode")) {
             save_of.insert(from, to);
         }
     }
@@ -216,14 +322,14 @@ pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
             return true;
         }
         match (kinds.get(&from).map(String::as_str), str_of(c, "to_port")) {
-            (Some("h3_vae_decode"), "frames") => {
+            (Some("h3_vae_decode" | "ltx_vae_decode"), "frames") => {
                 player.push(match save_of.get(&from) {
                     Some(&save) => conn(save, "path", to, "source"),
                     None => conn(from, "frames", to, "source"),
                 });
                 false
             }
-            (Some("h3_audio_decode"), "audio") => false,
+            (Some("h3_audio_decode" | "ltx_audio_decode"), "audio") => false,
             _ => true,
         }
     });
@@ -252,6 +358,21 @@ pub fn migrate(nodes: &mut Vec<Value>, conns: &mut Vec<Value>) -> bool {
         plans.insert(id, pl);
     }
     nodes.retain(|n| id_of(n, "id").map(|i| !bypass.contains_key(&i)).unwrap_or(true));
+    // LipDub и IC-LoRA работают с адаптером модели: без своего — компонент службы.
+    let adapter = if nodes.iter().any(|n| str_of(n, "kind") == "flow_ltx_lipdub") {
+        Some("lipdub")
+    } else if nodes.iter().any(|n| str_of(n, "kind") == "flow_ltx_ic_lora") {
+        Some("union")
+    } else {
+        None
+    };
+    if let Some(a) = adapter {
+        for n in nodes.iter_mut().filter(|n| str_of(n, "kind") == "flow_ltx_model") {
+            if n["fields"].get("lora").is_none() {
+                n["fields"]["lora"] = text(a);
+            }
+        }
+    }
 
     let mut out = Vec::with_capacity(conns.len());
     let mut taken: HashSet<(u64, String)> = HashSet::new();
@@ -377,5 +498,42 @@ mod tests {
         assert!(!g["nodes"].as_array().unwrap().iter().any(|n| n["id"] == 10));
         assert_eq!(g["nodes"][0]["fields"]["model"]["value"], "minimax-h3-fl2va");
         assert_eq!(g["nodes"][4]["fields"]["guidance"]["value"], 1.0);
+    }
+
+    #[test]
+    fn ltx_chain() {
+        let mut g = json!({
+            "nodes": [
+                node(1, "ltx_checkpoint", Value::Null),
+                node(3, "ltx_text_encoder", json!({"kind": "LtxTextEncoder", "data": {"prompt": "кот"}})),
+                node(5, "ltx_sampler_stage1", json!({"kind": "LtxSamplerStage1", "data": {"width": 768, "height": 448, "duration_seconds": 4.0, "fps_idx": 1, "seed": 9}})),
+                node(6, "ltx_upscale", Value::Null),
+                node(7, "ltx_sampler_stage2", Value::Null),
+                node(8, "ltx_vae_decode", Value::Null),
+                node(9, "ltx_audio_decode", Value::Null),
+                node(13, "ltx_image", json!({"kind": "LtxImage", "data": {"image_path": "/a.png", "strength": 0.8, "frame_idx": 0}}))
+            ],
+            "connections": [
+                conn(1, "model", 5, "model"), conn(3, "video_encoding", 5, "video_encoding"), conn(3, "audio_encoding", 5, "audio_encoding"),
+                conn(13, "image_cond", 5, "image_cond"),
+                conn(5, "audio_tokens", 7, "audio_tokens"), conn(5, "video_latent", 6, "video_latent"), conn(6, "video_latent", 7, "video_latent"),
+                conn(7, "video_latent", 8, "video_latent"), conn(7, "audio_tokens", 9, "audio_tokens")
+            ]
+        });
+        assert!(migrate_graph(&mut g));
+        let c = g["connections"].as_array().unwrap();
+        assert!(c.contains(&conn(6, "latent", 7, "latent")));
+        assert!(!c.iter().any(|x| x["from_node"] == 5 && x["to_node"] == 7));
+        assert!(c.contains(&conn(3, "cond", 5, "cond")));
+        assert_eq!(c.iter().filter(|x| x["to_node"] == 5 && x["to_port"] == "cond").count(), 1);
+        assert!(c.contains(&conn(7, "latent", 9, "latent")));
+        let n = |id: u64| g["nodes"].as_array().unwrap().iter().find(|n| n["id"] == id).unwrap().clone();
+        assert_eq!(n(5)["fields"]["fps"]["value"], 1);
+        assert_eq!(n(3)["fields"]["prompt"]["value"], "кот");
+        assert_eq!(n(1)["fields"]["model"]["value"], "ltx-2-3-22b-distilled-1-1");
+        // Кадр-условие с файлом — новая нода «Файл» перед ним.
+        let file = g["nodes"].as_array().unwrap().iter().find(|n| n["kind"] == "flow_file").unwrap().clone();
+        assert_eq!(file["fields"]["path"]["value"], "/a.png");
+        assert!(c.contains(&conn(file["id"].as_u64().unwrap(), "file", 13, "image")));
     }
 }

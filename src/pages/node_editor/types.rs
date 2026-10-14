@@ -378,46 +378,6 @@ pub enum NodeKind {
     FfmpegPlayer,
 
     // ── LTX-2.3 (Нейро → LTX Video) ──
-    /// Хэндл чекпойнта (пути + device/quant/compute) → `model: Data(Model)`.
-    LtxCheckpoint,
-    /// `(model, prompt) → (video_encoding, audio_encoding)` (Gemma-3-12B +
-    /// перцивер-коннекторы).
-    LtxTextEncoder,
-    /// `(model, text) → nag: Data(Nag)` — NAG negative-prompt той же Gemma.
-    LtxNagPrompt,
-    /// `(model, v_enc, a_enc, nag?) → (video_latent, audio_tokens)` —
-    /// AvDit distilled stage1 на половинной сетке (8 шагов).
-    LtxSamplerStage1,
-    /// `(model, video_latent) → video_latent ×2` (spatial latent-upscaler).
-    LtxUpscale,
-    /// `(model, video_latent, audio_tokens, v_enc, a_enc) → (video_latent,
-    /// audio_tokens)` — AvDit stage2 re-noise+refine (3 шага).
-    LtxSamplerStage2,
-    /// `(model, video_latent) → frames: Data(Frames)` (видео-VAE decode,
-    /// превью в body).
-    LtxVaeDecode,
-    /// `(model, audio_tokens) → audio: Audio` (audio-VAE + вокодер, 48 kHz).
-    LtxAudioDecode,
-    /// `(frames, audio?) → mp4` (ffmpeg mux, sink).
-    LtxVideoSave,
-    /// Загрузка изображения для i2v: `→ image_cond: Data(ImageCond)`.
-    LtxImage,
-    /// Источник видео для v2v: `→ video: Data(VideoInput)`.
-    LtxVideoInput,
-    /// `(model, v_enc, a_enc, video) → (video_latent, audio_tokens)` —
-    /// retake региона [start,end] исходного видео.
-    LtxRetake,
-    /// `(model, v_enc, a_enc, ref_video) → (video_latent, audio_tokens)` —
-    /// IC-LoRA video→video (reference control).
-    LtxIcLora,
-    /// Источник аудио (речь) для lipdub: `→ audio: Data(AudioInput)`.
-    LtxAudioInput,
-    /// `(model, v_enc, a_enc, ref_video, audio) → (video_latent, audio_tokens)`
-    /// — lipdub (синхрон губ под речь).
-    LtxLipdub,
-    /// `(model, v_enc, a_enc, audio) → (video_latent, audio_tokens)` —
-    /// audio→video (видео под фиксированное входное аудио).
-    LtxA2V,
 
     // ── FLUX.1 (Нейро → FLUX) ──
 
@@ -466,6 +426,19 @@ pub enum NodeKind {
     FlowH3Sample,
     FlowH3DecodeVideo,
     FlowH3DecodeAudio,
+    FlowLtxModel,
+    FlowLtxEncode,
+    FlowLtxNag,
+    FlowLtxImage,
+    FlowLtxStage1,
+    FlowLtxUpscale,
+    FlowLtxStage2,
+    FlowLtxRetake,
+    FlowLtxIcLora,
+    FlowLtxLipdub,
+    FlowLtxA2v,
+    FlowLtxDecodeVideo,
+    FlowLtxDecodeAudio,
 }
 
 impl NodeKind {
@@ -530,22 +503,6 @@ impl NodeKind {
         NodeKind::Yue2VaeDecode,
         NodeKind::Yue2Transcribe,
         NodeKind::FfmpegPlayer,
-        NodeKind::LtxCheckpoint,
-        NodeKind::LtxTextEncoder,
-        NodeKind::LtxNagPrompt,
-        NodeKind::LtxSamplerStage1,
-        NodeKind::LtxUpscale,
-        NodeKind::LtxSamplerStage2,
-        NodeKind::LtxVaeDecode,
-        NodeKind::LtxAudioDecode,
-        NodeKind::LtxVideoSave,
-        NodeKind::LtxImage,
-        NodeKind::LtxVideoInput,
-        NodeKind::LtxRetake,
-        NodeKind::LtxIcLora,
-        NodeKind::LtxAudioInput,
-        NodeKind::LtxLipdub,
-        NodeKind::LtxA2V,
         NodeKind::ImageLoad,
         NodeKind::ImageSave,
         NodeKind::FlowText,
@@ -577,6 +534,19 @@ impl NodeKind {
         NodeKind::FlowH3Sample,
         NodeKind::FlowH3DecodeVideo,
         NodeKind::FlowH3DecodeAudio,
+        NodeKind::FlowLtxModel,
+        NodeKind::FlowLtxEncode,
+        NodeKind::FlowLtxNag,
+        NodeKind::FlowLtxImage,
+        NodeKind::FlowLtxStage1,
+        NodeKind::FlowLtxUpscale,
+        NodeKind::FlowLtxStage2,
+        NodeKind::FlowLtxRetake,
+        NodeKind::FlowLtxIcLora,
+        NodeKind::FlowLtxLipdub,
+        NodeKind::FlowLtxA2v,
+        NodeKind::FlowLtxDecodeVideo,
+        NodeKind::FlowLtxDecodeAudio,
     ];
 }
 
@@ -703,8 +673,6 @@ pub enum DataBlob {
     AceStep(AceStepBlob),
     /// Хэндл и латенты пайплайна YuE2.
     Yue2(Yue2Blob),
-    /// Хэндлы и тензоры пайплайна LTX-2.3 (synaptix).
-    Ltx(LtxBlob),
     /// Хэндл универсальной «Syn Checkpoint»-ноды (LLM/TTS/ASR-модели).
     SynModel(Arc<SynModelHandle>),
     /// Одна картинка — общий тип для FLUX, LTX Image, H3 Keyframe, Image Save.
@@ -873,46 +841,6 @@ impl std::fmt::Debug for ImageData {
 
 
 
-/// Типизированный payload одной из стадий LTX-2.3. Тензоры —
-/// `synaptix_core`: живут на устройстве из [`LtxModelHandle`].
-#[derive(Debug)]
-pub enum LtxBlob {
-    /// Конфиг чекпойнта от Checkpoint-ноды. Подмодели грузят потребители
-    /// через shared-кэш `nodes::ltx::shared` по ключу из хэндла.
-    Model(Arc<LtxModelHandle>),
-    /// Видео-контекст `[1, T_txt, 4096]` (Gemma → видео-коннектор).
-    VideoEncoding(synaptix_core::tensor::Tensor),
-    /// Аудио-контекст `[1, T_txt, 2048]` (Gemma → аудио-коннектор).
-    AudioEncoding(synaptix_core::tensor::Tensor),
-    /// NAG negative-encoding + параметры (scale/alpha/tau).
-    Nag {
-        encoding: synaptix_core::tensor::Tensor,
-        scale: f32,
-        alpha: f32,
-        tau: f32,
-    },
-    /// Видео-латент `[1, 128, F', H', W']` + метаданные сетки.
-    VideoLatent(LtxVideoLatent),
-    /// Аудио-токены `[1, Fa, 128]`.
-    AudioTokens(synaptix_core::tensor::Tensor),
-    /// Декодированные RGBA-кадры (выход видео-VAE) для Save/превью.
-    Frames(Arc<LtxFrames>),
-    /// Image-conditioning для i2v/keyframe: исходное изображение `[3,H,W]` в
-    /// [0,1] (resize+VAE-encode на нужную сетку делает Sampler) + сила (1.0 =
-    /// полная замена) + пиксель-кадр (`0` = i2v replace кадра 0, `>0` =
-    /// keyframe append на пиксель-кадре).
-    ImageCond {
-        image: synaptix_core::tensor::Tensor,
-        strength: f32,
-        frame_idx: usize,
-    },
-    /// Путь к исходному видео для v2v-режимов (retake и т.п.). Декодирование
-    /// (ffmpeg→кадры→VAE encode) на нужную сетку делает нода-потребитель.
-    VideoInput(PathBuf),
-    /// Путь к аудио (речь) для lipdub. Загрузка (16k→mel→audio-VAE encode)
-    /// делает нода-потребитель.
-    AudioInput(PathBuf),
-}
 
 /// Конфиг универсальной «Syn Checkpoint»-ноды: один .syn-бандл (или
 /// HF-каталог) + предпочтения device/storage/compute + резидентность.
@@ -935,26 +863,6 @@ pub struct SynModelHandle {
     pub resident: bool,
 }
 
-/// Конфиг LTX-чекпойнта: пути подмоделей + device/quant/compute. Дешёвый
-/// POD — открытие mmap и загрузка весов происходят у потребителей.
-#[derive(Clone, Debug, PartialEq)]
-pub struct LtxModelHandle {
-    pub model_path: PathBuf,
-    pub gemma_dir: PathBuf,
-    pub upscaler_path: Option<PathBuf>,
-    /// Каталог Depth Anything V2 — препроцессор IC-LoRA для control=depth.
-    pub depth_model_path: Option<PathBuf>,
-    pub lora_path: Option<PathBuf>,
-    pub lora_strength: f32,
-    pub device_idx: usize,
-    pub quant_dit_idx: usize,
-    pub quant_enc_idx: usize,
-    pub compute_idx: usize,
-    /// Держать тяжёлые компоненты в VRAM после прогона (см. чекбокс
-    /// «Держать в памяти» на Checkpoint-ноде). В ключи weak-кэшей НЕ
-    /// входит — резидентность не меняет сами веса.
-    pub resident: bool,
-}
 
 /// Конфиг ACE-Step чекпойнта: каталог моделей (как CLI `--models`) +
 /// опциональные per-bundle override'ы (lm / text-encoder / dit / vae) +
@@ -1009,30 +917,20 @@ pub enum Yue2Blob {
     Latent(synaptix_core::tensor::Tensor),
 }
 
-/// Видео-латент с метаданными латентной сетки (нужны downstream-нодам для
-/// pixel_coords/audio_token_count без пере-вычисления из UI-полей).
-#[derive(Clone, Debug)]
-pub struct LtxVideoLatent {
-    pub tensor: synaptix_core::tensor::Tensor,
-    pub fp: usize,
-    pub hp: usize,
-    pub wp: usize,
-    pub fps: f64,
-}
 
 /// Кадры RGBA после видео-VAE. Один экземпляр шарится Arc'ами между
 /// превью (FramesView) и Save-нодой. TODO: spool на диск для часовых
 /// FullHD-видео.
-pub struct LtxFrames {
+pub struct MemFrames {
     pub frames: Arc<Vec<Arc<syngui::video::VideoFrame>>>,
     pub width: u32,
     pub height: u32,
     pub fps: f64,
 }
 
-impl std::fmt::Debug for LtxFrames {
+impl std::fmt::Debug for MemFrames {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "LtxFrames({}x{}, {} кадров, {:.1}fps)", self.width, self.height, self.frames.len(), self.fps)
+        write!(f, "MemFrames({}x{}, {} кадров, {:.1}fps)", self.width, self.height, self.frames.len(), self.fps)
     }
 }
 
@@ -1145,34 +1043,6 @@ impl std::fmt::Debug for PortValue {
                         "Data(AceStep::Phase1Metas{{bpm={:?}, key={:?}, ts={:?}, dur={:?}, lang={:?}}})",
                         m.bpm, m.keyscale, m.timesignature, m.duration, m.language
                     )
-                }
-                DataBlob::Ltx(LtxBlob::Model(h)) => {
-                    write!(f, "Data(Ltx::Model({:?}))", h.model_path.file_name().unwrap_or_default())
-                }
-                DataBlob::Ltx(LtxBlob::VideoEncoding(t)) => {
-                    write!(f, "Data(Ltx::VideoEncoding{:?})", t.dims())
-                }
-                DataBlob::Ltx(LtxBlob::AudioEncoding(t)) => {
-                    write!(f, "Data(Ltx::AudioEncoding{:?})", t.dims())
-                }
-                DataBlob::Ltx(LtxBlob::Nag { encoding, scale, alpha, tau }) => {
-                    write!(f, "Data(Ltx::Nag{:?} s={scale} a={alpha} t={tau})", encoding.dims())
-                }
-                DataBlob::Ltx(LtxBlob::VideoLatent(l)) => {
-                    write!(f, "Data(Ltx::VideoLatent{:?} {}x{}x{} {:.0}fps)", l.tensor.dims(), l.fp, l.hp, l.wp, l.fps)
-                }
-                DataBlob::Ltx(LtxBlob::AudioTokens(t)) => {
-                    write!(f, "Data(Ltx::AudioTokens{:?})", t.dims())
-                }
-                DataBlob::Ltx(LtxBlob::Frames(fr)) => write!(f, "Data(Ltx::{:?})", fr),
-                DataBlob::Ltx(LtxBlob::ImageCond { image, strength, frame_idx }) => {
-                    write!(f, "Data(Ltx::ImageCond{:?} s={strength} f={frame_idx})", image.dims())
-                }
-                DataBlob::Ltx(LtxBlob::VideoInput(p)) => {
-                    write!(f, "Data(Ltx::VideoInput({:?}))", p.file_name().unwrap_or_default())
-                }
-                DataBlob::Ltx(LtxBlob::AudioInput(p)) => {
-                    write!(f, "Data(Ltx::AudioInput({:?}))", p.file_name().unwrap_or_default())
                 }
                 DataBlob::Image(img) => write!(f, "Data({img:?})"),
                 DataBlob::SynModel(h) => {
@@ -1329,16 +1199,6 @@ impl PortValue {
         }
     }
 
-    /// Извлечь хэндл LTX-чекпойнта (выход Checkpoint-ноды).
-    pub fn as_ltx_model(&self) -> Option<Arc<LtxModelHandle>> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::Model(h)) => Some(h.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
     pub fn as_syn_model(&self) -> Option<Arc<SynModelHandle>> {
         match self {
@@ -1386,108 +1246,23 @@ impl PortValue {
 
 
 
-    /// Извлечь видео-контекст `[1, T_txt, 4096]`.
-    pub fn as_ltx_video_encoding(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::VideoEncoding(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь аудио-контекст `[1, T_txt, 2048]`.
-    pub fn as_ltx_audio_encoding(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::AudioEncoding(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь NAG-конфиг (encoding + scale/alpha/tau).
-    pub fn as_ltx_nag(&self) -> Option<(synaptix_core::tensor::Tensor, f32, f32, f32)> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::Nag { encoding, scale, alpha, tau }) => {
-                    Some((encoding.clone(), *scale, *alpha, *tau))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь видео-латент с метаданными сетки.
-    pub fn as_ltx_video_latent(&self) -> Option<LtxVideoLatent> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::VideoLatent(l)) => Some(l.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь аудио-токены `[1, Fa, 128]`.
-    pub fn as_ltx_audio_tokens(&self) -> Option<synaptix_core::tensor::Tensor> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::AudioTokens(t)) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
     /// Извлечь декодированные кадры (выход видео-VAE).
-    pub fn as_ltx_frames(&self) -> Option<Arc<LtxFrames>> {
+    pub fn as_mem_frames(&self) -> Option<Arc<MemFrames>> {
         match self {
             PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::Frames(fr)) => Some(fr.clone()),
                 _ => None,
             },
             _ => None,
         }
     }
 
-    /// Извлечь путь исходного видео (v2v: retake и т.п.).
-    pub fn as_ltx_video_input(&self) -> Option<PathBuf> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::VideoInput(p)) => Some(p.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь путь аудио (lipdub-речь).
-    pub fn as_ltx_audio_input(&self) -> Option<PathBuf> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::AudioInput(p)) => Some(p.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
-    /// Извлечь image-conditioning (изображение + сила + пиксель-кадр).
-    pub fn as_ltx_image_cond(&self) -> Option<(synaptix_core::tensor::Tensor, f32, usize)> {
-        match self {
-            PortValue::Data(b) => match b.as_ref() {
-                DataBlob::Ltx(LtxBlob::ImageCond { image, strength, frame_idx }) => {
-                    Some((image.clone(), *strength, *frame_idx))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 
     /// True если значение пустое (нет связи или explicit Empty).
     pub fn is_empty(&self) -> bool {
@@ -2159,7 +1934,7 @@ pub enum NodeRuntime {
         out_version: RwSignal<u32>,
         /// Кадры из памяти (вход `frames`, напр. LTX VAE Decode). Если есть —
         /// memory-режим: `FramesView` ведёт видео, файл игнорируется.
-        frames_in: Arc<Mutex<Option<Arc<LtxFrames>>>>,
+        frames_in: Arc<Mutex<Option<Arc<MemFrames>>>>,
         /// Аудио из памяти (вход `audio`, напр. LTX Audio Decode) для
         /// memory-режима.
         audio_in: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
@@ -2170,185 +1945,6 @@ pub enum NodeRuntime {
         preview_version: RwSignal<u32>,
     },
 
-    LtxCheckpoint {
-        model_path: RwSignal<Option<PathBuf>>,
-        gemma_dir: RwSignal<Option<PathBuf>>,
-        upscaler_path: RwSignal<Option<PathBuf>>,
-        /// Каталог Depth Anything V2 (IC-LoRA, control=depth).
-        depth_model_path: RwSignal<Option<PathBuf>>,
-        lora_path: RwSignal<Option<PathBuf>>,
-        lora_strength: RwSignal<f32>,
-        device_idx: RwSignal<usize>,
-        quant_dit_idx: RwSignal<usize>,
-        quant_enc_idx: RwSignal<usize>,
-        compute_idx: RwSignal<usize>,
-        /// Держать DiT в VRAM после прогона (внимание: на 24 ГБ рядом с
-        /// VAE-decode может не хватить памяти — осознанный опт-ин).
-        resident: RwSignal<bool>,
-        /// Кэш Arc-хэндла: новый Arc только при смене параметров (иначе
-        /// ptr_eq в PortValue видел бы «новое» значение каждый evaluate).
-        handle_cache: Arc<Mutex<Option<Arc<LtxModelHandle>>>>,
-    },
-    LtxTextEncoder {
-        prompt_field: RwSignal<String>,
-        /// Держать Gemma загруженной после encode (strong-ref в gemma_keep).
-        /// ВЫКЛ по умолчанию: 12-24GB Gemma + DiT-активации не влезают в
-        /// 24GB VRAM.
-        keep_gemma: RwSignal<bool>,
-        /// Strong-ref на Gemma при keep_gemma=true (продлевает жизнь
-        /// Weak-кэша `nodes::ltx::shared::GEMMA_CACHE`).
-        gemma_keep: Arc<Mutex<Option<Arc<synaptix_llm_gemma3::pipeline::GemmaPipeline>>>>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        v_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxNagPrompt {
-        prompt_field: RwSignal<String>,
-        scale: RwSignal<f32>,
-        alpha: RwSignal<f32>,
-        tau: RwSignal<f32>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxSamplerStage1 {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        fps_idx: RwSignal<usize>,
-        /// 0 = детерминированный дефолт synaptix (парити с CLI).
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxUpscale {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxSamplerStage2 {
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxVaeDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        frames_out: Arc<Mutex<Option<Arc<LtxFrames>>>>,
-        output_version: RwSignal<u32>,
-        /// Бамп = перезапуск превью в body (replay декодированных кадров).
-        preview_version: RwSignal<u32>,
-    },
-    LtxAudioDecode {
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        out: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxVideoSave {
-        path: RwSignal<String>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        status: RwSignal<SaveStatus>,
-    },
-    LtxImage {
-        image_path: RwSignal<Option<PathBuf>>,
-        strength: RwSignal<f32>,
-        /// Пиксель-кадр conditioning: 0 = i2v (replace кадра 0), >0 = keyframe
-        /// (append на этом пиксель-кадре).
-        frame_idx: RwSignal<u32>,
-        error: RwSignal<Option<String>>,
-        /// Кэш: (путь, Arc<image-тензор [3,H,W]>) — грузим один раз, новый
-        /// Arc только при смене пути (ptr_eq стабилен в PortValue).
-        cache: Arc<Mutex<Option<(PathBuf, synaptix_core::tensor::Tensor)>>>,
-    },
-    LtxVideoInput {
-        video_path: RwSignal<Option<PathBuf>>,
-    },
-    LtxRetake {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        fps_idx: RwSignal<usize>,
-        retake_start: RwSignal<f32>,
-        retake_end: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxIcLora {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        fps_idx: RwSignal<usize>,
-        downscale: RwSignal<u32>,
-        ref_strength: RwSignal<f32>,
-        /// Control-препроцессинг ref-видео: 0=none, 1=canny, 2=depth.
-        control_idx: RwSignal<usize>,
-        canny_low: RwSignal<f32>,
-        canny_high: RwSignal<f32>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxAudioInput {
-        audio_path: RwSignal<Option<PathBuf>>,
-    },
-    LtxLipdub {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        fps_idx: RwSignal<usize>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
-    LtxA2V {
-        width: RwSignal<u32>,
-        height: RwSignal<u32>,
-        duration_seconds: RwSignal<f32>,
-        fps_idx: RwSignal<usize>,
-        seed: RwSignal<u64>,
-        running: RwSignal<bool>,
-        error: RwSignal<Option<String>>,
-        progress_pct: RwSignal<f32>,
-        cancel: Arc<std::sync::atomic::AtomicBool>,
-        v_out: Arc<Mutex<Option<LtxVideoLatent>>>,
-        a_out: Arc<Mutex<Option<synaptix_core::tensor::Tensor>>>,
-        output_version: RwSignal<u32>,
-    },
     ImageLoad {
         path: RwSignal<Option<PathBuf>>,
         error: RwSignal<Option<String>>,
@@ -2383,19 +1979,6 @@ impl NodeRuntime {
             | R::Llm { error, .. }
             | R::AceStepVaeEncode { error, .. }
             | R::AceStepGenerate { error, .. }
-            | R::LtxTextEncoder { error, .. }
-            | R::LtxNagPrompt { error, .. }
-            | R::LtxSamplerStage1 { error, .. }
-            | R::LtxUpscale { error, .. }
-            | R::LtxSamplerStage2 { error, .. }
-            | R::LtxVaeDecode { error, .. }
-            | R::LtxAudioDecode { error, .. }
-            | R::LtxVideoSave { error, .. }
-            | R::LtxImage { error, .. }
-            | R::LtxRetake { error, .. }
-            | R::LtxIcLora { error, .. }
-            | R::LtxLipdub { error, .. }
-            | R::LtxA2V { error, .. }
             | R::ImageLoad { error, .. }
             | R::ImageSave { error, .. } => Some(*error),
             R::Flow(f) => Some(f.error),
@@ -2403,42 +1986,12 @@ impl NodeRuntime {
         }
     }
 
-    /// Пустые ОБЯЗАТЕЛЬНЫЕ пути моделей ноды — pre-check агентского прогона
-    /// (`pipeline_run::prepare`): запускать граф с незаполненным чекпойнтом
-    /// бессмысленно, нода упадёт. ACE-Step здесь не проверяется — его
-    /// чекпойнт умеет fallback на глобальные настройки бандлов; LoRA и
-    /// LTX-upscaler опциональны; encoder H3 подхватывается из бандла.
-    /// Пуст ли `upscaler_path` LTX-чекпойнта. Отдельно от
-    /// [`missing_model_paths`](Self::missing_model_paths): upscaler нужен
-    /// только графам со стадией `LtxUpscale`, и требовать его от всех
-    /// (retake, a2v, lipdub) было бы ложной тревогой.
-    pub fn ltx_upscaler_missing(&self) -> bool {
-        matches!(
-            self,
-            NodeRuntime::LtxCheckpoint { upscaler_path, .. }
-                if upscaler_path.get_untracked().is_none()
-        )
-    }
 
     pub fn missing_model_paths(&self) -> Vec<&'static str> {
         use NodeRuntime as R;
         let empty = |p: &RwSignal<Option<PathBuf>>| p.get_untracked().is_none();
         match self {
-            R::LtxCheckpoint {
-                model_path,
-                gemma_dir,
-                ..
-            } => {
-                let mut v = Vec::new();
-                if empty(model_path) {
-                    v.push("model_path");
-                }
-                if empty(gemma_dir) {
-                    v.push("gemma_dir");
-                }
-                v
-            }
-            | R::SynCheckpoint { model_path, .. } => {
+            R::SynCheckpoint { model_path, .. } => {
                 if empty(model_path) {
                     vec!["model_path"]
                 } else {
@@ -2455,16 +2008,7 @@ impl NodeRuntime {
     pub fn run_progress_signal(&self) -> Option<RwSignal<f32>> {
         use NodeRuntime as R;
         match self {
-            R::AceStepGenerate { progress_pct, .. }
-            | R::LtxTextEncoder { progress_pct, .. }
-            | R::LtxSamplerStage1 { progress_pct, .. }
-            | R::LtxSamplerStage2 { progress_pct, .. }
-            | R::LtxVaeDecode { progress_pct, .. }
-            | R::LtxVideoSave { progress_pct, .. }
-            | R::LtxRetake { progress_pct, .. }
-            | R::LtxIcLora { progress_pct, .. }
-            | R::LtxLipdub { progress_pct, .. }
-            | R::LtxA2V { progress_pct, .. } => Some(*progress_pct),
+            R::AceStepGenerate { progress_pct, .. } => Some(*progress_pct),
             _ => None,
         }
     }
@@ -2477,12 +2021,6 @@ impl NodeRuntime {
         match self {
             R::SaveToFile { cancel, .. }
             | R::Llm { cancel, .. }
-            | R::LtxSamplerStage1 { cancel, .. }
-            | R::LtxSamplerStage2 { cancel, .. }
-            | R::LtxRetake { cancel, .. }
-            | R::LtxIcLora { cancel, .. }
-            | R::LtxLipdub { cancel, .. }
-            | R::LtxA2V { cancel, .. }
             | R::AceStepVaeEncode { cancel, .. }
             | R::AceStepGenerate { cancel, .. }
             | R::Yue2Generate { cancel, .. }
@@ -2636,58 +2174,6 @@ impl std::fmt::Debug for NodeRuntime {
             NodeRuntime::FfmpegPlayer { is_playing, current_path, .. } => {
                 let path = current_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
                 write!(f, "NodeRuntime::FfmpegPlayer{{path={path}, playing={}}}", is_playing.get_untracked())
-            }
-            NodeRuntime::LtxCheckpoint { model_path, .. } => {
-                let path = model_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::LtxCheckpoint{{path={path}}}")
-            }
-            NodeRuntime::LtxTextEncoder { running, .. } => {
-                write!(f, "NodeRuntime::LtxTextEncoder{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxNagPrompt { running, .. } => {
-                write!(f, "NodeRuntime::LtxNagPrompt{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxSamplerStage1 { running, .. } => {
-                write!(f, "NodeRuntime::LtxSamplerStage1{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxUpscale { running, .. } => {
-                write!(f, "NodeRuntime::LtxUpscale{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxSamplerStage2 { running, .. } => {
-                write!(f, "NodeRuntime::LtxSamplerStage2{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxVaeDecode { running, .. } => {
-                write!(f, "NodeRuntime::LtxVaeDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxAudioDecode { running, .. } => {
-                write!(f, "NodeRuntime::LtxAudioDecode{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxVideoSave { running, .. } => {
-                write!(f, "NodeRuntime::LtxVideoSave{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxImage { image_path, .. } => {
-                let p = image_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::LtxImage{{path={p}}}")
-            }
-            NodeRuntime::LtxVideoInput { video_path } => {
-                let p = video_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::LtxVideoInput{{path={p}}}")
-            }
-            NodeRuntime::LtxRetake { running, .. } => {
-                write!(f, "NodeRuntime::LtxRetake{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxIcLora { running, .. } => {
-                write!(f, "NodeRuntime::LtxIcLora{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxAudioInput { audio_path } => {
-                let p = audio_path.get_untracked().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string());
-                write!(f, "NodeRuntime::LtxAudioInput{{path={p}}}")
-            }
-            NodeRuntime::LtxLipdub { running, .. } => {
-                write!(f, "NodeRuntime::LtxLipdub{{running={}}}", running.get_untracked())
-            }
-            NodeRuntime::LtxA2V { running, .. } => {
-                write!(f, "NodeRuntime::LtxA2V{{running={}}}", running.get_untracked())
             }
             NodeRuntime::ImageLoad { path, .. } => {
                 let p = path.get_untracked().map(|p| p.display().to_string()).unwrap_or_default();

@@ -7,28 +7,43 @@
 //! которую уже можно править.
 
 use super::model::{
+
     AceStepCheckpointStateData,
+
     AceStepGenerateStateData,
+
     AceStepVaeStateData,
+
     ConnData,
+
     Yue2CheckpointStateData,
+
     Yue2GenerateStateData,
+
     Yue2TranscribeStateData,
+
     FieldValueData,
-    LtxSamplerStage1StateData,
+
     NodeData,
+
     NodeStateData,
+
     PointData,
+
     Template,
+
     TemplateKind,
+
     TextViewStateData,
+
     VibeVoiceStateData,
+
 };
 use crate::pages::node_editor::types::NodeKind;
 
 /// Все встроенные шаблоны. Порядок ⇒ порядок отображения в панели.
 /// Шаблоны со стадиями моделей в службе (FLUX.1, FLUX.2, Qwen-Image,
-/// SDXL, MiniMax-H3) — JSON: переведены из прежних родных нод
+/// SDXL, MiniMax-H3, LTX-2.3) — JSON: переведены из прежних родных нод
 /// [`super::native`].
 const STAGE_TEMPLATES: &[(&str, &str)] = &[
     ("builtin-flux-image-to-image", include_str!("builtin/builtin-flux-image-to-image.json")),
@@ -44,7 +59,13 @@ const STAGE_TEMPLATES: &[(&str, &str)] = &[
     ("builtin-h3-ref2va", include_str!("builtin/builtin-h3-ref2va.json")),
     ("builtin-h3-text-to-video", include_str!("builtin/builtin-h3-text-to-video.json")),
     ("builtin-h3-turbo", include_str!("builtin/builtin-h3-turbo.json")),
+    ("builtin-ltx-a2v", include_str!("builtin/builtin-ltx-a2v.json")),
     ("builtin-ltx-flux-keyframe", include_str!("builtin/builtin-ltx-flux-keyframe.json")),
+    ("builtin-ltx-ic-lora", include_str!("builtin/builtin-ltx-ic-lora.json")),
+    ("builtin-ltx-image-to-video", include_str!("builtin/builtin-ltx-image-to-video.json")),
+    ("builtin-ltx-lipdub", include_str!("builtin/builtin-ltx-lipdub.json")),
+    ("builtin-ltx-retake", include_str!("builtin/builtin-ltx-retake.json")),
+    ("builtin-ltx-text-to-video", include_str!("builtin/builtin-ltx-text-to-video.json")),
     ("builtin-qwen-image-edit", include_str!("builtin/builtin-qwen-image-edit.json")),
     ("builtin-qwen-image-multi-edit", include_str!("builtin/builtin-qwen-image-multi-edit.json")),
     ("builtin-qwen-image21-edit", include_str!("builtin/builtin-qwen-image21-edit.json")),
@@ -94,12 +115,12 @@ pub fn all() -> Vec<Template> {
         stage("builtin-h3-first-frame"),
         stage("builtin-h3-first-last"),
         stage("builtin-h3-ref2va"),
-        ltx_text_to_video_template(),
-        ltx_image_to_video_template(),
-        ltx_retake_template(),
-        ltx_ic_lora_template(),
-        ltx_lipdub_template(),
-        ltx_a2v_template(),
+        stage("builtin-ltx-text-to-video"),
+        stage("builtin-ltx-image-to-video"),
+        stage("builtin-ltx-retake"),
+        stage("builtin-ltx-ic-lora"),
+        stage("builtin-ltx-lipdub"),
+        stage("builtin-ltx-a2v"),
         stage("builtin-flux-text-to-image"),
         stage("builtin-flux-image-to-image"),
         stage("builtin-flux2-text-to-image"),
@@ -158,361 +179,12 @@ pub fn all() -> Vec<Template> {
 
 
 
-fn ltx_a2v_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "a dynamic music video, vibrant motion synced to the beat".into(),
-        width: 280.0,
-        height: 90.0,
-    });
-    Template {
-        id: "builtin-ltx-a2v".into(),
-        builtin: true,
-        name: "LTX: Audio to Video".into(),
-        description:
-            "Аудио (Audio Input) фиксирует звуковую дорожку, промпт задаёт сцену → \
-             Text Encoder → A2V (stage1 video-denoise при frozen-аудио → upscale ×2 → \
-             stage2 refine) → VAE Decode + Audio Decode → Видеоплеер / Save. В \
-             Checkpoint укажите чекпойнт LTX-2.3, Gemma и upscaler; в Audio Input — звук."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 560.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 360.0),
-            node_plain(14, NodeKind::LtxAudioInput, 480.0, 60.0),
-            node_with_state(
-                5,
-                NodeKind::LtxA2V,
-                920.0,
-                160.0,
-                NodeStateData::LtxA2V(crate::templates::model::LtxA2VStateData::default()),
-            ),
-            node_plain(8, NodeKind::LtxVaeDecode, 1380.0, 80.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1380.0, 440.0),
-            node_plain(11, NodeKind::LtxVideoSave, 1820.0, 60.0),
-            node_plain(12, NodeKind::FfmpegPlayer, 1820.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 14, from_port: "audio".into(), to_node: 5, to_port: "audio".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn ltx_lipdub_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "a person speaking to the camera".into(),
-        width: 280.0,
-        height: 80.0,
-    });
-    Template {
-        id: "builtin-ltx-lipdub".into(),
-        builtin: true,
-        name: "LTX: Lipdub".into(),
-        description:
-            "Reference-видео (лицо) + речь (Audio Input) → синхрон губ под речь: \
-             Text Encoder → Lipdub (stage1 A/V append ref+audio → upscale → stage2 \
-             refine) → VAE Decode + Audio Decode → Видеоплеер / Save. В Checkpoint \
-             укажите чекпойнт LTX-2.3, Gemma, upscaler и lipdub-IC-LoRA (поле LoRA)."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 620.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 420.0),
-            node_plain(13, NodeKind::LtxVideoInput, 480.0, 60.0),
-            node_plain(14, NodeKind::LtxAudioInput, 480.0, 220.0),
-            node_with_state(
-                5,
-                NodeKind::LtxLipdub,
-                920.0,
-                160.0,
-                NodeStateData::LtxLipdub(crate::templates::model::LtxLipdubStateData::default()),
-            ),
-            node_plain(8, NodeKind::LtxVaeDecode, 1380.0, 80.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1380.0, 440.0),
-            node_plain(11, NodeKind::LtxVideoSave, 1820.0, 60.0),
-            node_plain(12, NodeKind::FfmpegPlayer, 1820.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 13, from_port: "video".into(), to_node: 5, to_port: "ref_video".into() },
-            ConnData { from_node: 14, from_port: "audio".into(), to_node: 5, to_port: "audio".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn ltx_ic_lora_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "a vibrant scene, cinematic lighting".into(),
-        width: 280.0,
-        height: 90.0,
-    });
-    Template {
-        id: "builtin-ltx-ic-lora".into(),
-        builtin: true,
-        name: "LTX: IC-LoRA".into(),
-        description:
-            "Reference-видео (LTX Video Input) задаёт структуру/движение, промпт — \
-             содержание → Text Encoder → IC-LoRA (append ref-control) → VAE Decode + \
-             Audio Decode → Видеоплеер / Save. В Checkpoint укажите чекпойнт LTX-2.3, \
-             Gemma и IC-LoRA-адаптер (поле LoRA); в Video Input — reference-видео."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 560.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 360.0),
-            node_plain(13, NodeKind::LtxVideoInput, 480.0, 60.0),
-            node_with_state(
-                5,
-                NodeKind::LtxIcLora,
-                920.0,
-                160.0,
-                NodeStateData::LtxIcLora(crate::templates::model::LtxIcLoraStateData::default()),
-            ),
-            node_plain(8, NodeKind::LtxVaeDecode, 1380.0, 80.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1380.0, 440.0),
-            node_plain(11, NodeKind::LtxVideoSave, 1820.0, 60.0),
-            node_plain(12, NodeKind::FfmpegPlayer, 1820.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 13, from_port: "video".into(), to_node: 5, to_port: "ref_video".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn ltx_retake_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "same scene, smooth natural motion".into(),
-        width: 280.0,
-        height: 90.0,
-    });
-    Template {
-        id: "builtin-ltx-retake".into(),
-        builtin: true,
-        name: "LTX: Retake".into(),
-        description:
-            "Исходное видео (LTX Video Input) + промпт → Text Encoder → Retake \
-             (регенерация региона [начало,конец] сек, остальное frozen) → VAE Decode \
-             + Audio Decode → Видеоплеер / Save. Одностадийно (без upscale). В \
-             Checkpoint укажите чекпойнт LTX-2.3 и Gemma; в Video Input — видео."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 560.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 360.0),
-            node_plain(13, NodeKind::LtxVideoInput, 480.0, 60.0),
-            node_with_state(
-                5,
-                NodeKind::LtxRetake,
-                920.0,
-                160.0,
-                NodeStateData::LtxRetake(crate::templates::model::LtxRetakeStateData::default()),
-            ),
-            node_plain(8, NodeKind::LtxVaeDecode, 1380.0, 80.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1380.0, 440.0),
-            node_plain(11, NodeKind::LtxVideoSave, 1820.0, 60.0),
-            node_plain(12, NodeKind::FfmpegPlayer, 1820.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 13, from_port: "video".into(), to_node: 5, to_port: "video".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
-
-fn ltx_image_to_video_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "the scene comes alive, gentle camera motion, natural light".into(),
-        width: 280.0,
-        height: 100.0,
-    });
-    Template {
-        id: "builtin-ltx-image-to-video".into(),
-        builtin: true,
-        name: "LTX: Image to Video".into(),
-        description:
-            "Изображение (кадр 0) + промпт → Text Encoder → Sampler Stage1 (A/V, image-cond, \
-             NAG) → Upscale ×2 → Stage2-refine → VAE Decode + Audio Decode → Видеоплеер / Save. \
-             В Checkpoint укажите чекпойнт LTX-2.3, Gemma и upscaler; в LTX Image — картинку."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 560.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 420.0),
-            node_plain(4, NodeKind::LtxNagPrompt, 480.0, 60.0),
-            node_plain(13, NodeKind::LtxImage, 480.0, 700.0),
-            node_with_state(
-                5,
-                NodeKind::LtxSamplerStage1,
-                920.0,
-                200.0,
-                NodeStateData::LtxSamplerStage1(LtxSamplerStage1StateData::default()),
-            ),
-            node_plain(6, NodeKind::LtxUpscale, 1380.0, 60.0),
-            node_plain(7, NodeKind::LtxSamplerStage2, 1380.0, 280.0),
-            node_plain(8, NodeKind::LtxVaeDecode, 1840.0, 120.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1840.0, 480.0),
-            node_plain(11, NodeKind::LtxVideoSave, 2280.0, 60.0),
-            node_plain(12, NodeKind::FfmpegPlayer, 2280.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 4, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 6, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 7, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 4, from_port: "nag".into(), to_node: 5, to_port: "nag".into() },
-            ConnData { from_node: 13, from_port: "image_cond".into(), to_node: 5, to_port: "image_cond".into() },
-            ConnData { from_node: 13, from_port: "image_cond".into(), to_node: 7, to_port: "image_cond".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 6, to_port: "video_latent".into() },
-            ConnData { from_node: 6, from_port: "video_latent".into(), to_node: 7, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 7, to_port: "audio_tokens".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 7, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 7, to_port: "audio_encoding".into() },
-            ConnData { from_node: 7, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 7, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
 
 
-fn ltx_text_to_video_template() -> Template {
-    let prompt_state = NodeStateData::TextView(TextViewStateData {
-        output_text: "a woman in a cozy cafe, talking warmly to the camera, soft daylight, \
-                      gentle background chatter"
-            .into(),
-        width: 280.0,
-        height: 120.0,
-    });
-    Template {
-        id: "builtin-ltx-text-to-video".into(),
-        builtin: true,
-        name: "LTX: Text to Video".into(),
-        description:
-            "Промпт → Text Encoder (Gemma) → Sampler Stage1 (A/V, NAG) → Upscale ×2 → \
-             Stage2-refine → VAE Decode + Audio Decode → Video Save (mp4) и Видеоплеер \
-             (кадры+звук из памяти, параллельно Save). В Checkpoint-ноде укажите \
-             чекпойнт LTX-2.3, Gemma и upscaler — .syn-бандлы из каталога моделей \
-             (или .safetensors + HF-каталог Gemma). Чекпойнт нужен ИМЕННО \
-             distilled (ltx-2.3-22b-distilled-*): стадии идут по \
-             distilled-расписанию 8+3 шага, на dev-модели видео выйдет размытым."
-                .into(),
-        kind: TemplateKind::Full,
-        nodes: vec![
-            node_plain(1, NodeKind::LtxCheckpoint, 60.0, 60.0),
-            node_with_state(2, NodeKind::TextView, 60.0, 560.0, prompt_state),
-            node_plain(3, NodeKind::LtxTextEncoder, 480.0, 420.0),
-            node_plain(4, NodeKind::LtxNagPrompt, 480.0, 60.0),
-            node_with_state(
-                5,
-                NodeKind::LtxSamplerStage1,
-                920.0,
-                200.0,
-                NodeStateData::LtxSamplerStage1(LtxSamplerStage1StateData::default()),
-            ),
-            node_plain(6, NodeKind::LtxUpscale, 1380.0, 60.0),
-            node_plain(7, NodeKind::LtxSamplerStage2, 1380.0, 280.0),
-            node_plain(8, NodeKind::LtxVaeDecode, 1840.0, 120.0),
-            node_plain(9, NodeKind::LtxAudioDecode, 1840.0, 480.0),
-            node_plain(11, NodeKind::LtxVideoSave, 2280.0, 60.0),
-            // Видеоплеер из памяти (кадры VAE Decode + аудио) — параллельно Save.
-            node_plain(12, NodeKind::FfmpegPlayer, 2280.0, 320.0),
-        ],
-        connections: vec![
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 3, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 4, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 5, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 6, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 7, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 8, to_port: "model".into() },
-            ConnData { from_node: 1, from_port: "model".into(), to_node: 9, to_port: "model".into() },
-            ConnData { from_node: 2, from_port: "out".into(), to_node: 3, to_port: "prompt".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 5, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 5, to_port: "audio_encoding".into() },
-            ConnData { from_node: 4, from_port: "nag".into(), to_node: 5, to_port: "nag".into() },
-            ConnData { from_node: 5, from_port: "video_latent".into(), to_node: 6, to_port: "video_latent".into() },
-            ConnData { from_node: 6, from_port: "video_latent".into(), to_node: 7, to_port: "video_latent".into() },
-            ConnData { from_node: 5, from_port: "audio_tokens".into(), to_node: 7, to_port: "audio_tokens".into() },
-            ConnData { from_node: 3, from_port: "video_encoding".into(), to_node: 7, to_port: "video_encoding".into() },
-            ConnData { from_node: 3, from_port: "audio_encoding".into(), to_node: 7, to_port: "audio_encoding".into() },
-            ConnData { from_node: 7, from_port: "video_latent".into(), to_node: 8, to_port: "video_latent".into() },
-            ConnData { from_node: 7, from_port: "audio_tokens".into(), to_node: 9, to_port: "audio_tokens".into() },
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 11, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 11, to_port: "audio".into() },
-            // Видеоплеер из памяти — параллельно Save (кадры + аудио).
-            ConnData { from_node: 8, from_port: "frames".into(), to_node: 12, to_port: "frames".into() },
-            ConnData { from_node: 9, from_port: "audio".into(), to_node: 12, to_port: "audio".into() },
-        ],
-        viewport: None,
-    }
-}
+
+
+
+
 
 fn empty_template() -> Template {
     Template {

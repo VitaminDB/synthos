@@ -246,19 +246,6 @@ pub enum NodeStateData {
     Yue2Transcribe(Yue2TranscribeStateData),
     FfmpegPlayer(FfmpegPlayerStateData),
     SynCheckpoint(SynCheckpointStateData),
-    LtxCheckpoint(LtxCheckpointStateData),
-    LtxTextEncoder(LtxTextEncoderStateData),
-    LtxNagPrompt(LtxNagPromptStateData),
-    LtxSamplerStage1(LtxSamplerStage1StateData),
-    LtxSamplerStage2(LtxSamplerStage2StateData),
-    LtxVideoSave(LtxVideoSaveStateData),
-    LtxImage(LtxImageStateData),
-    LtxVideoInput(LtxVideoInputStateData),
-    LtxRetake(LtxRetakeStateData),
-    LtxIcLora(LtxIcLoraStateData),
-    LtxAudioInput(LtxAudioInputStateData),
-    LtxLipdub(LtxLipdubStateData),
-    LtxA2V(LtxA2VStateData),
     ImageLoad(ImageLoadStateData),
     ImageSave(ImageSaveStateData),
 }
@@ -315,182 +302,21 @@ pub struct ImageSaveStateData {
     pub path: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxA2VStateData {
-    #[serde(default = "default_ltx_width")]
-    pub width: u32,
-    #[serde(default = "default_ltx_height")]
-    pub height: u32,
-    #[serde(default = "default_ltx_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub fps_idx: usize,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for LtxA2VStateData {
-    fn default() -> Self {
-        Self {
-            width: default_ltx_width(),
-            height: default_ltx_height(),
-            duration_seconds: default_ltx_duration(),
-            fps_idx: 0,
-            seed: 0,
-        }
-    }
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxAudioInputStateData {
-    #[serde(default)]
-    pub audio_path: Option<String>,
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxLipdubStateData {
-    #[serde(default = "default_ltx_width")]
-    pub width: u32,
-    #[serde(default = "default_ltx_height")]
-    pub height: u32,
-    #[serde(default = "default_ltx_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub fps_idx: usize,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for LtxLipdubStateData {
-    fn default() -> Self {
-        Self {
-            width: default_ltx_width(),
-            height: default_ltx_height(),
-            duration_seconds: default_ltx_duration(),
-            fps_idx: 0,
-            seed: 0,
-        }
-    }
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxIcLoraStateData {
-    #[serde(default = "default_ltx_width")]
-    pub width: u32,
-    #[serde(default = "default_ltx_height")]
-    pub height: u32,
-    #[serde(default = "default_ltx_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub fps_idx: usize,
-    #[serde(default = "default_ltx_downscale")]
-    pub downscale: u32,
-    #[serde(default = "default_ltx_image_strength")]
-    pub ref_strength: f32,
-    #[serde(default)]
-    pub control_idx: usize,
-    #[serde(default = "default_ltx_canny_low")]
-    pub canny_low: f32,
-    #[serde(default = "default_ltx_canny_high")]
-    pub canny_high: f32,
-    /// Legacy: каталог depth-модели жил в ноде, теперь — в LTX Checkpoint.
-    /// Читается только для миграции, не пишется.
-    #[serde(default, skip_serializing)]
-    pub depth_model_path: Option<String>,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for LtxIcLoraStateData {
-    fn default() -> Self {
-        Self {
-            width: default_ltx_width(),
-            height: default_ltx_height(),
-            duration_seconds: default_ltx_duration(),
-            fps_idx: 0,
-            downscale: default_ltx_downscale(),
-            ref_strength: default_ltx_image_strength(),
-            control_idx: 0,
-            canny_low: default_ltx_canny_low(),
-            canny_high: default_ltx_canny_high(),
-            depth_model_path: None,
-            seed: 0,
-        }
-    }
-}
 
-fn default_ltx_canny_low() -> f32 {
-    0.1
-}
-fn default_ltx_canny_high() -> f32 {
-    0.3
-}
 
-fn default_ltx_downscale() -> u32 {
-    2
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxVideoInputStateData {
-    #[serde(default)]
-    pub video_path: Option<String>,
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxRetakeStateData {
-    #[serde(default = "default_ltx_width")]
-    pub width: u32,
-    #[serde(default = "default_ltx_height")]
-    pub height: u32,
-    #[serde(default = "default_ltx_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub fps_idx: usize,
-    #[serde(default)]
-    pub retake_start: f32,
-    #[serde(default = "default_ltx_retake_end")]
-    pub retake_end: f32,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for LtxRetakeStateData {
-    fn default() -> Self {
-        Self {
-            width: default_ltx_width(),
-            height: default_ltx_height(),
-            duration_seconds: default_ltx_duration(),
-            fps_idx: 0,
-            retake_start: 0.0,
-            retake_end: default_ltx_retake_end(),
-            seed: 0,
-        }
-    }
-}
 
-fn default_ltx_retake_end() -> f32 {
-    2.0
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxImageStateData {
-    #[serde(default)]
-    pub image_path: Option<String>,
-    #[serde(default = "default_ltx_image_strength")]
-    pub strength: f32,
-    #[serde(default)]
-    pub frame_idx: u32,
-}
 
-impl Default for LtxImageStateData {
-    fn default() -> Self {
-        Self { image_path: None, strength: default_ltx_image_strength(), frame_idx: 0 }
-    }
-}
 
-fn default_ltx_image_strength() -> f32 {
-    1.0
-}
 
 /// State универсальной «Syn Checkpoint»-ноды: путь + предпочтения
 /// device/storage/compute (индекс 0 = Auto) + резидентность.
@@ -522,39 +348,6 @@ impl Default for SynCheckpointStateData {
     }
 }
 
-/// State Checkpoint-ноды LTX-2.3: пути подмоделей + device/quant/compute.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxCheckpointStateData {
-    #[serde(default)]
-    pub model_path: Option<String>,
-    #[serde(default)]
-    pub gemma_dir: Option<String>,
-    #[serde(default)]
-    pub upscaler_path: Option<String>,
-    /// Каталог Depth Anything V2 для IC-LoRA (control=depth).
-    #[serde(default)]
-    pub depth_model_path: Option<String>,
-    #[serde(default)]
-    pub lora_path: Option<String>,
-    #[serde(default = "default_ltx_lora_strength")]
-    pub lora_strength: f32,
-    #[serde(default)]
-    pub device_idx: usize,
-    #[serde(default)]
-    pub quant_dit_idx: usize,
-    #[serde(default)]
-    pub quant_enc_idx: usize,
-    #[serde(default)]
-    pub compute_idx: usize,
-    /// Держать тяжёлые компоненты в VRAM после прогона. Старые шаблоны
-    /// без поля → false (прежнее weak-поведение).
-    #[serde(default)]
-    pub resident: bool,
-}
-
-fn default_ltx_lora_strength() -> f32 {
-    1.0
-}
 
 
 
@@ -570,100 +363,15 @@ fn default_ltx_lora_strength() -> f32 {
 
 
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxTextEncoderStateData {
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default)]
-    pub keep_gemma: bool,
-}
 
-/// State NAG-ноды. Дефолты scale/alpha/tau — из
-/// `synaptix_video_ltx23::pipeline::NAG_DEFAULT_*`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxNagPromptStateData {
-    #[serde(default = "default_ltx_nag_prompt")]
-    pub prompt: String,
-    #[serde(default = "default_ltx_nag_scale")]
-    pub scale: f32,
-    #[serde(default = "default_ltx_nag_alpha")]
-    pub alpha: f32,
-    #[serde(default = "default_ltx_nag_tau")]
-    pub tau: f32,
-}
 
-impl Default for LtxNagPromptStateData {
-    fn default() -> Self {
-        Self {
-            prompt: default_ltx_nag_prompt(),
-            scale: default_ltx_nag_scale(),
-            alpha: default_ltx_nag_alpha(),
-            tau: default_ltx_nag_tau(),
-        }
-    }
-}
 
-fn default_ltx_nag_prompt() -> String {
-    synaptix_video_ltx23::pipeline::DEFAULT_NAG_PROMPT.to_string()
-}
-fn default_ltx_nag_scale() -> f32 {
-    synaptix_video_ltx23::pipeline::NAG_DEFAULT_SCALE
-}
-fn default_ltx_nag_alpha() -> f32 {
-    synaptix_video_ltx23::pipeline::NAG_DEFAULT_ALPHA
-}
-fn default_ltx_nag_tau() -> f32 {
-    synaptix_video_ltx23::pipeline::NAG_DEFAULT_TAU
-}
 
-/// State Sampler-Stage1 ноды: целевые размеры/длительность/fps/seed.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LtxSamplerStage1StateData {
-    #[serde(default = "default_ltx_width")]
-    pub width: u32,
-    #[serde(default = "default_ltx_height")]
-    pub height: u32,
-    #[serde(default = "default_ltx_duration")]
-    pub duration_seconds: f32,
-    #[serde(default)]
-    pub fps_idx: usize,
-    #[serde(default)]
-    pub seed: u64,
-}
 
-impl Default for LtxSamplerStage1StateData {
-    fn default() -> Self {
-        Self {
-            width: default_ltx_width(),
-            height: default_ltx_height(),
-            duration_seconds: default_ltx_duration(),
-            fps_idx: 0,
-            seed: 0,
-        }
-    }
-}
 
-fn default_ltx_width() -> u32 {
-    1024
-}
-fn default_ltx_height() -> u32 {
-    576
-}
-fn default_ltx_duration() -> f32 {
-    10.0
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxSamplerStage2StateData {
-    #[serde(default)]
-    pub seed: u64,
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct LtxVideoSaveStateData {
-    #[serde(default)]
-    pub path: String,
-}
+
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct FfmpegPlayerStateData {

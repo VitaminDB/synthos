@@ -25,7 +25,7 @@ use crate::pages::node_editor::registry;
 use crate::pages::node_editor::run_controls::{self, RunEnd, RunOutcome, StartRunError};
 use crate::pages::node_editor::state::NodeEditorCtx;
 use crate::pages::node_editor::tabs::EditorWorkspace;
-use crate::pages::node_editor::types::{NodeKind, NodeRuntime};
+use crate::pages::node_editor::types::NodeRuntime;
 use crate::syn_chat::attach::ingest;
 use crate::syn_chat::SynChatCtx;
 
@@ -128,40 +128,6 @@ pub struct Prepared {
     pub warnings: Vec<String>,
 }
 
-/// Замечания по графу перед прогоном.
-///
-/// LTX-стадии в synaptix идут по **distilled**-расписанию (`DISTILLED_SIGMAS`
-/// — 8 Euler-шагов на stage1, 3 на stage2). Недистиллированный чекпойнт
-/// (`ltx-2.3-22b-dev`) на восьми шагах даёт мутную картинку — «как будто
-/// шагов не хватает». Число шагов у ноды не настраивается, поэтому чекпойнт
-/// и расписание обязаны совпадать; ловим несовпадение до прогона.
-fn graph_warnings(nodes: &[crate::pages::node_editor::types::NodeInstance]) -> Vec<String> {
-    let mut out = Vec::new();
-    for n in nodes {
-        if !n.enabled.get_untracked() {
-            continue;
-        }
-        let Ok(rt) = n.runtime.lock() else { continue };
-        let NodeRuntime::LtxCheckpoint { model_path, .. } = &*rt else {
-            continue;
-        };
-        let Some(path) = model_path.get_untracked() else {
-            continue;
-        };
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if !name.contains("distilled") {
-            out.push(tr!(
-                "chat.pipeline.warning.ltx_non_distilled",
-                node_id = n.id.0,
-                name = name
-            ));
-        }
-    }
-    out
-}
 
 /// Ctx служебной вкладки текущего чата (main thread).
 fn agent_tab_ctx() -> Result<NodeEditorCtx, String> {
@@ -238,27 +204,6 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             }
         }
     }
-    // Upscaler нужен только графам со стадией Upscale — проверяем по факту
-    // её наличия, а не в missing_model_paths (там он был бы ложной тревогой
-    // для retake/a2v/lipdub). Ловим до прогона: иначе граф падает уже после
-    // выгрузки LLM и загрузки 46-гигабайтного DiT.
-    let needs_upscaler = nodes
-        .iter()
-        .any(|n| n.enabled.get_untracked() && n.kind == NodeKind::LtxUpscale);
-    if needs_upscaler {
-        for n in &nodes {
-            if !n.enabled.get_untracked() {
-                continue;
-            }
-            if n.runtime.lock().is_ok_and(|rt| rt.ltx_upscaler_missing()) {
-                missing.push(tr!(
-                    "chat.pipeline.error.missing_upscaler",
-                    node_id = n.id.0,
-                    node_title = registry::meta(n.kind).title
-                ));
-            }
-        }
-    }
 
     if !missing.is_empty() {
         return Err(tr!("chat.pipeline.error.missing_paths", list = missing.join("\n")));
@@ -296,7 +241,6 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
         let (path_sig, default_ext) = {
             let Ok(rt) = n.runtime.lock() else { continue };
             match &*rt {
-                NodeRuntime::LtxVideoSave { path, .. } => (SavePathSig::Str(*path), "mp4"),
                 NodeRuntime::ImageSave { path, .. } => (SavePathSig::OptPath(*path), "png"),
                 NodeRuntime::SaveToFile { path, .. } => (SavePathSig::Str(*path), "wav"),
                 _ => continue,
@@ -327,7 +271,7 @@ fn prepare_impl(run_label: &str) -> Result<Prepared, String> {
             pre,
         });
     }
-    Ok(Prepared { planned, runnable, warnings: graph_warnings(&nodes) })
+    Ok(Prepared { planned, runnable, warnings: Vec::new() })
 }
 
 /// Запустить прогон служебной вкладки. Возвращает receiver итога и число
@@ -370,7 +314,7 @@ pub async fn cancel_current() {
 /// хотя результат уже посчитан и играет в редакторе.
 enum ViewerOutput {
     Video {
-        frames: std::sync::Arc<crate::pages::node_editor::types::LtxFrames>,
+        frames: std::sync::Arc<crate::pages::node_editor::types::MemFrames>,
         audio: Option<std::sync::Arc<syngui::audio::AudioBuffer>>,
     },
     Audio(std::sync::Arc<syngui::audio::AudioBuffer>),
@@ -486,7 +430,7 @@ pub async fn collect_viewer_outputs(
                     lines.push(tr!("chat.pipeline.viewer.mkdir_failed", title = p.title, node_id = p.node_id, error = e));
                     continue;
                 }
-                match crate::pages::node_editor::nodes::ltx::video_save::encode_mp4(
+                match crate::pages::node_editor::nodes::common::encode_mp4(
                     frames,
                     audio.as_deref(),
                     &out,
@@ -505,7 +449,7 @@ pub async fn collect_viewer_outputs(
                     lines.push(tr!("chat.pipeline.viewer.mkdir_failed", title = p.title, node_id = p.node_id, error = e));
                     continue;
                 }
-                match crate::pages::node_editor::nodes::ltx::video_save::write_wav(&out, buf) {
+                match crate::pages::node_editor::nodes::common::write_wav(&out, buf) {
                     Ok(()) => out,
                     Err(e) => {
                         lines.push(tr!("chat.pipeline.viewer.wav_write_failed", title = p.title, node_id = p.node_id, error = e));

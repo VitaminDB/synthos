@@ -77,6 +77,19 @@ const KINDS: &[(NodeKind, &str, &str, &str)] = &[
     (NodeKind::FlowH3Sample, "h3_sample", "H3 Sampler", MI_AUTO_AWESOME),
     (NodeKind::FlowH3DecodeVideo, "h3_decode_video", "H3 Video Decoder", MI_MOVIE),
     (NodeKind::FlowH3DecodeAudio, "h3_decode_audio", "H3 Audio Decoder", MI_GRAPHIC_EQ),
+    (NodeKind::FlowLtxModel, "ltx_model", "LTX Model", MI_INVENTORY_2),
+    (NodeKind::FlowLtxEncode, "ltx_encode", "LTX Encoder", MI_TRANSLATE),
+    (NodeKind::FlowLtxNag, "ltx_nag", "LTX NAG", MI_TUNE),
+    (NodeKind::FlowLtxImage, "ltx_image", "LTX Frame", MI_IMAGE_ICON),
+    (NodeKind::FlowLtxStage1, "ltx_stage1", "LTX Stage1", MI_AUTO_AWESOME),
+    (NodeKind::FlowLtxUpscale, "ltx_upscale", "LTX Upscale ×2", MI_ASPECT_RATIO),
+    (NodeKind::FlowLtxStage2, "ltx_stage2", "LTX Stage2", MI_AUTO_AWESOME),
+    (NodeKind::FlowLtxRetake, "ltx_retake", "LTX Retake", MI_MOVIE),
+    (NodeKind::FlowLtxIcLora, "ltx_ic_lora", "LTX IC-LoRA", MI_MOVIE),
+    (NodeKind::FlowLtxLipdub, "ltx_lipdub", "LTX LipDub", MI_RECORD_VOICE_OVER),
+    (NodeKind::FlowLtxA2v, "ltx_a2v", "LTX Audio to Video", MI_AUDIOTRACK),
+    (NodeKind::FlowLtxDecodeVideo, "ltx_decode_video", "LTX Video Decoder", MI_MOVIE),
+    (NodeKind::FlowLtxDecodeAudio, "ltx_decode_audio", "LTX Audio Decoder", MI_GRAPHIC_EQ),
 ];
 
 /// Подкатегория палитры по разделу ядра (ключ `node.subcategory.*`).
@@ -84,6 +97,7 @@ fn subcategory(spec: &sf::NodeSpec) -> Option<&'static str> {
     match spec.category {
         "Модели картинок" => Some("flow_image"),
         "MiniMax-H3" => Some("flow_h3"),
+        "LTX-2.3" => Some("flow_ltx"),
         _ => None,
     }
 }
@@ -264,7 +278,7 @@ fn to_val(pv: &PortValue, dir: &Path, name: &str) -> Val {
         PortValue::Float(f) => Val::Number(*f as f64),
         PortValue::Audio(buf) => {
             let p = dir.join(format!("{name}.wav"));
-            match super::ltx::video_save::write_wav(&p, buf) {
+            match super::common::write_wav(&p, buf) {
                 Ok(()) => Val::File(p),
                 Err(_) => Val::Empty,
             }
@@ -469,6 +483,7 @@ fn model_kind(fk: &str) -> Option<(synaptixd::ModelKind, Option<&'static str>)> 
         "image" | "image_model" => (K::Image, None),
         "video" => (K::Video, None),
         "h3_model" => (K::Video, Some("h3")),
+        "ltx_model" => (K::Video, Some("ltx")),
         "music" => (K::Music, None),
         "llm" => (K::Llm, None),
         "speak" => (K::Tts, None),
@@ -547,21 +562,25 @@ fn field_control(fk: &str, f: &'static sf::FieldSpec, value: FieldValue) -> Box<
                 .on_change(move |s| sig.set(s.to_string()))
                 .class("node-input-text"),
         ),
-        (_, FieldValue::Float(sig)) => Box::new(
-            SpinBox::new()
-                .min(0.0)
-                .max(4_294_967_295.0)
-                .step(1.0)
-                .decimal_places(match f.name {
-                    "volume" | "strength" | "guidance" | "denoise" => 2,
-                    "seconds" | "start" | "end" => 1,
-                    _ => 0,
-                })
-                .value(sig.get_untracked() as f64)
-                .on_change(move |v| sig.set(v as f32))
-                .width(120.0)
-                .class("node-input-spinbox"),
-        ),
+        (_, FieldValue::Float(sig)) => {
+            // Дробные поля — два знака и мелкий шаг, остальные — целые.
+            let (dp, step) = match f.name {
+                "volume" | "strength" | "guidance" | "denoise" | "alpha" | "tau" | "canny_low" | "canny_high" | "lora_strength" => (2, 0.05),
+                "seconds" | "start" | "end" => (1, 0.5),
+                _ => (0, 1.0),
+            };
+            Box::new(
+                SpinBox::new()
+                    .min(0.0)
+                    .max(4_294_967_295.0)
+                    .step(step)
+                    .decimal_places(dp)
+                    .value(sig.get_untracked() as f64)
+                    .on_change(move |v| sig.set(v as f32))
+                    .width(120.0)
+                    .class("node-input-spinbox"),
+            )
+        }
         (_, FieldValue::Bool(sig)) => Box::new(Checkbox::checked(sig.get_untracked()).on_change(move |v| sig.set(v)).class("node-input-checkbox")),
         (FT::Choice(opts), FieldValue::Choice(sig)) => {
             let label = |o: &str| if o.is_empty() { "—".to_string() } else { o.to_string() };
@@ -641,7 +660,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         }
     }
     let (running, error, status, progress, version) = (rt.running, rt.error, rt.status, rt.progress, rt.version);
-    col = col.children(vec![super::ltx::progress_row(running, progress)]);
+    col = col.children(vec![super::common::progress_row(running, progress)]);
     let rt2 = rt.clone();
     col = col.children(vec![Box::new(Reactive::new(move || -> Vec<Box<dyn Widget>> {
         version.get();

@@ -23,7 +23,7 @@ use crate::icons::{MI_FOLDER_OPEN, MI_MOVIE, MI_PLAY_ARROW};
 
 use super::super::eval::{EvalContext, NodeExecutor};
 use super::super::registry;
-use super::super::types::{LtxFrames, NodeInstance, NodeRuntime, PortValue};
+use super::super::types::{MemFrames, NodeInstance, NodeRuntime, PortValue};
 
 pub struct FfmpegPlayerExec;
 
@@ -39,7 +39,7 @@ impl NodeExecutor for FfmpegPlayerExec {
             _ => None,
         };
         let frames_pv = ctx.read_input("frames");
-        let new_frames = frames_pv.as_ltx_frames();
+        let new_frames = frames_pv.as_mem_frames();
         let new_audio = ctx.read_input("audio").as_audio();
 
         let Ok(g) = ctx.runtime().lock() else { return };
@@ -110,7 +110,7 @@ struct FfmpegPlayerHandles {
     video_out: Arc<Mutex<Option<Arc<syngui::video::VideoStream>>>>,
     audio_out: Arc<Mutex<Option<Arc<syngui::audio::AudioStream>>>>,
     out_version: RwSignal<u32>,
-    frames_in: Arc<Mutex<Option<Arc<LtxFrames>>>>,
+    frames_in: Arc<Mutex<Option<Arc<MemFrames>>>>,
     audio_in: Arc<Mutex<Option<Arc<AudioBuffer>>>>,
     preview_version: RwSignal<u32>,
 }

@@ -58,32 +58,6 @@ use super::model::{
 
     LlmStateData,
 
-    LtxA2VStateData,
-
-    LtxAudioInputStateData,
-
-    LtxCheckpointStateData,
-
-    LtxIcLoraStateData,
-
-    LtxImageStateData,
-
-    LtxLipdubStateData,
-
-    LtxNagPromptStateData,
-
-    LtxRetakeStateData,
-
-    LtxSamplerStage1StateData,
-
-    LtxSamplerStage2StateData,
-
-    LtxTextEncoderStateData,
-
-    LtxVideoInputStateData,
-
-    LtxVideoSaveStateData,
-
     SynCheckpointStateData,
 
     MarkdownViewStateData,
@@ -479,23 +453,6 @@ pub fn migrate_inline_models(t: &Template) -> Option<Template> {
                 next_id += 1;
             }
             // IC-LoRA: каталог depth-модели — в подключённый LTX Checkpoint.
-            Some(NodeStateData::LtxIcLora(d)) if d.depth_model_path.is_some() => {
-                let Some(src) = model_src else { continue };
-                let m = out.get_or_insert_with(|| t.clone());
-                let Some(ck) = m.nodes.iter_mut().find(|n| n.id == src && n.kind == NodeKind::LtxCheckpoint)
-                else {
-                    continue;
-                };
-                // Чекпойнт без state (рукописный шаблон) — serde-дефолты полей.
-                let state = ck.state.get_or_insert_with(|| {
-                    NodeStateData::LtxCheckpoint(serde_json::from_str("{}").expect("serde defaults"))
-                });
-                if let NodeStateData::LtxCheckpoint(s) = state {
-                    if s.depth_model_path.is_none() {
-                        s.depth_model_path = d.depth_model_path.clone();
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -732,157 +689,6 @@ pub fn runtime_to_state(rt: &NodeRuntime) -> Option<NodeStateData> {
             storage_idx: storage_idx.get_untracked(),
             compute_idx: compute_idx.get_untracked(),
             resident: resident.get_untracked(),
-        })),
-        NodeRuntime::LtxCheckpoint {
-            model_path,
-            gemma_dir,
-            upscaler_path,
-            depth_model_path,
-            lora_path,
-            lora_strength,
-            device_idx,
-            quant_dit_idx,
-            quant_enc_idx,
-            compute_idx,
-            resident,
-            ..
-        } => Some(NodeStateData::LtxCheckpoint(LtxCheckpointStateData {
-            model_path: model_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            gemma_dir: gemma_dir
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            upscaler_path: upscaler_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            depth_model_path: depth_model_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            lora_path: lora_path
-                .get_untracked()
-                .map(|p| p.to_string_lossy().to_string()),
-            lora_strength: lora_strength.get_untracked(),
-            device_idx: device_idx.get_untracked(),
-            quant_dit_idx: quant_dit_idx.get_untracked(),
-            quant_enc_idx: quant_enc_idx.get_untracked(),
-            compute_idx: compute_idx.get_untracked(),
-            resident: resident.get_untracked(),
-        })),
-        NodeRuntime::LtxTextEncoder {
-            prompt_field,
-            keep_gemma,
-            ..
-        } => Some(NodeStateData::LtxTextEncoder(LtxTextEncoderStateData {
-            prompt: prompt_field.get_untracked(),
-            keep_gemma: keep_gemma.get_untracked(),
-        })),
-        NodeRuntime::LtxNagPrompt {
-            prompt_field,
-            scale,
-            alpha,
-            tau,
-            ..
-        } => Some(NodeStateData::LtxNagPrompt(LtxNagPromptStateData {
-            prompt: prompt_field.get_untracked(),
-            scale: scale.get_untracked(),
-            alpha: alpha.get_untracked(),
-            tau: tau.get_untracked(),
-        })),
-        NodeRuntime::LtxSamplerStage1 {
-            width,
-            height,
-            duration_seconds,
-            fps_idx,
-            seed,
-            ..
-        } => Some(NodeStateData::LtxSamplerStage1(LtxSamplerStage1StateData {
-            width: width.get_untracked(),
-            height: height.get_untracked(),
-            duration_seconds: duration_seconds.get_untracked(),
-            fps_idx: fps_idx.get_untracked(),
-            seed: seed.get_untracked(),
-        })),
-        NodeRuntime::LtxUpscale { .. } => None,
-        NodeRuntime::LtxSamplerStage2 { seed, .. } => {
-            Some(NodeStateData::LtxSamplerStage2(LtxSamplerStage2StateData {
-                seed: seed.get_untracked(),
-            }))
-        }
-        NodeRuntime::LtxVaeDecode { .. } => None,
-        NodeRuntime::LtxAudioDecode { .. } => None,
-        NodeRuntime::LtxVideoSave { path, .. } => {
-            Some(NodeStateData::LtxVideoSave(LtxVideoSaveStateData {
-                path: path.get_untracked(),
-            }))
-        }
-        NodeRuntime::LtxImage { image_path, strength, frame_idx, .. } => {
-            Some(NodeStateData::LtxImage(LtxImageStateData {
-                image_path: image_path
-                    .get_untracked()
-                    .map(|p| p.to_string_lossy().to_string()),
-                strength: strength.get_untracked(),
-                frame_idx: frame_idx.get_untracked(),
-            }))
-        }
-        NodeRuntime::LtxVideoInput { video_path } => {
-            Some(NodeStateData::LtxVideoInput(LtxVideoInputStateData {
-                video_path: video_path
-                    .get_untracked()
-                    .map(|p| p.to_string_lossy().to_string()),
-            }))
-        }
-        NodeRuntime::LtxRetake {
-            width, height, duration_seconds, fps_idx, retake_start, retake_end, seed, ..
-        } => Some(NodeStateData::LtxRetake(LtxRetakeStateData {
-            width: width.get_untracked(),
-            height: height.get_untracked(),
-            duration_seconds: duration_seconds.get_untracked(),
-            fps_idx: fps_idx.get_untracked(),
-            retake_start: retake_start.get_untracked(),
-            retake_end: retake_end.get_untracked(),
-            seed: seed.get_untracked(),
-        })),
-        NodeRuntime::LtxIcLora {
-            width, height, duration_seconds, fps_idx, downscale, ref_strength,
-            control_idx, canny_low, canny_high, seed, ..
-        } => Some(NodeStateData::LtxIcLora(LtxIcLoraStateData {
-            width: width.get_untracked(),
-            height: height.get_untracked(),
-            duration_seconds: duration_seconds.get_untracked(),
-            fps_idx: fps_idx.get_untracked(),
-            downscale: downscale.get_untracked(),
-            ref_strength: ref_strength.get_untracked(),
-            control_idx: control_idx.get_untracked(),
-            canny_low: canny_low.get_untracked(),
-            canny_high: canny_high.get_untracked(),
-            depth_model_path: None,
-            seed: seed.get_untracked(),
-        })),
-        NodeRuntime::LtxAudioInput { audio_path } => {
-            Some(NodeStateData::LtxAudioInput(LtxAudioInputStateData {
-                audio_path: audio_path
-                    .get_untracked()
-                    .map(|p| p.to_string_lossy().to_string()),
-            }))
-        }
-        NodeRuntime::LtxLipdub {
-            width, height, duration_seconds, fps_idx, seed, ..
-        } => Some(NodeStateData::LtxLipdub(LtxLipdubStateData {
-            width: width.get_untracked(),
-            height: height.get_untracked(),
-            duration_seconds: duration_seconds.get_untracked(),
-            fps_idx: fps_idx.get_untracked(),
-            seed: seed.get_untracked(),
-        })),
-        NodeRuntime::LtxA2V {
-            width, height, duration_seconds, fps_idx, seed, ..
-        } => Some(NodeStateData::LtxA2V(LtxA2VStateData {
-            width: width.get_untracked(),
-            height: height.get_untracked(),
-            duration_seconds: duration_seconds.get_untracked(),
-            fps_idx: fps_idx.get_untracked(),
-            seed: seed.get_untracked(),
         })),
         NodeRuntime::Yue2Checkpoint {
             models_dir,
@@ -1386,166 +1192,6 @@ pub fn apply_state_to_runtime(rt: &NodeRuntime, state: &NodeStateData) {
             resident.set(data.resident);
         }
         (
-            NodeRuntime::LtxCheckpoint {
-                model_path,
-                gemma_dir,
-                upscaler_path,
-                depth_model_path,
-                lora_path,
-                lora_strength,
-                device_idx,
-                quant_dit_idx,
-                quant_enc_idx,
-                compute_idx,
-                resident,
-                ..
-            },
-            NodeStateData::LtxCheckpoint(data),
-        ) => {
-            model_path.set(data.model_path.as_ref().map(PathBuf::from));
-            gemma_dir.set(data.gemma_dir.as_ref().map(PathBuf::from));
-            upscaler_path.set(data.upscaler_path.as_ref().map(PathBuf::from));
-            depth_model_path.set(data.depth_model_path.as_ref().map(PathBuf::from));
-            lora_path.set(data.lora_path.as_ref().map(PathBuf::from));
-            lora_strength.set(data.lora_strength);
-            device_idx.set(data.device_idx);
-            quant_dit_idx.set(data.quant_dit_idx);
-            quant_enc_idx.set(data.quant_enc_idx);
-            compute_idx.set(data.compute_idx);
-            resident.set(data.resident);
-        }
-        (
-            NodeRuntime::LtxTextEncoder {
-                prompt_field,
-                keep_gemma,
-                ..
-            },
-            NodeStateData::LtxTextEncoder(data),
-        ) => {
-            prompt_field.set(data.prompt.clone());
-            keep_gemma.set(data.keep_gemma);
-        }
-        (
-            NodeRuntime::LtxNagPrompt {
-                prompt_field,
-                scale,
-                alpha,
-                tau,
-                ..
-            },
-            NodeStateData::LtxNagPrompt(data),
-        ) => {
-            prompt_field.set(data.prompt.clone());
-            scale.set(data.scale);
-            alpha.set(data.alpha);
-            tau.set(data.tau);
-        }
-        (
-            NodeRuntime::LtxSamplerStage1 {
-                width,
-                height,
-                duration_seconds,
-                fps_idx,
-                seed,
-                ..
-            },
-            NodeStateData::LtxSamplerStage1(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            fps_idx.set(data.fps_idx);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::LtxSamplerStage2 { seed, .. },
-            NodeStateData::LtxSamplerStage2(data),
-        ) => {
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::LtxVideoSave { path, .. },
-            NodeStateData::LtxVideoSave(data),
-        ) => {
-            path.set(data.path.clone());
-        }
-        (
-            NodeRuntime::LtxImage { image_path, strength, frame_idx, .. },
-            NodeStateData::LtxImage(data),
-        ) => {
-            image_path.set(data.image_path.as_ref().map(PathBuf::from));
-            strength.set(data.strength);
-            frame_idx.set(data.frame_idx);
-        }
-        (
-            NodeRuntime::LtxVideoInput { video_path },
-            NodeStateData::LtxVideoInput(data),
-        ) => {
-            video_path.set(data.video_path.as_ref().map(PathBuf::from));
-        }
-        (
-            NodeRuntime::LtxRetake {
-                width, height, duration_seconds, fps_idx, retake_start, retake_end, seed, ..
-            },
-            NodeStateData::LtxRetake(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            fps_idx.set(data.fps_idx);
-            retake_start.set(data.retake_start);
-            retake_end.set(data.retake_end);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::LtxIcLora {
-                width, height, duration_seconds, fps_idx, downscale, ref_strength,
-                control_idx, canny_low, canny_high, seed, ..
-            },
-            NodeStateData::LtxIcLora(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            fps_idx.set(data.fps_idx);
-            downscale.set(data.downscale);
-            ref_strength.set(data.ref_strength);
-            control_idx.set(data.control_idx);
-            canny_low.set(data.canny_low);
-            canny_high.set(data.canny_high);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::LtxAudioInput { audio_path },
-            NodeStateData::LtxAudioInput(data),
-        ) => {
-            audio_path.set(data.audio_path.as_ref().map(PathBuf::from));
-        }
-        (
-            NodeRuntime::LtxLipdub {
-                width, height, duration_seconds, fps_idx, seed, ..
-            },
-            NodeStateData::LtxLipdub(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            fps_idx.set(data.fps_idx);
-            seed.set(data.seed);
-        }
-        (
-            NodeRuntime::LtxA2V {
-                width, height, duration_seconds, fps_idx, seed, ..
-            },
-            NodeStateData::LtxA2V(data),
-        ) => {
-            width.set(data.width);
-            height.set(data.height);
-            duration_seconds.set(data.duration_seconds);
-            fps_idx.set(data.fps_idx);
-            seed.set(data.seed);
-        }
-        (
             NodeRuntime::Yue2Checkpoint {
                 models_dir,
                 model_path,
@@ -2041,8 +1687,7 @@ mod tests {
     }
 
     /// Семейные ноды старых графов: VAE Encode подключается к чекпойнту
-    /// ACE-Step, декодер YuE2 уезжает в копию чекпойнта, depth-модель
-    /// IC-LoRA — в подключённый LTX Checkpoint.
+    /// ACE-Step, декодер YuE2 уезжает в копию чекпойнта.
     #[test]
     fn legacy_family_models_migrate_to_checkpoints() {
         let json = r#"{
@@ -2054,14 +1699,10 @@ mod tests {
                 { "id": 3, "kind": "yue2_checkpoint", "pos": { "x": 0.0, "y": 300.0 },
                   "state": { "kind": "Yue2Checkpoint", "data": { "quant_idx": 2 } } },
                 { "id": 4, "kind": "yue2_vae_decode", "pos": { "x": 400.0, "y": 300.0 },
-                  "state": { "kind": "Yue2VaeDecode", "data": { "vae_path": "/m/yue2-vae-legacy.syn" } } },
-                { "id": 5, "kind": "ltx_checkpoint", "pos": { "x": 0.0, "y": 600.0 } },
-                { "id": 6, "kind": "ltx_ic_lora", "pos": { "x": 400.0, "y": 600.0 },
-                  "state": { "kind": "LtxIcLora", "data": { "control_idx": 2, "depth_model_path": "/m/depth" } } }
+                  "state": { "kind": "Yue2VaeDecode", "data": { "vae_path": "/m/yue2-vae-legacy.syn" } } }
             ],
             "connections": [
-                { "from_node": 3, "from_port": "model", "to_node": 4, "to_port": "model" },
-                { "from_node": 5, "from_port": "model", "to_node": 6, "to_port": "model" }
+                { "from_node": 3, "from_port": "model", "to_node": 4, "to_port": "model" }
             ]
         }"#;
         let t: Template = serde_json::from_str(json).unwrap();
@@ -2087,13 +1728,6 @@ mod tests {
         let to_decode: Vec<_> = m.connections.iter().filter(|c| c.to_node == 4 && c.to_port == "model").collect();
         assert_eq!(to_decode.len(), 1);
         assert_eq!(to_decode[0].from_node, ck.id);
-
-        // IC-LoRA: depth-модель — в LTX Checkpoint 5.
-        let ltx = m.nodes.iter().find(|n| n.id == 5).unwrap();
-        match &ltx.state {
-            Some(NodeStateData::LtxCheckpoint(s)) => assert_eq!(s.depth_model_path.as_deref(), Some("/m/depth")),
-            other => panic!("{other:?}"),
-        }
     }
 
     #[test]

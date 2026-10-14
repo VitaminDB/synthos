@@ -376,7 +376,6 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
     use crate::pages::node_editor::nodes::{
         acestep,
         ffmpeg_player,
-        ltx,
         syn_checkpoint,
         yue2,
     };
@@ -410,20 +409,6 @@ fn enum_hints(kind: NodeKind) -> Vec<(&'static str, &'static [&'static str])> {
             ("track_idx", acestep::generate::TRACK_OPTIONS),
         ],
         NodeKind::FfmpegPlayer => vec![("hwaccel_idx", ffmpeg_player::HWACCEL_LABELS)],
-        NodeKind::LtxCheckpoint => vec![
-            ("device_idx", ltx::DEVICE_OPTIONS),
-            ("quant_dit_idx", ltx::QUANT_DIT_OPTIONS),
-            ("quant_enc_idx", ltx::QUANT_ENC_OPTIONS),
-            ("compute_idx", ltx::COMPUTE_OPTIONS),
-        ],
-        NodeKind::LtxSamplerStage1
-        | NodeKind::LtxRetake
-        | NodeKind::LtxLipdub
-        | NodeKind::LtxA2V => vec![("fps_idx", ltx::FPS_OPTIONS)],
-        NodeKind::LtxIcLora => vec![
-            ("fps_idx", ltx::FPS_OPTIONS),
-            ("control_idx", ltx::CONTROL_OPTIONS),
-        ],
         _ => Vec::new(),
     }
 }
@@ -781,13 +766,6 @@ fn missing_model_paths(ctx: &NodeEditorCtx) -> Vec<String> {
         let mut fields: Vec<String> = rt.missing_model_paths().into_iter().map(String::from).collect();
         if let (Some(src), false) = (n.kind.model_input_source(), has_model_input) {
             fields.push(format!("model ← {src}"));
-        }
-        // Upscaler требуется только графам со стадией Upscale ×2.
-        let needs_upscaler = nodes
-            .iter()
-            .any(|x| x.enabled.get_untracked() && x.kind == NodeKind::LtxUpscale);
-        if needs_upscaler && rt.ltx_upscaler_missing() {
-            fields.push("upscaler_path".into());
         }
         if !fields.is_empty() {
             out.push(format!(
@@ -1728,12 +1706,12 @@ mod tests {
     #[test]
     fn nodes_filter_matches_any_token() {
         let out = nodes_impl(&serde_json::json!({
-            "filter": "ltx_checkpoint ltx_sampler_stage1 quant_dit_idx width"
+            "filter": "flow_ltx_model flow_ltx_stage1"
         }))
         .expect("nodes");
-        assert!(out.contains("\"LTX Checkpoint\""), "{out}");
-        assert!(out.contains("\"LTX Sampler Stage1\""), "{out}");
-        assert!(!out.contains("\"H3 Checkpoint\""), "{out}");
+        assert!(out.contains("\"LTX Model\""), "{out}");
+        assert!(out.contains("\"LTX Stage1\""), "{out}");
+        assert!(!out.contains("\"H3 Model\""), "{out}");
     }
 
     /// Промах фильтра — не ошибка, а список видов нод: иначе агент крутит
@@ -1743,7 +1721,7 @@ mod tests {
         let out = nodes_impl(&serde_json::json!({"filter": "quant_dit_idx keep_gemma"}))
             .expect("промах не ошибка");
         assert!(out.contains("no nodes found"), "{out}");
-        assert!(out.contains("ltx_checkpoint · LTX Checkpoint"), "{out}");
+        assert!(out.contains("flow_ltx_model · LTX Model"), "{out}");
     }
 
     #[test]
@@ -1756,18 +1734,18 @@ mod tests {
     /// `*_idx`-поля state расшифрованы: без этого агент выбирал квант вслепую.
     #[test]
     fn enum_hints_explain_quant_indices() {
-        let lines = enum_hints_lines(NodeKind::LtxCheckpoint);
+        let lines = enum_hints_lines(NodeKind::Yue2Checkpoint);
         let quant = lines
             .iter()
-            .find(|l| l.starts_with("quant_dit_idx:"))
-            .expect("quant_dit_idx расшифрован");
-        assert!(quant.contains("0=nvfp4"), "{quant}");
+            .find(|l| l.starts_with("quant_idx:"))
+            .expect("quant_idx расшифрован");
+        assert!(quant.contains("0="), "{quant}");
         assert!(enum_hints_lines(NodeKind::Add).is_empty());
     }
 
     #[test]
     fn kind_slug_is_snake_case() {
-        assert_eq!(kind_slug(NodeKind::LtxTextEncoder), "ltx_text_encoder");
+        assert_eq!(kind_slug(NodeKind::Yue2Checkpoint), "yue2_checkpoint");
         assert_eq!(kind_slug(NodeKind::AceStepGenerate), "ace_step_generate");
     }
 
@@ -1776,12 +1754,12 @@ mod tests {
     fn template_from_value_fills_defaults() {
         let graph = serde_json::json!({
             "nodes": [
-                { "kind": "ltx_checkpoint" },
+                { "kind": "syn_checkpoint" },
                 {
-                    "kind": "ltx_text_encoder",
+                    "kind": "text_view",
                     "state": {
-                        "kind": "LtxTextEncoder",
-                        "data": { "prompt": "закат над морем" }
+                        "kind": "TextView",
+                        "data": { "output_text": "закат над морем" }
                     }
                 }
             ],
@@ -1793,11 +1771,11 @@ mod tests {
         assert_eq!(t.nodes.len(), 2);
         assert_eq!(t.nodes[0].id, 1);
         assert_eq!(t.nodes[1].id, 2);
-        assert_eq!(t.nodes[0].kind, NodeKind::LtxCheckpoint);
+        assert_eq!(t.nodes[0].kind, NodeKind::SynCheckpoint);
         // pos проставлен сеткой.
         assert!(t.nodes[1].pos.x > t.nodes[0].pos.x);
         let state = t.nodes[1].state.as_ref().expect("state");
-        assert_eq!(variant_tag(state).as_deref(), Some("LtxTextEncoder"));
+        assert_eq!(variant_tag(state).as_deref(), Some("TextView"));
         assert_eq!(t.connections.len(), 1);
     }
 
@@ -1807,10 +1785,10 @@ mod tests {
     fn template_from_value_tolerates_unknown_state_fields() {
         let graph = serde_json::json!({
             "nodes": [{
-                "kind": "ltx_text_encoder",
+                "kind": "text_view",
                 "state": {
-                    "kind": "LtxTextEncoder",
-                    "data": { "prompt": "x", "made_up_field": 42 }
+                    "kind": "TextView",
+                    "data": { "output_text": "x", "made_up_field": 42 }
                 }
             }]
         });
@@ -1818,17 +1796,16 @@ mod tests {
         assert!(t.nodes[0].state.is_some());
         let warns = unknown_graph_state_fields(&graph).join("\n");
         assert!(warns.contains("made_up_field"), "{warns}");
-        assert!(warns.contains("ltx_text_encoder"), "{warns}");
+        assert!(warns.contains("text_view"), "{warns}");
     }
 
     /// Дефолтные чекпойнты без путей — pre-check прогона это ловит.
     #[test]
     fn default_checkpoints_report_missing_paths() {
-        let rt = registry::default_runtime(NodeKind::LtxCheckpoint);
+        let rt = registry::default_runtime(NodeKind::SynCheckpoint);
         let g = rt.lock().unwrap();
         let miss = g.missing_model_paths();
         assert!(miss.contains(&"model_path"), "{miss:?}");
-        assert!(miss.contains(&"gemma_dir"), "{miss:?}");
         drop(g);
         // Реактивные ноды ничего не требуют.
         let rt = registry::default_runtime(NodeKind::Add);
@@ -1957,7 +1934,7 @@ mod tests {
     #[test]
     fn hardware_note_covers_checkpoint_nodes() {
         assert!(hardware_note(NodeKind::AceStepCheckpoint).is_some());
-        assert!(hardware_note(NodeKind::LtxCheckpoint).is_some());
+        assert!(hardware_note(NodeKind::SynCheckpoint).is_some());
         assert!(hardware_note(NodeKind::TextView).is_none());
     }
 
@@ -1999,9 +1976,9 @@ mod tests {
     /// Пример state снимается с default_runtime и несёт правильный тег.
     #[test]
     fn state_example_matches_kind() {
-        let js = state_example(NodeKind::LtxSamplerStage1).expect("state");
-        assert!(js.contains("\"LtxSamplerStage1\""), "{js}");
-        assert!(js.contains("width"), "{js}");
+        let js = state_example(NodeKind::AceStepCheckpoint).expect("state");
+        assert!(js.contains("\"AceStepCheckpoint\""), "{js}");
+        assert!(js.contains("device_idx"), "{js}");
         // Реактивные ноды без state.
         assert!(state_example(NodeKind::Add).is_none());
     }

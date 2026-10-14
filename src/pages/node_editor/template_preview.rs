@@ -125,6 +125,19 @@ fn node_color(kind: NodeKind) -> Color {
         | NodeKind::FlowH3Sample
         | NodeKind::FlowH3DecodeVideo
         | NodeKind::FlowH3DecodeAudio => Color::new(0.55, 0.42, 0.92, 1.0),
+        NodeKind::FlowLtxModel
+        | NodeKind::FlowLtxEncode
+        | NodeKind::FlowLtxNag
+        | NodeKind::FlowLtxImage
+        | NodeKind::FlowLtxStage1
+        | NodeKind::FlowLtxUpscale
+        | NodeKind::FlowLtxStage2
+        | NodeKind::FlowLtxRetake
+        | NodeKind::FlowLtxIcLora
+        | NodeKind::FlowLtxLipdub
+        | NodeKind::FlowLtxA2v
+        | NodeKind::FlowLtxDecodeVideo
+        | NodeKind::FlowLtxDecodeAudio => Color::new(0.34, 0.62, 0.95, 1.0),
         NodeKind::Number => Color::new(0.40, 0.65, 0.95, 1.0),       // blue
         NodeKind::Add => Color::new(0.93, 0.37, 0.28, 1.0),          // primary/red
         NodeKind::Output => Color::new(0.16, 0.74, 0.55, 1.0),       // emerald
@@ -165,22 +178,6 @@ fn node_color(kind: NodeKind) -> Color {
         NodeKind::FfmpegPlayer => Color::new(0.93, 0.27, 0.60, 1.0),
         // LTX-2.3 семейство — единая палитра в сине-бирюзовой гамме,
         // граф «LTX — Text2Video» визуально отличим от ACE-Step.
-        NodeKind::LtxCheckpoint
-        | NodeKind::LtxTextEncoder
-        | NodeKind::LtxNagPrompt
-        | NodeKind::LtxSamplerStage1
-        | NodeKind::LtxUpscale
-        | NodeKind::LtxSamplerStage2
-        | NodeKind::LtxVaeDecode
-        | NodeKind::LtxAudioDecode
-        | NodeKind::LtxVideoSave
-        | NodeKind::LtxImage
-        | NodeKind::LtxVideoInput
-        | NodeKind::LtxRetake
-        | NodeKind::LtxIcLora
-        | NodeKind::LtxAudioInput
-        | NodeKind::LtxLipdub
-        | NodeKind::LtxA2V => Color::new(0.30, 0.68, 0.92, 1.0),
     }
 }
 

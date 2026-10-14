@@ -221,8 +221,12 @@ pub(super) fn build_all() -> Vec<Tool> {
                 builtin-qwen-image-*, builtin-qwen-image21-* — Qwen-Image 2.1 refers to \
                 references as <image1>, <image2>…, builtin-sdxl-*; prompt format comes \
                 with open); a generated frame straight into video (builtin-ltx-flux-keyframe, \
-                builtin-h3-flux-keyframe: Image Decoder.image → LTX Image / H3 \
-                Encoder.first_frame); video: LTX text/image→video, lip-dub, audio→video; \
+                builtin-h3-flux-keyframe: Image Decoder.image → LTX Frame / H3 \
+                Encoder.first_frame); LTX-2.3 video with audio, also as service stages: LTX Model \
+                (fields.lora: union / motion / lipdub or a file) → LTX Encoder (+ LTX NAG) → \
+                LTX Stage1 (LTX Frame: frame 0 = first frame, >0 = keyframe) → LTX Upscale ×2 → \
+                LTX Stage2, or LTX Retake / IC-LoRA (control none/canny/depth) / LipDub / \
+                Audio to Video → LTX Video/Audio Decoder → Mux (builtin-ltx-*); \
                 MiniMax-H3 video with native audio — H3 Model → H3 Video Size → H3 Encoder \
                 (first_frame/last_frame from flow_file.path, or refs from a flow_list whose \
                 fields.items = file paths, one per line — images, videos, audio the user \
@@ -240,9 +244,9 @@ pub(super) fn build_all() -> Vec<Tool> {
                 5) action=run — start the run (before a heavy run check \
                 system status; free_vram=true unloads the chat LLM for the \
                 duration of the run and reloads it after). \
-                In state strings the attachment:<name|sha|last> reference \
+                In state and fields strings the attachment:<name|sha|last> reference \
                 works — it substitutes the path of a chat attachment (e.g. a \
-                ref image in LtxImage.image_path). action=graph — a snapshot \
+                ref image in flow_file.path feeding LTX Frame). action=graph — a snapshot \
                 of the graph; action=save_template with name — save the \
                 graph as a custom template for the user.",
             schema: json!({

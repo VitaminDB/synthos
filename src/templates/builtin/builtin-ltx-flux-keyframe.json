@@ -131,12 +131,17 @@
     },
     {
       "id": 101,
-      "kind": "ltx_checkpoint",
+      "kind": "flow_ltx_model",
       "pos": {
         "x": 60.0,
         "y": 1160.0
       },
-      "fields": {},
+      "fields": {
+        "model": {
+          "type": "Text",
+          "value": "ltx-2-3-22b-distilled-1-1"
+        }
+      },
       "style": {
         "tint": null,
         "shadow": true
@@ -168,7 +173,7 @@
     },
     {
       "id": 103,
-      "kind": "ltx_text_encoder",
+      "kind": "flow_ltx_encode",
       "pos": {
         "x": 480.0,
         "y": 1520.0
@@ -183,7 +188,7 @@
     },
     {
       "id": 104,
-      "kind": "ltx_nag_prompt",
+      "kind": "flow_ltx_nag",
       "pos": {
         "x": 480.0,
         "y": 1160.0
@@ -198,7 +203,7 @@
     },
     {
       "id": 113,
-      "kind": "ltx_image",
+      "kind": "flow_ltx_image",
       "pos": {
         "x": 480.0,
         "y": 1800.0
@@ -213,31 +218,43 @@
     },
     {
       "id": 105,
-      "kind": "ltx_sampler_stage1",
+      "kind": "flow_ltx_stage1",
       "pos": {
         "x": 920.0,
         "y": 1300.0
       },
-      "fields": {},
+      "fields": {
+        "fps": {
+          "type": "Choice",
+          "value": 0
+        },
+        "height": {
+          "type": "Float",
+          "value": 576.0
+        },
+        "seconds": {
+          "type": "Float",
+          "value": 10.0
+        },
+        "seed": {
+          "type": "Float",
+          "value": 0.0
+        },
+        "width": {
+          "type": "Float",
+          "value": 1024.0
+        }
+      },
       "style": {
         "tint": null,
         "shadow": true
       },
       "enabled": true,
-      "state": {
-        "kind": "LtxSamplerStage1",
-        "data": {
-          "width": 1024,
-          "height": 576,
-          "duration_seconds": 10.0,
-          "fps_idx": 0,
-          "seed": 0
-        }
-      }
+      "state": null
     },
     {
       "id": 106,
-      "kind": "ltx_upscale",
+      "kind": "flow_ltx_upscale",
       "pos": {
         "x": 1380.0,
         "y": 1160.0
@@ -252,7 +269,7 @@
     },
     {
       "id": 107,
-      "kind": "ltx_sampler_stage2",
+      "kind": "flow_ltx_stage2",
       "pos": {
         "x": 1380.0,
         "y": 1380.0
@@ -267,7 +284,7 @@
     },
     {
       "id": 108,
-      "kind": "ltx_vae_decode",
+      "kind": "flow_ltx_decode_video",
       "pos": {
         "x": 1840.0,
         "y": 1220.0
@@ -282,7 +299,7 @@
     },
     {
       "id": 109,
-      "kind": "ltx_audio_decode",
+      "kind": "flow_ltx_decode_audio",
       "pos": {
         "x": 1840.0,
         "y": 1580.0
@@ -297,12 +314,17 @@
     },
     {
       "id": 111,
-      "kind": "ltx_video_save",
+      "kind": "flow_mux",
       "pos": {
         "x": 2280.0,
         "y": 1160.0
       },
-      "fields": {},
+      "fields": {
+        "mode": {
+          "type": "Choice",
+          "value": 0
+        }
+      },
       "style": {
         "tint": null,
         "shadow": true
@@ -425,15 +447,9 @@
     },
     {
       "from_node": 103,
-      "from_port": "video_encoding",
+      "from_port": "cond",
       "to_node": 105,
-      "to_port": "video_encoding"
-    },
-    {
-      "from_node": 103,
-      "from_port": "audio_encoding",
-      "to_node": 105,
-      "to_port": "audio_encoding"
+      "to_port": "cond"
     },
     {
       "from_node": 104,
@@ -443,80 +459,56 @@
     },
     {
       "from_node": 113,
-      "from_port": "image_cond",
+      "from_port": "image",
       "to_node": 105,
-      "to_port": "image_cond"
+      "to_port": "image"
     },
     {
       "from_node": 113,
-      "from_port": "image_cond",
+      "from_port": "image",
       "to_node": 107,
-      "to_port": "image_cond"
+      "to_port": "image"
     },
     {
       "from_node": 105,
-      "from_port": "video_latent",
+      "from_port": "latent",
       "to_node": 106,
-      "to_port": "video_latent"
+      "to_port": "latent"
     },
     {
       "from_node": 106,
-      "from_port": "video_latent",
+      "from_port": "latent",
       "to_node": 107,
-      "to_port": "video_latent"
-    },
-    {
-      "from_node": 105,
-      "from_port": "audio_tokens",
-      "to_node": 107,
-      "to_port": "audio_tokens"
+      "to_port": "latent"
     },
     {
       "from_node": 103,
-      "from_port": "video_encoding",
+      "from_port": "cond",
       "to_node": 107,
-      "to_port": "video_encoding"
-    },
-    {
-      "from_node": 103,
-      "from_port": "audio_encoding",
-      "to_node": 107,
-      "to_port": "audio_encoding"
+      "to_port": "cond"
     },
     {
       "from_node": 107,
-      "from_port": "video_latent",
+      "from_port": "latent",
       "to_node": 108,
-      "to_port": "video_latent"
+      "to_port": "latent"
     },
     {
       "from_node": 107,
-      "from_port": "audio_tokens",
+      "from_port": "latent",
       "to_node": 109,
-      "to_port": "audio_tokens"
+      "to_port": "latent"
     },
     {
       "from_node": 108,
-      "from_port": "frames",
+      "from_port": "video",
       "to_node": 111,
-      "to_port": "frames"
+      "to_port": "video"
     },
     {
       "from_node": 109,
       "from_port": "audio",
       "to_node": 111,
-      "to_port": "audio"
-    },
-    {
-      "from_node": 108,
-      "from_port": "frames",
-      "to_node": 112,
-      "to_port": "frames"
-    },
-    {
-      "from_node": 109,
-      "from_port": "audio",
-      "to_node": 112,
       "to_port": "audio"
     },
     {
@@ -524,6 +516,12 @@
       "from_port": "image",
       "to_node": 113,
       "to_port": "image"
+    },
+    {
+      "from_node": 111,
+      "from_port": "video",
+      "to_node": 112,
+      "to_port": "source"
     }
   ],
   "viewport": null

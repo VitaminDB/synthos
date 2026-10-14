@@ -614,7 +614,8 @@ fn generate_subagent_turn(
     let mut ttft_ms: Option<u32> = None;
     let t_turn = Instant::now();
     let mut last_push = Instant::now();
-    let g = crate::syn_chat::daemon::generate(
+    let label = syngui::tr!("service.label.subagent");
+    let g = synaptixd::with_label(&label, || crate::syn_chat::daemon::generate(
         &model.id,
         crate::syn_chat::daemon::to_service(history, &crate::syn_chat::daemon::MediaAt::new()),
         tool_schemas.to_vec(),
@@ -632,7 +633,7 @@ fn generate_subagent_turn(
             }
             true
         },
-    )?;
+    ))?;
     tracing::debug!(target: "subagent", id = %id, turn, gen_tokens = g.tokens, "turn done");
     push_live_stats(run_id, gen_before, g.tokens, ttft_ms, t_turn);
     let stats = (g.prompt_tokens as u32, g.context as u32, g.cached_tokens as u32);

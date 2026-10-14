@@ -64,6 +64,12 @@ mod imp {
                 temperature_c: temp,
             })
         }
+
+        /// Версия архитектуры (compute capability) карты 0.
+        pub fn compute_capability(&self) -> Option<(i32, i32)> {
+            let cc = self.nvml.device_by_index(0).ok()?.cuda_compute_capability().ok()?;
+            Some((cc.major, cc.minor))
+        }
     }
 }
 
@@ -83,7 +89,18 @@ mod imp {
         pub fn sample(&self) -> Option<GpuSample> {
             None
         }
+        pub fn compute_capability(&self) -> Option<(i32, i32)> {
+            None
+        }
     }
 }
 
 pub use imp::GpuMonitor;
+
+/// Тензорные ядра FP4/MXFP8 (Blackwell, sm_100/sm_120) — по NVML, без
+/// CUDA-контекста в процессе; `None` — карты NVIDIA нет.
+pub fn block_scaled_mma() -> Option<bool> {
+    static CC: std::sync::OnceLock<Option<(i32, i32)>> = std::sync::OnceLock::new();
+    let cc = *CC.get_or_init(|| GpuMonitor::try_new().and_then(|g| g.compute_capability()));
+    cc.map(|(major, _)| matches!(major, 10 | 12))
+}

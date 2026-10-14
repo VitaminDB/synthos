@@ -120,3 +120,17 @@ pub fn generate(
 pub fn complete(model: &str, history: &[Message], params: &synaptixd::Params, stop: Arc<dyn Fn() -> bool + Send + Sync>) -> anyhow::Result<synaptixd::Generated> {
     generate(model, to_service(history, &MediaAt::new()), Vec::new(), params, stop, &mut |_| true)
 }
+
+/// KV-сессия чата в службе: (ёмкость, токенов; байт).
+pub fn kv_usage(model: &str, key: &str) -> Option<(u32, u64)> {
+    let m = synaptixd::Client::connect().ok()?.metrics(false).ok()?;
+    m.kv.into_iter().find(|k| k.model == model && k.key == key).map(|k| (k.capacity, k.bytes))
+}
+
+/// Свободная видеопамять карты 0, МБ (NVML; 0 — неизвестно).
+pub fn vram_free_mb() -> u32 {
+    crate::metrics::gpu::GpuMonitor::try_new()
+        .and_then(|g| g.sample())
+        .map(|g| (g.mem_total.saturating_sub(g.mem_used) >> 20) as u32)
+        .unwrap_or(0)
+}

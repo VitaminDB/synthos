@@ -115,14 +115,14 @@ where
 {
     // Подпись зависит от карты: без нативных ядер формат исполняется
     // портируемым путём (деквант в регистрах GEMV / полосами перед GEMM).
-    let caps = synaptix::facade::device::cuda_caps(0).ok();
+    let mma = crate::metrics::gpu::block_scaled_mma();
     let native = |ok: Option<bool>| match ok {
         Some(true) => tr!("settings.dtype.native"),
         Some(false) => tr!("settings.dtype.portable"),
         None => String::new(),
     };
-    let fp4 = native(caps.as_ref().map(|c| c.fp4_mma()));
-    let fp8 = native(caps.as_ref().map(|c| c.mxfp8_mma()));
+    let fp4 = native(mma);
+    let fp8 = native(mma);
     let mut items = vec![
         DropdownItem::new("f32", tr!("settings.dtype.storage.f32")),
         DropdownItem::new("bf16", tr!("settings.dtype.storage.bf16")),

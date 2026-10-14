@@ -1517,16 +1517,21 @@ async fn run_agent_loop(
             gen.prompt_tokens,
             raw_calls.len()
         );
+        // KV-сессия чата и её память — у службы; свободная видеопамять — NVML.
+        let (ring_tokens, ring_bytes) = session_key
+            .as_deref()
+            .and_then(|key| crate::syn_chat::daemon::kv_usage(&model.id, key))
+            .unwrap_or((gen.context as u32, 0));
         let stat = TurnStats {
             prompt_tokens: last_prompt_tokens,
             reused_tokens: gen.cached_tokens as u32,
             gen_tokens: total_gen_tokens + tokens_this_turn,
             prefill_ms: gen.prefill_ms as u32,
             turns: turn as u32 + 1,
-            ring_tokens: gen.context as u32,
-            ring_bytes: 0,
+            ring_tokens,
+            ring_bytes,
             ctx_budget: gen.context as u32,
-            vram_free_mb: 0,
+            vram_free_mb: crate::syn_chat::daemon::vram_free_mb(),
             blocks_resident: None,
         };
         if_active(&chat_id, move |c| stat.apply(c));
@@ -2182,7 +2187,7 @@ pub(crate) fn generate_summary(
         let abort = abort.clone();
         Arc::new(move || abort.load(Ordering::Relaxed) != abort_snapshot)
     };
-    let g = crate::syn_chat::daemon::complete(&model.id, &history, &call, stop)?;
+    let g = synaptixd::with_label(&tr!("service.label.summary"), || crate::syn_chat::daemon::complete(&model.id, &history, &call, stop))?;
     log::info!("[syn_chat] сводка: промпт {} ток, ответ {} ток", g.prompt_tokens, g.tokens);
     Ok(g.text.trim().to_string())
 }

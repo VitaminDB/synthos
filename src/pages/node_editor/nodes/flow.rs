@@ -452,7 +452,9 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
             });
         }
         let opts = sf::RunOpts { cancel, inputs, ..Default::default() };
-        let res = synaptixd::flow::run_with(&flow, &dir, &opts, &mut |e| match e {
+        // В метриках службы прогон виден как «Synthos · нодовый редактор».
+        let label = tr!("service.label.node_editor");
+        let res = synaptixd::with_label(&label, || synaptixd::flow::run_with(&flow, &dir, &opts, &mut |e| match e {
             sf::Event::Started { id, item, .. } => {
                 if let Some(r) = rts.get(&id) {
                     r.progress.set(0.0);
@@ -477,7 +479,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 }
             }
             _ => {}
-        });
+        }));
         done.store(true, Ordering::SeqCst);
         log_worker_done("flow", started, &res);
         if let Err(e) = res {

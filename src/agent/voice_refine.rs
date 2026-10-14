@@ -116,7 +116,9 @@ fn run_refine(model: &LoadedSynModel, system: &str, user: &str) -> anyhow::Resul
     params.enable_thinking = false;
     params.max_new_tokens = REFINE_MAX_NEW_TOKENS as u32;
     let call = crate::syn_chat::daemon::params(&params, None);
-    let g = crate::syn_chat::daemon::complete(&model.id, &history, &call, std::sync::Arc::new(|| false))?;
+    let g = synaptixd::with_label(&tr!("service.label.voice_refine"), || {
+        crate::syn_chat::daemon::complete(&model.id, &history, &call, std::sync::Arc::new(|| false))
+    })?;
     // enable_thinking=false, но защитно вырезаем `<think>…</think>`, если
     // шаблон всё же их выдал.
     let mut tp = ThinkParser::new();

@@ -331,6 +331,7 @@ chat.attach.summary.preparing_only.other = "파일 {n}개 준비 중…"
 chat.attach.count.other = "파일 {n}개"
 chat.msg.tool_result.lines_count.other = "{n}줄"
 chat.msg.tool_live.title = "실시간 출력"
+chat.msg.tool_live.waiting = "출력 대기 중…"
 chat.msg.tool_live.hidden.other = "… 이전 {n}줄"
 chat.msg.tool_result.show_all.other = "전체 보기 ({n}줄)"
 

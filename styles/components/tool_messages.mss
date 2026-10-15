@@ -612,3 +612,9 @@
 .tool-live-head {
     padding: 0px 0px 6px 0px;
 }
+.tool-live-waiting {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    animation: tool-live-pulse 1.6s ease-in-out infinite;
+}

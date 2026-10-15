@@ -942,7 +942,8 @@ const TOOL_LIVE_LINES: usize = 12;
 
 /// Живой вывод идущего `bash`-вызова: терминальная панель с пульсирующей
 /// точкой, счётчиком строк и хвостом вывода (stderr — цветом ошибки).
-/// Пусто, пока у вызова нет вывода, после результата и в чужом чате.
+/// Открывается сразу при старте вызова («Ожидание вывода…»); пусто после
+/// результата и в чужом чате.
 fn tool_live_panel(call_ids: Vec<String>) -> Box<dyn Widget> {
     let chat = use_context::<SynChatCtx>();
     let panel = Reactive::new(move || -> Vec<Box<dyn Widget>> {
@@ -951,21 +952,24 @@ fn tool_live_panel(call_ids: Vec<String>) -> Box<dyn Widget> {
             return vec![];
         }
         let shown = live.tail(TOOL_LIVE_LINES);
-        if shown.is_empty() {
-            return vec![];
-        }
         let total = live.line_count();
         let hidden = total.saturating_sub(shown.len());
-        let header = mgui! {
-            Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                DecoratedBox::new().class("tool-live-dot"),
-                Text::new(tr!("chat.msg.tool_live.title")).class("tool-live-title"),
-                DecoratedBox::new().class("grow"),
+        let mut head: Vec<Box<dyn Widget>> = vec![
+            Box::new(DecoratedBox::new().class("tool-live-dot")),
+            Box::new(Text::new(tr!("chat.msg.tool_live.title")).class("tool-live-title")),
+            Box::new(DecoratedBox::new().class("grow")),
+        ];
+        if total > 0 {
+            head.push(Box::new(
                 Text::new(trn!("chat.msg.tool_result.lines_count", total)).class("tool-live-count"),
-            ]
-        };
+            ));
+        }
+        let header = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).children(head);
         let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(shown.len() + 2);
         rows.push(Box::new(DecoratedBox::new().class("tool-live-head").child(header)));
+        if shown.is_empty() {
+            rows.push(Box::new(Text::new(tr!("chat.msg.tool_live.waiting")).class("tool-live-waiting")));
+        }
         if hidden > 0 {
             rows.push(Box::new(
                 Text::new(trn!("chat.msg.tool_live.hidden", hidden)).class("tool-live-more"),

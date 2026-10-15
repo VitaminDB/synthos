@@ -331,6 +331,7 @@ chat.attach.summary.preparing_only.other = "{n} 件のファイルを準備中�
 chat.attach.count.other = "{n} 個のファイル"
 chat.msg.tool_result.lines_count.other = "{n} 行"
 chat.msg.tool_live.title = "リアルタイム出力"
+chat.msg.tool_live.waiting = "出力を待機中…"
 chat.msg.tool_live.hidden.other = "… 前の {n} 行"
 chat.msg.tool_result.show_all.other = "すべて表示（{n} 行）"
 

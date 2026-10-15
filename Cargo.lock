@@ -6928,6 +6928,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "synaptix-flow",
  "synaptix-graph",
  "synaptixd",
  "thiserror 2.0.19",
@@ -7059,7 +7060,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.313"
+version = "0.2.314"
 dependencies = [
  "android_logger",
  "anyhow",

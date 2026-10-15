@@ -698,6 +698,10 @@ impl ToolLive {
         use std::sync::atomic::AtomicBool;
         use std::sync::Mutex;
         let buf = Arc::new(Mutex::new(LiveOutput::new(chat_id.clone(), call_id)));
+        // Панель открывается сразу при старте — ещё до первой строки: вывод
+        // может прийти не скоро (`… | tail`, ожидание устройства).
+        let empty = buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        run_on_main_thread(move || use_context::<SynChatCtx>().tool_live.set(Some(empty)));
         let dirty = Arc::new(AtomicBool::new(false));
         let tap: synassist::tools::bash::Tap = {
             let (buf, dirty) = (buf.clone(), dirty.clone());

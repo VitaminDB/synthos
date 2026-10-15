@@ -331,6 +331,7 @@ chat.attach.summary.preparing_only.other = "正在准备 {n} 个文件…"
 chat.attach.count.other = "{n} 个文件"
 chat.msg.tool_result.lines_count.other = "{n} 行"
 chat.msg.tool_live.title = "实时输出"
+chat.msg.tool_live.waiting = "等待输出…"
 chat.msg.tool_live.hidden.other = "… 之前 {n} 行"
 chat.msg.tool_result.show_all.other = "全部显示（{n} 行）"
 

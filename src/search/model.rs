@@ -138,14 +138,7 @@ pub enum SearchAction {
     Command(SearchCommand),
 }
 
-/// Поле элемента, по которому идёт поиск помимо названия: нормализованный
-/// текст для сравнения, исходный — для показа «по чему нашли».
-#[derive(Clone, Debug, PartialEq)]
-pub struct SearchField {
-    pub norm: String,
-    pub display: String,
-    pub bonus: i32,
-}
+pub use super::matching::SearchField;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchItem {

@@ -1,6 +1,6 @@
 # synthos
 
-[![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
+[![Licence: GPL-3.0 or commercial](https://img.shields.io/badge/licence-GPL--3.0%20%7C%20commercial-blue)](#licence)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
 [![Vibe-coded with Claude Code](https://img.shields.io/badge/vibe--coded-Claude%20Code-d97757)](#how-it-is-built)
 
@@ -397,4 +397,4 @@ support its development with a donation via [PayPal](https://paypal.me/vitamindb
 
 ## Licence
 
-MIT OR Apache-2.0 — see [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+Synthos is dual-licensed: free under the [GNU GPL v3.0](LICENSE) (with an [additional permission](LICENSE-EXCEPTION.md) for proprietary GPU/NPU runtime libraries), or under a [commercial licence](LICENSE-COMMERCIAL.md) for companies that ship it in closed-source products. Versions up to 15 October 2026 remain under MIT OR Apache-2.0.

@@ -33,8 +33,12 @@ pub fn view() -> impl Widget {
                             // Те же ссылки, что у чипов в шапке окна.
                             link_row(MI_FAVORITE, tr!("settings.about.donate"), titlebar::DONATE_URL),
                             link_row(MI_CODE, tr!("settings.about.source_code"), titlebar::GITHUB_URL),
-                            link_row(MI_BOOK, tr!("settings.about.license_apache"), "https://www.apache.org/licenses/LICENSE-2.0"),
-                            link_row(MI_BOOK, tr!("settings.about.license_mit"), "https://opensource.org/licenses/MIT"),
+                            link_row(MI_BOOK, tr!("settings.about.license_gpl"), "https://www.gnu.org/licenses/gpl-3.0.html"),
+                            link_row(
+                                MI_BOOK,
+                                tr!("settings.about.license_commercial"),
+                                concat!(env!("CARGO_PKG_REPOSITORY"), "/blob/master/LICENSE-COMMERCIAL.md"),
+                            ),
                         ]),
                     ]
                 ]

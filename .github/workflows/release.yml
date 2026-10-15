@@ -167,7 +167,7 @@ jobs:
           install -Dm644 packaging/synthos.desktop "$stage/share/applications/synthos.desktop"
           install -Dm644 packaging/synthos.svg \
             "$stage/share/icons/hicolor/scalable/apps/synthos.svg"
-          install -Dm644 README.md LICENSE-MIT LICENSE-APACHE -t "$stage/"
+          install -Dm644 README.md LICENSE LICENSE-COMMERCIAL.md LICENSE-EXCEPTION.md -t "$stage/"
 
           tar --zstd -C "$(dirname "$stage")" -cf \
             "$out/synthos-$ver-x86_64-linux.tar.zst" "synthos-$ver"

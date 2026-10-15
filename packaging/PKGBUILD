@@ -10,7 +10,7 @@ epoch=1
 pkgver=0.2.313
 pkgrel=1
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода; NVIDIA sm_80+, модели .syn и GGUF"
-license=("MIT" "Apache-2.0")
+license=("GPL-3.0-only")
 arch=("x86_64")
 url="https://github.com/VitaminDB/synthos"
 

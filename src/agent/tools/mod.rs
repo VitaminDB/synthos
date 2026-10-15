@@ -52,7 +52,7 @@ use syngui::core::sync::Mutex;
 use tokio::sync::oneshot;
 
 pub use descriptor::Tool;
-pub use executor::{execute, ToolError, ToolOutcome};
+pub use executor::{execute, execute_tapped, ToolError, ToolOutcome};
 
 /// Решение пользователя по диалогу подтверждения.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

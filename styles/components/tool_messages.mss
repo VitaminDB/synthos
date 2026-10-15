@@ -565,3 +565,50 @@
 .tool-countdown.urgent .tool-countdown-text {
     color: var(--error);
 }
+
+/* Живой вывод идущего `bash`-вызова (карточка вызова): терминальная
+ * панель с хвостом stdout/stderr. Только для глаз — в модель не уходит. */
+.tool-live {
+    background-color: var(--bg-window);
+    border-radius: 10px;
+    padding: 8px 12px 10px 12px;
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+.tool-live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: var(--success);
+    animation: tool-live-pulse 1.1s ease-in-out infinite;
+}
+@keyframes tool-live-pulse {
+    0%, 100% { opacity: 1.0; }
+    50%      { opacity: 0.3; }
+}
+.tool-live-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.tool-live-count {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.tool-live-more {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.7;
+    padding: 2px 0px 2px 0px;
+}
+.tool-live-line {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    color: var(--text);
+}
+.tool-live-line.err {
+    color: var(--error);
+}
+.tool-live-head {
+    padding: 0px 0px 6px 0px;
+}

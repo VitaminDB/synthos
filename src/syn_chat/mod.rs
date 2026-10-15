@@ -21,6 +21,7 @@ pub mod state;
 pub mod storage;
 pub mod system_prompt;
 pub mod telemetry;
+pub mod tool_live;
 pub mod tool_parser;
 
 pub use model_registry::{LoadedSynModel, SynModelRegistry};

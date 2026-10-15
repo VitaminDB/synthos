@@ -916,7 +916,7 @@ pub(super) fn tool_call_card_only(
         ))
     };
 
-    let card_children: Vec<Box<dyn Widget>> = if compact {
+    let mut card_children: Vec<Box<dyn Widget>> = if compact {
         vec![
             clickable_header(msg_idx, header),
             collapsible(msg_idx, args_widget),
@@ -924,12 +924,73 @@ pub(super) fn tool_call_card_only(
     } else {
         vec![Box::new(header), args_widget()]
     };
+    // Живой вывод — вне collapsible: виден и у свёрнутой карточки.
+    if let Some(ids) = msg.tool_calls.as_ref().filter(|c| !c.is_empty()) {
+        card_children.push(tool_live_panel(ids.iter().map(|c| c.id.clone()).collect()));
+    }
 
     DecoratedBox::new().class("tool-call-card").child(
         Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .children(card_children),
+    )
+}
+
+/// Сколько последних строк живого вывода показывать в карточке.
+const TOOL_LIVE_LINES: usize = 12;
+
+/// Живой вывод идущего `bash`-вызова: терминальная панель с пульсирующей
+/// точкой, счётчиком строк и хвостом вывода (stderr — цветом ошибки).
+/// Пусто, пока у вызова нет вывода, после результата и в чужом чате.
+fn tool_live_panel(call_ids: Vec<String>) -> Box<dyn Widget> {
+    let chat = use_context::<SynChatCtx>();
+    let panel = Reactive::new(move || -> Vec<Box<dyn Widget>> {
+        let Some(live) = chat.tool_live.get() else { return vec![] };
+        if live.owner != chat.active_chat_id.get() || !call_ids.contains(&live.call_id) {
+            return vec![];
+        }
+        let shown = live.tail(TOOL_LIVE_LINES);
+        if shown.is_empty() {
+            return vec![];
+        }
+        let total = live.line_count();
+        let hidden = total.saturating_sub(shown.len());
+        let header = mgui! {
+            Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                DecoratedBox::new().class("tool-live-dot"),
+                Text::new(tr!("chat.msg.tool_live.title")).class("tool-live-title"),
+                DecoratedBox::new().class("grow"),
+                Text::new(trn!("chat.msg.tool_result.lines_count", total)).class("tool-live-count"),
+            ]
+        };
+        let mut rows: Vec<Box<dyn Widget>> = Vec::with_capacity(shown.len() + 2);
+        rows.push(Box::new(DecoratedBox::new().class("tool-live-head").child(header)));
+        if hidden > 0 {
+            rows.push(Box::new(
+                Text::new(trn!("chat.msg.tool_live.hidden", hidden)).class("tool-live-more"),
+            ));
+        }
+        rows.extend(shown.into_iter().map(|l| -> Box<dyn Widget> {
+            let class = if l.err { "tool-live-line err" } else { "tool-live-line" };
+            // Пустая строка — пробел: у пустого Text нулевая высота.
+            let text = if l.text.is_empty() { " ".to_string() } else { l.text };
+            Box::new(Text::new(text).selectable(true).class(class))
+        }));
+        vec![Box::new(
+            DecoratedBox::new().class("tool-live").child(
+                Column::new()
+                    .gap(1.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .children(rows),
+            ),
+        )]
+    });
+    Box::new(
+        AnimatedSize::new(panel)
+            .axis(AnimationAxis::Height)
+            .duration_ms(160)
+            .easing(Easing::EaseOutCubic),
     )
 }
 

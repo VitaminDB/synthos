@@ -155,6 +155,9 @@ pub struct SynChatCtx {
     /// Идёт вызов инструмента: чат хода и имя инструмента. Пока он есть,
     /// статус хода — «Выполняется инструмент …», а не «Генерация ответа».
     pub tool_running: RwSignal<Option<(Option<String>, String)>>,
+    /// Живой вывод идущего вызова `bash` — только для карточки вызова, в
+    /// модель не уходит (см. [`crate::syn_chat::tool_live`]).
+    pub tool_live: RwSignal<Option<crate::syn_chat::tool_live::LiveOutput>>,
     pub tool_timer: crate::pages::node_editor::timing::Stopwatch,
     /// Последняя ошибка для UI.
     pub error: RwSignal<Option<String>>,
@@ -395,6 +398,7 @@ impl SynChatCtx {
             pending: use_signal(false),
             tool_limit: use_signal(None),
             tool_running: use_signal(None),
+            tool_live: use_signal(None),
             tool_timer: crate::pages::node_editor::timing::Stopwatch::new(),
             error: use_signal(None),
             abort: Arc::new(AtomicU64::new(0)),

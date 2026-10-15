@@ -227,6 +227,12 @@ pub(crate) fn canonical_tool_name(name: &str) -> &str {
 }
 
 pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
+    execute_tapped(call, None).await
+}
+
+/// [`execute`] с живым выводом: `tap` получает stdout/stderr `bash` по мере
+/// появления — для показа в UI. Результат вызова тот же, что без него.
+pub async fn execute_tapped(call: &ChatToolCall, tap: Option<synassist::tools::bash::Tap>) -> ToolOutcome {
     let name = call.function.name.clone().unwrap_or_default();
     let name = canonical_tool_name(&name).to_string();
     let raw_args = call.function.arguments.as_deref().unwrap_or("");
@@ -234,7 +240,7 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
     let args = normalized.as_str();
 
     let limit = timeout_for(&name, args);
-    let run = run_tool(&name, args);
+    let run = run_tool(&name, args, tap);
     let result = match limit {
         Some(secs) => match tokio::time::timeout(std::time::Duration::from_secs(secs), run).await {
             Ok(r) => r,
@@ -266,9 +272,9 @@ pub async fn execute(call: &ChatToolCall) -> ToolOutcome {
 
 /// Исполнить инструмент по ключу (без предела времени — его ставит
 /// [`execute`]).
-async fn run_tool(name: &str, args: &str) -> Result<String, ToolError> {
+async fn run_tool(name: &str, args: &str, tap: Option<synassist::tools::bash::Tap>) -> Result<String, ToolError> {
     match name {
-        KEY_BASH => run_bash(args).await,
+        KEY_BASH => run_bash_tapped(args, tap).await,
         KEY_KB_SEARCH => super::kb_search::run(args).await,
         KEY_WEB => super::web::run(args).await,
         KEY_AUTOSKILL => super::autoskill::run(args).await,
@@ -285,9 +291,13 @@ async fn run_tool(name: &str, args: &str) -> Result<String, ToolError> {
 }
 
 pub async fn run_bash(args_json: &str) -> Result<String, ToolError> {
+    run_bash_tapped(args_json, None).await
+}
+
+async fn run_bash_tapped(args_json: &str, tap: Option<synassist::tools::bash::Tap>) -> Result<String, ToolError> {
     let v: serde_json::Value = serde_json::from_str(args_json).map_err(|e| ToolError::BadArgs(e.to_string()))?;
     let command = v.get("command").and_then(|x| x.as_str()).ok_or(ToolError::MissingField("command"))?;
-    synassist::tools::bash::run(command, None, MAX_READ_OUTPUT_BYTES).await.map_err(|e| match e {
+    synassist::tools::bash::run_tapped(command, None, MAX_READ_OUTPUT_BYTES, tap).await.map_err(|e| match e {
         synassist::tools::bash::BashError::Spawn(s) => ToolError::Spawn(s),
         other => ToolError::Runtime(other.to_string()),
     })

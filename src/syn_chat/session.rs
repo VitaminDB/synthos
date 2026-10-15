@@ -681,6 +681,52 @@ impl Drop for ToolCountdown {
     }
 }
 
+/// Живой вывод идущего `bash`-вызова на его карточке. Поток копится в
+/// буфере, в UI уходит не чаще [`LIVE_FLUSH`]: шумная команда не дёргает
+/// перерисовку на каждый кусок pipe'а. При drop панель гаснет — дальше
+/// карточка результата. В модель живой вывод не попадает.
+struct ToolLive {
+    tap: synassist::tools::bash::Tap,
+    flusher: tokio::task::JoinHandle<()>,
+}
+
+const LIVE_FLUSH: Duration = Duration::from_millis(100);
+
+impl ToolLive {
+    fn start(chat_id: &Option<String>, call_id: String) -> Self {
+        use crate::syn_chat::tool_live::LiveOutput;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Mutex;
+        let buf = Arc::new(Mutex::new(LiveOutput::new(chat_id.clone(), call_id)));
+        let dirty = Arc::new(AtomicBool::new(false));
+        let tap: synassist::tools::bash::Tap = {
+            let (buf, dirty) = (buf.clone(), dirty.clone());
+            Arc::new(move |stream, text| {
+                let err = stream == synassist::tools::bash::Stream::Stderr;
+                buf.lock().unwrap_or_else(|e| e.into_inner()).push(err, text);
+                dirty.store(true, Ordering::Release);
+            })
+        };
+        let flusher = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(LIVE_FLUSH).await;
+                if dirty.swap(false, Ordering::AcqRel) {
+                    let snap = buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    run_on_main_thread(move || use_context::<SynChatCtx>().tool_live.set(Some(snap)));
+                }
+            }
+        });
+        Self { tap, flusher }
+    }
+}
+
+impl Drop for ToolLive {
+    fn drop(&mut self) {
+        self.flusher.abort();
+        run_on_main_thread(|| use_context::<SynChatCtx>().tool_live.set(None));
+    }
+}
+
 /// Выполнить действие над контекстом, только если чат генерации открыт.
 ///
 /// Живой стрим, плашки ошибок и `pending` принадлежат открытому чату: пока
@@ -1936,10 +1982,15 @@ async fn run_agent_loop(
                         chat_call.function.arguments.as_deref().unwrap_or(""),
                     ),
                 );
+                // Живой вывод — только у `bash`: остальные отвечают разом.
+                let live = (tools::executor::canonical_tool_name(&tool_name(chat_call))
+                    == tools::catalog::KEY_BASH)
+                    .then(|| ToolLive::start(&chat_id, chat_call.id.clone()));
+                let tap = live.as_ref().map(|l| l.tap.clone());
                 // Исполнение с возможностью прерывания на длинных tool'ах
                 // (web fetch может висеть 30+ сек).
                 let outcome = tokio::select! {
-                    o = tools::execute(chat_call) => o,
+                    o = tools::execute_tapped(chat_call, tap) => o,
                     _ = wait_abort(&abort, abort_snapshot) => {
                         cancel_unanswered(&chat_id, &chat_calls[ci..]);
                         return Ok(());

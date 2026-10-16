@@ -368,6 +368,7 @@ fn apply_recursive(nodes: &mut Vec<TreeNode>, git: &GitStatusMap, palette: &GitP
                     icon_color: None,
                     badge_color: Some(palette.color_for(st)),
                     strikethrough: false,
+                    ..Default::default()
                 });
             }
             apply_recursive(&mut node.children, git, palette);
@@ -384,6 +385,7 @@ fn apply_recursive(nodes: &mut Vec<TreeNode>, git: &GitStatusMap, palette: &GitP
                     icon_color: Some(c),
                     badge_color: None,
                     strikethrough: st == GitStatus::Deleted,
+                    ..Default::default()
                 });
             }
         }
@@ -433,6 +435,7 @@ fn make_ghost_node(path: &Path, palette: &GitPalette) -> TreeNode {
             icon_color: Some(red),
             badge_color: None,
             strikethrough: true,
+            ..Default::default()
         })
 }
 

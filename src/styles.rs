@@ -131,7 +131,7 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/syn_chat.mss"),
         "\n",
-        include_str!("../styles/components/notes.mss"),
+        include_str!("../../synshell/crates/syn-notes/styles/notes.mss"),
         "\n",
         include_str!("../styles/layout/huggingface.mss"),
         "\n",

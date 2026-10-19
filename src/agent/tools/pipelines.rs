@@ -1465,7 +1465,7 @@ fn resolve_attachment_uris_in(v: &mut serde_json::Value, notes: &mut Vec<String>
     }
 }
 
-pub(super) fn find_attachment(r: &str) -> Option<MsgAttachment> {
+pub(crate) fn find_attachment(r: &str) -> Option<MsgAttachment> {
     let atts = chat_attachments();
     let r_lower = r.to_lowercase();
     if r_lower == "last" || r_lower == "latest" {

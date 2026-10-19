@@ -25,6 +25,7 @@ pub mod logging;
 pub mod metrics;
 pub mod migrate;
 pub mod models;
+pub mod notes_host;
 pub mod pages;
 pub mod paths;
 pub mod rail;
@@ -116,7 +117,8 @@ pub fn run_desktop() {
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
-            provide_context(pages::notes::NotesCtx::new_or_restore(&AppConfig::load()));
+            notes_host::install(&ctx);
+            provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
@@ -136,6 +138,7 @@ pub fn run_desktop() {
             pages::notes::autosave::install_notes_autosave();
             pages::notes::reminders::install_reminders();
             pages::notes::right_panel::install_props_panel_memory();
+            pages::notes::projects::install_busy_retry();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.
@@ -189,7 +192,8 @@ fn android_main(app: syngui::app::AndroidApp) {
             provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
             provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
-            provide_context(pages::notes::NotesCtx::new_or_restore(&AppConfig::load()));
+            notes_host::install(&ctx);
+            provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
@@ -209,6 +213,7 @@ fn android_main(app: syngui::app::AndroidApp) {
             pages::notes::autosave::install_notes_autosave();
             pages::notes::reminders::install_reminders();
             pages::notes::right_panel::install_props_panel_memory();
+            pages::notes::projects::install_busy_retry();
             // Watcher sequencer'а нодового редактора ставится здесь, а не в
             // `run_controls::view`: страница пересобирается роутером, и
             // effect, заведённый внутри неё, умирал вместе с прогоном.
@@ -797,7 +802,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             // Открытые проекты заметок (плитки, активная страница и
             // раскрытые узлы каждого) и недавние: `.get()` внутри `persist`
             // подписывают effect на их смену.
-            notes_projects: Some(notes_state.projects),
+            notes_projects: Some(notes_host::projects(notes_state.projects)),
             notes_active_project: notes_state.active_project,
             notes_recent: notes_state.recent,
             panels: panels.to_config(),

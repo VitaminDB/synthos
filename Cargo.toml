@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
 # релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
 # приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
-version = "0.2.314"
+version = "0.2.315"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]
@@ -122,6 +122,10 @@ rfd = { version = "0.15", default-features = false, features = [
 
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
 synassist = { path = "../synshell/crates/synassist" }
+# Заметки: режим «Заметки» и инструмент notes — библиотека syn-notes
+# (тот же код, что в приложении заметок synshell).
+syn-notes = { path = "../synshell/crates/syn-notes" }
+syn-notes-proto = { path = "../synshell/crates/syn-notes-proto" }
 synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
 # Клиент службы нейросетей: графы ядра (стадии моделей, генерация) исполняет она.
 synaptixd = { path = "../synshell/crates/synaptixd", default-features = false }

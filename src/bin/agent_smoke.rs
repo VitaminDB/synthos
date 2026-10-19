@@ -243,7 +243,7 @@ fn run() -> std::result::Result<(), String> {
     // Контексты страниц: инструмент `notes` работает с деревом заметок, а
     // `pipelines` — с рабочим столом графов. Без них вызов инструмента valит
     // весь процесс на `use_context`.
-    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&cfg));
+    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&synthos::notes_host::state(&cfg)));
     provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
 
     // Модель грузит служба со своим профилем.

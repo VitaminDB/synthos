@@ -8,3 +8,4 @@ pub use syn_notes::notes;
 pub mod settings;
 pub mod syn_chat;
 pub mod syn_explorer;
+pub mod training;

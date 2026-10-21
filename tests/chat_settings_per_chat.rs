@@ -24,6 +24,7 @@ fn set_panels(app: &AppCtx, ctx: &SynChatCtx, s: &ChatSettings) {
     app.skills_active.set(s.skills_active.clone());
     ctx.system_prompt.set(s.system_prompt.clone());
     ctx.prompt_active.set(s.prompt_preset.clone());
+    ctx.loras.set(s.loras.clone());
 }
 
 fn on_disk(id: &str) -> ChatSettings {
@@ -69,6 +70,7 @@ fn settings_follow_the_open_chat() {
         skills_active: vec!["tone".into()],
         system_prompt: "общий промпт".into(),
         prompt_preset: first_preset,
+        loras: None,
     };
     set_panels(&app, &ctx, &global);
     registry::load_all();
@@ -86,6 +88,7 @@ fn settings_follow_the_open_chat() {
         skills_active: vec![],
         system_prompt: "промпт чата B".into(),
         prompt_preset: String::new(),
+        loras: Some(vec![synthos::syn_chat::chat_settings::ChatLora { name: "стиль".into(), strength: 80 }]),
     };
     set_panels(&app, &ctx, &b_settings);
     ctx.params.update(|p| {

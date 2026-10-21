@@ -66,6 +66,7 @@ struct Item {
 const FOOTER_UTILITY: &[Item] = &[
     Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip_key: "nav.syn_explorer" },
     Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip_key: "nav.huggingface" },
+    Item { icon: MI_MODEL_TRAINING, route: "training",      tooltip_key: "nav.training" },
 ];
 
 const FOOTER_SETTINGS: &[Item] = &[
@@ -157,6 +158,8 @@ fn rail_column(items: &'static [Item]) -> impl Widget {
         let item = *it;
         if item.route == "huggingface" {
             col = col.child(move || hf_rail_item(item));
+        } else if item.route == "training" {
+            col = col.child(move || training_rail_item(item));
         } else {
             col = col.child(move || rail_item(item));
         }
@@ -186,6 +189,24 @@ fn hf_rail_item(it: Item) -> impl Widget {
         .filter(|d| matches!(d.status, DlStatus::Active | DlStatus::Pending))
         .count();
 
+    let mut stack = Stack::new().child(btn);
+    if count > 0 {
+        stack = stack.child(Positioned::new(Badge::new(count.to_string()).small()).at(22.0, -2.0));
+    }
+    stack
+}
+
+/// Пункт «Обучение»: бейдж — число идущих и ждущих задач в службе.
+fn training_rail_item(it: Item) -> impl Widget {
+    let app = use_context::<AppCtx>();
+    let is_selected = app.current_route.get() == it.route;
+    let class = if is_selected { "nav-rail-item selected" } else { "nav-rail-item" };
+    let route = it.route;
+    let btn = ToolButton::new(it.icon)
+        .tooltip(tr!(it.tooltip_key))
+        .on_click(move || rail::navigate(route))
+        .class(class);
+    let count = use_context::<crate::pages::training::TrainingCtx>().active_jobs();
     let mut stack = Stack::new().child(btn);
     if count > 0 {
         stack = stack.child(Positioned::new(Badge::new(count.to_string()).small()).at(22.0, -2.0));

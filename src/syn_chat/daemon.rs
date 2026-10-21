@@ -72,6 +72,17 @@ impl std::fmt::Display for Interrupted {
 
 impl std::error::Error for Interrupted {}
 
+thread_local! {
+    /// Адаптеры LoRA хода, идущего в этом потоке (воркер чата ставит их на
+    /// время хода; `None` — как у модели в службе).
+    static TURN_LORAS: std::cell::RefCell<Option<Vec<synaptixd::LoraUse>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Поставить адаптеры хода текущему потоку.
+pub fn set_turn_loras(loras: Option<Vec<synaptixd::LoraUse>>) {
+    TURN_LORAS.with(|l| *l.borrow_mut() = loras);
+}
+
 /// Ход модели в службе. `stop` опрашивается и во время префилла (событий
 /// ещё нет); `on_event` возвращает `false`, чтобы оборвать ход.
 pub fn generate(
@@ -102,7 +113,8 @@ pub fn generate(
             }
         })
     };
-    let r = c.chat(model, messages, tools, params, |ev| {
+    let loras = TURN_LORAS.with(|l| l.borrow().clone());
+    let r = c.chat_loras(model, messages, tools, params, loras, |ev| {
         if !cut.load(Ordering::SeqCst) && !on_event(ev) {
             cut.store(true, Ordering::SeqCst);
         }

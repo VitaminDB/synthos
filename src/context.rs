@@ -25,6 +25,7 @@ pub const ROUTES: &[&str] = &[
     "notes",
     "syn_explorer",
     "huggingface",
+    "training",
     "settings",
 ];
 

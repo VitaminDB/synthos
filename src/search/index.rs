@@ -90,6 +90,7 @@ const PAGES: &[(&str, &str, &str)] = &[
     ("code", "search.page.code", MI_CODE),
     ("syn_explorer", "nav.syn_explorer", MI_INVENTORY_2),
     ("huggingface", "nav.huggingface", MI_CLOUD_DOWNLOAD),
+    ("training", "nav.training", MI_MODEL_TRAINING),
     ("settings", "nav.settings", MI_SETTINGS),
 ];
 
@@ -141,6 +142,7 @@ fn page_keywords(route: &str) -> &'static [&'static str] {
             "packages",
         ],
         "huggingface" => &["hf", "загрузки", "скачать", "hub", "download", "huggingface"],
+        "training" => &["обучение", "дообучение", "lora", "лора", "адаптер", "датасет", "train", "finetune", "dataset"],
         "settings" => &["настройки", "параметры", "опции", "settings", "preferences"],
         _ => &[],
     }

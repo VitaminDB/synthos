@@ -70,6 +70,7 @@ pub fn styles() -> &'static str {
         include_str!("../styles/components/settings_audio_models.mss"),
         "\n",
         include_str!("../styles/components/settings_kb.mss"),
+        include_str!("../styles/components/training.mss"),
         "\n",
         include_str!("../styles/components/tool_messages.mss"),
         include_str!("../styles/components/wizard_panel.mss"),

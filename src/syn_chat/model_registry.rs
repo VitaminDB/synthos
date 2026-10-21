@@ -45,6 +45,18 @@ pub struct ServiceLlm {
     pub engine: Option<synaptixd::EngineProfile>,
     /// Ручные правки профиля в настройках модели.
     pub own: synaptixd::EngineProfile,
+    /// Адаптеры LoRA модели по умолчанию (настройки службы).
+    pub loras: Vec<synaptixd::LoraUse>,
+    /// Архитектура (`qwen3`, `qwen3_5`, `gemma4`…).
+    pub arch: String,
+}
+
+impl ServiceLlm {
+    /// Учится ли адаптер LoRA на этой модели: плотные Qwen3 и Qwen3.5/3.6/3.8
+    /// (MoE, Gemma и прочие обучение synaptix пока не знает).
+    pub fn trainable(&self) -> bool {
+        matches!(self.arch.as_str(), "qwen3" | "qwen3_5")
+    }
 }
 
 impl ServiceLlm {
@@ -60,6 +72,8 @@ impl ServiceLlm {
             disk_bytes: m.disk_bytes,
             engine: m.engine.clone(),
             own: m.settings.engine.clone(),
+            loras: m.settings.loras.clone(),
+            arch: m.arch.clone(),
         })
     }
 }

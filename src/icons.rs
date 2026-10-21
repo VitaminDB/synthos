@@ -202,6 +202,10 @@ pub const MI_CONTENT_PASTE: &str       = "\u{E14F}";
 /// Material «timer» — секундомер в бейджах таймеров node-editor'а
 /// (шапка карточки ноды и Run-pill).
 pub const MI_TIMER: &str               = "\u{E425}";
+pub const MI_MODEL_TRAINING: &str      = "\u{F0CF}";
+pub const MI_DATASET: &str             = "\u{F8EE}";
+pub const MI_SCHOOL: &str              = "\u{E80C}";
+pub const MI_ADD_NOTES: &str           = "\u{E89C}";
 
 // --- Music / Audio
 /// Material Symbols «library_music» — иконка категории Audio в node-editor

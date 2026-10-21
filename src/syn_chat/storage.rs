@@ -600,6 +600,7 @@ mod tests {
             skills_active: vec!["tone".into()],
             system_prompt: "общий".into(),
             prompt_preset: "p1".into(),
+            loras: None,
         };
 
         assert_eq!(list_meta_filling(&global).len(), 2);

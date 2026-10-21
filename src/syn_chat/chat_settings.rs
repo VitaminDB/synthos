@@ -37,6 +37,36 @@ pub struct ChatSettings {
     /// удалён — текст чата ни к одному пресету не привязан.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub prompt_preset: String,
+    /// Адаптеры LoRA чата. `None` — как в настройках модели в службе;
+    /// пустой список — без адаптеров.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loras: Option<Vec<ChatLora>>,
+}
+
+/// Адаптер LoRA в чате: имя в библиотеке и сила в процентах (100 — как
+/// обучен).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChatLora {
+    pub name: String,
+    #[serde(default = "full")]
+    pub strength: u16,
+}
+
+fn full() -> u16 {
+    100
+}
+
+impl ChatLora {
+    pub fn to_use(&self) -> synaptixd::LoraUse {
+        synaptixd::LoraUse { name: self.name.clone(), enabled: true, strength: self.strength as f32 / 100.0 }
+    }
+}
+
+impl ChatSettings {
+    /// Набор адаптеров на запрос к службе (`None` — из настроек модели).
+    pub fn lora_request(&self) -> Option<Vec<synaptixd::LoraUse>> {
+        self.loras.as_ref().map(|v| v.iter().map(ChatLora::to_use).collect())
+    }
 }
 
 impl ChatSettings {
@@ -53,6 +83,7 @@ impl ChatSettings {
             skills_active: list(|a| a.skills_active),
             system_prompt: ctx.system_prompt.get_untracked(),
             prompt_preset: ctx.prompt_active.get_untracked(),
+            loras: ctx.loras.get_untracked(),
         }
     }
 
@@ -67,6 +98,7 @@ impl ChatSettings {
         }
         set_changed(ctx.system_prompt, &self.system_prompt);
         set_changed(ctx.prompt_active, &self.prompt_preset);
+        set_changed(ctx.loras, &self.loras);
     }
 
     /// Подписать текущий эффект на все сигналы настроек — автосейв узнаёт
@@ -79,6 +111,7 @@ impl ChatSettings {
         }
         ctx.system_prompt.with(|_| ());
         ctx.prompt_active.with(|_| ());
+        ctx.loras.with(|_| ());
     }
 }
 

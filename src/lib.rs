@@ -120,6 +120,7 @@ pub fn run_desktop() {
             notes_host::install(&ctx);
             provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
+            provide_context(pages::training::TrainingCtx::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
             // Восстановление прерванной очереди HF-загрузок с прошлого
@@ -195,6 +196,7 @@ fn android_main(app: syngui::app::AndroidApp) {
             notes_host::install(&ctx);
             provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
+            provide_context(pages::training::TrainingCtx::new());
             let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
             provide_context(hf_ctx);
             // Восстановление прерванной очереди HF-загрузок с прошлого
@@ -989,6 +991,7 @@ fn build_app() -> impl Widget {
         .route("notes", || Box::new(pages::notes::view()))
         .route("syn_explorer", || Box::new(pages::syn_explorer::view()))
         .route("huggingface", || Box::new(pages::huggingface::view()))
+        .route("training", || Box::new(pages::training::view()))
         .route("settings", || Box::new(pages::settings::view()));
 
     // Padding и rounded окна управляются MSS-pseudo `:window-maximized`

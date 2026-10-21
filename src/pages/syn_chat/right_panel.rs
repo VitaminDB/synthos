@@ -52,6 +52,7 @@ fn params_tab() -> impl Widget {
             .gap(10.0)
             .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
                 model_card(),
+                lora_card(),
                 // Размышления — выше сэмплинга: от них зависит, какой пресет
                 // модели работает в режиме «По умолчанию».
                 thinking_card(),
@@ -79,6 +80,125 @@ pub fn model_card() -> impl Widget {
             IntoWidget::into_widget(pick_button_reactive()),
         ]
     })
+}
+
+// ── Карточка «Адаптеры LoRA» ─────────────────────────────────────
+
+/// Адаптеры чата: как у модели в службе или свой набор этого чата.
+pub fn lora_card() -> impl Widget {
+    let open = use_context::<SynChatCtx>().cards.loras;
+    CollapsibleCard::new("sampling-card", MI_LAYERS, tr!("chat.right.lora.title"), open).body(|| {
+        use syngui::widgets::containers::reactive::IntoWidget;
+        vec![IntoWidget::into_widget(lora_body())]
+    })
+}
+
+/// Модель чата в службе: загруженная, иначе последняя или по умолчанию.
+fn chat_service_model() -> Option<crate::syn_chat::model_registry::ServiceLlm> {
+    let reg = use_context::<SynModelRegistry>();
+    let models = reg.models.get();
+    let path = reg.current.get().map(|m| m.path.clone()).or_else(|| reg.last_path.get());
+    path.and_then(|p| models.iter().find(|m| m.path == p).cloned())
+        .or_else(|| reg.default_id.get().and_then(|d| models.iter().find(|m| m.id == d).cloned()))
+}
+
+fn lora_body() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {
+    || {
+        use crate::syn_chat::chat_settings::ChatLora;
+        let ctx = use_context::<SynChatCtx>();
+        let training = use_context::<crate::pages::training::TrainingCtx>();
+        let Some(model) = chat_service_model() else {
+            return DecoratedBox::new().child(Text::new(tr!("chat.right.lora.no_model")).max_lines(3).class("sampling-hint")).class("lora-chat-body");
+        };
+        let all = training.loras.get();
+        let mine: Vec<_> = all.iter().filter(|l| l.base.as_deref() == Some(model.id.as_str())).cloned().collect();
+        let own = ctx.loras.get();
+        let mut col = Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+        if mine.is_empty() {
+            col = col.child(Text::new(tr!("chat.right.lora.empty")).max_lines(4).class("sampling-hint"));
+            col = col.child(
+                Button::new(tr!("chat.right.lora.open_training"))
+                    .icon(MI_MODEL_TRAINING)
+                    .on_click(|| crate::rail::navigate("training"))
+                    .class("right-reset-btn"),
+            );
+            return DecoratedBox::new().child(col).class("lora-chat-body");
+        }
+        // Режим: свой набор чата или как у модели.
+        let custom = own.is_some();
+        let defaults = model.loras.clone();
+        let mine2 = mine.clone();
+        col = col.child(mgui! {
+            Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                DecoratedBox::new().class("grow").child(mgui! {
+                    Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                        Text::new(tr!("chat.right.lora.custom")).class("sampling-label"),
+                        Text::new(if custom { tr!("chat.right.lora.custom.on") } else { tr!("chat.right.lora.custom.off") }).max_lines(3).class("sampling-hint"),
+                    ]
+                }),
+                Toggle::with_state(custom).on_change(move |v| {
+                    let ctx = use_context::<SynChatCtx>();
+                    if v {
+                        // Свой набор начинается с набора модели.
+                        let start: Vec<ChatLora> = defaults
+                            .iter()
+                            .filter(|u| u.enabled && mine2.iter().any(|l| l.name == u.name))
+                            .map(|u| ChatLora { name: u.name.clone(), strength: (u.strength * 100.0).round() as u16 })
+                            .collect();
+                        ctx.loras.set(Some(start));
+                    } else {
+                        ctx.loras.set(None);
+                    }
+                }),
+            ]
+        });
+        for l in &mine {
+            let (on, strength) = match &own {
+                Some(set) => set.iter().find(|c| c.name == l.name).map(|c| (true, c.strength as f32 / 100.0)).unwrap_or((false, 1.0)),
+                None => model.loras.iter().find(|u| u.name == l.name).map(|u| (u.enabled, u.strength)).unwrap_or((false, 1.0)),
+            };
+            let eval = l.train.get("eval_loss").and_then(|v| v.as_f64()).map(|e| tr!("chat.right.lora.eval", v = format!("{e:.3}"))).unwrap_or_default();
+            let (n1, n2) = (l.name.clone(), l.name.clone());
+            let toggle = Toggle::with_state(on).disabled(!custom).on_change(move |v| {
+                let ctx = use_context::<SynChatCtx>();
+                let mut set = ctx.loras.get_untracked().unwrap_or_default();
+                set.retain(|c| c.name != n1);
+                if v {
+                    set.push(ChatLora { name: n1.clone(), strength: (strength * 100.0).round() as u16 });
+                }
+                ctx.loras.set(Some(set));
+            });
+            let slider = Slider::new().range(0.0, 2.0).step(0.05).value(strength).show_value(2).width(120.0).disabled(!custom || !on).on_change(move |v| {
+                let ctx = use_context::<SynChatCtx>();
+                let mut set = ctx.loras.get_untracked().unwrap_or_default();
+                if let Some(c) = set.iter_mut().find(|c| c.name == n2) {
+                    let s = (v * 100.0).round() as u16;
+                    if c.strength != s {
+                        c.strength = s;
+                        ctx.loras.set(Some(set));
+                    }
+                }
+            });
+            col = col.child(mgui! {
+                Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch).class("lora-chat-row") => [
+                    Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center)
+                        .child(DecoratedBox::new().class("grow").child(mgui! {
+                            Column::new().gap(1.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                                Text::new(l.name.clone()).max_lines(1).class("sampling-label"),
+                                Text::new(eval).max_lines(1).class("sampling-hint"),
+                            ]
+                        }))
+                        .child(toggle),
+                    Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center)
+                        .child(Text::new(tr!("chat.right.lora.strength")).class("sampling-hint"))
+                        .child(DecoratedBox::new().class("grow"))
+                        .child(slider),
+                ]
+            });
+        }
+        col = col.child(Text::new(tr!("chat.right.lora.hint")).max_lines(4).class("sampling-hint"));
+        DecoratedBox::new().child(col).class("lora-chat-body")
+    }
 }
 
 fn model_status_reactive() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'static {

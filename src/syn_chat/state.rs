@@ -178,6 +178,8 @@ pub struct SynChatCtx {
     /// id пресета, из которого взят текст открытого чата. Пусто или пресета
     /// уже нет — текст чата свой.
     pub prompt_active: RwSignal<String>,
+    /// Адаптеры LoRA открытого чата (`None` — как у модели в службе).
+    pub loras: RwSignal<Option<Vec<crate::syn_chat::chat_settings::ChatLora>>>,
     /// Плавающее окно редактора системного промпта: открыто ли, где и
     /// какого размера (размер/позиция переживают закрытие в рамках сессии).
     pub prompt_window_open: RwSignal<bool>,
@@ -321,6 +323,7 @@ pub struct CardsOpen {
     pub sampling: RwSignal<bool>,
     pub context: RwSignal<bool>,
     pub system: RwSignal<bool>,
+    pub loras: RwSignal<bool>,
 }
 
 impl CardsOpen {
@@ -334,6 +337,7 @@ impl CardsOpen {
             sampling: use_signal(cfg.sampling),
             context: use_signal(cfg.context),
             system: use_signal(cfg.system),
+            loras: use_signal(cfg.loras),
         }
     }
 
@@ -348,6 +352,7 @@ impl CardsOpen {
             sampling: self.sampling.get(),
             context: self.context.get(),
             system: self.system.get(),
+            loras: self.loras.get(),
         }
     }
 }
@@ -406,6 +411,7 @@ impl SynChatCtx {
             system_prompt: use_signal(prompt_text),
             prompt_presets: use_signal(prompts.presets),
             prompt_active: use_signal(prompt_active),
+            loras: use_signal(None),
             prompt_window_open: use_signal(false),
             prompt_window_pos: use_signal(Point::new(120.0, 120.0)),
             prompt_window_size: use_signal(PROMPT_WINDOW_DEFAULT_SIZE),

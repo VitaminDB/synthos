@@ -1234,6 +1234,8 @@ pub struct SynChatCardsConfig {
     pub context: bool,
     #[serde(default = "default_true")]
     pub system: bool,
+    #[serde(default = "default_true")]
+    pub loras: bool,
 }
 
 impl Default for SynChatCardsConfig {
@@ -1247,6 +1249,7 @@ impl Default for SynChatCardsConfig {
             sampling: false,
             context: true,
             system: true,
+            loras: true,
         }
     }
 }

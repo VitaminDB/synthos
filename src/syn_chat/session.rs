@@ -920,11 +920,13 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
     let ctx_for_worker = ctx.clone();
     let chat_for_worker = chat_id.clone();
     let abort = ctx.abort.clone();
+    let turn_loras = turn.chat.lora_request();
 
     // 3. Worker — обычный std::thread, не tokio: synaptix CUDA блокирует.
     //    Внутри thread создаём локальный current-thread tokio runtime для
     //    `tools::execute` и `await_decision_on_tool_call` (оба `async`).
     std::thread::spawn(move || {
+        crate::syn_chat::daemon::set_turn_loras(turn_loras);
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

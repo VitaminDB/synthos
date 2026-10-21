@@ -146,8 +146,11 @@ pub fn snapshot_from_ctx(ctx: &HuggingFaceCtx) -> PersistedDownloads {
                 .map(|s| PersistedSegment { from: s.from, to: s.to, bytes_done: s.bytes_done })
                 .collect(),
             expected_sha256: d.expected_sha256.clone(),
+            // Несовпадение тоже сохраняем: иначе после перезапуска ✗ пропадал,
+            // а битый файл выглядел просто скачанным.
             verified_sha256: match &d.verify {
                 VerifyStatus::Match { sha256, .. } => Some(sha256.clone()),
+                VerifyStatus::Mismatch { actual, .. } => Some(actual.clone()),
                 _ => None,
             },
         });
@@ -202,12 +205,12 @@ pub fn into_map(p: PersistedDownloads) -> (HashMap<String, DownloadState>, Vec<S
                 retry_count: 0,
                 last_meta_flush_at: None,
                 expected_sha256: it.expected_sha256.clone(),
-                verify: match it.verified_sha256 {
-                    Some(s) => VerifyStatus::Match {
-                        sha256: s,
-                        has_expected: it.expected_sha256.is_some(),
-                    },
-                    None => VerifyStatus::Unknown,
+                verify: match (it.verified_sha256, &it.expected_sha256) {
+                    (Some(s), Some(exp)) if !s.eq_ignore_ascii_case(exp) => {
+                        VerifyStatus::Mismatch { actual: s, expected: exp.clone() }
+                    }
+                    (Some(s), exp) => VerifyStatus::Match { sha256: s, has_expected: exp.is_some() },
+                    (None, _) => VerifyStatus::Unknown,
                 },
             },
         );
@@ -327,5 +330,19 @@ mod tests {
         assert_ne!(fingerprint(&a, true), fingerprint(&b, true));
         assert_eq!(fingerprint(&a, false), fingerprint(&b, false));
         assert_ne!(fingerprint(&b, false), fingerprint(&c, false));
+    }
+
+    /// Несовпавший SHA-256 после перезапуска остаётся несовпадением, а не
+    /// пропадает (битый файл не должен выглядеть скачанным).
+    #[test]
+    fn mismatch_survives_reload() {
+        let mut it = item(1000, PersistedStatus::Done);
+        it.expected_sha256 = Some("aa".into());
+        it.verified_sha256 = Some("bb".into());
+        let (map, _) = into_map(list(it.clone()));
+        assert!(matches!(map.values().next().unwrap().verify, VerifyStatus::Mismatch { .. }));
+        it.verified_sha256 = Some("AA".into());
+        let (map, _) = into_map(list(it));
+        assert!(matches!(map.values().next().unwrap().verify, VerifyStatus::Match { has_expected: true, .. }));
     }
 }

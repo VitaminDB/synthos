@@ -45,7 +45,7 @@ fn retry_backoff(n: u32) -> Duration {
 /// 408/429) сразу превращаются в Error.
 fn is_transient(e: &HfError) -> bool {
     match e {
-        HfError::Transport(_) | HfError::Io(_) => true,
+        HfError::Transport(_) | HfError::Io(_) | HfError::Incomplete { .. } => true,
         HfError::Status(code, _) => *code >= 500 || *code == 408 || *code == 429,
         HfError::Decode(_) => false,
         // Прерывание пользователем — намеренное, не ретраим.

@@ -840,6 +840,7 @@ hf.dialog.cache_dir.rfd_title = "HuggingFace модельдеріне арнал
 hf.error.network = "желі"
 hf.error.decode = "жауапты талдау"
 hf.error.io = "файл"
+hf.error.incomplete = "ағын үзілді: {expected} байттан {got} алынды"
 hf.error.aborted.paused = "кідіртілген"
 hf.error.aborted.stopped = "тоқтатылған"
 hf.error.aborted.cancelled = "болдырылмаған"

@@ -122,6 +122,9 @@ pub enum HfError {
     Io(std::io::Error),
     /// Закачку прервал пользователь (см. `control.rs`). Не ретраится.
     Aborted(AbortKind),
+    /// Сервер закрыл поток раньше конца диапазона: получено `got` из `expected`
+    /// байт. Транзиентная — повтор докачает с этого места.
+    Incomplete { got: u64, expected: u64 },
 }
 
 impl fmt::Display for HfError {
@@ -140,6 +143,9 @@ impl fmt::Display for HfError {
             }
             HfError::Decode(msg) => write!(f, "{}: {msg}", tr!("hf.error.decode")),
             HfError::Io(e) => write!(f, "{}: {e}", tr!("hf.error.io")),
+            HfError::Incomplete { got, expected } => {
+                write!(f, "{}", tr!("hf.error.incomplete", got = got, expected = expected))
+            }
             HfError::Aborted(kind) => match kind {
                 AbortKind::Pause => write!(f, "{}", tr!("hf.error.aborted.paused")),
                 AbortKind::Stop => write!(f, "{}", tr!("hf.error.aborted.stopped")),
@@ -527,10 +533,64 @@ pub async fn download_file(
         Err(_) => (0u64, false),
     };
 
+    // Один файл качает один процесс: второй экземпляр Synthos ждёт, иначе он
+    // обнулит общий `.part` (truncate + set_len) посреди чужой закачки.
+    let _lock = acquire_dest_lock(dest, &ctl).await?;
+    if total > 0 && std::fs::metadata(dest).map(|m| m.is_file() && m.len() == total).unwrap_or(false) {
+        // Пока ждали, файл докачал другой экземпляр — хэш проверит verify.
+        return Ok(());
+    }
+
     if n_segments > 1 && ranges && total >= SEG_THRESHOLD {
         download_segmented(repo_id, filename, dest, key, downloads_sig, total, n_segments, ctl).await
     } else {
         download_single(repo_id, filename, dest, key, downloads_sig, total, ctl).await
+    }
+}
+
+/// Межпроцессная блокировка закачки `dest` (flock на `<dest>.lock`).
+/// Отпускается при drop; файл блокировки удаляется владельцем.
+struct DestLock {
+    path: PathBuf,
+    _file: File,
+}
+
+impl Drop for DestLock {
+    fn drop(&mut self) {
+        // Удаляем до снятия flock (он снимется при закрытии `_file`): ждущий
+        // увидит, что его inode отвязан, и переоткроет путь.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+async fn acquire_dest_lock(dest: &Path, ctl: &super::control::DlControl) -> Result<DestLock, HfError> {
+    use std::os::unix::fs::MetadataExt;
+    let mut s = dest.as_os_str().to_os_string();
+    s.push(".lock");
+    let path = PathBuf::from(s);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    loop {
+        check_abort(ctl)?;
+        let file = OpenOptions::new().create(true).truncate(false).write(true).open(&path)?;
+        match file.try_lock() {
+            Ok(()) => {
+                // Файл мог быть удалён прежним владельцем между open и lock —
+                // тогда держим блокировку на отвязанном inode, берём заново.
+                let same = match (file.metadata(), std::fs::metadata(&path)) {
+                    (Ok(a), Ok(b)) => a.ino() == b.ino() && a.dev() == b.dev(),
+                    _ => false,
+                };
+                if same {
+                    return Ok(DestLock { path, _file: file });
+                }
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(e)) => return Err(HfError::Io(e)),
+        }
+        drop(file);
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
 
@@ -649,6 +709,9 @@ async fn download_single(
     }
     file.flush()?;
     drop(file);
+    if total > 0 && downloaded != total {
+        return Err(HfError::Incomplete { got: downloaded, expected: total });
+    }
     std::fs::rename(&part_path, dest)?;
     let key_c = key.clone();
     let done = downloaded;
@@ -850,9 +913,17 @@ async fn download_segmented(
                     g.1.clone()
                 };
                 let key_f = key.clone();
+                let meta_f = meta_path.clone();
+                let short = done_in_seg < span;
                 run_on_main_thread(move || {
-                    push_segment_progress(downloads_sig, &key_f, &dones, None);
+                    // Недокачанный сегмент: sidecar должен знать точный done для резюма.
+                    push_segment_progress(downloads_sig, &key_f, &dones, short.then_some(meta_f.as_path()));
                 });
+                // Поток закрылся без ошибки, но до конца диапазона: без этой
+                // проверки файл с дырами (нулями) переименовывался как готовый.
+                if short {
+                    return Err(HfError::Incomplete { got: done_in_seg, expected: span });
+                }
                 Ok::<(), HfError>(())
             }
         })

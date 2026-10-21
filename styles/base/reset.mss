@@ -97,7 +97,7 @@ Dropdown {
     padding: 10px 14px;
     font-size: 14px;
     accent-color: var(--primary);
-    --popup-background: var(--bg-shell);
+    --popup-background: var(--bg-popup);
     --popup-color: var(--text);
     --popup-border: var(--border);
     --popup-accent: var(--primary);
@@ -168,7 +168,7 @@ TimePicker {
     border-color: var(--border-soft);
     font-size: 14px;
     accent-color: var(--primary);
-    --popup-background: var(--bg-shell);
+    --popup-background: var(--bg-popup);
     --popup-color: var(--text);
     --popup-border: var(--border);
     --popup-hover-background: var(--surface-hover);
@@ -295,16 +295,16 @@ ColorPicker {
     border-radius: 10px;
     height: 32px;
     font-size: 13px;
-    --popup-background: var(--bg-shell);
+    --popup-background: var(--bg-popup);
     --popup-color: var(--text);
     --popup-border: var(--border);
 }
 
 PopupMenu {
-    background-color:            var(--bg-shell);
+    background-color:            var(--bg-popup);
     color:                       var(--text);
     border-color:                var(--border);
-    --popup-background:          var(--bg-shell);
+    --popup-background:          var(--bg-popup);
     --popup-color:               var(--text);
     --popup-border:              var(--border);
     --popup-accent:              var(--primary);

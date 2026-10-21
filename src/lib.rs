@@ -556,8 +556,10 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
                     extra.push_str(&theme_data::accent_override_mss(accent, theme.is_dark));
                 }
             }
+            // Непрозрачность панелей действует только вместе с размытием:
+            // выключенный переключатель «Размытие фона» = окно без прозрачности.
             let opacity = appearance.window_opacity.get();
-            if opacity < 0.999 {
+            if appearance.window_blur.get() && opacity < 0.999 {
                 extra.push_str(&theme_data::surface_alpha_mss(&theme, opacity));
             }
 

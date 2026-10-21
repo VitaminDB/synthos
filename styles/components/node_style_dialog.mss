@@ -43,7 +43,7 @@
     border-radius: 10px;
     height: 32px;
     font-size: 13px;
-    --popup-background: var(--bg-shell);
+    --popup-background: var(--bg-popup);
     --popup-color: var(--text);
     --popup-border: var(--border);
 }

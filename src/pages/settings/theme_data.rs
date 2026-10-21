@@ -101,6 +101,10 @@ impl SynthosTheme {
         let _ = writeln!(s, ":root {{");
         let _ = writeln!(s, "    --bg-window:        {};", self.bg_window);
         let _ = writeln!(s, "    --bg-shell:         {};", self.bg_shell);
+        // Фон всплывающих меню и списков: всегда непрозрачный, его не трогает
+        // `surface_alpha_mss` — меню лежит поверх содержимого окна, и сквозь
+        // него просвечивал бы текст.
+        let _ = writeln!(s, "    --bg-popup:         {};", self.bg_shell);
         let _ = writeln!(s, "    --bg-rail:          {};", self.bg_rail);
         let _ = writeln!(s, "    --bg-chats:         {};", self.bg_chats);
         let _ = writeln!(s, "    --bg-chat:          {};", self.bg_chat);

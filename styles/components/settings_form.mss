@@ -56,7 +56,7 @@
      * (#F3F3F5) — разница на 1 единицу, hover-цвет был визуально не отличим.
      * Берём существующий «белый/панельный» фон, он гарантированно
      * контрастен с `--surface-hover`. */
-    --popup-background: var(--bg-shell);
+    --popup-background: var(--bg-popup);
     --popup-color: var(--text);
     --popup-border: var(--border);
     --popup-accent: var(--primary);

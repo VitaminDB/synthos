@@ -1,6 +1,6 @@
 {
-  "name": "H3: Turbo (6 шагов)",
-  "description": "Same graph as Text to Video for the Turbo LoRA: 6 steps without CFG. Put the Turbo LoRA file (minimax_h3_turbo…safetensors) into the LoRA field of H3 Model — without it 6 steps come out noisy.",
+  "name": "H3: Turbo (8 шагов)",
+  "description": "Same graph as Text to Video for the lightx2v Turbo LoRA (lightx2v/Minimax-h3-Turbo, e.g. minimax_h3_fl2v_turbo_8step_v1.1_768p_bf16.safetensors in Models/lora/h3): 8 steps without CFG (4 for a 4step file). Put the file into the LoRA field of H3 Model — 768p Turbo sets sigma shift 6 by itself; without the LoRA 8 steps come out blurry.",
   "kind": "full",
   "nodes": [
     {
@@ -106,7 +106,7 @@
         },
         "steps": {
           "type": "Float",
-          "value": 6.0
+          "value": 8.0
         }
       },
       "style": {

@@ -272,9 +272,11 @@ pub fn view(ctx: TrainingCtx) -> impl Widget {
 
 /// Скорость обучения на этой карте по замерам (RTX 5090 Laptop): токенов в
 /// секунду обратно пропорционально весу базы в NVFP4 (1.7B, 2 ГБ — 3100;
-/// 9B, 7.4 ГБ — 810).
-pub fn tokens_per_sec(disk_bytes: u64) -> f64 {
-    6.2e12 / disk_bytes.max(1) as f64
+/// 9B, 7.4 ГБ — 810). У MoE на токен работает малая доля весов, но эксперты
+/// подкачиваются из RAM: Qwen3.6-35B-A3B, 22.6 ГБ — около 950.
+pub fn tokens_per_sec(disk_bytes: u64, moe: bool) -> f64 {
+    let k = if moe { 2.1e13 } else { 6.2e12 };
+    k / disk_bytes.max(1) as f64
 }
 
 pub fn hms(secs: f64) -> String {
@@ -301,8 +303,8 @@ fn check_card(ctx: TrainingCtx) -> Box<dyn Widget> {
         Check::Done(c) => {
             let f = ctx.form.get_untracked();
             let reg = use_context::<SynModelRegistry>();
-            let disk = reg.models.get_untracked().into_iter().find(|m| Some(&m.id) == f.model.as_ref()).map(|m| m.disk_bytes).unwrap_or(0);
-            let eta = (c.tokens as f64 * f.epochs as f64) / tokens_per_sec(disk);
+            let (disk, moe) = reg.models.get_untracked().into_iter().find(|m| Some(&m.id) == f.model.as_ref()).map(|m| (m.disk_bytes, m.moe())).unwrap_or((0, false));
+            let eta = (c.tokens as f64 * f.epochs as f64) / tokens_per_sec(disk, moe);
             let mut col = Column::new()
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)

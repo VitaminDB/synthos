@@ -52,10 +52,15 @@ pub struct ServiceLlm {
 }
 
 impl ServiceLlm {
-    /// Учится ли адаптер LoRA на этой модели: плотные Qwen3 и Qwen3.5/3.6/3.8
-    /// (MoE, Gemma и прочие обучение synaptix пока не знает).
+    /// Учится ли адаптер LoRA на этой модели: Qwen3 и Qwen3.5/3.6/3.8 —
+    /// плотные и MoE (Gemma, Qwen4Exp и прочие обучение synaptix пока не знает).
     pub fn trainable(&self) -> bool {
-        matches!(self.arch.as_str(), "qwen3" | "qwen3_5")
+        matches!(self.arch.as_str(), "qwen3" | "qwen3_5" | "qwen3_5_moe")
+    }
+
+    /// MoE-модель: на токен работает малая доля весов.
+    pub fn moe(&self) -> bool {
+        self.arch.ends_with("_moe")
     }
 }
 

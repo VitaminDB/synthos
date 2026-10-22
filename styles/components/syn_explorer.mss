@@ -203,7 +203,7 @@ Tooltip {
 .syn-visually-hidden {
     color: transparent;
     font-size: 1px;
-    max-lines: 1;
+    line-clamp: 1;
 }
 
 .syn-folder-section {
@@ -535,7 +535,7 @@ Tooltip {
 .syn-placeholder-hint {
     color: var(--text-muted);
     font-size: 13px;
-    max-lines: 2;
+    line-clamp: 2;
 }
 
 .syn-placeholder-cta {

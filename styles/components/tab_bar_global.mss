@@ -64,10 +64,6 @@ Tab:selected {
     font-weight: 600;
 }
 
-Tab:selected:hover {
-    background-color: var(--surface-hover);
-}
-
 Tab:disabled {
     color: var(--text-subtle);
 }

@@ -129,7 +129,7 @@
     color: var(--text-muted);
     font-size: 11px;
     max-width: 180px;
-    text-overflow: ellipsis;
+    line-clamp: 1;
 }
 
 .ne-models-row-meta {

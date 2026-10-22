@@ -79,7 +79,6 @@
     font-family: "JetBrains Mono", "Fira Code", monospace;
     font-size: 12px;
     color: var(--text-muted);
-    white-space: pre;
     --md-code-block-bg: transparent;
     --md-code-block-color: var(--text-muted);
     --md-code-block-padding: 0px;
@@ -324,7 +323,6 @@
     font-family: "JetBrains Mono", "Fira Code", monospace;
     font-size: 12px;
     color: var(--text);
-    white-space: pre;
 }
 
 .tool-confirm-warning {

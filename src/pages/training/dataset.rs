@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::{Dropdown, DropdownItem, MultilineTextEdit, TextField};
+use syngui::widgets::{MultilineTextEdit, TextField};
 
 use crate::icons::*;
 
@@ -390,12 +390,31 @@ pub fn header_actions(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         )
 }
 
-const ROLES: [(&str, &str); 4] = [
-    ("system", "training.role.system"),
-    ("user", "training.role.user"),
-    ("assistant", "training.role.assistant"),
-    ("tool", "training.role.tool"),
-];
+/// Роли по кругу: щелчок по метке роли переключает на следующую.
+const ROLES: [&str; 4] = ["user", "assistant", "tool", "system"];
+
+fn role_label(role: &str) -> String {
+    tr!(match role {
+        "assistant" => "training.role.assistant",
+        "system" => "training.role.system",
+        "tool" => "training.role.tool",
+        _ => "training.role.user",
+    })
+}
+
+fn role_icon(role: &str) -> &'static str {
+    match role {
+        "assistant" => MI_AUTO_AWESOME,
+        "system" => MI_TUNE,
+        "tool" => MI_DATA_OBJECT,
+        _ => MI_PERSON,
+    }
+}
+
+fn next_role(role: &str) -> String {
+    let i = ROLES.iter().position(|r| *r == role).unwrap_or(0);
+    ROLES[(i + 1) % ROLES.len()].to_string()
+}
 
 /// Заготовка описаний инструментов (формат OpenAI).
 const TOOLS_TEMPLATE: &str = "[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"\",\n      \"description\": \"\",\n      \"parameters\": {\"type\": \"object\", \"properties\": {}, \"required\": []}\n    }\n  }\n]";
@@ -434,7 +453,7 @@ pub fn view(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         let page = page.min(pages - 1);
         let from = page * PAGE;
         let to = (from + PAGE).min(total);
-        let mut col = Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+        let mut col = Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
         if !d.broken.is_empty() {
             col = col.child(Text::new(tr!("training.dataset.broken", n = d.broken.len())).class("training-warning"));
         }
@@ -450,94 +469,79 @@ pub fn view(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         vec![Box::new(col)]
     });
     let _ = ctx;
-    ScrollView::new().vertical().child(DecoratedBox::new().class("training-center-body dsx-body").child(body))
+    ScrollView::new().vertical().child(DecoratedBox::new().class("dsx-body").child(body))
 }
 
 fn pager(doc: DatasetDoc, page: usize, pages: usize, total: usize) -> Box<dyn Widget> {
     let (p1, p2) = (doc.clone(), doc);
     Box::new(mgui! {
-        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).class("training-pager") => [
-            Button::new(tr!("training.dataset.prev")).disabled(page == 0).on_click(move || p1.page.set(page.saturating_sub(1))).class("training-btn"),
-            Text::new(tr!("training.dataset.page", page = page + 1, pages = pages, total = total)).class("training-hint"),
-            Button::new(tr!("training.dataset.next")).disabled(page + 1 >= pages).on_click(move || p2.page.set(page + 1)).class("training-btn"),
+        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center).class("dsx-pager") => [
+            Button::new(tr!("training.dataset.prev")).disabled(page == 0).on_click(move || p1.page.set(page.saturating_sub(1))).class("dsx-link"),
+            Text::new(tr!("training.dataset.page", page = page + 1, pages = pages, total = total)).class("dsx-muted"),
+            Button::new(tr!("training.dataset.next")).disabled(page + 1 >= pages).on_click(move || p2.page.set(page + 1)).class("dsx-link"),
         ]
     })
 }
 
-fn chip(text: String, class: &str) -> impl Widget {
-    DecoratedBox::new().class(format!("dsx-chip {class}")).child(Text::new(text).class("dsx-chip-text"))
+fn pill(text: String, class: &str) -> impl Widget {
+    DecoratedBox::new().class(format!("dsx-pill {class}")).child(Text::new(text).class("dsx-pill-text"))
 }
 
-fn add_btn(label: String, on: impl FnMut() + Send + 'static) -> impl Widget {
-    Button::new(label).icon(MI_ADD).on_click(on).class("dsx-add")
+fn icon_btn(icon: &str, tip: String, on: impl FnMut() + Send + 'static) -> impl Widget {
+    ToolButton::new(icon).tooltip(tip).on_click(on).class("dsx-icon")
+}
+
+/// Поле текста без своей рамки (рамку и фон снимает `.dsx-text MultilineTextEdit`).
+fn text_area(text: String, placeholder: String, mono: bool, max_rows: usize, on: impl FnMut(&str) + Send + 'static) -> impl Widget {
+    DecoratedBox::new().class(if mono { "dsx-text dsx-mono" } else { "dsx-text" }).child(
+        MultilineTextEdit::new().text(text).placeholder(placeholder).rows(1).soft_wrap(true).auto_height(true).max_rows(max_rows).on_change(on),
+    )
 }
 
 fn example_card(doc: DatasetDoc, i: usize) -> Box<dyn Widget> {
     let ex = doc.examples.lock().unwrap().get(i).cloned();
     let Some(ex) = ex else { return Box::new(DecoratedBox::new()) };
-    let mut col = Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
 
-    // Шапка: номер, сводка, инструменты, удалить.
+    // Шапка: номер, сводка, действия.
     let mut head = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center);
-    head = head.child(Text::new(tr!("training.dataset.example", n = i + 1)).class("dsx-title"));
+    head = head.child(Text::new(format!("#{}", i + 1)).class("dsx-num"));
     if let Example::Chat { turns, tools, .. } = &ex {
-        head = head.child(chip(tr!("training.dataset.turns", n = turns.len()), ""));
+        head = head.child(pill(tr!("training.dataset.turns", n = turns.len()), ""));
         let calls: usize = turns.iter().map(|t| t.calls.len()).sum();
         if calls > 0 {
-            head = head.child(chip(tr!("training.dataset.calls", n = calls), "dsx-chip-tool"));
+            head = head.child(pill(tr!("training.dataset.calls", n = calls), "dsx-pill-tool"));
         }
         if !tools.trim().is_empty() {
             let n = tools_count(tools).map(|n| n.to_string()).unwrap_or_else(|| "?".into());
-            head = head.child(chip(tr!("training.dataset.tools_count", n = n), "dsx-chip-tool"));
+            head = head.child(pill(tr!("training.dataset.tools_count", n = n), "dsx-pill-tool"));
         }
     }
     head = head.child(DecoratedBox::new().class("grow"));
     if let Example::Chat { tools, .. } = &ex {
         if tools.trim().is_empty() {
             let d = doc.clone();
-            head = head.child(
-                ToolButton::new(MI_HANDYMAN)
-                    .tooltip(tr!("training.dataset.tools_add"))
-                    .on_click(move || edit_chat(&d, i, |_, tools| *tools = TOOLS_TEMPLATE.into()))
-                    .class("training-icon-btn"),
-            );
+            head = head.child(icon_btn(MI_HANDYMAN, tr!("training.dataset.tools_add"), move || edit_chat(&d, i, |_, tools| *tools = TOOLS_TEMPLATE.into())));
         }
     }
     let del = doc.clone();
-    head = head.child(
-        ToolButton::new(MI_DELETE)
-            .tooltip(tr!("training.dataset.delete_example"))
-            .on_click(move || {
-                del.edit(|v| {
-                    if i < v.len() {
-                        v.remove(i);
-                    }
-                })
-            })
-            .class("training-icon-btn"),
-    );
-    col = col.child(head);
+    head = head.child(icon_btn(MI_DELETE, tr!("training.dataset.delete_example"), move || {
+        del.edit(|v| {
+            if i < v.len() {
+                v.remove(i);
+            }
+        })
+    }));
 
+    let mut col = Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch).child(head);
     match ex {
         Example::Text(t) => {
             let d = doc.clone();
-            col = col.child(
-                DecoratedBox::new().class("dsx-turn dsx-turn-user").child(
-                    MultilineTextEdit::new()
-                        .text(t)
-                        .rows(2)
-                        .soft_wrap(true)
-                        .auto_height(true)
-                        .max_rows(18)
-                        .on_change(move |s: &str| {
-                            if let Some(Example::Text(x)) = d.examples.lock().unwrap().get_mut(i) {
-                                *x = s.to_string();
-                            }
-                            d.dirty.set(true);
-                        })
-                        .class("dsx-edit"),
-                ),
-            );
+            col = col.child(text_area(t, String::new(), false, 24, move |s: &str| {
+                if let Some(Example::Text(x)) = d.examples.lock().unwrap().get_mut(i) {
+                    *x = s.to_string();
+                }
+                d.dirty.set(true);
+            }));
         }
         Example::Chat { turns, tools, .. } => {
             if !tools.trim().is_empty() {
@@ -546,16 +550,17 @@ fn example_card(doc: DatasetDoc, i: usize) -> Box<dyn Widget> {
             for (k, t) in turns.iter().enumerate() {
                 col = col.child(turn_view(doc.clone(), i, k, t));
             }
-            let add = |role: &'static str, key: &str| {
+            let link = |role: &'static str, key: &str| {
                 let d = doc.clone();
-                add_btn(tr!(key), move || edit_chat(&d, i, |t, _| t.push(Turn::new(role))))
+                Button::new(tr!(key)).on_click(move || edit_chat(&d, i, |t, _| t.push(Turn::new(role)))).class("dsx-link")
             };
             col = col.child(mgui! {
-                Row::new().gap(6.0).class("dsx-add-row") => [
-                    add("user", "training.dataset.add_user"),
-                    add("assistant", "training.dataset.add_assistant"),
-                    add("tool", "training.dataset.add_tool_result"),
-                    add("system", "training.dataset.add_system"),
+                Row::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Center).class("dsx-add-row") => [
+                    Text::new(MI_ADD).class("dsx-add-icon"),
+                    link("user", "training.dataset.add_user"),
+                    link("assistant", "training.dataset.add_assistant"),
+                    link("tool", "training.dataset.add_tool_result"),
+                    link("system", "training.dataset.add_system"),
                 ]
             });
         }
@@ -567,30 +572,21 @@ fn example_card(doc: DatasetDoc, i: usize) -> Box<dyn Widget> {
 fn tools_panel(doc: DatasetDoc, i: usize, tools: String) -> impl Widget {
     let valid = use_signal(tools_count(&tools).is_some());
     let d = doc.clone();
-    let edit = MultilineTextEdit::new()
-        .text(tools)
-        .rows(2)
-        .soft_wrap(true)
-        .auto_height(true)
-        .max_rows(20)
-        .on_change(move |s: &str| {
-            if let Some(Example::Chat { tools, .. }) = d.examples.lock().unwrap().get_mut(i) {
-                *tools = s.to_string();
-            }
-            valid.set(tools_count(s).is_some() || s.trim().is_empty());
-            d.dirty.set(true);
-        })
-        .class("dsx-edit dsx-mono");
+    let edit = text_area(tools, String::new(), true, 22, move |s: &str| {
+        if let Some(Example::Chat { tools, .. }) = d.examples.lock().unwrap().get_mut(i) {
+            *tools = s.to_string();
+        }
+        valid.set(tools_count(s).is_some() || s.trim().is_empty());
+        d.dirty.set(true);
+    });
     let rm = doc.clone();
     DecoratedBox::new().class("dsx-tools").child(mgui! {
-        Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+        Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
             Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                Text::new(MI_HANDYMAN).class("dsx-tools-icon"),
-                Text::new(tr!("training.dataset.tools")).class("dsx-role-label"),
-                Text::new(tr!("training.dataset.tools_hint")).max_lines(2).class("dsx-hint grow"),
-                ToolButton::new(MI_CLOSE).tooltip(tr!("training.dataset.tools_remove")).on_click(move || {
-                    edit_chat(&rm, i, |_, tools| tools.clear());
-                }).class("training-icon-btn"),
+                Text::new(MI_HANDYMAN).class("dsx-glyph dsx-glyph-tools"),
+                Text::new(tr!("training.dataset.tools")).class("dsx-role dsx-role-tools"),
+                Text::new(tr!("training.dataset.tools_hint")).max_lines(2).class("dsx-muted grow"),
+                icon_btn(MI_CLOSE, tr!("training.dataset.tools_remove"), move || edit_chat(&rm, i, |_, tools| tools.clear())),
             ],
             edit,
             Reactive::new(move || -> Vec<Box<dyn Widget>> {
@@ -601,41 +597,34 @@ fn tools_panel(doc: DatasetDoc, i: usize, tools: String) -> impl Widget {
 }
 
 fn turn_view(doc: DatasetDoc, i: usize, k: usize, t: &Turn) -> impl Widget {
-    let mut dd = Dropdown::new().width(150.0);
-    for (id, key) in ROLES {
-        dd = dd.item(DropdownItem::new(id, tr!(key)));
-    }
+    let role = t.role.clone();
+    // Метка роли: щелчок — следующая роль.
     let d1 = doc.clone();
-    let dd = dd.selected(t.role.clone()).on_change(move |v: &str| {
-        let v = v.to_string();
-        edit_chat(&d1, i, |turns, _| {
-            if let Some(t) = turns.get_mut(k) {
-                t.role = v;
-            }
-        });
-    });
-
-    let mut head = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).child(DecoratedBox::new().class("dsx-role").child(dd));
-    if t.role == "tool" {
-        let d = doc.clone();
-        head = head.child(
-            TextField::new()
-                .text(t.name.clone())
-                .placeholder(tr!("training.dataset.placeholder.tool_name"))
-                .width(220.0)
-                .on_change(move |s: &str| {
-                    let s = s.to_string();
-                    with_turn(&d, i, k, |t| t.name = s);
+    let mut head = Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center).child(
+        Button::new(role_label(&role))
+            .on_click(move || {
+                edit_chat(&d1, i, |turns, _| {
+                    if let Some(t) = turns.get_mut(k) {
+                        t.role = next_role(&t.role);
+                    }
                 })
-                .class("dsx-name"),
-        );
+            })
+            .class(&format!("dsx-role dsx-role-{role}")),
+    );
+    if role == "tool" {
+        let d = doc.clone();
+        head = head.child(DecoratedBox::new().class("dsx-name").child(
+            TextField::new().text(t.name.clone()).placeholder(tr!("training.dataset.placeholder.tool_name")).width(200.0).on_change(move |s: &str| {
+                let s = s.to_string();
+                with_turn(&d, i, k, |t| t.name = s);
+            }),
+        ));
     }
     head = head.child(DecoratedBox::new().class("grow"));
-    if t.role == "assistant" {
+    if role == "assistant" {
         let d = doc.clone();
         head = head.child(
             Button::new(tr!("training.dataset.add_call"))
-                .icon(MI_DATA_OBJECT)
                 .on_click(move || {
                     edit_chat(&d, i, |turns, _| {
                         if let Some(t) = turns.get_mut(k) {
@@ -643,70 +632,66 @@ fn turn_view(doc: DatasetDoc, i: usize, k: usize, t: &Turn) -> impl Widget {
                         }
                     })
                 })
-                .class("dsx-add"),
+                .class("dsx-link"),
         );
     }
     let d3 = doc.clone();
-    head = head.child(
-        ToolButton::new(MI_CLOSE)
-            .tooltip(tr!("training.dataset.delete_turn"))
-            .on_click(move || {
-                edit_chat(&d3, i, |turns, _| {
-                    if k < turns.len() {
-                        turns.remove(k);
-                    }
-                })
-            })
-            .class("training-icon-btn dsx-del"),
-    );
+    head = head.child(icon_btn(MI_CLOSE, tr!("training.dataset.delete_turn"), move || {
+        edit_chat(&d3, i, |turns, _| {
+            if k < turns.len() {
+                turns.remove(k);
+            }
+        })
+    }));
 
     let d2 = doc.clone();
-    let placeholder = match t.role.as_str() {
+    let placeholder = match role.as_str() {
         "assistant" if !t.calls.is_empty() => "training.dataset.placeholder.assistant_call",
         "assistant" => "training.dataset.placeholder.assistant",
         "system" => "training.dataset.placeholder.system",
         "tool" => "training.dataset.placeholder.tool",
         _ => "training.dataset.placeholder.user",
     };
-    let edit = MultilineTextEdit::new()
-        .text(t.content.clone())
-        .placeholder(tr!(placeholder))
-        .rows(1)
-        .soft_wrap(true)
-        .auto_height(true)
-        .max_rows(18)
-        .on_change(move |s: &str| {
-            let s = s.to_string();
-            with_turn(&d2, i, k, |t| t.content = s);
-        })
-        .class(if t.role == "tool" { "dsx-edit dsx-mono" } else { "dsx-edit" });
+    let edit = text_area(t.content.clone(), tr!(placeholder), role == "tool", 20, move |s: &str| {
+        let s = s.to_string();
+        with_turn(&d2, i, k, |t| t.content = s);
+    });
 
-    let mut col = Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch).child(head).child(edit);
+    let mut body = Column::new().gap(2.0).cross_axis_alignment(CrossAxisAlignment::Stretch).child(head).child(edit);
     for (c, call) in t.calls.iter().enumerate() {
-        col = col.child(call_view(doc.clone(), i, k, c, call));
+        body = body.child(call_view(doc.clone(), i, k, c, call));
     }
-    DecoratedBox::new().class(format!("dsx-turn dsx-turn-{}", t.role)).child(col)
+    let avatar = DecoratedBox::new()
+        .class(format!("dsx-avatar dsx-avatar-{role}"))
+        .child(Text::new(role_icon(&role)).class(&format!("dsx-glyph dsx-glyph-{role}")));
+    mgui! {
+        Row::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Start).class("dsx-turn") => [
+            avatar,
+            DecoratedBox::new().class("grow").child(body),
+        ]
+    }
 }
 
 /// Вызов инструмента: имя функции и аргументы JSON.
 fn call_view(doc: DatasetDoc, i: usize, k: usize, c: usize, call: &ToolCall) -> impl Widget {
     let (dn, da, dr) = (doc.clone(), doc.clone(), doc);
+    let args = text_area(call.args.clone(), tr!("training.dataset.placeholder.args"), true, 14, move |s: &str| {
+        let s = s.to_string();
+        with_turn(&da, i, k, |t| if let Some(x) = t.calls.get_mut(c) { x.args = s });
+    });
     mgui! {
         DecoratedBox::new().class("dsx-call") => [
             Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Text::new(MI_DATA_OBJECT).class("dsx-call-icon"),
-                    TextField::new()
-                        .text(call.name.clone())
-                        .placeholder(tr!("training.dataset.placeholder.tool_name"))
-                        .width(240.0)
-                        .on_change(move |s: &str| {
+                Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Text::new("ƒ").class("dsx-call-f"),
+                    DecoratedBox::new().class("dsx-name").child(
+                        TextField::new().text(call.name.clone()).placeholder(tr!("training.dataset.placeholder.tool_name")).width(220.0).on_change(move |s: &str| {
                             let s = s.to_string();
                             with_turn(&dn, i, k, |t| if let Some(x) = t.calls.get_mut(c) { x.name = s });
                         })
-                        .class("dsx-name"),
+                    ),
                     DecoratedBox::new().class("grow"),
-                    ToolButton::new(MI_CLOSE).tooltip(tr!("training.dataset.delete_call")).on_click(move || {
+                    icon_btn(MI_CLOSE, tr!("training.dataset.delete_call"), move || {
                         edit_chat(&dr, i, |turns, _| {
                             if let Some(t) = turns.get_mut(k) {
                                 if c < t.calls.len() {
@@ -714,20 +699,9 @@ fn call_view(doc: DatasetDoc, i: usize, k: usize, c: usize, call: &ToolCall) -> 
                                 }
                             }
                         })
-                    }).class("training-icon-btn"),
+                    }),
                 ],
-                MultilineTextEdit::new()
-                    .text(call.args.clone())
-                    .placeholder(tr!("training.dataset.placeholder.args"))
-                    .rows(1)
-                    .soft_wrap(true)
-                    .auto_height(true)
-                    .max_rows(12)
-                    .on_change(move |s: &str| {
-                        let s = s.to_string();
-                        with_turn(&da, i, k, |t| if let Some(x) = t.calls.get_mut(c) { x.args = s });
-                    })
-                    .class("dsx-edit dsx-mono"),
+                args,
             ]
         ]
     }

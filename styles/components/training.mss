@@ -333,150 +333,211 @@
 }
 
 /* ─── Редактор датасета ────────────────────────────────────────── *
- * Пример — карточка; реплики — как в чате: метка роли сверху, текст на
- * всю ширину без отдельной «коробки», цвет роли — полосой слева и лёгкой
- * подложкой. Вызовы инструментов — вложенные блоки моноширинным шрифтом.
+ * Пример — спокойная карточка; реплики — стенограмма: круглый значок роли
+ * слева, над текстом мелкая метка роли (щелчок меняет роль), сам текст —
+ * без рамок и подложек. Цвет роли только у значка и метки. Вызовы
+ * инструментов — тонкие плашки моноширинным шрифтом.
  * ───────────────────────────────────────────────────────────────── */
 
 .dsx-body {
-    max-width: 920px;
+    padding: 20px 28px 32px 28px;
+    width: 100%;
+    max-width: 860px;
 }
 
 .dsx-card {
-    padding: 12px 14px 12px 14px;
-    border-radius: var(--radius-panel);
+    padding: 14px 16px 12px 16px;
+    border-radius: 12px;
     background-color: var(--bg-panel);
     border-width: 1px;
     border-color: var(--border-soft);
 }
 
-.dsx-title {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 700;
+.dsx-num {
+    color: var(--text-subtle);
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    font-weight: 600;
 }
 
-.dsx-chip {
-    padding: 2px 8px;
+.dsx-pill {
+    padding: 1px 8px;
     border-radius: 999px;
     background-color: var(--surface-hover);
 }
 
-.dsx-chip-text {
+.dsx-pill-text {
     color: var(--text-muted);
     font-size: 11px;
-    font-weight: 600;
 }
 
-.dsx-chip.dsx-chip-tool {
+.dsx-pill.dsx-pill-tool {
     background-color: var(--warning-soft);
 }
 
-.dsx-chip-tool .dsx-chip-text {
+.dsx-pill-tool .dsx-pill-text {
     color: var(--warning);
 }
+
+.dsx-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    color: var(--text-subtle);
+    background-color: transparent;
+}
+
+.dsx-icon:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
+}
+
+.dsx-muted {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Реплика */
 
 .dsx-turn {
-    padding: 6px 10px 8px 12px;
-    border-radius: 10px;
-    background-color: var(--bg-shell);
-    border-left-width: 3px;
-    border-color: var(--border-strong);
+    padding: 0;
 }
 
-.dsx-turn.dsx-turn-user {
-    border-color: var(--text-subtle);
+.dsx-avatar {
+    width: 26px;
+    height: 26px;
+    border-radius: 13px;
+    background-color: var(--surface-hover);
+    margin: 2px 0 0 0;
 }
 
-.dsx-turn.dsx-turn-assistant {
+.dsx-avatar.dsx-avatar-assistant {
     background-color: var(--primary-soft);
-    border-color: var(--primary);
 }
 
-.dsx-turn.dsx-turn-system {
+.dsx-avatar.dsx-avatar-system {
     background-color: var(--warning-soft);
-    border-color: var(--warning);
 }
 
-.dsx-turn.dsx-turn-tool {
-    border-color: var(--avatar-violet);
+.dsx-glyph {
+    font-family: "Material Icons";
+    font-size: 15px;
+    color: var(--text-muted);
 }
 
-/* Выбор роли — компактная метка, а не поле формы. */
+.dsx-glyph.dsx-glyph-assistant { color: var(--primary); }
+.dsx-glyph.dsx-glyph-system { color: var(--warning); }
+.dsx-glyph.dsx-glyph-tool { color: var(--avatar-violet); }
+.dsx-glyph.dsx-glyph-user { color: var(--avatar-blue); }
+.dsx-glyph.dsx-glyph-tools { color: var(--warning); }
+
+/* Метка роли — кнопка-текст: мелко, заглавными, цветом роли. */
 .dsx-role {
-    height: 28px;
-}
-
-.dsx-role-label {
-    color: var(--text);
-    font-size: 12px;
-    font-weight: 700;
-}
-
-.dsx-hint {
+    padding: 3px 6px;
+    border-radius: 6px;
+    border-width: 0;
+    background-color: transparent;
     color: var(--text-muted);
     font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-.dsx-edit {
-    min-height: 22px;
-    padding: 2px 2px;
+.dsx-role:hover {
+    background-color: var(--surface-hover);
+}
+
+.dsx-role.dsx-role-user { color: var(--avatar-blue); }
+.dsx-role.dsx-role-assistant { color: var(--primary); }
+.dsx-role.dsx-role-system { color: var(--warning); }
+.dsx-role.dsx-role-tool { color: var(--avatar-violet); }
+.dsx-role.dsx-role-tools { color: var(--warning); padding: 0; }
+
+/* Текст реплики — без рамки и фона, выделяется только фокусом. */
+.dsx-text {
+    padding: 0;
+}
+
+.dsx-text MultilineTextEdit {
     background-color: transparent;
     border-width: 0;
+    border-radius: 6px;
+    padding: 2px 6px;
     color: var(--text);
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
 }
 
-.dsx-mono {
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-    font-size: 12px;
+.dsx-text MultilineTextEdit:focus {
+    background-color: var(--surface-hover);
 }
 
-.dsx-name {
-    height: 28px;
+.dsx-text.dsx-mono MultilineTextEdit {
     font-family: "JetBrains Mono", "Fira Code", monospace;
     font-size: 12px;
+    color: var(--text-muted);
 }
+
+/* Имя функции — тихое поле моноширинным. */
+.dsx-name TextField {
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border-width: 0;
+    background-color: var(--surface-hover);
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    color: var(--text);
+}
+
+/* Вызов инструмента */
 
 .dsx-call {
-    padding: 6px 8px 6px 10px;
+    padding: 6px 8px 6px 8px;
+    margin: 4px 0 2px 6px;
     border-radius: 8px;
-    background-color: var(--bg-search);
     border-width: 1px;
     border-color: var(--border-soft);
+    background-color: var(--bg-shell);
 }
 
-.dsx-call-icon {
-    font-family: "Material Icons";
-    font-size: 16px;
+.dsx-call-f {
     color: var(--avatar-violet);
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0 2px 0 4px;
 }
+
+/* Описания инструментов */
 
 .dsx-tools {
-    padding: 8px 10px 8px 12px;
+    padding: 10px 12px 10px 12px;
     border-radius: 10px;
+    border-width: 1px;
+    border-color: var(--border-soft);
     background-color: var(--bg-shell);
-    border-width: 1px;
-    border-color: var(--border-soft);
 }
 
-.dsx-tools-icon {
-    font-family: "Material Icons";
-    font-size: 16px;
-    color: var(--warning);
-}
-
+/* Тихие ссылки: «+ Пользователь · Ассистент · …», «Вызов», страницы. */
 .dsx-add-row {
-    padding: 2px 0 0 0;
+    padding: 2px 0 0 32px;
 }
 
-.dsx-add {
-    padding: 4px 10px;
-    border-radius: 999px;
+.dsx-add-icon {
+    font-family: "Material Icons";
+    font-size: 14px;
+    color: var(--text-subtle);
+    padding: 0 2px 0 0;
+}
+
+.dsx-link {
+    padding: 3px 8px;
+    border-radius: 6px;
+    border-width: 0;
     background-color: transparent;
-    border-width: 1px;
-    border-color: var(--border-soft);
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 500;
@@ -484,9 +545,13 @@
                 color var(--duration-fast) var(--ease-standard);
 }
 
-.dsx-add:hover {
+.dsx-link:hover {
     background-color: var(--surface-hover);
     color: var(--text);
+}
+
+.dsx-pager {
+    padding: 6px 0 0 0;
 }
 
 .training-pager {

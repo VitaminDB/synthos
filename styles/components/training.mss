@@ -332,41 +332,161 @@
     font-weight: 600;
 }
 
-/* ─── Редактор датасета ────────────────────────────────────────── */
+/* ─── Редактор датасета ────────────────────────────────────────── *
+ * Пример — карточка; реплики — как в чате: метка роли сверху, текст на
+ * всю ширину без отдельной «коробки», цвет роли — полосой слева и лёгкой
+ * подложкой. Вызовы инструментов — вложенные блоки моноширинным шрифтом.
+ * ───────────────────────────────────────────────────────────────── */
 
-.training-example-title {
-    color: var(--text-muted);
-    font-size: 12px;
+.dsx-body {
+    max-width: 920px;
+}
+
+.dsx-card {
+    padding: 12px 14px 12px 14px;
+    border-radius: var(--radius-panel);
+    background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.dsx-title {
+    color: var(--text);
+    font-size: 13px;
     font-weight: 700;
 }
 
-.training-turn {
-    padding: 8px 8px 8px 10px;
+.dsx-chip {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background-color: var(--surface-hover);
+}
+
+.dsx-chip-text {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.dsx-chip.dsx-chip-tool {
+    background-color: var(--warning-soft);
+}
+
+.dsx-chip-tool .dsx-chip-text {
+    color: var(--warning);
+}
+
+.dsx-turn {
+    padding: 6px 10px 8px 12px;
     border-radius: 10px;
     background-color: var(--bg-shell);
     border-left-width: 3px;
     border-color: var(--border-strong);
 }
 
-.training-turn.training-turn-user {
+.dsx-turn.dsx-turn-user {
     border-color: var(--text-subtle);
 }
 
-.training-turn.training-turn-assistant {
+.dsx-turn.dsx-turn-assistant {
+    background-color: var(--primary-soft);
     border-color: var(--primary);
 }
 
-.training-turn.training-turn-system {
+.dsx-turn.dsx-turn-system {
+    background-color: var(--warning-soft);
     border-color: var(--warning);
 }
 
-.training-turn-edit {
-    min-height: 34px;
-    padding: 6px 8px;
-    border-radius: 8px;
-    background-color: var(--bg-search);
+.dsx-turn.dsx-turn-tool {
+    border-color: var(--avatar-violet);
+}
+
+/* Выбор роли — компактная метка, а не поле формы. */
+.dsx-role {
+    height: 28px;
+}
+
+.dsx-role-label {
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.dsx-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.dsx-edit {
+    min-height: 22px;
+    padding: 2px 2px;
+    background-color: transparent;
+    border-width: 0;
     color: var(--text);
     font-size: 13px;
+    line-height: 1.5;
+}
+
+.dsx-mono {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.dsx-name {
+    height: 28px;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.dsx-call {
+    padding: 6px 8px 6px 10px;
+    border-radius: 8px;
+    background-color: var(--bg-search);
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.dsx-call-icon {
+    font-family: "Material Icons";
+    font-size: 16px;
+    color: var(--avatar-violet);
+}
+
+.dsx-tools {
+    padding: 8px 10px 8px 12px;
+    border-radius: 10px;
+    background-color: var(--bg-shell);
+    border-width: 1px;
+    border-color: var(--border-soft);
+}
+
+.dsx-tools-icon {
+    font-family: "Material Icons";
+    font-size: 16px;
+    color: var(--warning);
+}
+
+.dsx-add-row {
+    padding: 2px 0 0 0;
+}
+
+.dsx-add {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: transparent;
+    border-width: 1px;
+    border-color: var(--border-soft);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.dsx-add:hover {
+    background-color: var(--surface-hover);
+    color: var(--text);
 }
 
 .training-pager {

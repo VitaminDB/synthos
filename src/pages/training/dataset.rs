@@ -16,42 +16,124 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use syngui::mgui;
 use syngui::prelude::*;
-use syngui::widgets::{Dropdown, DropdownItem, MultilineTextEdit};
+use syngui::widgets::{Dropdown, DropdownItem, MultilineTextEdit, TextField};
 
 use crate::icons::*;
 
 use super::state::{Selection, TrainingCtx};
 
-/// Реплика диалога.
-#[derive(Clone, Debug, PartialEq)]
+/// Вызов инструмента в ответе ассистента: имя функции и аргументы (JSON-текст).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ToolCall {
+    pub name: String,
+    pub args: String,
+}
+
+/// Реплика диалога. `name` — имя функции у результата инструмента
+/// (`role = "tool"`), `calls` — вызовы ассистента; прочие поля сообщения
+/// (`reasoning_content`, `tool_call_id`, …) хранятся в `extra` и пишутся обратно.
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Turn {
     pub role: String,
     pub content: String,
+    pub name: String,
+    pub calls: Vec<ToolCall>,
+    pub extra: serde_json::Map<String, Value>,
 }
 
-/// Пример датасета.
+impl Turn {
+    pub fn new(role: &str) -> Self {
+        Self { role: role.into(), ..Default::default() }
+    }
+}
+
+/// Пример датасета. У диалога `tools` — описания функций (JSON-текст
+/// массива в формате OpenAI, пусто — без инструментов), `extra` — прочие
+/// поля строки.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Example {
-    Chat(Vec<Turn>),
+    Chat { turns: Vec<Turn>, tools: String, extra: serde_json::Map<String, Value> },
     Text(String),
 }
 
+fn call_of(v: &Value) -> Option<ToolCall> {
+    let f = v.get("function").unwrap_or(v);
+    let name = f.get("name")?.as_str()?.to_string();
+    let args = match f.get("arguments").or_else(|| f.get("parameters")) {
+        Some(Value::String(s)) => pretty_json(s),
+        Some(x) => serde_json::to_string_pretty(x).unwrap_or_default(),
+        None => "{}".into(),
+    };
+    Some(ToolCall { name, args })
+}
+
+/// JSON-текст в читаемом виде (не JSON — как есть).
+fn pretty_json(s: &str) -> String {
+    serde_json::from_str::<Value>(s).ok().and_then(|v| serde_json::to_string_pretty(&v).ok()).unwrap_or_else(|| s.to_string())
+}
+
+/// Значение JSON из текста поля: разобранное или (не JSON) строка как есть.
+fn json_or_string(s: &str) -> Value {
+    serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.to_string()))
+}
+
 impl Example {
+    pub fn new_chat() -> Self {
+        Example::Chat { turns: vec![Turn::new("user"), Turn::new("assistant")], tools: String::new(), extra: Default::default() }
+    }
+
     fn parse(v: &Value) -> Option<Self> {
         let s = |v: &Value, keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(Value::as_str)).map(str::to_string);
         if let Some(arr) = v.get("messages").or_else(|| v.get("conversations")).and_then(Value::as_array) {
-            let turns = arr
-                .iter()
-                .map(|m| {
-                    let role = match s(m, &["role", "from"]).unwrap_or_default().as_str() {
-                        "system" => "system",
-                        "assistant" | "gpt" | "bot" | "model" | "chatgpt" => "assistant",
-                        _ => "user",
-                    };
-                    Turn { role: role.into(), content: s(m, &["content", "value", "text"]).unwrap_or_default() }
-                })
-                .collect();
-            return Some(Example::Chat(turns));
+            let mut turns: Vec<Turn> = Vec::new();
+            for m in arr {
+                let raw = s(m, &["role", "from"]).unwrap_or_default();
+                let content = s(m, &["content", "value", "text"]).unwrap_or_default();
+                // ShareGPT: вызов — отдельная реплика; к ответу ассистента перед ней.
+                if raw == "function_call" {
+                    if let Some(c) = serde_json::from_str::<Value>(&content).ok().as_ref().and_then(call_of) {
+                        match turns.last_mut() {
+                            Some(t) if t.role == "assistant" => t.calls.push(c),
+                            _ => turns.push(Turn { calls: vec![c], ..Turn::new("assistant") }),
+                        }
+                    }
+                    continue;
+                }
+                let role = match raw.as_str() {
+                    "system" => "system",
+                    "assistant" | "gpt" | "bot" | "model" | "chatgpt" => "assistant",
+                    "tool" | "function" | "observation" | "ipython" => "tool",
+                    _ => "user",
+                };
+                let mut t = Turn { content, ..Turn::new(role) };
+                if let Some(o) = m.as_object() {
+                    for (k, x) in o {
+                        match k.as_str() {
+                            "role" | "from" | "content" | "value" | "text" => {}
+                            "name" if role == "tool" => t.name = x.as_str().unwrap_or_default().to_string(),
+                            "tool_calls" if role == "assistant" => t.calls.extend(x.as_array().into_iter().flatten().filter_map(call_of)),
+                            "function_call" if role == "assistant" => t.calls.extend(call_of(x)),
+                            _ => {
+                                t.extra.insert(k.clone(), x.clone());
+                            }
+                        }
+                    }
+                }
+                if role == "tool" && t.name.is_empty() {
+                    t.name = turns.iter().rev().find(|x| x.role == "assistant").and_then(|a| a.calls.last()).map(|c| c.name.clone()).unwrap_or_default();
+                }
+                turns.push(t);
+            }
+            let tools = match v.get("tools") {
+                Some(Value::String(x)) => pretty_json(x),
+                Some(x @ Value::Array(a)) if !a.is_empty() => serde_json::to_string_pretty(x).unwrap_or_default(),
+                _ => String::new(),
+            };
+            let mut extra = v.as_object().cloned().unwrap_or_default();
+            for k in ["messages", "conversations", "tools"] {
+                extra.remove(k);
+            }
+            return Some(Example::Chat { turns, tools, extra });
         }
         if let Some(out) = s(v, &["output", "completion", "response", "answer", "chosen"]) {
             let mut prompt = s(v, &["instruction", "prompt", "question", "query"]).unwrap_or_default();
@@ -60,18 +142,50 @@ impl Example {
             }
             let mut turns = Vec::new();
             if let Some(sys) = s(v, &["system"]).filter(|x| !x.is_empty()) {
-                turns.push(Turn { role: "system".into(), content: sys });
+                turns.push(Turn { content: sys, ..Turn::new("system") });
             }
-            turns.push(Turn { role: "user".into(), content: prompt });
-            turns.push(Turn { role: "assistant".into(), content: out });
-            return Some(Example::Chat(turns));
+            turns.push(Turn { content: prompt, ..Turn::new("user") });
+            turns.push(Turn { content: out, ..Turn::new("assistant") });
+            return Some(Example::Chat { turns, tools: String::new(), extra: Default::default() });
         }
         s(v, &["text", "content"]).map(Example::Text)
     }
 
+    /// Строка JSONL в формате OpenAI (`messages`, `tools`, `tool_calls`).
     fn to_json(&self) -> Value {
         match self {
-            Example::Chat(t) => json!({ "messages": t.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>() }),
+            Example::Chat { turns, tools, extra } => {
+                let msgs: Vec<Value> = turns
+                    .iter()
+                    .map(|t| {
+                        let mut m = t.extra.clone();
+                        m.insert("role".into(), json!(t.role));
+                        m.insert("content".into(), json!(t.content));
+                        if t.role == "tool" && !t.name.trim().is_empty() {
+                            m.insert("name".into(), json!(t.name.trim()));
+                        }
+                        if t.role == "assistant" && !t.calls.is_empty() {
+                            let calls: Vec<Value> = t
+                                .calls
+                                .iter()
+                                .map(|c| {
+                                    // аргументы — строкой компактного JSON, как у OpenAI
+                                    let args = serde_json::from_str::<Value>(&c.args).map(|v| v.to_string()).unwrap_or_else(|_| c.args.clone());
+                                    json!({"type": "function", "function": {"name": c.name.trim(), "arguments": args}})
+                                })
+                                .collect();
+                            m.insert("tool_calls".into(), Value::Array(calls));
+                        }
+                        Value::Object(m)
+                    })
+                    .collect();
+                let mut o = extra.clone();
+                o.insert("messages".into(), Value::Array(msgs));
+                if !tools.trim().is_empty() {
+                    o.insert("tools".into(), json_or_string(tools.trim()));
+                }
+                Value::Object(o)
+            }
             Example::Text(t) => json!({ "text": t }),
         }
     }
@@ -206,7 +320,7 @@ pub fn create(ctx: TrainingCtx, name: &str) {
     }
     let doc = DatasetDoc::with(
         path.clone(),
-        vec![Example::Chat(vec![Turn { role: "user".into(), content: String::new() }, Turn { role: "assistant".into(), content: String::new() }])],
+        vec![Example::new_chat()],
         Vec::new(),
     );
     match doc.save() {
@@ -250,7 +364,7 @@ pub fn header_actions(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
             Button::new(tr!("training.dataset.add_example"))
                 .icon(MI_ADD)
                 .on_click(move || {
-                    d1.edit(|v| v.push(Example::Chat(vec![Turn { role: "user".into(), content: String::new() }, Turn { role: "assistant".into(), content: String::new() }])));
+                    d1.edit(|v| v.push(Example::new_chat()));
                     let last = d1.len().saturating_sub(1) / PAGE;
                     d1.page.set(last);
                 })
@@ -276,7 +390,38 @@ pub fn header_actions(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         )
 }
 
-const ROLES: [(&str, &str); 3] = [("system", "training.role.system"), ("user", "training.role.user"), ("assistant", "training.role.assistant")];
+const ROLES: [(&str, &str); 4] = [
+    ("system", "training.role.system"),
+    ("user", "training.role.user"),
+    ("assistant", "training.role.assistant"),
+    ("tool", "training.role.tool"),
+];
+
+/// Заготовка описаний инструментов (формат OpenAI).
+const TOOLS_TEMPLATE: &str = "[\n  {\n    \"type\": \"function\",\n    \"function\": {\n      \"name\": \"\",\n      \"description\": \"\",\n      \"parameters\": {\"type\": \"object\", \"properties\": {}, \"required\": []}\n    }\n  }\n]";
+
+/// Правка текста реплики без пересборки вида (курсор не сбрасывается).
+fn with_turn(doc: &DatasetDoc, i: usize, k: usize, f: impl FnOnce(&mut Turn)) {
+    if let Some(Example::Chat { turns, .. }) = doc.examples.lock().unwrap().get_mut(i) {
+        if let Some(t) = turns.get_mut(k) {
+            f(t);
+        }
+    }
+    doc.dirty.set(true);
+}
+
+/// Правка структуры диалога (с пересборкой вида).
+fn edit_chat(doc: &DatasetDoc, i: usize, f: impl FnOnce(&mut Vec<Turn>, &mut String)) {
+    doc.edit(|v| {
+        if let Some(Example::Chat { turns, tools, .. }) = v.get_mut(i) {
+            f(turns, tools);
+        }
+    });
+}
+
+fn tools_count(tools: &str) -> Option<usize> {
+    serde_json::from_str::<Value>(tools).ok().and_then(|v| v.as_array().map(Vec::len))
+}
 
 /// Тело редактора: страница примеров и переход между страницами.
 pub fn view(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
@@ -289,7 +434,7 @@ pub fn view(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         let page = page.min(pages - 1);
         let from = page * PAGE;
         let to = (from + PAGE).min(total);
-        let mut col = Column::new().gap(14.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+        let mut col = Column::new().gap(12.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
         if !d.broken.is_empty() {
             col = col.child(Text::new(tr!("training.dataset.broken", n = d.broken.len())).class("training-warning"));
         }
@@ -299,11 +444,13 @@ pub fn view(ctx: TrainingCtx, doc: DatasetDoc) -> impl Widget {
         for i in from..to {
             col = col.child(example_card(d.clone(), i));
         }
-        col = col.child(pager(d.clone(), page, pages, total));
+        if pages > 1 {
+            col = col.child(pager(d.clone(), page, pages, total));
+        }
         vec![Box::new(col)]
     });
     let _ = ctx;
-    ScrollView::new().vertical().child(DecoratedBox::new().class("training-center-body").child(body))
+    ScrollView::new().vertical().child(DecoratedBox::new().class("training-center-body dsx-body").child(body))
 }
 
 fn pager(doc: DatasetDoc, page: usize, pages: usize, total: usize) -> Box<dyn Widget> {
@@ -317,60 +464,143 @@ fn pager(doc: DatasetDoc, page: usize, pages: usize, total: usize) -> Box<dyn Wi
     })
 }
 
+fn chip(text: String, class: &str) -> impl Widget {
+    DecoratedBox::new().class(format!("dsx-chip {class}")).child(Text::new(text).class("dsx-chip-text"))
+}
+
+fn add_btn(label: String, on: impl FnMut() + Send + 'static) -> impl Widget {
+    Button::new(label).icon(MI_ADD).on_click(on).class("dsx-add")
+}
+
 fn example_card(doc: DatasetDoc, i: usize) -> Box<dyn Widget> {
     let ex = doc.examples.lock().unwrap().get(i).cloned();
     let Some(ex) = ex else { return Box::new(DecoratedBox::new()) };
-    let mut col = Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+    let mut col = Column::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
+
+    // Шапка: номер, сводка, инструменты, удалить.
+    let mut head = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center);
+    head = head.child(Text::new(tr!("training.dataset.example", n = i + 1)).class("dsx-title"));
+    if let Example::Chat { turns, tools, .. } = &ex {
+        head = head.child(chip(tr!("training.dataset.turns", n = turns.len()), ""));
+        let calls: usize = turns.iter().map(|t| t.calls.len()).sum();
+        if calls > 0 {
+            head = head.child(chip(tr!("training.dataset.calls", n = calls), "dsx-chip-tool"));
+        }
+        if !tools.trim().is_empty() {
+            let n = tools_count(tools).map(|n| n.to_string()).unwrap_or_else(|| "?".into());
+            head = head.child(chip(tr!("training.dataset.tools_count", n = n), "dsx-chip-tool"));
+        }
+    }
+    head = head.child(DecoratedBox::new().class("grow"));
+    if let Example::Chat { tools, .. } = &ex {
+        if tools.trim().is_empty() {
+            let d = doc.clone();
+            head = head.child(
+                ToolButton::new(MI_HANDYMAN)
+                    .tooltip(tr!("training.dataset.tools_add"))
+                    .on_click(move || edit_chat(&d, i, |_, tools| *tools = TOOLS_TEMPLATE.into()))
+                    .class("training-icon-btn"),
+            );
+        }
+    }
     let del = doc.clone();
-    let head = mgui! {
-        Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Text::new(tr!("training.dataset.example", n = i + 1)).class("training-example-title"),
-            DecoratedBox::new().class("grow"),
-            ToolButton::new(MI_DELETE).tooltip(tr!("training.dataset.delete_example")).on_click(move || {
-                del.edit(|v| { if i < v.len() { v.remove(i); } });
-            }).class("training-icon-btn"),
-        ]
-    };
+    head = head.child(
+        ToolButton::new(MI_DELETE)
+            .tooltip(tr!("training.dataset.delete_example"))
+            .on_click(move || {
+                del.edit(|v| {
+                    if i < v.len() {
+                        v.remove(i);
+                    }
+                })
+            })
+            .class("training-icon-btn"),
+    );
     col = col.child(head);
+
     match ex {
         Example::Text(t) => {
             let d = doc.clone();
             col = col.child(
-                MultilineTextEdit::new()
-                    .text(t)
-                    .soft_wrap(true)
-                    .auto_height(true)
-                    .max_rows(16)
-                    .on_change(move |s: &str| {
-                        if let Some(Example::Text(x)) = d.examples.lock().unwrap().get_mut(i) {
-                            *x = s.to_string();
-                        }
-                        d.dirty.set(true);
-                    })
-                    .class("training-turn-edit"),
+                DecoratedBox::new().class("dsx-turn dsx-turn-user").child(
+                    MultilineTextEdit::new()
+                        .text(t)
+                        .rows(2)
+                        .soft_wrap(true)
+                        .auto_height(true)
+                        .max_rows(18)
+                        .on_change(move |s: &str| {
+                            if let Some(Example::Text(x)) = d.examples.lock().unwrap().get_mut(i) {
+                                *x = s.to_string();
+                            }
+                            d.dirty.set(true);
+                        })
+                        .class("dsx-edit"),
+                ),
             );
         }
-        Example::Chat(turns) => {
-            for (k, t) in turns.iter().enumerate() {
-                col = col.child(turn_row(doc.clone(), i, k, t));
+        Example::Chat { turns, tools, .. } => {
+            if !tools.trim().is_empty() {
+                col = col.child(tools_panel(doc.clone(), i, tools));
             }
-            let (a1, a2) = (doc.clone(), doc.clone());
+            for (k, t) in turns.iter().enumerate() {
+                col = col.child(turn_view(doc.clone(), i, k, t));
+            }
+            let add = |role: &'static str, key: &str| {
+                let d = doc.clone();
+                add_btn(tr!(key), move || edit_chat(&d, i, |t, _| t.push(Turn::new(role))))
+            };
             col = col.child(mgui! {
-                Row::new().gap(8.0) => [
-                    Button::new(tr!("training.dataset.add_user")).icon(MI_ADD).on_click(move || {
-                        a1.edit(|v| if let Some(Example::Chat(t)) = v.get_mut(i) { t.push(Turn { role: "user".into(), content: String::new() }) });
-                    }).class("training-btn training-btn-small"),
-                    Button::new(tr!("training.dataset.add_assistant")).icon(MI_ADD).on_click(move || {
-                        a2.edit(|v| if let Some(Example::Chat(t)) = v.get_mut(i) { t.push(Turn { role: "assistant".into(), content: String::new() }) });
-                    }).class("training-btn training-btn-small"),
+                Row::new().gap(6.0).class("dsx-add-row") => [
+                    add("user", "training.dataset.add_user"),
+                    add("assistant", "training.dataset.add_assistant"),
+                    add("tool", "training.dataset.add_tool_result"),
+                    add("system", "training.dataset.add_system"),
                 ]
             });
         }
     }
-    Box::new(DecoratedBox::new().class("training-card").child(col))
+    Box::new(DecoratedBox::new().class("dsx-card").child(col))
 }
 
-fn turn_row(doc: DatasetDoc, i: usize, k: usize, t: &Turn) -> impl Widget {
+/// Описания инструментов примера: JSON-массив в формате OpenAI.
+fn tools_panel(doc: DatasetDoc, i: usize, tools: String) -> impl Widget {
+    let valid = use_signal(tools_count(&tools).is_some());
+    let d = doc.clone();
+    let edit = MultilineTextEdit::new()
+        .text(tools)
+        .rows(2)
+        .soft_wrap(true)
+        .auto_height(true)
+        .max_rows(20)
+        .on_change(move |s: &str| {
+            if let Some(Example::Chat { tools, .. }) = d.examples.lock().unwrap().get_mut(i) {
+                *tools = s.to_string();
+            }
+            valid.set(tools_count(s).is_some() || s.trim().is_empty());
+            d.dirty.set(true);
+        })
+        .class("dsx-edit dsx-mono");
+    let rm = doc.clone();
+    DecoratedBox::new().class("dsx-tools").child(mgui! {
+        Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+            Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                Text::new(MI_HANDYMAN).class("dsx-tools-icon"),
+                Text::new(tr!("training.dataset.tools")).class("dsx-role-label"),
+                Text::new(tr!("training.dataset.tools_hint")).max_lines(2).class("dsx-hint grow"),
+                ToolButton::new(MI_CLOSE).tooltip(tr!("training.dataset.tools_remove")).on_click(move || {
+                    edit_chat(&rm, i, |_, tools| tools.clear());
+                }).class("training-icon-btn"),
+            ],
+            edit,
+            Reactive::new(move || -> Vec<Box<dyn Widget>> {
+                if valid.get() { vec![] } else { vec![Box::new(Text::new(tr!("training.dataset.tools_invalid")).class("training-warning"))] }
+            }),
+        ]
+    })
+}
+
+fn turn_view(doc: DatasetDoc, i: usize, k: usize, t: &Turn) -> impl Widget {
     let mut dd = Dropdown::new().width(150.0);
     for (id, key) in ROLES {
         dd = dd.item(DropdownItem::new(id, tr!(key)));
@@ -378,42 +608,127 @@ fn turn_row(doc: DatasetDoc, i: usize, k: usize, t: &Turn) -> impl Widget {
     let d1 = doc.clone();
     let dd = dd.selected(t.role.clone()).on_change(move |v: &str| {
         let v = v.to_string();
-        d1.edit(|ex| {
-            if let Some(Example::Chat(turns)) = ex.get_mut(i) {
-                if let Some(t) = turns.get_mut(k) {
-                    t.role = v;
-                }
+        edit_chat(&d1, i, |turns, _| {
+            if let Some(t) = turns.get_mut(k) {
+                t.role = v;
             }
         });
     });
+
+    let mut head = Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center).child(DecoratedBox::new().class("dsx-role").child(dd));
+    if t.role == "tool" {
+        let d = doc.clone();
+        head = head.child(
+            TextField::new()
+                .text(t.name.clone())
+                .placeholder(tr!("training.dataset.placeholder.tool_name"))
+                .width(220.0)
+                .on_change(move |s: &str| {
+                    let s = s.to_string();
+                    with_turn(&d, i, k, |t| t.name = s);
+                })
+                .class("dsx-name"),
+        );
+    }
+    head = head.child(DecoratedBox::new().class("grow"));
+    if t.role == "assistant" {
+        let d = doc.clone();
+        head = head.child(
+            Button::new(tr!("training.dataset.add_call"))
+                .icon(MI_DATA_OBJECT)
+                .on_click(move || {
+                    edit_chat(&d, i, |turns, _| {
+                        if let Some(t) = turns.get_mut(k) {
+                            t.calls.push(ToolCall { name: String::new(), args: "{}".into() });
+                        }
+                    })
+                })
+                .class("dsx-add"),
+        );
+    }
+    let d3 = doc.clone();
+    head = head.child(
+        ToolButton::new(MI_CLOSE)
+            .tooltip(tr!("training.dataset.delete_turn"))
+            .on_click(move || {
+                edit_chat(&d3, i, |turns, _| {
+                    if k < turns.len() {
+                        turns.remove(k);
+                    }
+                })
+            })
+            .class("training-icon-btn dsx-del"),
+    );
+
     let d2 = doc.clone();
+    let placeholder = match t.role.as_str() {
+        "assistant" if !t.calls.is_empty() => "training.dataset.placeholder.assistant_call",
+        "assistant" => "training.dataset.placeholder.assistant",
+        "system" => "training.dataset.placeholder.system",
+        "tool" => "training.dataset.placeholder.tool",
+        _ => "training.dataset.placeholder.user",
+    };
     let edit = MultilineTextEdit::new()
         .text(t.content.clone())
-        .placeholder(tr!(match t.role.as_str() {
-            "assistant" => "training.dataset.placeholder.assistant",
-            "system" => "training.dataset.placeholder.system",
-            _ => "training.dataset.placeholder.user",
-        }))
+        .placeholder(tr!(placeholder))
+        .rows(1)
         .soft_wrap(true)
         .auto_height(true)
-        .max_rows(14)
+        .max_rows(18)
         .on_change(move |s: &str| {
-            if let Some(Example::Chat(turns)) = d2.examples.lock().unwrap().get_mut(i) {
-                if let Some(t) = turns.get_mut(k) {
-                    t.content = s.to_string();
-                }
-            }
-            d2.dirty.set(true);
-        });
-    let d3 = doc.clone();
-    let role_class = format!("training-turn training-turn-{}", t.role);
-    DecoratedBox::new().class(role_class).child(mgui! {
-        Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Start) => [
-            dd,
-            DecoratedBox::new().class("grow").child(edit.class("training-turn-edit")),
-            ToolButton::new(MI_CLOSE).tooltip(tr!("training.dataset.delete_turn")).on_click(move || {
-                d3.edit(|ex| if let Some(Example::Chat(turns)) = ex.get_mut(i) { if k < turns.len() { turns.remove(k); } });
-            }).class("training-icon-btn"),
+            let s = s.to_string();
+            with_turn(&d2, i, k, |t| t.content = s);
+        })
+        .class(if t.role == "tool" { "dsx-edit dsx-mono" } else { "dsx-edit" });
+
+    let mut col = Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch).child(head).child(edit);
+    for (c, call) in t.calls.iter().enumerate() {
+        col = col.child(call_view(doc.clone(), i, k, c, call));
+    }
+    DecoratedBox::new().class(format!("dsx-turn dsx-turn-{}", t.role)).child(col)
+}
+
+/// Вызов инструмента: имя функции и аргументы JSON.
+fn call_view(doc: DatasetDoc, i: usize, k: usize, c: usize, call: &ToolCall) -> impl Widget {
+    let (dn, da, dr) = (doc.clone(), doc.clone(), doc);
+    mgui! {
+        DecoratedBox::new().class("dsx-call") => [
+            Column::new().gap(4.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
+                Row::new().gap(8.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
+                    Text::new(MI_DATA_OBJECT).class("dsx-call-icon"),
+                    TextField::new()
+                        .text(call.name.clone())
+                        .placeholder(tr!("training.dataset.placeholder.tool_name"))
+                        .width(240.0)
+                        .on_change(move |s: &str| {
+                            let s = s.to_string();
+                            with_turn(&dn, i, k, |t| if let Some(x) = t.calls.get_mut(c) { x.name = s });
+                        })
+                        .class("dsx-name"),
+                    DecoratedBox::new().class("grow"),
+                    ToolButton::new(MI_CLOSE).tooltip(tr!("training.dataset.delete_call")).on_click(move || {
+                        edit_chat(&dr, i, |turns, _| {
+                            if let Some(t) = turns.get_mut(k) {
+                                if c < t.calls.len() {
+                                    t.calls.remove(c);
+                                }
+                            }
+                        })
+                    }).class("training-icon-btn"),
+                ],
+                MultilineTextEdit::new()
+                    .text(call.args.clone())
+                    .placeholder(tr!("training.dataset.placeholder.args"))
+                    .rows(1)
+                    .soft_wrap(true)
+                    .auto_height(true)
+                    .max_rows(12)
+                    .on_change(move |s: &str| {
+                        let s = s.to_string();
+                        with_turn(&da, i, k, |t| if let Some(x) = t.calls.get_mut(c) { x.args = s });
+                    })
+                    .class("dsx-edit dsx-mono"),
+            ]
         ]
-    })
+    }
 }

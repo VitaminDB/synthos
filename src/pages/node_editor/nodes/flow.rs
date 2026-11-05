@@ -683,7 +683,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
     let map = node.fields.lock().map(|m| m.clone()).unwrap_or_default();
     for f in spec.fields {
         if let Some(v) = map.get(f.name).cloned() {
-            col = col.children(vec![field_row(f.label, field_control(spec.kind, f, v))]);
+            col = col.children(vec![field_row(&syngui::i18n::t(f.label), field_control(spec.kind, f, v))]);
         }
     }
     let (running, error, status, progress, version) = (rt.running, rt.error, rt.status, rt.progress, rt.version);

@@ -386,7 +386,7 @@ fn compact_port_in(node_id: NodeId, schema: PortSchema) -> Box<dyn Widget> {
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 PortDot::new(node_id, Some(schema), PortSide::Input, Some(color)),
                 Padding::symmetric(6.0, 0.0)
-                    .child(Text::new(schema.label.to_string()).class("node-card-port-label-in")),
+                    .child(Text::new(syngui::i18n::t(schema.label)).class("node-card-port-label-in")),
             ]
     })
 }
@@ -398,7 +398,7 @@ fn compact_port_out(node_id: NodeId, schema: PortSchema) -> Box<dyn Widget> {
             .gap(0.0)
             .cross_axis_alignment(CrossAxisAlignment::Center) => [
                 Padding::symmetric(6.0, 0.0)
-                    .child(Text::new(schema.label.to_string()).class("node-card-port-label-out")),
+                    .child(Text::new(syngui::i18n::t(schema.label)).class("node-card-port-label-out")),
                 PortDot::new(node_id, Some(schema), PortSide::Output, Some(color)),
             ]
     })
@@ -520,8 +520,8 @@ fn value_display(id: NodeId, port: &'static str, css_class: &'static str) -> Box
 }
 
 fn port_row(node_id: NodeId, in_port: Option<PortSchema>, out_port: Option<PortSchema>) -> Box<dyn Widget> {
-    let in_label = in_port.map(|p| p.label.to_string()).unwrap_or_default();
-    let out_label = out_port.map(|p| p.label.to_string()).unwrap_or_default();
+    let in_label = in_port.map(|p| syngui::i18n::t(p.label)).unwrap_or_default();
+    let out_label = out_port.map(|p| syngui::i18n::t(p.label)).unwrap_or_default();
     let in_color = in_port.map(|p| wire_color(p.kind, false));
     let out_color = out_port.map(|p| wire_color(p.kind, false));
 
@@ -539,7 +539,7 @@ fn port_row(node_id: NodeId, in_port: Option<PortSchema>, out_port: Option<PortS
 }
 
 fn field_row(schema: FieldSchema, fields: Arc<Mutex<std::collections::HashMap<&'static str, FieldValue>>>) -> Box<dyn Widget> {
-    let label = schema.label.to_string();
+    let label = syngui::i18n::t(schema.label);
     let name = schema.name;
     let map = fields.lock().unwrap_or_else(|e| e.into_inner());
     let value = map.get(name).cloned();

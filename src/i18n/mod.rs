@@ -38,6 +38,8 @@ pub fn install(general: GeneralCtx) {
     syngui::i18n::register_catalogs(&CATALOGS);
     // Строки режима «Заметки» — каталоги библиотеки заметок.
     syngui::i18n::register_catalogs(&syn_notes::i18n::CATALOGS);
+    // Подписи нод ядра synaptix-flow (исходные строки — русские).
+    syngui::i18n::register_catalogs(&synaptix_flow::CATALOGS);
     create_effect(move || {
         let raw = general.language.get();
         syngui::i18n::set_language(resolve(&raw));

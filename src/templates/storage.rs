@@ -10,23 +10,41 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use syngui::tr;
 use thiserror::Error;
 
 use super::model::Template;
 use crate::skills::make_slug;
 
+/// Текст ошибки показывается в уведомлениях — на языке интерфейса.
 #[derive(Debug, Error)]
 pub enum TemplateError {
-    #[error("Шаблон с id «{0}» не найден")]
+    #[error("{}", not_found(.0))]
     NotFound(String),
-    #[error("Имя не должно быть пустым")]
+    #[error("{}", tr!("templates.error.empty_name"))]
     EmptyName,
-    #[error("Builtin-шаблон «{0}» нельзя изменить или удалить")]
+    #[error("{}", builtin_read_only(.0))]
     BuiltinReadOnly(String),
-    #[error("Ошибка ввода-вывода: {0}")]
+    #[error("{}", io_error(.0))]
     Io(#[from] io::Error),
-    #[error("Ошибка сериализации JSON: {0}")]
+    #[error("{}", serialize_error(.0))]
     Serialize(String),
+}
+
+fn not_found(id: &str) -> String {
+    tr!("templates.error.not_found", id = id)
+}
+
+fn builtin_read_only(id: &str) -> String {
+    tr!("templates.error.builtin_read_only", id = id)
+}
+
+fn io_error(e: &io::Error) -> String {
+    tr!("templates.error.io", error = e)
+}
+
+fn serialize_error(e: &str) -> String {
+    tr!("templates.error.serialize", error = e)
 }
 
 /// `~/.config/synthos/templates/`. Создаётся лениво при первой записи.

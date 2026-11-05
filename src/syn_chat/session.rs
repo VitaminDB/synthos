@@ -1530,11 +1530,7 @@ async fn run_agent_loop(
                 c.streaming_tool.set(String::new());
             });
             if loop_retried {
-                stop_reason = Some(format!(
-                    "Остановлено: модель зацикливается в генерации (фрагмент из {period} \
-                     символов повторяется по кругу) второй ход подряд. Переформулируйте \
-                     задачу или поднимите температуру."
-                ));
+                stop_reason = Some(tr!("chat.session.stop.generation_loop", period = period));
                 ledger_update(&chat_id, pop_empty_assistant);
                 break 'agent;
             }
@@ -1756,37 +1752,15 @@ async fn run_agent_loop(
                 || total >= TOTAL_STOP_AT
             {
                 let text = if consecutive >= REPEAT_STOP_AT {
-                    format!(
-                        "Остановлено: инструмент `{}` вызван с теми же аргументами \
-                         {consecutive}-й раз подряд — агент ходит по кругу.",
-                        tool_name(chat_call)
-                    )
+                    tr!("chat.session.stop.repeat", tool = tool_name(chat_call), n = consecutive)
                 } else if periods >= ALTERNATION_STOP_AT {
-                    format!(
-                        "Остановлено: агент {periods} раза подряд чередует одни и те же \
-                         два вызова (последний — `{}`) — ходит по кругу.",
-                        tool_name(chat_call)
-                    )
+                    tr!("chat.session.stop.alternation", tool = tool_name(chat_call), n = periods)
                 } else if stagnant >= STAGNANT_STOP_AT {
-                    format!(
-                        "Остановлено: `{}` с этими аргументами {stagnant} раза подряд \
-                         вернул один и тот же результат — между вызовами не меняется \
-                         ничего, агент ходит по кругу.",
-                        tool_name(chat_call)
-                    )
+                    tr!("chat.session.stop.stagnant", tool = tool_name(chat_call), n = stagnant)
                 } else if numeric_stagnant >= NUMERIC_STAGNANT_STOP_AT {
-                    format!(
-                        "Остановлено: `{}` вызывается с теми же аргументами, меняются \
-                         только числа, а результат по сути один и тот же — агент \
-                         подбирает числа по кругу.",
-                        tool_name(chat_call)
-                    )
+                    tr!("chat.session.stop.numeric", tool = tool_name(chat_call))
                 } else {
-                    format!(
-                        "Остановлено: `{}` с этими аргументами вызван {total}-й раз за \
-                         ход — агент ходит по кругу.",
-                        tool_name(chat_call)
-                    )
+                    tr!("chat.session.stop.total", tool = tool_name(chat_call), n = total)
                 };
                 log::warn!("[syn_chat] guard повторов: {text}");
                 push_tool_result(&chat_id, chat_call, text.clone(), true);
@@ -2084,12 +2058,11 @@ async fn run_agent_loop(
             // собрать вызов — дальше только сгорает бюджет ходов.
             invalid_streak = if outcome.invalid_args { invalid_streak + 1 } else { 0 };
             if invalid_streak >= INVALID_ARGS_STOP_AT {
-                let text = format!(
-                    "Остановлено: {invalid_streak} вызова подряд не прошли разбор \
-                     аргументов (последний — `{}`: {}). Агент не может собрать \
-                     вызов инструмента.",
-                    tool_name(chat_call),
-                    outcome.content.lines().next().unwrap_or("").trim()
+                let text = tr!(
+                    "chat.session.stop.invalid_args",
+                    n = invalid_streak,
+                    tool = tool_name(chat_call),
+                    error = outcome.content.lines().next().unwrap_or("").trim()
                 );
                 log::warn!("[syn_chat] guard аргументов: {text}");
                 stop_reason = Some(text);

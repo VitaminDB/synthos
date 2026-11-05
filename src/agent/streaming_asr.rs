@@ -42,7 +42,7 @@ pub fn start(stream: Arc<AudioStream>, actx: AudioCtx, language: Option<String>)
         let guard = asr.lock().map_err(|_| "asr mutex poisoned".to_string())?;
         match guard.as_ref() {
             Some(t) => t.transcribe_pcm_text(buf, sr, lang),
-            None => Err("ASR-модель не загружена".to_string()),
+            None => Err(syngui::tr!("voice.error.model_not_loaded")),
         }
     });
     let handle = StreamingAsr::start_with(rx, sr, run, cfg);

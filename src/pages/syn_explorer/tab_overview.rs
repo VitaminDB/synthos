@@ -131,18 +131,18 @@ fn capabilities_section(meta: &BundleMeta) -> impl Widget {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let overlays = format!("LoRA-overlays: {}", meta.overlays.len());
+    let overlays = tr!("explorer.overview.overlays", value = meta.overlays.len());
 
     mgui! {
         DecoratedBox::new().class("syn-overview-card") => [
             Column::new()
                 .gap(6.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Capabilities").class("syn-overview-subtitle"),
-                    Text::new(format!("Required: {required}")).class("syn-overview-line"),
-                    Text::new(format!("Optional: {optional}")).class("syn-overview-line"),
+                    Text::new(tr!("explorer.overview.capabilities")).class("syn-overview-subtitle"),
+                    Text::new(tr!("explorer.overview.required", value = required)).class("syn-overview-line"),
+                    Text::new(tr!("explorer.overview.optional", value = optional)).class("syn-overview-line"),
                     Text::new(tr!("explorer.overview.components", value = components)).class("syn-overview-line"),
-                    Text::new(format!("Refs: {refs_label}")).class("syn-overview-line"),
+                    Text::new(tr!("explorer.overview.refs", value = refs_label)).class("syn-overview-line"),
                     Text::new(overlays).class("syn-overview-line"),
                 ]
         ]

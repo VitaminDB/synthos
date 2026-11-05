@@ -476,8 +476,8 @@ pub struct ServiceAsr {
 
 impl ServiceAsr {
     pub fn open(model_path: &str, language: Option<String>) -> Result<Self, String> {
-        let mut c = synaptixd::Client::connect().map_err(|e| format!("служба нейросетей: {e}"))?;
-        let info = c.open(model_path).map_err(|e| format!("служба нейросетей: {e}"))?;
+        let mut c = synaptixd::Client::connect().map_err(|e| tr!("voice.error.service", error = e))?;
+        let info = c.open(model_path).map_err(|e| tr!("voice.error.service", error = e))?;
         Ok(Self { model: info.entry.id, language, _hold: c })
     }
 
@@ -487,12 +487,12 @@ impl ServiceAsr {
         synaptixd::Client::connect()
             .and_then(|mut c| c.transcribe(&self.model, pcm, sample_rate, lang))
             .map(|t| t.text)
-            .map_err(|e| format!("распознавание речи в службе: {e}"))
+            .map_err(|e| tr!("voice.error.transcribe", error = e))
     }
 
     /// Распознать WAV (16 бит, моно).
     pub fn transcribe_wav(&self, wav: &[u8]) -> Result<String, String> {
-        let (pcm, sr) = wav_mono(wav).ok_or("WAV записи не разобран")?;
+        let (pcm, sr) = wav_mono(wav).ok_or_else(|| tr!("voice.error.bad_wav"))?;
         self.transcribe_pcm_text(&pcm, sr, None)
     }
 }

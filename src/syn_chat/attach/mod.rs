@@ -36,7 +36,7 @@ use super::state::SynChatCtx;
 pub fn pick_and_attach() {
     std::thread::spawn(move || {
         let picked = rfd::FileDialog::new()
-            .set_title("Прикрепить файлы")
+            .set_title(tr!("chat.attach.dialog_title"))
             .pick_files();
         if let Some(paths) = picked {
             ingest_paths_blocking(paths);
@@ -89,7 +89,7 @@ fn ingest_paths_inner(paths: Vec<PathBuf>) {
                 }
                 Err(e) => {
                     log::warn!("[attach] {name}: {e}");
-                    ctx.error.set(Some(format!("Не удалось прикрепить {name}: {e}")));
+                    ctx.error.set(Some(tr!("chat.attach.error.failed", name = name, error = e)));
                 }
             }
         });
@@ -173,19 +173,24 @@ pub fn gc_after_delete() {
 // Форматирование для UI
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// «12,4 МБ» — компактный размер файла для подписи карточки.
+/// «12,4 МБ» — компактный размер файла для подписи карточки; единицы —
+/// из каталога (`hf.unit.*`).
 pub fn format_size(bytes: u64) -> String {
+    format_size_with(bytes, |unit| tr!(unit))
+}
+
+fn format_size_with(bytes: u64, unit_name: impl Fn(&str) -> String) -> String {
     const KB: f64 = 1024.0;
     let b = bytes as f64;
     if b < KB {
-        return format!("{bytes} Б");
+        return format!("{bytes} {}", unit_name("hf.unit.b"));
     }
     let (value, unit) = if b < KB * KB {
-        (b / KB, "КБ")
+        (b / KB, unit_name("hf.unit.kb"))
     } else if b < KB * KB * KB {
-        (b / (KB * KB), "МБ")
+        (b / (KB * KB), unit_name("hf.unit.mb"))
     } else {
-        (b / (KB * KB * KB), "ГБ")
+        (b / (KB * KB * KB), unit_name("hf.unit.gb"))
     };
     if value < 10.0 {
         format!("{value:.1} {unit}").replace('.', ",")
@@ -273,9 +278,18 @@ mod tests {
 
     #[test]
     fn sizes_are_human_readable() {
-        assert_eq!(format_size(512), "512 Б");
-        assert_eq!(format_size(2048), "2,0 КБ");
-        assert_eq!(format_size(15 * 1024 * 1024), "15 МБ");
+        let ru = |key: &str| {
+            match key {
+                "hf.unit.b" => "Б",
+                "hf.unit.kb" => "КБ",
+                "hf.unit.mb" => "МБ",
+                _ => "ГБ",
+            }
+            .to_string()
+        };
+        assert_eq!(format_size_with(512, ru), "512 Б");
+        assert_eq!(format_size_with(2048, ru), "2,0 КБ");
+        assert_eq!(format_size_with(15 * 1024 * 1024, ru), "15 МБ");
     }
 
     #[test]

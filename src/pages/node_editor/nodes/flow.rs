@@ -461,7 +461,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                     r.status.set(match item {
                         Some((k, n)) => format!("{k} / {n}"),
                         None if id == target => String::new(),
-                        None => "выполняется…".into(),
+                        None => tr!("nodes.flow.running"),
                     });
                 }
             }
@@ -469,7 +469,7 @@ pub fn on_run(node: &NodeInstance, ctx: &NodeEditorCtx) {
                 if let Some(r) = rts.get(&id) {
                     r.progress.set(step as f32 / total as f32);
                     if id != target {
-                        r.status.set(format!("шаг {step} / {total}"));
+                        r.status.set(tr!("nodes.flow.step", step = step, total = total));
                     }
                 }
             }
@@ -531,27 +531,27 @@ fn service_models(kind: synaptixd::ModelKind, filter: Option<&str>) -> Vec<Strin
 /// Поле «Модель»: модели службы нужного вида; пусто — модель по умолчанию;
 /// путь или чужой id из шаблона остаётся вариантом списка.
 fn model_control(kind: synaptixd::ModelKind, filter: Option<&'static str>, sig: RwSignal<String>) -> Box<dyn Widget> {
-    const AUTO: &str = "по умолчанию";
+    let auto = tr!("nodes.flow.model_default");
     let current = sig.get_untracked();
     let mut ids = service_models(kind, filter);
     if !current.is_empty() && !ids.contains(&current) {
         ids.insert(0, current.clone());
     }
-    let mut items = vec![DropdownItem::simple(AUTO)];
+    let mut items = vec![DropdownItem::simple(auto.clone())];
     items.extend(ids.iter().map(|i| DropdownItem::simple(i.clone())));
     Box::new(
         Dropdown::with_items(items)
-            .selected(if current.is_empty() { AUTO.to_string() } else { current })
-            .on_change(move |val| sig.set(if val == AUTO { String::new() } else { val.to_string() }))
+            .selected(if current.is_empty() { auto.clone() } else { current })
+            .on_change(move |val| sig.set(if val == auto { String::new() } else { val.to_string() }))
             .class("node-input-dropdown"),
     )
 }
 
 /// Путь к файлу: поле и кнопка выбора.
 fn file_control(sig: RwSignal<String>) -> Box<dyn Widget> {
-    let field = TextField::new().text(sig.get_untracked()).placeholder("путь к файлу").on_change(move |s| sig.set(s.to_string())).class("node-input-text");
+    let field = TextField::new().text(sig.get_untracked()).placeholder(tr!("nodes.flow.path_placeholder")).on_change(move |s| sig.set(s.to_string())).class("node-input-text");
     let pick = ToolButton::new(MI_FOLDER_OPEN)
-        .tooltip("Выбрать файл")
+        .tooltip(tr!("nodes.flow.pick_file"))
         .on_click(move || {
             if let Some(p) = rfd::FileDialog::new().pick_file() {
                 sig.set(p.display().to_string());
@@ -580,7 +580,7 @@ fn field_control(fk: &str, f: &'static sf::FieldSpec, value: FieldValue) -> Box<
         (_, FieldValue::Text(sig)) => Box::new(
             TextField::new()
                 .text(sig.get_untracked())
-                .placeholder(if f.ty == FT::File { "путь к файлу" } else { "" })
+                .placeholder(if f.ty == FT::File { tr!("nodes.flow.path_placeholder") } else { String::new() })
                 .on_change(move |s| sig.set(s.to_string()))
                 .class("node-input-text"),
         ),
@@ -661,7 +661,7 @@ fn result_view(rt: &FlowRuntime, spec: &'static sf::NodeSpec) -> Vec<Box<dyn Wid
                     .children(vec![
                         Box::new(
                             ToolButton::new(MI_FOLDER_OPEN)
-                                .tooltip("Открыть")
+                                .tooltip(tr!("nodes.flow.open_file"))
                                 .on_click(move || {
                                     let _ = crate::paths::open_with_system(&open);
                                 })
@@ -697,7 +697,7 @@ pub fn body(node: &NodeInstance) -> Box<dyn Widget> {
         }
         let s = status.get();
         if running.get() {
-            v.push(Box::new(Text::new(if s.is_empty() { "выполняется…".to_string() } else { s }).class("audio-node-meta")));
+            v.push(Box::new(Text::new(if s.is_empty() { tr!("nodes.flow.running") } else { s }).class("audio-node-meta")));
             return v;
         }
         if !s.is_empty() {

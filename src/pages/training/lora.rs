@@ -61,7 +61,7 @@ pub fn view(ctx: TrainingCtx, name: String) -> impl Widget {
             .child(Text::new(tr!("training.lora.info")).class("training-card-title"))
             .child(line(tr!("training.lora.base"), t.get("base_title").and_then(|v| v.as_str()).map(String::from).or(l.base.clone()).unwrap_or_else(|| l.base_path.clone())))
             .child(line(tr!("training.lora.rank"), format!("r = {}, α = {}", l.rank, l.alpha)))
-            .child(line(tr!("training.lora.size"), format!("{:.0} МБ", l.bytes as f64 / 1048576.0)))
+            .child(line(tr!("training.lora.size"), format!("{:.0} {}", l.bytes as f64 / 1048576.0, tr!("hf.unit.mb"))))
             .child(line(tr!("training.lora.path"), crate::paths::pretty(std::path::Path::new(&l.path))));
         if let Some(d) = t.get("dataset").and_then(|v| v.as_str()) {
             info = info.child(line(tr!("training.lora.dataset"), crate::paths::pretty(std::path::Path::new(d))));

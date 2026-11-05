@@ -123,7 +123,7 @@ fn refs_section(meta: &synaptix_bundle::BundleMeta) -> impl Widget {
             Column::new()
                 .gap(4.0)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch) => [
-                    Text::new("Refs").class("syn-property-label"),
+                    Text::new(tr!("explorer.metadata.refs")).class("syn-property-label"),
                     Text::new(body).class("syn-meta-readonly-text"),
                 ]
         ]

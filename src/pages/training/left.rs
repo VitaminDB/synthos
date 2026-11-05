@@ -65,9 +65,9 @@ pub fn view() -> impl Widget {
 
 fn mb(b: u64) -> String {
     if b >= 1 << 30 {
-        format!("{:.1} ГБ", b as f64 / (1u64 << 30) as f64)
+        format!("{:.1} {}", b as f64 / (1u64 << 30) as f64, tr!("hf.unit.gb"))
     } else {
-        format!("{} МБ", (b >> 20).max(1))
+        format!("{} {}", (b >> 20).max(1), tr!("hf.unit.mb"))
     }
 }
 

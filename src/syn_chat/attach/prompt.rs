@@ -417,7 +417,8 @@ mod tests {
         let line = fallback_line(&att(AttachmentKind::Image, "photo.png"), None);
         assert!(line.contains("photo.png"));
         assert!(line.contains("1920×1080"));
-        assert!(line.contains("2,0 КБ"));
+        // Единица размера — из каталога (`hf.unit.kb`), в тестах каталогов нет.
+        assert!(line.contains("2,0 "));
     }
 
     /// Документ меряется токенизатором: что влезает в бюджет — целиком,

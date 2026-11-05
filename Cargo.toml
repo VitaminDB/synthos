@@ -121,7 +121,7 @@ rfd = { version = "0.15", default-features = false, features = [
 ] }
 
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
-synassist = { path = "../synshell/crates/synassist" }
+synassist = { package = "syn-assist", path = "../synshell/crates/syn-assist" }
 # Заметки: режим «Заметки» и инструмент notes — библиотека syn-notes
 # (тот же код, что в приложении заметок synshell).
 syn-notes = { path = "../synshell/crates/syn-notes" }
@@ -285,3 +285,26 @@ incremental = true
 [[bin]]
 name = "agent_smoke"
 path = "src/bin/agent_smoke.rs"
+
+# Крейты synshell (synassist, synaptixd, synmedia…) берут syngui и synaptix git-зависимостями с GitHub;
+# подменить их здешними рабочими копиями — иначе в сборке две копии syngui (типы виджетов не сходятся).
+
+[patch."https://github.com/VitaminDB/syngui.git"]
+syngui = { path = "../syngui/syngui" }
+mss-analysis = { path = "../syngui/mss-analysis" }
+
+[patch."https://github.com/VitaminDB/synaptix.git"]
+synaptix = { path = "../synaptix/crates/synaptix" }
+synaptix-core = { path = "../synaptix/crates/synaptix-core" }
+synaptix-bundle = { path = "../synaptix/crates/synaptix-bundle" }
+synaptix-vfx = { path = "../synaptix/crates/synaptix-vfx" }
+synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
+synaptix-kernels-cuda = { path = "../synaptix/crates/synaptix-kernels-cuda" }
+synaptix-kernels-npu = { path = "../synaptix/crates/synaptix-kernels-npu" }
+synaptix-asr-wav2vec2 = { path = "../synaptix/crates/synaptix-models/asr/wav2vec2" }
+synaptix-align-mfa = { path = "../synaptix/crates/synaptix-models/align/mfa" }
+synaptix-tts-omnivoice = { path = "../synaptix/crates/synaptix-models/tts/omnivoice" }
+synaptix-tts-vibevoice = { path = "../synaptix/crates/synaptix-models/tts/vibevoice" }
+synaptix-tts-voxcpm = { path = "../synaptix/crates/synaptix-models/tts/voxcpm" }
+synaptix-llm-common = { path = "../synaptix/crates/synaptix-models/llm/common" }
+synaptix-gen = { path = "../synaptix/crates/synaptix-gen" }

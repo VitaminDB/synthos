@@ -2,7 +2,6 @@
 
 [![Licence: GPL-3.0 or commercial](https://img.shields.io/badge/licence-GPL--3.0%20%7C%20commercial-blue)](#licence)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
-[![Vibe-coded with Claude Code](https://img.shields.io/badge/vibe--coded-Claude%20Code-d97757)](#how-it-is-built)
 
 A local AI desktop studio written in Rust — an agentic chat client, a block-based notes workspace,
 a node editor for generating video, music and speech, a code editor and a document knowledge
@@ -353,11 +352,11 @@ performance analyses quoted above (`qwen4exp_perf_2026.md`, `gemma4_2026.md`,
 - [syngui](https://github.com/VitaminDB/syngui) — the GUI framework.
 - [synaptix](https://github.com/VitaminDB/synaptix) — the inference and training engine.
 
-## How it is built
+## How it is tested
 
-Since spring 2026 I have been working in [Claude Code](https://claude.com/claude-code). Every
-number in this README was measured on my machine, with the losses reported next to the wins. It
-is my own daily code editor and chat.
+Every number in this README was measured on my machine, with the losses reported next to the
+wins. It is my own daily code editor and chat. Developed with the help of [Claude
+Code](https://claude.com/claude-code).
 
 ## FAQ
 

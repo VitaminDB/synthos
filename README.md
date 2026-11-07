@@ -355,12 +355,9 @@ performance analyses quoted above (`qwen4exp_perf_2026.md`, `gemma4_2026.md`,
 
 ## How it is built
 
-This project is vibe-coded. Since spring 2026 I write all of my projects with [Claude
-Code](https://claude.com/claude-code): I decide what to build and how it fits together,
-describe each task, and review, run and measure the result on my own hardware — the model
-writes the code, the tests and most of the documentation. Every number in this README was
-measured on my machine, with the losses reported next to the wins. It is my own daily
-code editor and chat.
+Since spring 2026 I have been working in [Claude Code](https://claude.com/claude-code). Every
+number in this README was measured on my machine, with the losses reported next to the wins. It
+is my own daily code editor and chat.
 
 ## FAQ
 

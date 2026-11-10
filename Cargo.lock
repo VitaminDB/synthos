@@ -256,6 +256,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
+dependencies = [
+ "derive_arbitrary",
+]
+
+[[package]]
 name = "arboard"
 version = "3.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,6 +873,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
+dependencies = [
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1317,6 +1335,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
+name = "derive_arbitrary"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.2",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1553,6 +1582,18 @@ name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "encode_unicode"
@@ -4233,6 +4274,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mss-lang"
+version = "0.1.0"
+
+[[package]]
 name = "naga"
 version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5294,6 +5339,18 @@ dependencies = [
  "shell-words",
  "winapi",
  "winreg",
+]
+
+[[package]]
+name = "postcard"
+version = "1.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
+dependencies = [
+ "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "serde",
 ]
 
 [[package]]
@@ -6810,11 +6867,42 @@ dependencies = [
 ]
 
 [[package]]
-name = "syn-notes"
-version = "0.1.42"
+name = "syn-assist"
+version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
+ "dom_smoothie",
+ "futures-util",
+ "htmd",
  "libc",
  "log",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "syn-notes-proto",
+ "synaptix-flow",
+ "synaptix-graph",
+ "synaptixd",
+ "synshell-tr",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
+name = "syn-notes"
+version = "0.2.0"
+dependencies = [
+ "encoding_rs",
+ "flate2",
+ "image",
+ "libc",
+ "libloading 0.8.9",
+ "log",
+ "postcard",
+ "pulldown-cmark",
  "rand 0.8.7",
  "rfd",
  "serde",
@@ -6825,17 +6913,19 @@ dependencies = [
  "synaptix-bundle",
  "syngui",
  "synshell-common",
+ "tiny-skia",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "toml_edit 0.23.10+spec-1.0.0",
  "tracing",
  "tracing-subscriber",
  "zbus",
+ "zip",
 ]
 
 [[package]]
 name = "syn-notes-proto"
-version = "0.1.42"
+version = "0.2.0"
 dependencies = [
  "serde_json",
 ]
@@ -6908,7 +6998,7 @@ dependencies = [
 
 [[package]]
 name = "synaptix-flow"
-version = "0.1.42"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6931,7 +7021,7 @@ dependencies = [
 
 [[package]]
 name = "synaptix-graph"
-version = "0.1.42"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -6943,6 +7033,7 @@ dependencies = [
 name = "synaptix-io"
 version = "0.1.1"
 dependencies = [
+ "half",
  "image",
  "memmap2",
  "safetensors",
@@ -6999,36 +7090,12 @@ dependencies = [
 
 [[package]]
 name = "synaptixd"
-version = "0.1.42"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde",
  "serde_json",
  "synaptix-flow",
-]
-
-[[package]]
-name = "synassist"
-version = "0.1.42"
-dependencies = [
- "base64 0.22.1",
- "dom_smoothie",
- "futures-util",
- "htmd",
- "libc",
- "log",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "syn-notes-proto",
- "synaptix-flow",
- "synaptix-graph",
- "synaptixd",
- "thiserror 2.0.19",
- "tokio",
- "url",
- "urlencoding",
 ]
 
 [[package]]
@@ -7050,6 +7117,7 @@ dependencies = [
  "android_logger",
  "anyhow",
  "arboard",
+ "ash",
  "base64 0.22.1",
  "bitflags 2.13.1",
  "bytemuck",
@@ -7072,6 +7140,8 @@ dependencies = [
  "khronos-egl",
  "libc",
  "log",
+ "mss-lang",
+ "objc2 0.6.4",
  "oboe",
  "percent-encoding",
  "pollster",
@@ -7096,6 +7166,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-scanner",
  "web-sys",
@@ -7106,6 +7177,7 @@ dependencies = [
  "winit",
  "wl-clipboard-rs",
  "x11rb",
+ "yeslogic-fontconfig-sys",
  "zbus",
 ]
 
@@ -7124,7 +7196,7 @@ dependencies = [
 
 [[package]]
 name = "synshell-common"
-version = "0.1.42"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -7139,7 +7211,7 @@ dependencies = [
 
 [[package]]
 name = "synshell-tr"
-version = "0.1.42"
+version = "0.2.0"
 
 [[package]]
 name = "synstructure"
@@ -7203,6 +7275,7 @@ dependencies = [
  "sha2",
  "sqlite-vec",
  "symphonia",
+ "syn-assist",
  "syn-notes",
  "syn-notes-proto",
  "synaptix",
@@ -7216,7 +7289,6 @@ dependencies = [
  "synaptix-rag",
  "synaptix-tokenizer",
  "synaptixd",
- "synassist",
  "syngui",
  "sysinfo",
  "tempfile",
@@ -9413,6 +9485,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dcb24d0152526ae49b9b96c1dcf71850ca1e0b882e4e28ed898a93c41334744"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9423,6 +9510,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-core"
@@ -9494,3 +9593,47 @@ dependencies = [
  "syn 2.0.119",
  "winnow 1.0.4",
 ]
+
+[[patch.unused]]
+name = "synaptix-align-mfa"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-asr-wav2vec2"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-gen"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-kernels-cuda"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-kernels-npu"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-llm-common"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-tts-omnivoice"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-tts-vibevoice"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-tts-voxcpm"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "synaptix-vfx"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "mss-analysis"
+version = "0.1.0"

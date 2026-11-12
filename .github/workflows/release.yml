@@ -52,11 +52,13 @@ jobs:
         working-directory: synthos
         run: |
           get() { grep -E "^$1=" packaging/deps.lock | tail -1 | cut -d= -f2 | tr -d '[:space:]'; }
-          syngui="$(get syngui)"; synaptix="$(get synaptix)"
+          syngui="$(get syngui)"; synaptix="$(get synaptix)"; synshell="$(get synshell)"
           echo "syngui=${syngui:-master}"   >> "$GITHUB_OUTPUT"
           echo "synaptix=${synaptix:-master}" >> "$GITHUB_OUTPUT"
+          echo "synshell=${synshell:-master}" >> "$GITHUB_OUTPUT"
           echo "syngui:   ${syngui:-master}"
           echo "synaptix: ${synaptix:-master}"
+          echo "synshell: ${synshell:-master}"
 
       - name: syngui
         uses: actions/checkout@v4
@@ -71,6 +73,14 @@ jobs:
           repository: VitaminDB/synaptix
           path: synaptix
           ref: ${{ steps.pins.outputs.synaptix }}
+
+      # Служба synaptixd (встроенный движок), ассистент, заметки — крейты synshell.
+      - name: synshell
+        uses: actions/checkout@v4
+        with:
+          repository: VitaminDB/synshell
+          path: synshell
+          ref: ${{ steps.pins.outputs.synshell }}
 
       - name: Сверить версию тега с Cargo.toml и PKGBUILD
         id: version
@@ -204,6 +214,9 @@ jobs:
             echo "- synthos \`$(git rev-parse --short HEAD)\`"
             echo "- syngui \`${{ steps.pins.outputs.syngui }}\`"
             echo "- synaptix \`${{ steps.pins.outputs.synaptix }}\`"
+            echo "- synshell \`${{ steps.pins.outputs.synshell }}\`"
+            echo ""
+            echo "Движок нейросетей встроен: служба synaptixd не нужна. Если она запущена (пакет synaptix, ставится с synshell-ai), synthos работает через неё и делит загруженные модели с synshell."
             echo ""
             echo "Веса моделей в релиз не входят — скачиваются из Hugging Face внутри приложения."
           } > "$notes"

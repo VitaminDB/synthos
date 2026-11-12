@@ -1,10 +1,11 @@
 # Коммиты sibling-репозиториев, из которых собирается релиз.
 #
-# synthos path-зависит на ../syngui и ../synaptix, поэтому «версия synthos» без
-# этих двух SHA неполна: тот же тег, собранный с другим syngui, — другой бинарь.
+# synthos path-зависит на ../syngui, ../synaptix и ../synshell (служба
+# synaptixd, ассистент, заметки), поэтому «версия synthos» без этих SHA неполна: тот же тег, собранный с другим syngui, — другой бинарь.
 # Обновляется скриптом packaging/pin-deps.sh непосредственно перед тегом.
 #
 # Формат: <имя>=<полный sha>. Пустое значение → релизная сборка возьмёт master.
 
-syngui=ac2ef72b7dd86727bade78e823dcf6c3f7048e01
-synaptix=de673add50a17f430cff31298073c73ff01fb283
+syngui=8aac1e20fc76e1b996d73ffc1849df9b910d4068
+synaptix=3105d6ae4a9f94aa24722c3b9a5b778f7d489de9
+synshell=28545b10324bcb15fbd5f54537d1bf834076f8dd

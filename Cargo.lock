@@ -8337,7 +8337,7 @@ dependencies = [
 
 [[package]]
 name = "synthos"
-version = "0.2.319"
+version = "0.2.321"
 dependencies = [
  "android_logger",
  "anyhow",
@@ -10699,9 +10699,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "synaptix-vfx"
-version = "0.1.1"
-
-[[patch.unused]]
 name = "mss-analysis"
 version = "0.1.0"
+
+[[patch.unused]]
+name = "synaptix-vfx"
+version = "0.1.1"

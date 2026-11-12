@@ -42,6 +42,15 @@ paru -S synthos-bin      # prebuilt binary from the latest release — recommend
 paru -S synthos-git      # build from source (needs CUDA toolkit, ~2 h, ~15 GB disk)
 ```
 
+**It works right after install — no background service needed.** The synaptix engine
+(CUDA, Intel NPU, CPU) is built into synthos: chat, the node editor, image/video/music
+generation and the knowledge base run inside the app itself. If the system `synaptixd`
+service is running — package `synaptix`, installed together with `synshell-ai` — synthos
+connects to it instead and shares the models already loaded there with synshell, so a model
+is not held in VRAM twice. The choice is made at start-up; to force it, set
+`SYNTHOS_ENGINE=embedded` (always the built-in engine) or `SYNTHOS_ENGINE=service` (service
+only). There is a single package; both modes are in it.
+
 **Other distributions** — download the tarball from
 [Releases](https://github.com/VitaminDB/synthos/releases) or build from source (see
 [Build](#build)). The binary is built against Arch's library versions; on other
@@ -303,13 +312,15 @@ draws a 1024² image in 2–3 s. Details in `docs/small_vram_7gb_2026.md`.
 
 ## Build
 
-synthos is a Cargo workspace that path-depends on its two sibling repositories. Check all
-three out next to each other:
+synthos is a Cargo workspace that path-depends on its sibling repositories — syngui (UI),
+synaptix (engine) and synshell (the `synaptixd` server, assistant and notes crates). Check
+all four out next to each other:
 
 ```
 ~/Projects/
 ├── syngui/
 ├── synaptix/
+├── synshell/
 └── synthos/
 ```
 
@@ -332,11 +343,6 @@ then `makepkg` against the existing binary.
   paths. 7 GB of VRAM is enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
   to CPU for smoke tests and debugging.
 - A Windows build is planned — the app currently depends on Linux-only components.
-- No background service is required. The synaptix engine is linked into synthos itself: if
-  the system `synaptixd` service (synshell) is running, synthos uses it and shares its loaded
-  models with other programs; otherwise it starts the same server in-process on a private
-  socket. `SYNTHOS_ENGINE=embedded` forces the in-process engine, `SYNTHOS_ENGINE=service` the
-  service only. Build features `engine` / `cuda` / `npu` (on by default) control it.
 
 ## Models and licences
 

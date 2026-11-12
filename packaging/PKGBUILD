@@ -7,7 +7,7 @@ pkgname=synthos
 # ревизия пакета: растёт, только если тот же код пересобирается под новые
 # библиотеки (мажорный ffmpeg), и сбрасывается в 1 вместе с новым pkgver.
 epoch=1
-pkgver=0.2.320
+pkgver=0.2.321
 pkgrel=1
 pkgdesc="Synthos — локальная AI-студия: чат с агентом, заметки, node-редактор (video/audio/music/image), редактор кода; NVIDIA sm_80+, модели .syn и GGUF"
 license=("GPL-3.0-only")
@@ -30,6 +30,15 @@ depends=(
     "libavformat.so=63-64"
     "libswscale.so=10-64"
     "libswresample.so=7-64"
+)
+optdepends=(
+    "nvidia-utils: нейросети на видеокарте NVIDIA (драйвер CUDA грузится в рантайме)"
+    "cuda: компилятор ядер NVRTC — ядра собираются на лету под карту (sm_80+)"
+    "openvino-intel-npu-plugin: нейросети на Intel NPU"
+    "intel-npu-driver: драйвер Intel NPU"
+    "intel-npu-compiler: компилятор моделей для Intel NPU"
+    "synaptix: системная служба synaptixd — synthos подключается к ней и делит загруженные модели с synshell; без неё работает свой встроенный движок"
+    "synshell-ai: ассистент synshell — ставит службу synaptix, с которой synthos делит модели"
 )
 makedepends=(
     "cargo"

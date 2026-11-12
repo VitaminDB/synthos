@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Записывает в packaging/deps.lock текущие HEAD соседних репозиториев syngui и
-# synaptix — чтобы релизная сборка на runner'е собрала ровно то, что собрано
+# Записывает в packaging/deps.lock текущие HEAD соседних репозиториев syngui,
+# synaptix и synshell — чтобы релизная сборка на runner'е собрала ровно то, что собрано
 # локально.
 #
 # Запускать перед тегом:
 #   packaging/pin-deps.sh && git commit -am "релиз v0.2.0: пины зависимостей"
 #
 # Скрипт отказывается писать пин, если в соседнем репозитории есть
-# незакоммиченные правки или коммит не запушен: и то и другое означает, что
-# runner склонирует не тот код, который вы проверяли.
+# незакоммиченные правки отслеживаемых файлов или коммит не запушен: и то и
+# другое означает, что runner склонирует не тот код, который вы проверяли.
+# Неотслеживаемые файлы (tmp/, target-wt/) в сборку не попадают и не мешают.
+# У synshell проверяются только крейты, которые тянет synthos: в остальных
+# параллельно идёт своя работа, к сборке synthos она отношения не имеет.
 
 set -euo pipefail
 
@@ -23,6 +26,7 @@ pins=""
 # присваивание fail=1 ушло бы в subshell и потерялось.
 pin() {
     local name="$1" repo="$parent/$1"
+    shift
 
     if [ ! -d "$repo/.git" ]; then
         echo "✗ $name: нет репозитория в $repo" >&2
@@ -31,7 +35,7 @@ pin() {
     fi
 
     local dirty sha pushed
-    dirty="$(git -C "$repo" status --porcelain)"
+    dirty="$(git -C "$repo" status --porcelain --untracked-files=no -- "$@")"
     sha="$(git -C "$repo" rev-parse HEAD)"
     pushed="$(git -C "$repo" branch -r --contains "$sha" 2>/dev/null | head -1)"
 
@@ -51,6 +55,9 @@ pin() {
 
 pin syngui
 pin synaptix
+# Крейты synshell в сборке synthos (cargo metadata) и корень workspace.
+pin synshell Cargo.toml crates/synaptixd crates/synaptix-flow crates/synaptix-graph \
+    crates/syn-assist crates/syn-notes crates/syn-notes-proto crates/synshell-common crates/synshell-tr
 
 if [ "$fail" -ne 0 ]; then
     echo "" >&2

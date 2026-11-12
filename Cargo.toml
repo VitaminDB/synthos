@@ -40,7 +40,14 @@ name = "synthos"
 path = "src/main.rs"
 
 [features]
-default = ["desktop", "nvml", "kb-sqlite-vec", "gguf"]
+default = ["desktop", "nvml", "kb-sqlite-vec", "gguf", "engine", "cuda", "npu"]
+# Встроенный движок: без запущенной службы synaptixd synthos поднимает тот же
+# сервер (`synaptixd::server`) у себя в процессе — см. src/engine.rs.
+engine = ["synaptixd/daemon"]
+# Ускорители встроенного движка — как у системной службы (cuda — NVIDIA,
+# npu — Intel); без них свой движок считает на процессоре.
+cuda = ["engine", "synaptixd/cuda"]
+npu = ["engine", "synaptixd/npu"]
 desktop = ["syngui/clipboard"]
 android = ["syngui/android"]
 testing = ["syngui/testing"]
@@ -127,7 +134,8 @@ synassist = { package = "syn-assist", path = "../synshell/crates/syn-assist" }
 syn-notes = { path = "../synshell/crates/syn-notes" }
 syn-notes-proto = { path = "../synshell/crates/syn-notes-proto" }
 synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
-# Клиент службы нейросетей: графы ядра (стадии моделей, генерация) исполняет она.
+# Движок нейросетей: клиент (чат, генерация, графы ядра) и — с фичей `engine` —
+# сам сервер, если системная служба synaptixd не запущена (src/engine.rs).
 synaptixd = { path = "../synshell/crates/synaptixd", default-features = false }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
 # synaptix-io (feature image) — load_image/resize_bilinear для LTX Image ноды

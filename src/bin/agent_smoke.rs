@@ -415,6 +415,7 @@ fn run() -> std::result::Result<(), String> {
 fn main() {
     syngui::signal::init_main_thread();
     synthos::logging::init();
+    eprintln!("agent_smoke: движок {:?}", synthos::engine::ensure());
     if let Err(e) = run() {
         eprintln!("agent_smoke FAILED: {e}");
         std::process::exit(1);

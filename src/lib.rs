@@ -17,6 +17,7 @@ pub mod agent;
 pub mod components;
 pub mod config;
 pub mod context;
+pub mod engine;
 pub mod fsutil;
 pub mod i18n;
 pub mod icons;
@@ -74,6 +75,10 @@ pub fn run_desktop() {
     // всем последующим Connection'ам в процессе. Без feature
     // `kb-sqlite-vec` — no-op, KB остаётся на full-scan.
     kb::init_sqlite_vec();
+
+    // Движок нейросетей: системная служба synaptixd, если запущена, иначе
+    // тот же сервер внутри процесса — synthos работает и без службы.
+    engine::ensure();
 
     let (theme_mss, ctx) = build_context();
     i18n::install(ctx.general);

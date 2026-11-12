@@ -332,6 +332,11 @@ then `makepkg` against the existing binary.
   paths. 7 GB of VRAM is enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
   to CPU for smoke tests and debugging.
 - A Windows build is planned — the app currently depends on Linux-only components.
+- No background service is required. The synaptix engine is linked into synthos itself: if
+  the system `synaptixd` service (synshell) is running, synthos uses it and shares its loaded
+  models with other programs; otherwise it starts the same server in-process on a private
+  socket. `SYNTHOS_ENGINE=embedded` forces the in-process engine, `SYNTHOS_ENGINE=service` the
+  service only. Build features `engine` / `cuda` / `npu` (on by default) control it.
 
 ## Models and licences
 

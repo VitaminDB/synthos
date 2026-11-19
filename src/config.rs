@@ -462,6 +462,23 @@ pub struct CodeSessionConfig {
     /// дерева файлов и редактора; shell стартует в домашнем каталоге.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal_only: bool,
+    /// Вкладки терминалов, чьи процессы держит хранитель терминалов
+    /// (`AppConfig.terminals_persist`): при запуске synthos подключается к
+    /// ним по ключу. Терминалы без живого процесса не восстанавливаются.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminals: Vec<TerminalTabConfig>,
+    /// Ключ активной вкладки терминала.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_terminal: Option<String>,
+}
+
+/// Вкладка терминала в составе сессии (см. [`CodeSessionConfig::terminals`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TerminalTabConfig {
+    /// Ключ терминала в хранителе.
+    pub key: String,
+    pub title: String,
 }
 
 /// Сериализуемая копия `syngui::widgets::input::code_editor::EditorPersistedState`
@@ -612,6 +629,11 @@ pub struct AppConfig {
     /// Размер шрифта VTE-терминала в логических пикселях.
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
+    /// Терминалы переживают перезапуск и падение synthos: PTY держит
+    /// отдельный процесс-хранитель (`synthos --pty-holder`), при запуске
+    /// вкладки подключаются к живым процессам.
+    #[serde(default = "default_true")]
+    pub terminals_persist: bool,
     /// Семейство шрифта CodeEditor. Пустая строка = `"monospace"`
     /// (системный моноширинный по умолчанию). Применяется через MSS-
     /// переменную `--code-editor-font-family`.
@@ -1043,6 +1065,7 @@ impl Default for AppConfig {
             last_code_folder: None,
             terminal_font_family: String::new(),
             terminal_font_size: default_terminal_font_size(),
+            terminals_persist: true,
             code_editor_font_family: String::new(),
             code_editor_font_size: default_code_editor_font_size(),
             kb: KbConfig::default(),

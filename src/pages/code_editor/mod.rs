@@ -45,6 +45,7 @@ pub mod git_status;
 pub mod open_files;
 pub mod state;
 pub mod terminal_activity;
+pub mod terminal_holder;
 pub mod terminal_pane;
 pub mod text_diff;
 

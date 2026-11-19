@@ -1258,6 +1258,9 @@ settings.terminal.size.px = "{n} px"
 settings.terminal.size.desc = "8-32 px. Change sans redémarrer la session shell en cours — le PTY et l'historique sont conservés."
 settings.terminal.preview.caption = "{family} · {size} px"
 settings.terminal.preview = "Aperçu"
+settings.terminal.section.sessions = "Sessions"
+settings.terminal.persist = "Terminals survive restarts"
+settings.terminal.persist.desc = "Tab processes are kept by a separate holder: they keep running when synthos quits or crashes, and tabs reattach on the next start. Applies to new tabs."
 
 # leftovers
 nodes.option.first_frame = "première image"

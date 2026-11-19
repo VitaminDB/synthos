@@ -14,6 +14,7 @@ use syngui::prelude::*;
 use syngui::widgets::navigation::router::{Router, RouterView};
 
 pub mod agent;
+pub mod cli;
 pub mod components;
 pub mod config;
 pub mod context;
@@ -107,6 +108,9 @@ pub fn run_desktop() {
         // загрузка — повод показать диалог вместо молчаливого выхода
         // (см. `components::quit_dialog`).
         .on_close_request(components::quit_dialog::allow_close)
+        // Второй запуск не открывает второе окно: поднимает это и передаёт
+        // аргументы (`synthos --open-terminal …`, см. `cli`).
+        .with_single_instance("synthos")
         .run(move |_| {
             provide_context(ctx.clone());
             provide_context(components::quit_dialog::QuitCtx::new());
@@ -116,6 +120,17 @@ pub fn run_desktop() {
             let startup_cfg = AppConfig::load();
             let code_ctx = build_code_editor_ctx();
             provide_context(code_ctx);
+            // Вкладки терминалов, пережившие прошлый запуск в хранителе PTY,
+            // и терминалы хранителя без вкладки — обратно в свои сессии.
+            let saved_terminals: Vec<_> = startup_cfg
+                .code_sessions
+                .iter()
+                .map(|c| (c.terminals.clone(), c.active_terminal.clone()))
+                .collect();
+            pages::code_editor::state::restore_terminals(&code_ctx, ctx.clone(), &saved_terminals);
+            // Аргументы командной строки (`--open-terminal …`) этого запуска
+            // и повторных: второй `synthos …` передаёт их сюда.
+            cli::install(&ctx);
             // Семплер занятости терминалов — для бейджей на плитках сессий
             // в нав-рейле (см. pages::code_editor::terminal_activity).
             pages::code_editor::terminal_activity::start_sampler(code_ctx);
@@ -314,6 +329,8 @@ fn build_code_editor_ctx() -> pages::code_editor::state::CodeEditorCtx {
                 editor_states: std::collections::HashMap::new(),
                 created_at: None,
                 terminal_only: false,
+                terminals: Vec::new(),
+                active_terminal: None,
             });
         }
     }
@@ -472,6 +489,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
     let notifications = syngui::widgets::feedback::NotificationCtx::with_default_duration(15_000);
     let terminal_font_family = use_signal(saved.terminal_font_family.clone());
     let terminal_font_size = use_signal(saved.terminal_font_size);
+    let terminals_persist = use_signal(saved.terminals_persist);
     let code_editor_font_family = use_signal(saved.code_editor_font_family.clone());
     let code_editor_font_size = use_signal(saved.code_editor_font_size);
     let syn_chat_max_image_tokens = use_signal(saved.syn_chat_max_image_tokens);
@@ -517,6 +535,7 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         tools,
         terminal_font_family,
         terminal_font_size,
+        terminals_persist,
         code_editor_font_family,
         code_editor_font_size,
         kb,
@@ -618,6 +637,7 @@ fn install_config_autosave(ctx: &AppCtx) {
     let selected_audio_model = ctx.selected_audio_model;
     let terminal_font_family = ctx.terminal_font_family;
     let terminal_font_size = ctx.terminal_font_size;
+    let terminals_persist = ctx.terminals_persist;
     let code_editor_font_family = ctx.code_editor_font_family;
     let code_editor_font_size = ctx.code_editor_font_size;
     let kb_auto_augment = ctx.kb.auto_augment;
@@ -694,6 +714,27 @@ fn install_config_autosave(ctx: &AppCtx) {
                     .collect(),
                 created_at: Some(s.created_at),
                 terminal_only: s.terminal_only,
+                // Только вкладки, чьи процессы держит хранитель: локальные
+                // PTY умирают вместе с synthos, восстанавливать нечего.
+                // Заголовки читаются без подписки — программы меняют их
+                // часто (спиннеры), конфиг на каждое изменение не пишем.
+                terminals: s
+                    .terminals
+                    .tabs
+                    .get()
+                    .iter()
+                    .filter_map(|t| {
+                        t.key.as_ref().map(|key| config::TerminalTabConfig {
+                            key: key.clone(),
+                            title: t.title.get_untracked(),
+                        })
+                    })
+                    .collect(),
+                active_terminal: s.terminals.active_id.get().and_then(|id| {
+                    s.terminals
+                        .tabs
+                        .with_untracked(|v| v.iter().find(|t| t.id == id).and_then(|t| t.key.clone()))
+                }),
             })
             .collect();
         let active_idx = active_id.and_then(|id| sessions.iter().position(|s| s.id == id));
@@ -747,6 +788,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             last_code_folder: None,
             terminal_font_family: terminal_font_family.get(),
             terminal_font_size: terminal_font_size.get(),
+            terminals_persist: terminals_persist.get(),
             code_editor_font_family: code_editor_font_family.get(),
             code_editor_font_size: code_editor_font_size.get(),
             // KB persisted-поля. Остальные параметры KbConfig не редактируются

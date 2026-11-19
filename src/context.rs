@@ -450,6 +450,9 @@ pub struct AppCtx {
     /// Размер шрифта VTE-терминала в логических пикселях.
     /// Persist'ится в `AppConfig.terminal_font_size`.
     pub terminal_font_size: RwSignal<f32>,
+    /// Терминалы переживают перезапуск synthos (хранитель PTY).
+    /// Persist'ится в `AppConfig.terminals_persist`.
+    pub terminals_persist: RwSignal<bool>,
     /// Семейство шрифта CodeEditor (страница «code» → центральная панель).
     /// Пусто = `"monospace"` (системный default). Биндится к панели Settings →
     /// Общие; persist'ится в `AppConfig.code_editor_font_family`. Применяется

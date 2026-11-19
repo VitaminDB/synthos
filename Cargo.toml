@@ -92,6 +92,9 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "audio",
     "ffmpeg",
     "terminal",
+    # Один экземпляр: повторный запуск поднимает окно и передаёт аргументы
+    # (`synthos --open-terminal …`).
+    "single-instance",
     "code-editor-all",
     # WYSIWYG-редактор блочных документов — режим «Заметки».
     "document-editor",

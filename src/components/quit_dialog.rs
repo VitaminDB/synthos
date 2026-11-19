@@ -100,7 +100,8 @@ fn pending_work() -> Vec<String> {
     let mut dirty_files = 0usize;
     for session in code.sessions.get_untracked() {
         for tab in session.terminals.tabs.get_untracked() {
-            if tab.session.is_busy() {
+            // Терминал хранителя переживёт выход — его не теряем.
+            if tab.session.is_busy() && !tab.session.is_held() {
                 busy_terminals += 1;
             }
         }

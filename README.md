@@ -250,6 +250,14 @@ bundle can also be transcoded on load into the format that suits the card.
 - Tree view with live git-status decorations, external-change watching, syntax highlighting,
   integrated terminals. With no file open the editor steps aside and the terminal takes the
   centre.
+- Terminals survive restarts and crashes (Settings → Terminal, on by default): a separate holder
+  process (`synthos --pty-holder`, started on demand, exits when idle) owns the PTYs, and on the
+  next start the tabs reattach to the running programs with their screen restored. A terminal the
+  holder keeps but no tab shows is put back into its project's session.
+- Command line: `synthos --open-terminal <dir> [--cmd '<command>'] [--title <title>]` opens a
+  terminal tab in that project (the command is typed into the tab's shell), `synthos
+  --list-terminals` lists the holder's terminals. A second `synthos` hands its arguments to the
+  running one and raises its window instead of opening another.
 
 | | |
 |---|---|

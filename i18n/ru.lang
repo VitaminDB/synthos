@@ -1440,6 +1440,9 @@ settings.terminal.size.px = "{n} px"
 settings.terminal.size.desc = "8–32 px. Меняется без перезапуска текущей сессии shell — PTY и история сохраняются."
 settings.terminal.preview.caption = "{family} · {size} px"
 settings.terminal.preview = "Предпросмотр"
+settings.terminal.section.sessions = "Сессии"
+settings.terminal.persist = "Терминалы переживают перезапуск"
+settings.terminal.persist.desc = "Процессы вкладок держит отдельный хранитель: при выходе или падении synthos они продолжают работать, а при следующем запуске вкладки подключаются к ним. Действует для новых вкладок."
 
 # leftovers
 nodes.option.first_frame = "первый кадр"

@@ -233,6 +233,7 @@ mod tests {
                 var: ReasoningVar::Effort,
                 levels: vec!["low".into(), "medium".into(), "xhigh".into()],
                 default: "xhigh".into(),
+                instruct_default: None,
             }),
         }
     }

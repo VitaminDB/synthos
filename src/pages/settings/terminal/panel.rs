@@ -41,6 +41,10 @@ pub fn terminal_font_panel() -> impl Widget {
                         vec![family_row(), size_row()],
                     )) as Box<dyn Widget>,
                     preview_card(),
+                    Box::new(section_card(
+                        tr!("settings.terminal.section.sessions"),
+                        vec![persist_row()],
+                    )),
                 ]),
         )
 }
@@ -222,6 +226,23 @@ fn preview_card() -> Box<dyn Widget> {
 }
 
 // ─── локальные хелперы (упрощённые копии из audio_models/mod.rs) ─────────────
+/// «Терминалы переживают перезапуск»: PTY в хранителе терминалов.
+fn persist_row() -> Box<dyn Widget> {
+    let control = DecoratedBox::new().child(move || {
+        let ctx = use_context::<AppCtx>();
+        let on = ctx.terminals_persist.get();
+        Toggle::new().on(on).on_change(move |v| {
+            use_context::<AppCtx>().terminals_persist.set(v);
+        })
+    });
+    row_frame(
+        MI_TERMINAL,
+        tr!("settings.terminal.persist"),
+        tr!("settings.terminal.persist.desc"),
+        Box::new(control),
+    )
+}
+
 // TODO: вынести row_frame/section_card в общий settings::common — сейчас они
 // дублируются в general.rs / models/mod.rs / audio_models/mod.rs / здесь.
 

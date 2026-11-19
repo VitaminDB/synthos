@@ -31,6 +31,7 @@ use crate::context::AppCtx;
 
 use super::dialogs::DialogKind;
 use super::drafts;
+use super::terminal_holder;
 use super::fs_ops;
 use super::fs_watcher::FsWatcher;
 use super::git_status::{GitStatusMap, GitStatusWorker};
@@ -658,6 +659,12 @@ impl CodeEditorCtx {
             self.active_id.get_untracked()
         };
 
+        // Терминалы хранителя от Drop не умирают — завершаем явно.
+        if let Some(s) = self.sessions.get_untracked().iter().find(|s| s.id == id) {
+            for tab in s.terminals.tabs.get_untracked() {
+                tab.session.terminate();
+            }
+        }
         self.sessions.update(|v| v.retain(|s| s.id != id));
         // Закрыли сессию — снимаем FS-watcher и git-worker, иначе они
         // продолжат держать inotify/FSEvents handle и thread'ы для
@@ -691,9 +698,12 @@ pub struct TerminalTab {
     /// Заголовок таба. Заполняется из OSC 0/2 терминала; pre-populate'ится
     /// дефолтом `"Terminal {id}"` для новых табов до первого title-sequence.
     pub title: RwSignal<String>,
-    /// PTY-сессия. Дроп этого clone'а (через retain в close_terminal или
-    /// при close сессии) — единственное место, которое финализирует процесс таба.
+    /// PTY-сессия. Закрытие вкладки — [`close_terminal`] (`terminate()` и
+    /// удаление из списка): терминал хранителя от простого Drop не умирает.
     pub session: TerminalSession,
+    /// Ключ терминала в хранителе (`terminal_holder`); `None` — PTY внутри
+    /// synthos, умрёт вместе с ним.
+    pub key: Option<String>,
 }
 
 /// Реактивная коллекция вкладок терминала. Copy через RwSignal-поля.
@@ -726,6 +736,23 @@ impl TerminalsState {
     }
 }
 
+/// Параметры новой вкладки терминала (см. [`add_terminal_with`]).
+#[derive(Default, Clone)]
+pub struct NewTerminal {
+    /// Рабочий каталог; `None` — корень проекта сессии (у «Терминала» — домашний).
+    pub cwd: Option<PathBuf>,
+    /// Заголовок до первой title-последовательности программы.
+    pub title: Option<String>,
+    /// Ввод, который получит оболочка сразу после запуска (например команда
+    /// с `\n` — как если бы пользователь набрал её сам).
+    pub input: Option<String>,
+    /// Подключиться к живому терминалу хранителя с этим ключом (восстановление);
+    /// нет такого — вкладка не создаётся.
+    pub attach_key: Option<String>,
+    /// Не делать вкладку активной.
+    pub background: bool,
+}
+
 /// Создать новый таб терминала в указанной сессии. Сразу делает его активным.
 /// Возвращает id нового таба.
 ///
@@ -734,8 +761,17 @@ impl TerminalsState {
 /// session спавнит shell без cwd (наследуется от процесса).
 /// font_size/family — снимок из `app.terminal_font_*`.
 pub fn add_terminal(session: CodeSession, app: AppCtx) -> Option<u32> {
+    add_terminal_with(session, app, NewTerminal::default())
+}
+
+/// [`add_terminal`] с параметрами. При включённой настройке
+/// `terminals_persist` PTY держит хранитель терминалов — вкладка переживёт
+/// перезапуск и падение synthos.
+pub fn add_terminal_with(session: CodeSession, app: AppCtx, opts: NewTerminal) -> Option<u32> {
     let mut config = TerminalConfig::default();
-    if let Some(folder) = session.root_folder.get_untracked() {
+    if let Some(cwd) = opts.cwd.clone() {
+        config.cwd = Some(cwd);
+    } else if let Some(folder) = session.root_folder.get_untracked() {
         config.cwd = Some(folder);
     } else if session.terminal_only {
         config.cwd = home_dir();
@@ -749,6 +785,22 @@ pub fn add_terminal(session: CodeSession, app: AppCtx) -> Option<u32> {
         config.font_size = size;
     }
 
+    let id = next_terminal_id(&session.terminals);
+    let title_text = opts.title.clone().unwrap_or_else(|| format!("Terminal {id}"));
+    let key = match opts.attach_key.clone() {
+        Some(k) => Some(k),
+        None if app.terminals_persist.get_untracked() => Some(terminal_holder::new_key()),
+        None => None,
+    };
+    if let Some(k) = key.as_ref() {
+        let meta = terminal_holder::TerminalMeta {
+            folder: session.root_folder.get_untracked().map(|p| p.display().to_string()),
+            terminal_only: session.terminal_only,
+            title: title_text.clone(),
+        };
+        config.holder = Some(terminal_holder::spec(k, &meta, opts.attach_key.is_none()));
+    }
+
     let pty = match TerminalSession::new(config) {
         Ok(s) => s,
         Err(e) => {
@@ -756,19 +808,99 @@ pub fn add_terminal(session: CodeSession, app: AppCtx) -> Option<u32> {
             return None;
         }
     };
+    if let Some(input) = opts.input.as_deref() {
+        pty.write(input.as_bytes());
+    }
 
-    let id = next_terminal_id(&session.terminals);
-    let title = use_signal(format!("Terminal {id}"));
+    let title = use_signal(title_text);
     pty.set_title_signal(title);
 
     let tab = TerminalTab {
         id,
         title,
         session: pty,
+        key,
     };
     session.terminals.tabs.update(|v| v.push(tab));
-    session.terminals.active_id.set(Some(id));
+    if !opts.background || session.terminals.active_id.get_untracked().is_none() {
+        session.terminals.active_id.set(Some(id));
+    }
     Some(id)
+}
+
+/// Подключить вкладки к живым терминалам хранителя после запуска synthos.
+///
+/// `saved[i]` — сохранённый состав вкладок сессии `sessions[i]` (ключ,
+/// заголовок, активная). Вкладки без живого терминала пропускаются. Живые
+/// терминалы хранителя, которых нет ни в одной сессии (потерянный конфиг,
+/// падение до сохранения), возвращаются в сессию своего проекта — а если её
+/// нет, в новую сессию этого проекта или «Терминал». Процесс без вкладки
+/// так не остаётся никогда.
+pub fn restore_terminals(
+    code: &CodeEditorCtx,
+    app: AppCtx,
+    saved: &[(Vec<crate::config::TerminalTabConfig>, Option<String>)],
+) {
+    let live = terminal_holder::list();
+    if live.is_empty() {
+        return;
+    }
+    let sessions = code.sessions.get_untracked();
+    let mut claimed = HashSet::new();
+    for (session, (tabs, active)) in sessions.iter().zip(saved) {
+        for tab in tabs {
+            if !live.iter().any(|h| h.key == tab.key) || !claimed.insert(tab.key.clone()) {
+                continue;
+            }
+            let restored = add_terminal_with(
+                *session,
+                app.clone(),
+                NewTerminal {
+                    title: Some(tab.title.clone()),
+                    attach_key: Some(tab.key.clone()),
+                    background: active.as_deref() != Some(tab.key.as_str()),
+                    ..Default::default()
+                },
+            );
+            tracing::info!(key = %tab.key, ok = restored.is_some(), "терминал: вкладка подключена к хранителю");
+        }
+    }
+
+    for held in live.iter().filter(|h| !claimed.contains(&h.key)) {
+        let meta = terminal_holder::TerminalMeta::decode(&held.meta);
+        let folder = meta.folder.as_ref().map(PathBuf::from);
+        let existing = code.sessions.get_untracked().into_iter().find(|s| match &folder {
+            Some(f) => s.root_folder.get_untracked().as_deref() == Some(f.as_path()),
+            None => s.terminal_only,
+        });
+        let session = match existing {
+            Some(s) => s,
+            None => {
+                let prev = code.active_id.get_untracked();
+                let id = if folder.is_some() { code.create_empty() } else { code.create_terminal() };
+                let Some(s) = code.sessions.get_untracked().into_iter().find(|s| s.id == id) else {
+                    continue;
+                };
+                if let Some(f) = folder.clone().filter(|f| f.is_dir()) {
+                    set_root_folder(s, f);
+                }
+                code.active_id.set(prev.or(Some(id)));
+                s
+            }
+        };
+        let title = if meta.title.is_empty() { None } else { Some(meta.title.clone()) };
+        add_terminal_with(
+            session,
+            app.clone(),
+            NewTerminal {
+                title,
+                attach_key: Some(held.key.clone()),
+                background: true,
+                ..Default::default()
+            },
+        );
+        tracing::warn!(key = %held.key, pid = held.pid, "терминал хранителя без вкладки — возвращён в сессию проекта");
+    }
 }
 
 /// Закрыть таб по id в указанной сессии. Если был активным — переключиться на
@@ -788,6 +920,13 @@ pub fn close_terminal(session: CodeSession, id: u32) {
     } else {
         session.terminals.active_id.get_untracked()
     };
+    if let Some(tab) = session
+        .terminals
+        .tabs
+        .with_untracked(|v| v.iter().find(|t| t.id == id).cloned())
+    {
+        tab.session.terminate();
+    }
     session.terminals.tabs.update(|v| v.retain(|t| t.id != id));
     if was_active {
         session.terminals.active_id.set(new_active);
@@ -1272,6 +1411,7 @@ mod tests {
             editor_states: HashMap::new(),
             created_at: Some(1),
             terminal_only,
+            ..Default::default()
         };
         let plain = serde_json::to_string(&cfg(false)).unwrap();
         assert!(!plain.contains("terminal_only"), "{plain}");
@@ -1341,6 +1481,7 @@ mod tests {
             editor_states: HashMap::new(),
             created_at: None,
             terminal_only: false,
+            ..Default::default()
         };
         let path = file.display().to_string();
         let ctx = CodeEditorCtx::new(

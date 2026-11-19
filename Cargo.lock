@@ -10704,9 +10704,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "mss-analysis"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "synaptix-vfx"
 version = "0.1.1"
+
+[[patch.unused]]
+name = "mss-analysis"
+version = "0.1.0"

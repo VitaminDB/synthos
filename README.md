@@ -338,8 +338,10 @@ cargo build --release            # or --profile fast-release for iteration
 
 The build needs stable Rust 1.96 or newer (the floor set by dependencies), the CUDA
 toolkit (`nvcc` is read at build time to pin the CUDA API version; the driver itself is
-loaded dynamically at runtime) and system FFmpeg development libraries. An Arch package is in [`packaging/`](packaging/) — `cargo build --release` first,
-then `makepkg` against the existing binary.
+loaded dynamically at runtime) and system FFmpeg development libraries. Packages and
+releases are built with the [`syngui`](https://github.com/VitaminDB/syngui) CLI
+(`syngui package -f arch --install`, `syngui release <version> --publish`); the metadata lives
+in `[package.metadata.syngui]` in `Cargo.toml`.
 
 ## Requirements
 

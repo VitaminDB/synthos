@@ -64,7 +64,7 @@ pub fn parse(args: &[String]) -> std::result::Result<Cli, String> {
             Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
             _ => (arg.as_str(), None),
         };
-        let mut take = |it: &mut std::iter::Peekable<std::slice::Iter<String>>| match inline.clone() {
+        let take = |it: &mut std::iter::Peekable<std::slice::Iter<String>>| match inline.clone() {
             Some(v) => Ok(v),
             None => value(it, flag),
         };

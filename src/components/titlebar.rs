@@ -1,9 +1,8 @@
 //! Custom title bar for the frameless window.
 //!
 //! Left: app name + version (`Synthos v<SYNTHOS_VERSION>` — `0.2.<номер
-//! сборки>`, `pkgver` из `packaging/PKGBUILD`, который пробрасывает `build.rs`;
-//! по нему сразу видно, какая сборка запущена), пилюля стадии («beta») и —
-//! только если пакет пересобирали под новые библиотеки — ревизия пакета.
+//! сборки>`, версия из `Cargo.toml`, см. `build.rs`; по нему сразу видно,
+//! какая сборка запущена) и пилюля стадии («beta»).
 //! Right: прогресс загрузок HuggingFace (пока они есть), затем чипы Donate и
 //! GitHub вплотную к кнопкам окна (те же ссылки есть в
 //! «Настройки → О программе»), затем window controls — either the built-in
@@ -36,7 +35,7 @@ pub const GITHUB_URL: &str = env!("CARGO_PKG_REPOSITORY");
 /// Octicons `mark-github` (MIT): белая заливка, цвет даёт `color-tint` из MSS.
 /// Холст 64 px при viewBox 16 — растеризуется один раз, и на 12 px в шапке
 /// логотип остаётся чётким и на HiDPI.
-const GITHUB_MARK_SVG: &[u8] = include_bytes!("../../packaging/github-mark.svg");
+const GITHUB_MARK_SVG: &[u8] = include_bytes!("../../data/icons/github-mark.svg");
 
 /// Зазор между чипами и кнопками окна.
 const LINKS_TO_CONTROLS: f32 = 8.0;
@@ -57,12 +56,8 @@ pub fn view() -> impl Widget {
     )
 }
 
-/// Ревизия пакета Arch: пусто при обычном `pkgrel=1` и вне репозитория —
-/// сам номер сборки живёт в версии рядом (см. `build.rs`).
-const PKGREL: &str = env!("SYNTHOS_PKGREL");
-
 fn title_text() -> impl Widget {
-    let mut row = Row::new()
+    let row = Row::new()
         .gap(8.0)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .child(
@@ -70,9 +65,6 @@ fn title_text() -> impl Widget {
                 .class("titlebar-title"),
         )
         .child(badge(tr!("titlebar.stage.beta"), "titlebar-badge-stage"));
-    if !PKGREL.is_empty() {
-        row = row.child(badge(format!("#{PKGREL}"), "titlebar-badge-build"));
-    }
     DecoratedBox::new().class("titlebar-heading").child(row)
 }
 

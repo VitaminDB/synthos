@@ -1,143 +1,27 @@
-# Выпуск релиза: self-hosted runner, GitHub Actions, AUR
+# Выпуск релиза
 
-Дата: 16.09.2026.
+Сборка, пакеты и выпуск synthos делаются только утилитой `syngui` (крейт `syngui-cli`
+в репозитории syngui). Свои PKGBUILD, скрипты и workflow GitHub Actions больше не
+используются: с 19.11.2026 их нет (каталог `packaging/` удалён).
 
-Сборка synthos не влезает в бесплатный GitHub-раннер: три репозитория, ~540k
-строк Rust, LTO и `codegen-units = 1`, плюс CUDA toolkit ради `nvcc` и системный
-FFmpeg. И главное — бинарь должен линковаться с библиотеками **Arch**, иначе
-пакет для Arch собирать бессмысленно. Поэтому релизы собирает self-hosted
-runner на рабочей машине.
-
-## Раскладка
-
-```
-_work/synthos/
-├── synthos/     ← checkout репозитория (тег)
-├── syngui/      ← checkout по SHA из packaging/deps.lock
-├── synaptix/    ← то же
-└── dist/        ← артефакты релиза
-_work/synthos-ci-target/   ← CARGO_TARGET_DIR, переживает очистку workspace
-```
-
-Путь `../syngui/syngui` из манифеста synthos разрешается сам собой: соседние
-директории — ровно то, что ждут path-зависимости.
-
-## Runner на этой машине (установлен 17.09.2026)
-
-- Каталог: `~/actions-runner` (версия 2.337.0, SHA-256 архива сверена с релизом
-  actions/runner), имя `synthos-builder`, метки `self-hosted, Linux, X64`.
-- Сервис — **пользовательский** systemd, без sudo:
-  `~/.config/systemd/user/actions-runner-synthos.service`. Живёт без входа в
-  сессию благодаря `loginctl enable-linger` (уже включён). `OOMScoreAdjust=500`.
-- **PATH задаётся в двух местах, и `.path` — не одно из них.** У сервиса systemd
-  даёт `PATH=/usr/local/bin:/usr/bin`, а `~/actions-runner/.path` на job не
-  распространяется: 20.09 сборка упала на `build.rs` форка cudarc с
-  «`nvcc --version` failed … NotFound». Теперь PATH прописан
-  `Environment=` в `~/.config/systemd/user/actions-runner-synthos.service` и
-  продублирован шагом «Окружение сборки» в `release.yml` (`$GITHUB_PATH`) —
-  второе версионируется в репозитории и переживает переустановку раннера.
-- **Рестарт сервиса оставляет старый `Runner.Listener` сиротой** (`KillMode=process`
-  убивает только `run.sh`). Два слушателя на одну регистрацию — путаница в
-  очереди; после `systemctl --user restart` проверяйте
-  `ps -eo pid,cmd | grep actions-runner/bin/Runner.Listener` и убивайте лишний.
-  Осторожно с `pkill -f Runner.Listener`: шаблон совпадает и с собственной
-  командной строкой шелла.
+Описание выпуска — `[package.metadata.syngui]` в `Cargo.toml`: зависимости Arch,
+optdepends, makedepends, `epoch`, состав релиза. Значок — `data/icons/synthos.svg`,
+ярлык — `data/synthos.desktop`.
 
 ```sh
-systemctl --user status actions-runner-synthos        # жив ли
-journalctl --user -u actions-runner-synthos -f        # лог раннера
-systemctl --user disable --now actions-runner-synthos # выключить совсем
+syngui package -f arch --install         # пакет Arch из текущего кода и установка в систему
+syngui release 0.2.323                   # сухой прогон: что будет сделано
+syngui release 0.2.323 --publish         # версия, коммит «Выпуск …», тег, архив x86_64,
+                                         # git push, релиз GitHub, PKGBUILD для AUR
 ```
 
-Переустановка с нуля (токен берётся через API, веб-интерфейс не нужен):
+Версия — `0.2.<номер сборки>`: `version` в `[workspace.package]`, тег `v0.2.<номер>`,
+она же в заголовке окна (`build.rs` → `SYNTHOS_VERSION`).
 
-```sh
-cd ~/actions-runner
-./config.sh remove --token "$(gh api -X POST repos/VitaminDB/synthos/actions/runners/remove-token --jq .token)"
-./config.sh --unattended --url https://github.com/VitaminDB/synthos --name synthos-builder --work _work \
-  --token "$(gh api -X POST repos/VitaminDB/synthos/actions/runners/registration-token --jq .token)"
-systemctl --user restart actions-runner-synthos
-```
+В AUR — `synthos-bin` (архив из релиза GitHub) и `synthos-git` (сборка из master
+четырёх репозиториев: synthos, syngui, synaptix, synshell). `epoch=1` обязателен: с
+20.09 по 23.09.2026 версией был голый номер сборки (268…278), и без epoch pacman счёл
+бы 0.2.x откатом. PKGBUILD с суммами `syngui release --publish` кладёт в
+`target/syngui/aur/`; оттуда они пушатся в `ssh://aur@aur.archlinux.org/<пакет>.git`.
 
-### Безопасность на публичном репозитории
-
-Self-hosted runner на публичном репозитории — это чужой код на вашей машине,
-если дать ему такую возможность. Закрыто тремя вещами:
-
-1. В `release.yml` нет триггера `pull_request` — только тег и `workflow_dispatch`.
-   Форк не может запустить сборку.
-2. Одобрение workflow из форков — `all_external_contributors` (выставлено 17.09 через
-   `gh api -X PUT repos/VitaminDB/synthos/actions/permissions/fork-pr-contributor-approval`;
-   по умолчанию было `first_time_contributors` — после одного принятого PR чужой код
-   запускался бы на этой машине без спроса).
-3. Раннер работает от обычного пользователя, не от root.
-
-## Нумерация (с 23.09.2026)
-
-Версия synthos — **`0.2.<номер сборки>`**: `0.2.278`, `0.2.279`, … Патч — тот
-самый сквозной номер сборки; одна и та же строка лежит в `Cargo.toml`, в
-`pkgver`, в теге релиза (`v0.2.278`), в AUR и в титлбаре.
-
-| Место | Как выглядит |
-|---|---|
-| `Cargo.toml` | `version = "0.2.278"` |
-| `packaging/PKGBUILD` | `epoch=1`, `pkgver=0.2.278`, `pkgrel=1` |
-| тег и релиз | `v0.2.278` |
-| AUR | `synthos-bin 1:0.2.278-1`, `synthos-git 1:0.2.278.rN.g<sha>` |
-| в приложении | `Synthos v0.2.278` — `build.rs` читает `pkgver` из PKGBUILD в `SYNTHOS_VERSION` |
-
-История: до 20.09 номер сборки жил в `pkgrel` (`0.2.0-267`), с 20.09 по 23.09
-версией был голый номер (`268`…`278`). Для pacman `278 > 0.2.278`, поэтому во
-всех трёх PKGBUILD стоит **`epoch=1`** — без него переход на `0.2.x` выглядел бы
-откатом, и yay/paru не предложили бы обновление. Убирать epoch нельзя никогда.
-makepkg пишет epoch в имя файла (`synthos-1:0.2.278-1-x86_64.pkg.tar.zst`);
-workflow кладёт пакет в релиз без `1:` — двоеточие в именах ассетов GitHub
-не любит.
-
-`pkgrel` — ревизия пакета: поднимается, только если **тот же** код
-пересобирается под новые библиотеки (мажорный ffmpeg), и сбрасывается в `1`
-вместе с новым `pkgver`. Пилюля в титлбаре показывает его лишь тогда, когда он
-больше единицы.
-
-Workflow сверяет `Cargo.toml` с `pkgver` и `pkgver` с тегом — расхождение
-останавливает релиз.
-
-## Как выпускается релиз
-
-```sh
-packaging/pin-deps.sh                    # SHA syngui и synaptix → deps.lock
-$EDITOR Cargo.toml packaging/PKGBUILD    # version = "0.2.279" ↔ pkgver=0.2.279, pkgrel=1
-git commit -am "релиз v0.2.279"
-git tag v0.2.279
-git push origin master v0.2.279    # именно так: --follow-tags легковесный тег не пушит
-```
-
-Дальше workflow сам: клонирует три репозитория по пинам, сверяет тег с версией
-(расхождение `Cargo.toml` и `PKGBUILD` — ошибка, а не тихий кривой пакет),
-собирает, гоняет `makepkg`, пакует tarball, считает `SHA256SUMS` и создаёт
-релиз.
-
-Ручной прогон без тега: `Actions → release → Run workflow`, ref = `master`.
-Такая сборка уезжает в релиз `v<версия>-build-<коммит>` (имя настоящего релиза
-она не занимает) и по умолчанию черновиком.
-
-## Грабли
-
-- **Сборка и запущенный synthos не уживаются в RAM.** Flash-Next держит 66 ГБ
-  pinned из 93; параллельная сборка получала OOM, и убивало обычно не её.
-  В workflow шаг сборки поднимает себе `oom_score_adj` (`choom -n 1000`), так
-  что первой падает сборка. Во время релиза лучше не держать модель загруженной.
-- **`CARGO_BUILD_JOBS: 16`** из 24 ядер — чтобы рабочий стол оставался живым.
-  Ограничивать до 4–8 не нужно: это только удлиняет сборку.
-- **Проверка mtime в PKGBUILD.** Локально она ловит «подняли pkgver после
-  сборки» (номер зашивается в бинарь на компиляции); в CI checkout делает файлы свежее бинаря при инкрементальной сборке,
-  поэтому шаг `makepkg` делает `touch` бинаря — сборка в том же job только что
-  прошла.
-- **`--locked` не используется.** Cargo.lock synthos зависит от версий крейтов в
-  syngui/synaptix; при смене пина `--locked` уронит релиз на ровном месте.
-
-## AUR
-
-См. [`packaging/aur/README.md`](../packaging/aur/README.md): `synthos-bin`
-(готовый бинарь из релиза) и `synthos-git` (сборка master всех трёх репозиториев;
-пины `deps.lock` — только для релиза по тегу). Публикация — `packaging/aur/publish.sh <пакет>`.
+Веса моделей в релиз не входят — скачиваются из Hugging Face внутри приложения.

@@ -141,7 +141,7 @@ fn language_button() -> impl Widget {
 }
 
 fn logo() -> impl Widget {
-    const LOGO_SVG: &[u8] = include_bytes!("../../packaging/synthos.svg");
+    const LOGO_SVG: &[u8] = include_bytes!("../../data/icons/synthos.svg");
     DecoratedBox::new()
         .child(
             Image::from_bytes("nav-rail-logo-synthos", LOGO_SVG.to_vec())

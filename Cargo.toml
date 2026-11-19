@@ -3,9 +3,9 @@ resolver = "2"
 members = ["."]
 
 [workspace.package]
-# Версия — 0.2.<номер сборки>: та же, что pkgver в packaging/PKGBUILD и тег
-# релиза v0.2.278. Патч — сквозной номер сборки, он растёт с каждым пакетом;
-# приложение показывает pkgver — см. build.rs (SYNTHOS_VERSION).
+# Версия — 0.2.<номер сборки>, тег релиза v0.2.<номер>. Патч — сквозной номер
+# сборки; приложение показывает её в заголовке — см. build.rs (SYNTHOS_VERSION).
+# Выпуск: `syngui release <версия> --publish` (метаданные — [package.metadata.syngui]).
 version = "0.2.321"
 edition = "2021"
 rust-version = "1.96"
@@ -269,6 +269,50 @@ tempfile = "3.10"
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
 log = "0.4"
+
+# Сборка, пакеты и выпуск — утилитой syngui (syngui-cli):
+#   syngui package -f arch --install        пакет Arch и установка в систему
+#   syngui release <версия> --publish       тег, релиз GitHub, PKGBUILD для AUR
+# Значок — data/icons/synthos.svg, ярлык — data/synthos.desktop.
+[package.metadata.syngui]
+name = "Synthos"
+description_en = "Local AI desktop studio: agentic chat, notes workspace, node editor for image/video/music/speech, code editor — native synaptix engine on any NVIDIA sm_80+ GPU, .syn and GGUF models"
+docs = ["README.md", "LICENSE", "LICENSE-COMMERCIAL.md", "LICENSE-EXCEPTION.md"]
+
+[package.metadata.syngui.linux]
+# epoch=1: с 20.09 по 23.09.2026 версией был голый номер сборки (268…278), и без
+# epoch pacman счёл бы 0.2.x откатом.
+epoch = 1
+arches = ["x86_64"]
+# synthos path-зависит на соседние syngui, synaptix и synshell — -git кладёт их рядом.
+git_sources = [
+    "syngui::git+https://github.com/VitaminDB/syngui.git",
+    "synaptix::git+https://github.com/VitaminDB/synaptix.git",
+    "synshell::git+https://github.com/VitaminDB/synshell.git",
+]
+# build.rs форка cudarc вызывает nvcc.
+build_env = ["PATH=/opt/cuda/bin:$PATH"]
+# ffmpeg по soname: мажорное обновление меняет soname, и pacman ловит
+# рассинхрон вместо падающего бинарника.
+depends = [
+    "alsa-lib", "fontconfig", "vulkan-icd-loader", "libxkbcommon", "wayland", "gtk3",
+    "libavutil.so=61-64", "libavcodec.so=63-64", "libavformat.so=63-64",
+    "libswscale.so=10-64", "libswresample.so=7-64",
+]
+optdepends = [
+    "nvidia-utils: нейросети на видеокарте NVIDIA (драйвер CUDA грузится в рантайме)",
+    "cuda: компилятор ядер NVRTC — ядра собираются на лету под карту (sm_80+)",
+    "openvino-intel-npu-plugin: нейросети на Intel NPU",
+    "intel-npu-driver: драйвер Intel NPU",
+    "intel-npu-compiler: компилятор моделей для Intel NPU",
+    "synaptix: системная служба synaptixd — synthos делит с ней загруженные модели; без неё работает встроенный движок",
+    "synshell-ai: ассистент synshell — ставит службу synaptix, с которой synthos делит модели",
+]
+# nvcc читается при сборке (версия CUDA API), сам драйвер грузится в рантайме.
+makedepends = ["cuda"]
+
+[package.metadata.syngui.release]
+artifacts = ["tar-x86_64"]
 
 [package.metadata.android]
 package = "com.syngui.synthos"

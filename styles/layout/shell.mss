@@ -73,20 +73,6 @@
     color: var(--primary);
 }
 
-/* Номер сборки — моноширинный и без разрядки: это число, а не слово. */
-.titlebar-badge-build {
-    background-color: var(--bg-search);
-    border-color: var(--border-soft);
-}
-
-.titlebar-badge-build .titlebar-badge-text {
-    color: var(--text-subtle);
-    font-family: monospace;
-    font-weight: 600;
-    letter-spacing: 0;
-    text-transform: none;
-}
-
 /* Чипы-ссылки Donate / GitHub у кнопок окна — без рамки и подложки, как
  * сами кнопки: подпись `.titlebar-badge-text` с иконкой, подложка только
  * при наведении (`:hover` самого чипа, с переходом). Цвет иконки и подписи —

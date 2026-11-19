@@ -7,7 +7,7 @@ use syngui::widgets::visual::{Image, ImageFit};
 use crate::components::titlebar;
 use crate::icons::*;
 
-const LOGO_SVG: &[u8] = include_bytes!("../../../packaging/synthos.svg");
+const LOGO_SVG: &[u8] = include_bytes!("../../../data/icons/synthos.svg");
 
 pub fn view() -> impl Widget {
     mgui! {

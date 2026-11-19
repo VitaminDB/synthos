@@ -1,6 +1,0 @@
-# рабочие директории и артефакты makepkg
-*/pkg/
-*/src/
-*/*.pkg.tar.zst
-*/*.tar.zst
-*/*.log

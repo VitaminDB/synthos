@@ -6,7 +6,7 @@ members = ["."]
 # Версия — 0.2.<номер сборки>, тег релиза v0.2.<номер>. Патч — сквозной номер
 # сборки; приложение показывает её в заголовке — см. build.rs (SYNTHOS_VERSION).
 # Выпуск: `syngui release <версия> --publish` (метаданные — [package.metadata.syngui]).
-version = "0.2.321"
+version = "0.2.322"
 edition = "2021"
 rust-version = "1.96"
 authors = ["Alexeyev Vitaly"]

@@ -47,6 +47,7 @@ pub mod state;
 pub mod terminal_activity;
 pub mod terminal_holder;
 pub mod terminal_pane;
+pub mod terminal_resume;
 pub mod text_diff;
 
 use syngui::mgui;

@@ -724,9 +724,15 @@ fn install_config_autosave(ctx: &AppCtx) {
                     .get()
                     .iter()
                     .filter_map(|t| {
-                        t.key.as_ref().map(|key| config::TerminalTabConfig {
-                            key: key.clone(),
-                            title: t.title.get_untracked(),
+                        t.key.as_ref().map(|key| {
+                            let r = t.resume.get();
+                            config::TerminalTabConfig {
+                                key: key.clone(),
+                                title: t.title.get_untracked(),
+                                cwd: r.cwd,
+                                claude_session: r.claude_session,
+                                claude_args: r.claude_args,
+                            }
                         })
                     })
                     .collect(),

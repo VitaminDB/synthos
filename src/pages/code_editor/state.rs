@@ -704,6 +704,9 @@ pub struct TerminalTab {
     /// Ключ терминала в хранителе (`terminal_holder`); `None` — PTY внутри
     /// synthos, умрёт вместе с ним.
     pub key: Option<String>,
+    /// Каталог и сессия Claude вкладки — чтобы поднять её заново, если
+    /// процесс потерян (обновляет семплер, сохраняется в конфиг).
+    pub resume: RwSignal<super::terminal_resume::ResumeInfo>,
 }
 
 /// Реактивная коллекция вкладок терминала. Copy через RwSignal-поля.
@@ -751,6 +754,8 @@ pub struct NewTerminal {
     pub attach_key: Option<String>,
     /// Не делать вкладку активной.
     pub background: bool,
+    /// Начальный снимок для восстановления (вкладка, поднятая заново).
+    pub resume: Option<super::terminal_resume::ResumeInfo>,
 }
 
 /// Создать новый таб терминала в указанной сессии. Сразу делает его активным.
@@ -801,6 +806,7 @@ pub fn add_terminal_with(session: CodeSession, app: AppCtx, opts: NewTerminal) -
         config.holder = Some(terminal_holder::spec(k, &meta, opts.attach_key.is_none()));
     }
 
+    let start_cwd = config.cwd.as_ref().map(|p| p.display().to_string());
     let pty = match TerminalSession::new(config) {
         Ok(s) => s,
         Err(e) => {
@@ -820,6 +826,10 @@ pub fn add_terminal_with(session: CodeSession, app: AppCtx, opts: NewTerminal) -
         title,
         session: pty,
         key,
+        resume: use_signal(opts.resume.clone().unwrap_or_else(|| super::terminal_resume::ResumeInfo {
+            cwd: start_cwd,
+            ..Default::default()
+        })),
     };
     session.terminals.tabs.update(|v| v.push(tab));
     if !opts.background || session.terminals.active_id.get_untracked().is_none() {
@@ -828,10 +838,43 @@ pub fn add_terminal_with(session: CodeSession, app: AppCtx, opts: NewTerminal) -
     Some(id)
 }
 
+/// Открыть заново вкладку, чей терминал в хранителе потерян: новая оболочка
+/// в прежнем каталоге; если в вкладке шла сессия Claude Code — она
+/// продолжается (`claude … --resume <id>`).
+fn reopen_lost_terminal(
+    session: CodeSession,
+    app: AppCtx,
+    tab: &crate::config::TerminalTabConfig,
+    active: Option<&str>,
+) -> Option<u32> {
+    let cwd = tab.cwd.as_ref().map(PathBuf::from).filter(|p| p.is_dir());
+    let input = tab
+        .claude_session
+        .as_deref()
+        .map(|id| format!("{}\n", super::terminal_resume::resume_command(id, &tab.claude_args)));
+    let resume = super::terminal_resume::ResumeInfo {
+        cwd: tab.cwd.clone(),
+        claude_session: tab.claude_session.clone(),
+        claude_args: tab.claude_args.clone(),
+    };
+    add_terminal_with(
+        session,
+        app,
+        NewTerminal {
+            cwd,
+            title: Some(tab.title.clone()),
+            input,
+            background: active != Some(tab.key.as_str()),
+            resume: Some(resume),
+            ..Default::default()
+        },
+    )
+}
+
 /// Подключить вкладки к живым терминалам хранителя после запуска synthos.
 ///
 /// `saved[i]` — сохранённый состав вкладок сессии `sessions[i]` (ключ,
-/// заголовок, активная). Вкладки без живого терминала пропускаются. Живые
+/// заголовок, активная). Вкладки без живого терминала открываются заново ([`reopen_lost_terminal`]). Живые
 /// терминалы хранителя, которых нет ни в одной сессии (потерянный конфиг,
 /// падение до сохранения), возвращаются в сессию своего проекта — а если её
 /// нет, в новую сессию этого проекта или «Терминал». Процесс без вкладки
@@ -842,14 +885,24 @@ pub fn restore_terminals(
     saved: &[(Vec<crate::config::TerminalTabConfig>, Option<String>)],
 ) {
     let live = terminal_holder::list();
-    if live.is_empty() {
-        return;
-    }
     let sessions = code.sessions.get_untracked();
     let mut claimed = HashSet::new();
     for (session, (tabs, active)) in sessions.iter().zip(saved) {
         for tab in tabs {
-            if !live.iter().any(|h| h.key == tab.key) || !claimed.insert(tab.key.clone()) {
+            if !claimed.insert(tab.key.clone()) {
+                continue;
+            }
+            if !live.iter().any(|h| h.key == tab.key) {
+                // Терминал потерян (хранитель убит, перезагрузка): вкладка
+                // поднимается заново в прежнем каталоге, сессия Claude —
+                // через `--resume`.
+                let restored = reopen_lost_terminal(*session, app.clone(), tab, active.as_deref());
+                tracing::warn!(
+                    key = %tab.key,
+                    claude = tab.claude_session.as_deref().unwrap_or("-"),
+                    ok = restored.is_some(),
+                    "терминал: процесс потерян — вкладка открыта заново"
+                );
                 continue;
             }
             let restored = add_terminal_with(

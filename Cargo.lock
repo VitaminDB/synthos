@@ -608,6 +608,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bindgen"
+version = "0.73.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "787ef8ef523575546b106a58213d6e6b06198a05c2f757258c68a74273670cfa"
+dependencies = [
+ "bitflags 2.13.1",
+ "cexpr",
+ "clang-sys",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 2.1.3",
+ "shlex 2.0.1",
+ "syn 3.0.2",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -785,9 +802,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "02f0e023adb368345ce0ca6cdfc0f24a06554468d0e8503e14a0841de79bfa69"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1091,7 +1108,7 @@ version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9b4739a805a62757a83e5654fa3faabec0442666b263bb2287d5a8185bfd953"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
 ]
 
 [[package]]
@@ -1811,9 +1828,9 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-next"
-version = "9.0.0"
+version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6380599799e175191eb7ffe82c97f36a2a90a36cbc54c738a903e5287d7f516a"
+checksum = "041fc1d1e9e6f62e03f52d8a2b1cc138d799defbaf7a9d69ddde78c97fb06e97"
 dependencies = [
  "bitflags 2.13.1",
  "ffmpeg-sys-next",
@@ -1822,11 +1839,11 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-sys-next"
-version = "9.0.0"
+version = "9.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b939bf79dd5949412a4b81cfe21a07f48ea21b47fcbb5f57816c8c2de5ae30b"
+checksum = "226c264da7fce6bd034bfc0b20f87ce4ecc97b3294c407503557910c05e43588"
 dependencies = [
- "bindgen",
+ "bindgen 0.73.2",
  "cc",
  "libc",
  "num_cpus",
@@ -1857,9 +1874,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.9"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fixedbitset"
@@ -7146,6 +7163,7 @@ dependencies = [
  "synaptix-llm-common",
  "synaptix-llm-gemma3",
  "synaptix-llm-gemma4",
+ "synaptix-llm-inkling2",
  "synaptix-llm-lfm3",
  "synaptix-llm-llama",
  "synaptix-llm-muse-glimmer",
@@ -7664,6 +7682,28 @@ dependencies = [
  "synaptix-core",
  "synaptix-infer",
  "synaptix-io 0.1.1",
+ "synaptix-llm-common",
+ "synaptix-nn 0.1.1",
+ "synaptix-ops 0.1.1",
+ "synaptix-tokenizer 0.1.1",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "synaptix-llm-inkling2"
+version = "0.1.1"
+dependencies = [
+ "cudarc",
+ "half",
+ "image",
+ "rayon",
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-infer",
+ "synaptix-io 0.1.1",
+ "synaptix-kernels-cpu",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -8419,7 +8459,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -10704,9 +10744,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "synaptix-vfx"
-version = "0.1.1"
-
-[[patch.unused]]
 name = "mss-analysis"
 version = "0.1.0"
+
+[[patch.unused]]
+name = "synaptix-vfx"
+version = "0.1.1"

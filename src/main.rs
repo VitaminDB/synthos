@@ -36,6 +36,14 @@ fn main() {
         }
         return;
     }
+    // Запуск из службы (например сессией агента под syncourier.service):
+    // setsid/disown не выводят из её cgroup, и `systemctl restart` службы
+    // убил бы synthos со всеми вкладками (22.11). Уходим в свой scope.
+    match syngui::platform::cgroup::escape_service_cgroup("synthos") {
+        Ok(Some(unit)) => eprintln!("synthos: запущен из службы — перенесён в {unit}"),
+        Ok(None) => {}
+        Err(e) => eprintln!("synthos: не удалось покинуть cgroup службы: {e}"),
+    }
     synthos::cli::set_startup_args(forward);
     synthos::migrate::migrate_user_data();
     synthos::run_desktop();

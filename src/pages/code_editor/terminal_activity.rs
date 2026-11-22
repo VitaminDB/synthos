@@ -95,4 +95,31 @@ fn sample_tick(ctx: CodeEditorCtx) {
     }
 
     *registry = seen;
+    drop(registry);
+
+    // Раз в RESUME_EVERY тиков — снимок для восстановления (каталог оболочки,
+    // сессия Claude). `set` с равным значением не будит автосохранение.
+    static TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % RESUME_EVERY != 0 {
+        return;
+    }
+    let claude = super::terminal_resume::claude_sessions();
+    for session in ctx.sessions.get_untracked() {
+        for t in session.terminals.tabs.get_untracked() {
+            if t.key.is_none() {
+                continue;
+            }
+            let Some(pid) = t.session.pid() else { continue };
+            let info = super::terminal_resume::probe(pid, &claude);
+            if info.cwd.is_none() {
+                continue; // оболочка уже умерла — оставить прежний снимок
+            }
+            if t.resume.get_untracked() != info {
+                t.resume.set(info);
+            }
+        }
+    }
 }
+
+/// Снимок для восстановления вкладок — каждые столько тиков (≈5 с).
+const RESUME_EVERY: u32 = 5;

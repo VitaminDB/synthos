@@ -464,7 +464,8 @@ pub struct CodeSessionConfig {
     pub terminal_only: bool,
     /// Вкладки терминалов, чьи процессы держит хранитель терминалов
     /// (`AppConfig.terminals_persist`): при запуске synthos подключается к
-    /// ним по ключу. Терминалы без живого процесса не восстанавливаются.
+    /// ним по ключу. Терминал без живого процесса открывается заново в
+    /// прежнем каталоге (`cwd`), сессия Claude — через `--resume`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub terminals: Vec<TerminalTabConfig>,
     /// Ключ активной вкладки терминала.
@@ -479,6 +480,17 @@ pub struct TerminalTabConfig {
     /// Ключ терминала в хранителе.
     pub key: String,
     pub title: String,
+    /// Последний каталог оболочки: если терминал хранителя потерян (хранитель
+    /// убит, перезагрузка), вкладка открывается заново здесь.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Сессия Claude Code, шедшая в вкладке: при потере терминала вкладка
+    /// набирает `claude … --resume <id>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_session: Option<String>,
+    /// Аргументы того запуска Claude (флаги без промпта).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub claude_args: Vec<String>,
 }
 
 /// Сериализуемая копия `syngui::widgets::input::code_editor::EditorPersistedState`

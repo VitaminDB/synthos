@@ -5,7 +5,7 @@
 //! synthos --open-terminal <папка> [--cmd <команда>] [--title <заголовок>]
 //!                                             вкладка терминала в проекте папки
 //! synthos --list-terminals                  терминалы хранителя
-//! synthos --screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]
+//! synthos --screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]
 //!                                             снимок редактора нод без окна
 //! synthos --help | --version
 //! synthos --pty-holder <сокет>                служебное: хранитель терминалов
@@ -31,7 +31,7 @@ pub struct Cli {
     pub pty_holder: Option<PathBuf>,
     pub list_terminals: bool,
     pub open_terminals: Vec<OpenTerminal>,
-    /// `--screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]`.
+    /// `--screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]`.
     pub screenshot: Option<crate::shot::Shot>,
 }
 
@@ -51,7 +51,7 @@ pub const USAGE: &str = "\
                                             --cmd набирается в оболочке вкладки
   synthos --list-terminals                  терминалы, которые держит хранитель
                                             (ключ, pid, подключена ли вкладка, папка, заголовок)
-  synthos --screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]
+  synthos --screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]
                                             снимок редактора нод без окна
   synthos --help | --version
 

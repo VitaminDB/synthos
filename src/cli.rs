@@ -5,6 +5,8 @@
 //! synthos --open-terminal <папка> [--cmd <команда>] [--title <заголовок>]
 //!                                             вкладка терминала в проекте папки
 //! synthos --list-terminals                  терминалы хранителя
+//! synthos --screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]
+//!                                             снимок редактора нод без окна
 //! synthos --help | --version
 //! synthos --pty-holder <сокет>                служебное: хранитель терминалов
 //! ```
@@ -29,6 +31,8 @@ pub struct Cli {
     pub pty_holder: Option<PathBuf>,
     pub list_terminals: bool,
     pub open_terminals: Vec<OpenTerminal>,
+    /// `--screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]`.
+    pub screenshot: Option<crate::shot::Shot>,
 }
 
 /// `--open-terminal <папка> [--cmd …] [--title …]`.
@@ -47,6 +51,8 @@ pub const USAGE: &str = "\
                                             --cmd набирается в оболочке вкладки
   synthos --list-terminals                  терминалы, которые держит хранитель
                                             (ключ, pid, подключена ли вкладка, папка, заголовок)
+  synthos --screenshot <png> [--template <id>|demo] [--size ШxВ] [--scale N]
+                                            снимок редактора нод без окна
   synthos --help | --version
 
 Если synthos уже запущен, аргументы передаются ему, второе окно не открывается.";
@@ -87,6 +93,28 @@ pub fn parse(args: &[String]) -> std::result::Result<Cli, String> {
                     last.cmd = Some(v);
                 } else {
                     last.title = Some(v);
+                }
+            }
+            "--screenshot" => {
+                cli.screenshot = Some(crate::shot::Shot {
+                    out: take(&mut it)?,
+                    template: "demo".into(),
+                    size: (1600, 1000),
+                    scale: 1.0,
+                })
+            }
+            "--template" | "--size" | "--scale" => {
+                let v = take(&mut it)?;
+                let Some(s) = cli.screenshot.as_mut() else {
+                    return Err(format!("{flag} — только после --screenshot <png>"));
+                };
+                match flag {
+                    "--template" => s.template = v,
+                    "--size" => {
+                        let (w, h) = v.split_once('x').ok_or_else(|| format!("--size: ШxВ, а не {v}"))?;
+                        s.size = (w.parse().map_err(|_| format!("--size: {v}"))?, h.parse().map_err(|_| format!("--size: {v}"))?);
+                    }
+                    _ => s.scale = v.parse().map_err(|_| format!("--scale: {v}"))?,
                 }
             }
             other => return Err(format!("неизвестный аргумент: {other}")),

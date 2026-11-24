@@ -85,6 +85,24 @@ pub struct SearchCtx {
 }
 
 pub fn install() -> SearchCtx {
+    let search = provide();
+    let index = search.index;
+    let scan = search.scan;
+    create_effect(move || {
+        // Подписка на язык интерфейса: заголовки страниц, команд и групп
+        // берутся из каталогов, значит индекс пересобирается при смене.
+        syngui::i18n::subscribe();
+        let scanned = scan.get();
+        let items = index::build_items(&scanned);
+        index.set_always(Arc::new(items));
+    });
+    install_debug_open(&search);
+    search
+}
+
+/// Контекст поиска без индекса — для снимков отдельных страниц
+/// (`synthos --screenshot`), где контекстов остальных разделов нет.
+pub fn provide() -> SearchCtx {
     let recent = config::AppConfig::load().search_recent;
     let search = SearchCtx {
         open: use_signal(false),
@@ -102,18 +120,6 @@ pub fn install() -> SearchCtx {
         state: Arc::new(Mutex::new(PanelState::default())),
     };
     provide_context(search.clone());
-
-    let index = search.index;
-    let scan = search.scan;
-    create_effect(move || {
-        // Подписка на язык интерфейса: заголовки страниц, команд и групп
-        // берутся из каталогов, значит индекс пересобирается при смене.
-        syngui::i18n::subscribe();
-        let scanned = scan.get();
-        let items = index::build_items(&scanned);
-        index.set_always(Arc::new(items));
-    });
-    install_debug_open(&search);
     search
 }
 

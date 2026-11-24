@@ -32,6 +32,7 @@ pub mod pages;
 pub mod paths;
 pub mod rail;
 pub mod search;
+pub mod shot;
 pub mod skills;
 pub mod styles;
 pub mod syn_chat;

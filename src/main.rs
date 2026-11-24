@@ -15,6 +15,16 @@ fn main() {
         println!("synthos {}", env!("SYNTHOS_VERSION"));
         return;
     }
+    if let Some(shot) = cli.screenshot.as_ref() {
+        match synthos::shot::run(shot) {
+            Ok((w, h)) => println!("{}: {w}x{h}", shot.out),
+            Err(e) => {
+                eprintln!("synthos --screenshot: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if cli.list_terminals {
         synthos::cli::print_terminals();
         return;

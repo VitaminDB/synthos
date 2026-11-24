@@ -51,6 +51,7 @@ fn demo(ws: &EditorWorkspace) {
 
 /// Нарисовать страницу нод в PNG.
 pub fn run(shot: &Shot) -> std::result::Result<(u32, u32), String> {
+    crate::pages::node_editor::install_host();
     let (theme_mss, _) = crate::build_context();
     let mss = format!("{}\n{}", crate::styles::styles(), theme_mss.get_untracked());
     let template = shot.template.clone();

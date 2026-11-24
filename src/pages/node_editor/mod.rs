@@ -19,38 +19,26 @@
 //! переключается через `EditorWorkspace.active` — реактивно через
 //! Reactive-обёртки.
 
-pub mod controls;
-pub mod eval;
-pub mod node_view;
-pub mod nodes;
-pub mod persist;
-pub mod registry;
 pub mod models_panel;
-pub mod run_controls;
-pub mod state;
-pub mod style_dialog;
-pub mod tabs;
-pub mod template_preview;
-pub mod timing;
-pub mod types;
-pub mod wires;
 
-use syngui::input::MouseButton;
+// Сам редактор узлов — общий крейт synshell `syn-node-editor` (им же
+// пользуется видеоредактор synshell). Здесь — страница Synthos вокруг
+// холста: шапка, шаблоны, панель моделей, и хост редактора.
+pub use syn_node_editor::{
+    canvas, controls, eval, node_view, nodes, persist, registry, run_controls, state, style_dialog, tabs,
+    template_preview, timing, types, wires,
+};
+
 use syngui::mgui;
 use syngui::prelude::*;
 use syngui::widget::styled::StyledWidget;
-use syngui::widgets::containers::{GestureDetector, PanZoomViewport};
-use syngui::widgets::overlay::menu::{MenuItem, PopupMenu};
-use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, Stack, TextField, ToolButton};
+use syngui::widgets::containers::GestureDetector;
+use syngui::widgets::{DecoratedBox, Padding, Reactive, Row, Stack, TextField};
 
 use crate::components::panel_header::{self, CenterSpec};
 use crate::components::workspace_frame::{self, expand, FrameSpec};
-use crate::icons::{
-    MI_DASHBOARD_CUSTOMIZE, MI_FIT_SCREEN, MI_HUB, MI_PSYCHOLOGY, MI_SAVE, MI_TUNE, MI_ZOOM_IN,
-    MI_ZOOM_OUT,
-};
+use crate::icons::{MI_DASHBOARD_CUSTOMIZE, MI_HUB, MI_PSYCHOLOGY, MI_SAVE, MI_TUNE};
 
-use self::registry::{registry as node_registry, NodeCategory};
 use self::state::NodeEditorCtx;
 use self::tabs::{EditorWorkspace, OpenTab};
 
@@ -218,86 +206,15 @@ fn empty_state() -> impl Widget {
         .class("ne-empty")
 }
 
+/// Холст графа (общий редактор) с панелью «Модели в памяти» Synthos.
 fn canvas_for(ctx: NodeEditorCtx) -> impl Widget {
-    let menu_ctx = ctx;
-    let filter_ctx = ctx;
-    let viewport = PanZoomViewport::new()
-        .pan(ctx.pan)
-        .zoom(ctx.zoom)
-        .zoom_range(0.25, 4.0)
-        .grid(true)
-        .grid_step(40.0)
-        .pan_button(MouseButton::Middle)
-        // LMB-pan не активируется в 10px-зоне вокруг любой ноды — иначе
-        // случайный клик возле карточки начинает pan вместо drag-handle'а
-        // или ловли port'а. `world` приходит в local-content-coord
-        // (canvas-local), та же система, что `node.bounds`.
-        .pan_filter(move |world| {
-            const INFLATE: f32 = 10.0;
-            let nodes = filter_ctx.nodes.get_untracked();
-            !nodes.iter().any(|n| {
-                let b = n.bounds.get_untracked();
-                let pos = n.pos.get_untracked();
-                // bounds.origin published в position-pass-coord, а world здесь
-                // — в canvas-local; используем `pos` как canvas-local-origin
-                // ноды (Stack кладёт Positioned в Stack.origin + node.pos).
-                let left = pos.x - INFLATE;
-                let top = pos.y - INFLATE;
-                let right = pos.x + b.size.width + INFLATE;
-                let bottom = pos.y + b.size.height + INFLATE;
-                world.x >= left && world.x <= right
-                    && world.y >= top && world.y <= bottom
-            })
-        })
-        .on_background_context_menu(move |world, screen| {
-            menu_ctx.open_bg_menu(world, screen);
-        })
-        .child(world_layer(ctx))
-        .class("node-editor-viewport");
-
-    let toolbar = build_toolbar(ctx);
-    let bg_menu = build_bg_menu(ctx);
-    let overlay = overlay_row(ctx, toolbar);
-
-    let frame_inner = Stack::new().children(vec![
-        Box::new(viewport) as Box<dyn Widget>,
-        Box::new(overlay),
-        Box::new(models_panel_host()) as Box<dyn Widget>,
-        bg_menu,
-        Box::new(style_dialog::view(ctx)) as Box<dyn Widget>,
-    ]);
-
-    DecoratedBox::new().child(frame_inner).class("ne-canvas-frame")
-}
-
-/// Верхняя «overlay-полоса» canvas'а: zoom-toolbar слева. Run-пилюля
-/// переехала в общую шапку страницы.
-///
-/// **Pass-through events**: возвращаем `Padding` напрямую (без DecoratedBox-
-/// обёртки). Stack растянет padding на всю canvas, но прозрачные layout-
-/// контейнеры (Padding/Row) не ловят события — клик/drag/zoom в пустом месте
-/// уходит на viewport ниже. DecoratedBox в overlay-host раньше перехватывал
-/// все события и блокировал pan/zoom — поэтому его и нет.
-///
-fn overlay_row(_ctx: NodeEditorCtx, toolbar: Box<dyn Widget>) -> impl Widget {
-    let row = Row::new()
-        .gap(0.0)
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .main_axis_alignment(MainAxisAlignment::Start)
-        .children(vec![toolbar]);
-
-    // Padding без DecoratedBox-обёртки: Padding/Row реализуют
-    // `passthrough_hit_test() == true`, поэтому пустые места строки
-    // пропускают события дальше в Stack (viewport получает pan/zoom/click).
-    // Row.cross_axis_alignment(Start) делает строку intrinsic-высоты —
-    // нижняя часть canvas остаётся свободной для drag-нод.
-    Padding::only(16.0, 16.0, 16.0, 0.0).child(row)
+    canvas::view(ctx, vec![Box::new(models_panel_host())])
 }
 
 /// Хост панели «Модели в памяти»: правый край canvas'а, ниже overlay-строки
-/// с toolbar'ом и run-pill'ом. Как и `overlay_row`, возвращаем Padding без
-/// DecoratedBox-обёртки — Padding/Row passthrough'ат hit-test, поэтому
-/// пустое место справа от панели по-прежнему пан'ит и зумит canvas.
+/// с toolbar'ом и run-pill'ом. Возвращаем Padding без DecoratedBox-обёртки —
+/// Padding/Row passthrough'ат hit-test, поэтому пустое место справа от
+/// панели по-прежнему пан'ит и зумит canvas.
 fn models_panel_host() -> impl Widget {
     Padding::only(0.0, 68.0, 16.0, 16.0).child(
         Row::new()
@@ -308,177 +225,44 @@ fn models_panel_host() -> impl Widget {
     )
 }
 
-/// Реактивный «мир» — Canvas wires + ноды на абсолютных позициях.
-fn world_layer(ctx: NodeEditorCtx) -> impl Widget {
-    Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        // Подмена контекста: внутри Reactive use_context::<NodeEditorCtx>()
-        // должно вернуть именно эту вкладку. provide_context на уровне
-        // Reactive children — единственное место, где это можно сделать
-        // согласованно для wires::view() и node_view::view(node).
-        provide_context(ctx);
-        let nodes = ctx.nodes.get();
-        let mut stack = Stack::new();
-        stack = stack.child(wires::view());
-        for node in nodes {
-            stack = stack.children(vec![node_view::view(node)]);
+// ───────────────────────────── Хост редактора ─────────────────────────────
+
+/// Связь общего редактора с Synthos: уведомления — лентой приложения,
+/// каталоги — `~/.config/synthos`, `~/.cache/synthos`, битые файлы — в
+/// общий список отложенных (уведомление при старте), подписи встроенных
+/// шаблонов — из каталогов строк.
+struct SynthosHost;
+
+impl syn_node_editor::host::EditorHost for SynthosHost {
+    fn app_name(&self) -> &'static str {
+        "synthos"
+    }
+
+    fn notify(&self, kind: syn_node_editor::host::Notice, text: String) {
+        let Some(app) = try_use_context::<crate::context::AppCtx>() else {
+            tracing::info!("{text}");
+            return;
+        };
+        match kind {
+            syn_node_editor::host::Notice::Info => app.notifications.info(text),
+            syn_node_editor::host::Notice::Error => app.notifications.error(text),
         }
-        // Без DecoratedBox-обёртки: оборачивание в DecoratedBox с прозрачным
-        // фоном лишь ставило не-passthrough контейнер между Reactive и Stack —
-        // в моменты `bounds=(0,0)` (rebuild) hit-test обрезался на нём, ноды
-        // не получали клики после pan/scroll. Stack passthrough даёт прямой
-        // путь к Positioned'ам и далее к карточкам нод.
-        vec![Box::new(stack) as Box<dyn Widget>]
-    })
+    }
+
+    fn open_path(&self, path: &std::path::Path) -> std::io::Result<()> {
+        crate::paths::open_with_system(path)
+    }
+
+    fn quarantine(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        crate::fsutil::quarantine(path)
+    }
+
+    fn template_title(&self, t: &crate::templates::Template) -> String {
+        crate::i18n::template_name(t)
+    }
 }
 
-fn build_toolbar(ctx: NodeEditorCtx) -> Box<dyn Widget> {
-    let ctx_in = ctx;
-    let ctx_out = ctx;
-    let ctx_fit = ctx;
-
-    // DecoratedBox-host даёт Reactive фиксированные constraints (через MSS
-     // width/height в `.node-editor-toolbar-zoom-host`). Без обёртки
-    // Reactive.layout получает max_width=INF от Row и схлопывается до 0×0
-    // — Text внутри не рисуется. См. Reactive.layout в syngui.
-    let label = DecoratedBox::new()
-        .child(Reactive::new(move || -> Vec<Box<dyn Widget>> {
-            let z = ctx_in.zoom.get();
-            let pct = (z * 100.0).round() as i32;
-            vec![Box::new(Text::new(format!("{}%", pct)).class("node-editor-toolbar-zoom"))]
-        }))
-        .class("node-editor-toolbar-zoom-host");
-
-    let row = mgui! {
-        Row::new()
-            .gap(4.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center) => [
-                ToolButton::new(MI_ZOOM_OUT)
-                    .tooltip(tr!("nodes.toolbar.zoom_out"))
-                    .on_click(move || {
-                        let z = (ctx_out.zoom.get_untracked() * 0.8).max(0.25);
-                        ctx_out.zoom.set(z);
-                    })
-                    .class("node-editor-toolbar-btn"),
-                label,
-                ToolButton::new(MI_ZOOM_IN)
-                    .tooltip(tr!("nodes.toolbar.zoom_in"))
-                    .on_click(move || {
-                        let z = (ctx_in.zoom.get_untracked() * 1.25).min(4.0);
-                        ctx_in.zoom.set(z);
-                    })
-                    .class("node-editor-toolbar-btn"),
-                ToolButton::new(MI_FIT_SCREEN)
-                    .tooltip(tr!("nodes.toolbar.reset_view"))
-                    .on_click(move || ctx_fit.reset_view())
-                    .class("node-editor-toolbar-btn"),
-            ]
-    };
-
-    let panel = DecoratedBox::new()
-        .child(Padding::symmetric(8.0, 4.0).child(row))
-        .class("node-editor-toolbar");
-
-    Box::new(panel)
-}
-
-/// PopupMenu «Add Node» — открывается через ctx.menu_open + позиция в
-/// ctx.menu_world_pos. Top-level — категории, внутри каждой категории —
-/// либо leaf-пункты (для нод без `subcategory`), либо submenu по
-/// `subcategory` (для группировки EQ и пр.). Mixer обрабатывается
-/// отдельно — его 5 пресетов (2/3/4/5 входа + Custom) живут в подменю
-/// «Аудио микшеры» внутри DSP-эффектов и стартуют ноду с нужным
-/// `n_inputs`.
-fn build_bg_menu(ctx: NodeEditorCtx) -> Box<dyn Widget> {
-    use crate::icons::MI_MERGE_TYPE;
-    use crate::pages::node_editor::types::NodeKind;
-    use std::collections::BTreeMap;
-
-    let items: Vec<MenuItem> = NodeCategory::ORDER
-        .iter()
-        .filter_map(|cat| {
-            // Top-level: ноды этой категории без subcategory и (для DspEffects)
-            // не Mixer (он переезжает в спец-пункт).
-            let mut top: Vec<MenuItem> = node_registry()
-                .iter()
-                .filter(|m| {
-                    m.category == *cat
-                        && m.subcategory.is_none()
-                        && !(matches!(m.kind, NodeKind::Mixer) && *cat == NodeCategory::DspEffects)
-                })
-                .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(m)).icon(m.icon))
-                .collect();
-
-            // Submenu по subcategory.
-            let mut by_sub: BTreeMap<&'static str, Vec<&'static registry::NodeKindMeta>> =
-                BTreeMap::new();
-            for m in node_registry().iter().filter(|m| m.category == *cat) {
-                if let Some(sub) = m.subcategory {
-                    by_sub.entry(sub).or_default().push(m);
-                }
-            }
-            for (sub_key, metas) in by_sub {
-                let icon = metas.first().map(|m| m.icon).unwrap_or("");
-                let children: Vec<MenuItem> = metas
-                    .iter()
-                    .map(|m| MenuItem::new(format!("add:{}", m.title), crate::i18n::node_title(m)).icon(m.icon))
-                    .collect();
-                top.push(
-                    MenuItem::new(format!("sub:{}:{}", cat.key(), sub_key), crate::i18n::node_subcategory_label(sub_key))
-                        .icon(icon)
-                        .children(children),
-                );
-            }
-
-            // Спец-обработка Mixer: 5 пресетов (2/3/4/5 + Custom).
-            if *cat == NodeCategory::DspEffects {
-                let mixer_presets = vec![
-                    MenuItem::new("add_mixer:2", trn!("nodes.menu.mixer_sources", 2)),
-                    MenuItem::new("add_mixer:3", trn!("nodes.menu.mixer_sources", 3)),
-                    MenuItem::new("add_mixer:4", trn!("nodes.menu.mixer_sources", 4)),
-                    MenuItem::new("add_mixer:5", trn!("nodes.menu.mixer_sources", 5)),
-                    MenuItem::new("add_mixer:custom", tr!("nodes.menu.mixer_custom")),
-                ];
-                top.push(
-                    MenuItem::new("sub:mixer", tr!("nodes.menu.mixer_group"))
-                        .icon(MI_MERGE_TYPE)
-                        .children(mixer_presets),
-                );
-            }
-
-            if top.is_empty() {
-                return None;
-            }
-            Some(
-                MenuItem::new(format!("cat:{:?}", cat), crate::i18n::node_category_label(*cat))
-                    .icon(cat.icon())
-                    .children(top),
-            )
-        })
-        .collect();
-
-    let ctx_select = ctx;
-    Box::new(
-        PopupMenu::new()
-            .is_open(ctx.menu_open)
-            .position(ctx.menu_screen_pos)
-            .items(items)
-            .on_select(move |action| {
-                if let Some(rest) = action.strip_prefix("add:") {
-                    let kind_opt = node_registry().iter().find(|m| m.title == rest).map(|m| m.kind);
-                    if let Some(k) = kind_opt {
-                        let world = ctx_select.menu_world_pos.get_untracked();
-                        ctx_select.add_node(k, world);
-                    }
-                } else if let Some(rest) = action.strip_prefix("add_mixer:") {
-                    let n: usize = match rest {
-                        "custom" => 2,
-                        s => s.parse().unwrap_or(2),
-                    };
-                    let world = ctx_select.menu_world_pos.get_untracked();
-                    let id = ctx_select.add_node(NodeKind::Mixer, world);
-                    ctx_select.set_mixer_n_inputs(id, n);
-                }
-                ctx_select.menu_open.set(false);
-            }),
-    )
+/// Поставить хост редактора — при запуске, до первого обращения к графам.
+pub fn install_host() {
+    syn_node_editor::host::set_host(SynthosHost);
 }

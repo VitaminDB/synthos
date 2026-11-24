@@ -9,10 +9,9 @@
 //! а ходит через эти helper'ы.
 
 pub mod builtin;
-pub mod convert;
-pub mod model;
-pub mod native;
 pub mod storage;
+// Модель графа, снимок/загрузка и перевод старых нод — в общем редакторе.
+pub use syn_node_editor::{convert, model, native};
 
 pub use model::{ConnData, FieldValueData, NodeData, PointData, Template, TemplateKind, ViewportData};
 pub use storage::{

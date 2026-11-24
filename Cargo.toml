@@ -137,6 +137,9 @@ synassist = { package = "syn-assist", path = "../synshell/crates/syn-assist" }
 syn-notes = { path = "../synshell/crates/syn-notes" }
 syn-notes-proto = { path = "../synshell/crates/syn-notes-proto" }
 synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
+# Редактор узлов — общий с видеоредактором synshell (холст, ноды, провода,
+# сохранение графа, прогон); страница, шаблоны и панель моделей — здесь.
+syn-node-editor = { path = "../synshell/crates/syn-node-editor" }
 # Движок нейросетей: клиент (чат, генерация, графы ядра) и — с фичей `engine` —
 # сам сервер, если системная служба synaptixd не запущена (src/engine.rs).
 synaptixd = { path = "../synshell/crates/synaptixd", default-features = false }
@@ -363,3 +366,5 @@ synaptix-tts-vibevoice = { path = "../synaptix/crates/synaptix-models/tts/vibevo
 synaptix-tts-voxcpm = { path = "../synaptix/crates/synaptix-models/tts/voxcpm" }
 synaptix-llm-common = { path = "../synaptix/crates/synaptix-models/llm/common" }
 synaptix-gen = { path = "../synaptix/crates/synaptix-gen" }
+synaptix-io = { path = "../synaptix/crates/synaptix-io" }
+synaptix-audio = { path = "../synaptix/crates/synaptix-audio" }

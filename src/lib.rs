@@ -82,6 +82,7 @@ pub fn run_desktop() {
     // тот же сервер внутри процесса — synthos работает и без службы.
     engine::ensure();
 
+    pages::node_editor::install_host();
     let (theme_mss, ctx) = build_context();
     i18n::install(ctx.general);
 
@@ -156,7 +157,7 @@ pub fn run_desktop() {
             pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
-            install_workspace_autosave();
+            pages::node_editor::persist::install_workspace_autosave();
             pages::notes::autosave::install_notes_autosave();
             pages::notes::reminders::install_reminders();
             pages::notes::right_panel::install_props_panel_memory();
@@ -189,6 +190,7 @@ fn android_main(app: syngui::app::AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info),
     );
 
+    pages::node_editor::install_host();
     let (theme_mss, ctx) = build_context();
 
     App::new()
@@ -232,7 +234,7 @@ fn android_main(app: syngui::app::AndroidApp) {
             pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
-            install_workspace_autosave();
+            pages::node_editor::persist::install_workspace_autosave();
             pages::notes::autosave::install_notes_autosave();
             pages::notes::reminders::install_reminders();
             pages::notes::right_panel::install_props_panel_memory();
@@ -922,85 +924,6 @@ fn install_syn_chat_autosave() {
 /// Fingerprint используется для skip-if-unchanged: вариант RwSignal'а,
 /// который выглядит «изменённым», но даёт идентичный JSON, не вызывает
 /// disk-write (пример — set с тем же значением через mouse-jitter в pan).
-fn install_workspace_autosave() {
-    use pages::node_editor::persist;
-    use pages::node_editor::tabs::EditorWorkspace;
-    use templates::convert::snapshot;
-
-    let last_fp = use_signal(0_u64);
-
-    create_effect(move || {
-        let ws = use_context::<EditorWorkspace>();
-        let tabs = ws.tabs.get();
-        let active = ws.active.get();
-
-        // Подписаться на все сигналы каждой вкладки. После этого собираем
-        // снимок через get_untracked — повторных подписок не возникает.
-        for tab in tabs.iter() {
-            persist::subscribe_tab_signals(&tab.ctx);
-            // Флаги агентской вкладки живут на OpenTab, не в ctx — reveal
-            // из чата тоже должен пересохранить workspace.
-            let _ = tab.hidden.get();
-            let _ = tab.agent_chat.get();
-            let _ = tab.created_at.get();
-        }
-
-        let mut tab_states = Vec::with_capacity(tabs.len());
-        for tab in tabs.iter() {
-            let (nodes, conns, viewport) = snapshot(&tab.ctx);
-            tab_states.push(persist::TabState {
-                id: tab.id.0,
-                title: tab.title.get_untracked(),
-                source: tab.source.get_untracked(),
-                agent_chat: tab.agent_chat.get_untracked(),
-                hidden: tab.hidden.get_untracked(),
-                nodes,
-                connections: conns,
-                viewport,
-                created_at: tab.created_at.get_untracked(),
-            });
-        }
-
-        let state = persist::WorkspaceState {
-            tabs: tab_states,
-            active: active.map(|id| id.0),
-            next_tab_id: ws.next_tab_id.get_untracked(),
-        };
-
-        // Skip-if-unchanged по hash JSON-байтов: при первом запуске сравним
-        // с пустым (0) и сохраним; в худшем случае одна лишняя запись.
-        let json = match serde_json::to_string_pretty(&state) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "workspace serialize failed");
-                return;
-            }
-        };
-        let fp = workspace_fingerprint(&json);
-        if last_fp.get_untracked() == fp {
-            return;
-        }
-        last_fp.set(fp);
-        if let Err(e) = persist::save(&state) {
-            tracing::warn!(error = %e, "workspace save failed");
-        }
-    });
-}
-
-fn workspace_fingerprint(s: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    let v = h.finish();
-    // 0 зарезервирован как «ни разу не считали»: гарантируем ненулевой.
-    if v == 0 {
-        1
-    } else {
-        v
-    }
-}
-
 /// Effect, отвечающий за авто-старт записи после загрузки ASR-модели.
 ///
 /// Когда пользователь кликает FAB при выгруженной модели, `voice_start()`

@@ -11,8 +11,6 @@ use syngui::widgets::overlay::menu::MenuItem;
 use crate::agent::tools::Tool;
 use crate::context::GeneralCtx;
 use crate::icons::MI_CHECK;
-use crate::pages::node_editor::registry::{NodeCategory, NodeKindMeta};
-use crate::pages::node_editor::types::NodeKind;
 use crate::templates::{Template, TemplateCategory};
 
 pub const AUTO: &str = "auto";
@@ -40,6 +38,8 @@ pub fn install(general: GeneralCtx) {
     syngui::i18n::register_catalogs(&syn_notes::i18n::CATALOGS);
     // Подписи нод ядра synaptix-flow (исходные строки — русские).
     syngui::i18n::register_catalogs(&synaptix_flow::CATALOGS);
+    // Редактор узлов (общий крейт synshell).
+    syngui::i18n::register_catalogs(&syn_node_editor::i18n::CATALOGS);
     create_effect(move || {
         let raw = general.language.get();
         syngui::i18n::set_language(resolve(&raw));
@@ -90,27 +90,8 @@ pub fn language_menu_items(current: &str) -> Vec<MenuItem> {
     items
 }
 
-/// serde-имя варианта `NodeKind` (snake_case) — стабильный ключ каталога.
-pub fn node_kind_key(kind: NodeKind) -> String {
-    serde_json::to_value(kind)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .unwrap_or_default()
-}
-
-/// Заголовок ноды: `node.<kind>.title`, иначе английский литерал из реестра.
-pub fn node_title(meta: &NodeKindMeta) -> String {
-    syngui::i18n::try_tr(&format!("node.{}.title", node_kind_key(meta.kind)))
-        .unwrap_or_else(|| meta.title.to_string())
-}
-
-pub fn node_category_label(category: NodeCategory) -> String {
-    tr!(&format!("node.category.{}", category.key()))
-}
-
-pub fn node_subcategory_label(key: &str) -> String {
-    tr!(&format!("node.subcategory.{key}"))
-}
+// Подписи нод и разделов палитры — у общего редактора узлов.
+pub use syn_node_editor::i18n::{node_category_label, node_kind_key, node_subcategory_label, node_title};
 
 pub fn template_category_label(category: TemplateCategory) -> String {
     tr!(&format!("template.category.{}", category.key()))

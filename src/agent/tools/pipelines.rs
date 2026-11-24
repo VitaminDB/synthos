@@ -345,6 +345,7 @@ fn port_kind_label(k: PortKind) -> &'static str {
         PortKind::Text => "text",
         PortKind::Video => "video",
         PortKind::Image => "image",
+        PortKind::Custom(name) => name,
     }
 }
 

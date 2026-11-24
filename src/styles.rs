@@ -2,7 +2,15 @@
 //! compile time. Keeps one component = one file and lets variables from
 //! `base/variables.mss` resolve in every other block.
 
+/// Вся таблица: свои стили, стили редактора узлов (`syn_node_editor::STYLES`)
+/// на прежнем месте каскада, затем остальные свои.
 pub fn styles() -> &'static str {
+    static ALL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| [HEAD, syn_node_editor::STYLES, TAIL].concat())
+}
+
+/// До стилей редактора узлов.
+const HEAD: &str = {
     concat!(
         include_str!("../styles/base/variables.mss"),
         "\n",
@@ -85,48 +93,16 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/terminal_tabs.mss"),
         "\n",
-        include_str!("../styles/components/node_editor.mss"),
-        "\n",
-        include_str!("../styles/components/node_editor_node.mss"),
-        "\n",
-        include_str!("../styles/components/node_editor_inputs.mss"),
-        "\n",
-        "\n",
-        include_str!("../styles/components/node_editor_run_controls.mss"),
+    )
+};
+
+/// После стилей редактора узлов.
+const TAIL: &str = {
+    concat!(
         "\n",
         include_str!("../styles/components/node_editor_models_panel.mss"),
         "\n",
-        include_str!("../styles/components/node_editor_timers.mss"),
-        "\n",
-        include_str!("../styles/components/markdown_node.mss"),
-        "\n",
-        include_str!("../styles/components/node_style_dialog.mss"),
-        "\n",
         include_str!("../styles/components/template_picker.mss"),
-        "\n",
-        include_str!("../styles/components/audio_node.mss"),
-        "\n",
-        include_str!("../styles/components/equalizer_node.mss"),
-        "\n",
-        include_str!("../styles/components/asr_node.mss"),
-        "\n",
-        include_str!("../styles/components/omnivoice_node.mss"),
-        "\n",
-        include_str!("../styles/components/voxcpm_node.mss"),
-        "\n",
-        include_str!("../styles/components/vibevoice_node.mss"),
-        "\n",
-        include_str!("../styles/components/acestep_nodes.mss"),
-        "\n",
-        include_str!("../styles/components/h3_nodes.mss"),
-        "\n",
-        include_str!("../styles/components/flux_nodes.mss"),
-        "\n",
-        include_str!("../styles/components/ltx_nodes.mss"),
-        "\n",
-        include_str!("../styles/components/sortformer_node.mss"),
-        "\n",
-        include_str!("../styles/components/ffmpeg_player_node.mss"),
         "\n",
         include_str!("../styles/components/syn_explorer.mss"),
         "\n",
@@ -145,7 +121,7 @@ pub fn styles() -> &'static str {
         "\n",
         include_str!("../styles/components/hf_dialog.mss"),
     )
-}
+};
 
 #[cfg(test)]
 mod tests {

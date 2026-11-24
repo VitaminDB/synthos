@@ -7102,6 +7102,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn-node-editor"
+version = "0.2.0"
+dependencies = [
+ "hound",
+ "rfd",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "synaptix-audio",
+ "synaptix-core",
+ "synaptix-flow",
+ "synaptix-io",
+ "synaptix-kernels-cpu",
+ "synaptixd",
+ "syngui",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "syn-notes"
 version = "0.2.0"
 dependencies = [
@@ -7151,13 +7172,13 @@ dependencies = [
  "serde_json",
  "synaptix-asr-gigaam",
  "synaptix-asr-whisper",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-diarization-sortformer",
  "synaptix-embedding-bge-m3",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
  "synaptix-llm-common",
@@ -7197,10 +7218,10 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
@@ -7213,10 +7234,10 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
 ]
@@ -7228,11 +7249,11 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -7249,20 +7270,6 @@ dependencies = [
  "synaptix-core",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "synaptix-audio"
-version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
-dependencies = [
- "hound",
- "rubato",
- "rustfft",
- "synaptix-core",
- "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
- "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "thiserror 2.0.19",
 ]
 
@@ -7331,7 +7338,7 @@ name = "synaptix-depth-anything"
 version = "0.1.0"
 dependencies = [
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-ops 0.1.1",
 ]
 
@@ -7342,10 +7349,10 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
@@ -7371,7 +7378,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -7399,7 +7406,7 @@ dependencies = [
  "synaptix-image-qwen",
  "synaptix-image-qwen21",
  "synaptix-image-sdxl",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-kernels-cuda",
  "synaptix-llm-gemma3",
@@ -7413,22 +7420,6 @@ dependencies = [
 [[package]]
 name = "synaptix-gguf"
 version = "0.1.1"
-dependencies = [
- "half",
- "memmap2",
- "rayon",
- "serde",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
-name = "synaptix-gguf"
-version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
 dependencies = [
  "half",
  "memmap2",
@@ -7461,7 +7452,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-diffusion",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cuda",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7478,7 +7469,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-diffusion",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cuda",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7495,7 +7486,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-diffusion",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cuda",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7513,7 +7504,7 @@ dependencies = [
  "synaptix-core",
  "synaptix-diffusion",
  "synaptix-image-qwen",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -7530,7 +7521,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-diffusion",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -7571,25 +7562,8 @@ dependencies = [
  "symphonia",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-gguf 0.1.1",
+ "synaptix-gguf",
  "synaptix-kernels-cpu",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
-name = "synaptix-io"
-version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
-dependencies = [
- "half",
- "memmap2",
- "safetensors",
- "serde",
- "serde_json",
- "synaptix-bundle",
- "synaptix-core",
- "synaptix-gguf 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -7649,7 +7623,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
@@ -7663,7 +7637,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7681,7 +7655,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7702,7 +7676,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
@@ -7720,7 +7694,7 @@ dependencies = [
  "serde_json",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7737,7 +7711,7 @@ dependencies = [
  "serde_json",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7754,7 +7728,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -7770,7 +7744,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7784,11 +7758,15 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
+ "synaptix-asr-whisper",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
+ "synaptix-nn 0.1.1",
+ "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
  "synaptix-vlm-minicpm",
  "synaptix-vlm-qwen3",
@@ -7805,7 +7783,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7836,7 +7814,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -7857,7 +7835,7 @@ dependencies = [
  "sha2",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
 ]
@@ -7871,7 +7849,7 @@ dependencies = [
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-llm-common",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
@@ -8005,10 +7983,10 @@ source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b
 dependencies = [
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-io",
  "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-tokenizer 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
@@ -8022,10 +8000,10 @@ source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b
 dependencies = [
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-io",
  "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "thiserror 2.0.19",
@@ -8041,7 +8019,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-io",
  "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "thiserror 2.0.19",
@@ -8057,10 +8035,10 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8078,7 +8056,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-io",
  "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-tts-leokani",
@@ -8094,7 +8072,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
+ "synaptix-io",
  "synaptix-nn 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "synaptix-ops 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
  "thiserror 2.0.19",
@@ -8108,11 +8086,11 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-infer",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8125,10 +8103,10 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8143,10 +8121,10 @@ dependencies = [
  "cudarc",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8161,10 +8139,10 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8180,7 +8158,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-ops 0.1.1",
  "thiserror 2.0.19",
 ]
@@ -8193,7 +8171,7 @@ dependencies = [
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-io 0.1.1",
+ "synaptix-io",
  "synaptix-nn 0.1.1",
  "synaptix-ops 0.1.1",
  "synaptix-tokenizer 0.1.1",
@@ -8411,15 +8389,16 @@ dependencies = [
  "sqlite-vec",
  "symphonia",
  "syn-assist",
+ "syn-node-editor",
  "syn-notes",
  "syn-notes-proto",
  "synaptix",
- "synaptix-audio 0.1.1",
+ "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
  "synaptix-flow",
- "synaptix-gguf 0.1.1",
- "synaptix-io 0.1.1",
+ "synaptix-gguf",
+ "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-rag",
  "synaptix-tokenizer 0.1.1",
@@ -10744,9 +10723,9 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "mss-analysis"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "synaptix-vfx"
 version = "0.1.1"
+
+[[patch.unused]]
+name = "mss-analysis"
+version = "0.1.0"

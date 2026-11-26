@@ -86,7 +86,7 @@ pub fn history_limit(tool: &str) -> Option<usize> {
 /// `ToolOutcome { error: true }` и уходят в LLM как обычный tool-result.
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, autotools, subagent, system, pipelines, notes, wizard, view_media")]
+    #[error("Unknown tool: {0}. Call one of: bash, kb_search, web, autoskill, autotools, subagent, system, generate, notes, wizard, view_media")]
     Unknown(String),
     #[error("Invalid arguments JSON: {0}")]
     BadArgs(String),
@@ -208,7 +208,7 @@ pub use synassist::tools::args::coerce_to_schema;
 
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
-pub(crate) const TOOL_KEYS: [&str; 11] = [
+pub(crate) const TOOL_KEYS: [&str; 12] = [
     KEY_BASH,
     KEY_KB_SEARCH,
     KEY_WEB,
@@ -217,6 +217,7 @@ pub(crate) const TOOL_KEYS: [&str; 11] = [
     KEY_SUBAGENT,
     KEY_SYSTEM,
     KEY_PIPELINES,
+    super::catalog::KEY_GENERATE,
     KEY_NOTES,
     super::catalog::KEY_WIZARD,
     super::catalog::KEY_VIEW_MEDIA,
@@ -282,6 +283,8 @@ async fn run_tool(name: &str, args: &str, tap: Option<synassist::tools::bash::Ta
         KEY_SUBAGENT => super::subagent::run(args).await,
         KEY_SYSTEM => super::system::run(args).await,
         KEY_PIPELINES => super::pipelines::run(args).await,
+        // Основной чат исполняет его сам (`syn_chat::session`): ход и вложения.
+        super::catalog::KEY_GENERATE => super::generate::run(args).await,
         KEY_NOTES => super::notes::run(args).await,
         super::catalog::KEY_WIZARD => super::wizard::run(args).await,
         // Основной чат исполняет его сам (`syn_chat::session`): нужна модель.

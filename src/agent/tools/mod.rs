@@ -16,6 +16,8 @@
 //!   `web::http`, чтобы получать сырой HTML до htmd для Readability.
 //! - [`view_media`] — модель смотрит локальный файл по пути своим зрением
 //!   (картинка/видео → vision-башня, звук → ASR); исполняет agent-loop чата.
+//! - [`generate`]   — картинка/видео/музыка/речь напрямую через службу
+//!   synaptixd (основной чат исполняет его сам: ход генерации и вложения).
 //! - [`autotools`]  — пул инструментов по запросу: схемы не объявляются,
 //!   модель подгружает нужную ответом `autotools` и зовёт инструмент по имени.
 //!
@@ -36,6 +38,7 @@ pub mod budget;
 pub mod catalog;
 pub mod descriptor;
 pub mod executor;
+pub mod generate;
 pub mod kb_search;
 pub mod notes;
 pub mod pipelines;

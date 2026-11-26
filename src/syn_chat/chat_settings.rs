@@ -92,8 +92,12 @@ impl ChatSettings {
     /// набором пересобирало бы секции панелей.
     pub fn apply(&self, ctx: &SynChatCtx) {
         if let Some(app) = try_use_context::<AppCtx>() {
-            set_changed(app.tools.active, &self.tools_active);
-            set_changed(app.tools.auto, &self.tools_auto);
+            // Чаты, сохранённые с `pipelines`, получают `generate`.
+            let (mut active, mut auto) = (self.tools_active.clone(), self.tools_auto.clone());
+            crate::agent::tools::catalog::migrate_tool_keys(&mut active);
+            crate::agent::tools::catalog::migrate_tool_keys(&mut auto);
+            set_changed(app.tools.active, &active);
+            set_changed(app.tools.auto, &auto);
             set_changed(app.skills_active, &self.skills_active);
         }
         set_changed(ctx.system_prompt, &self.system_prompt);

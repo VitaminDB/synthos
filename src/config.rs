@@ -1040,7 +1040,7 @@ pub fn default_tools_active() -> Vec<String> {
         "bash".to_string(),
         "web".to_string(),
         "system".to_string(),
-        "pipelines".to_string(),
+        "generate".to_string(),
         "notes".to_string(),
         "wizard".to_string(),
         "view_media".to_string(),
@@ -1442,6 +1442,8 @@ impl AppConfig {
                     cfg.introduce_view_media_tool();
                     cfg.introduce_kb_search_approval();
                     cfg.migrate_legacy_web_tool_keys();
+                    crate::agent::tools::catalog::migrate_tool_keys(&mut cfg.tools_active);
+                    crate::agent::tools::catalog::migrate_tool_keys(&mut cfg.tools_auto);
                     cfg.migrate_sampling_defaults();
                     cfg
                 }

@@ -230,39 +230,39 @@ mod tests {
     #[test]
     fn pool_skips_active_unknown_and_itself() {
         let active = keys(&["bash", "web"]);
-        let auto = keys(&["notes", "web", "nope", "autotools", "notes", "pipelines"]);
+        let auto = keys(&["notes", "web", "nope", "autotools", "notes", "generate"]);
         let got: Vec<&str> = pool(&active, &auto).iter().map(|t| t.key).collect();
-        assert_eq!(got, ["notes", "pipelines"]);
+        assert_eq!(got, ["notes", "generate"]);
     }
 
     #[test]
     fn toggle_moves_between_active_and_pool() {
         let mut active = keys(&["bash", "notes"]);
-        let mut auto = keys(&["pipelines"]);
+        let mut auto = keys(&["generate"]);
         // В пул — уходит из активных.
         toggle_exclusive(&mut auto, &mut active, "notes");
-        assert_eq!((active.clone(), auto.clone()), (keys(&["bash"]), keys(&["pipelines", "notes"])));
+        assert_eq!((active.clone(), auto.clone()), (keys(&["bash"]), keys(&["generate", "notes"])));
         // Повторный клик в пуле — просто выключает.
         toggle_exclusive(&mut auto, &mut active, "notes");
-        assert_eq!((active.clone(), auto.clone()), (keys(&["bash"]), keys(&["pipelines"])));
+        assert_eq!((active.clone(), auto.clone()), (keys(&["bash"]), keys(&["generate"])));
         // В активные — уходит из пула.
-        toggle_exclusive(&mut active, &mut auto, "pipelines");
-        assert_eq!((active, auto), (keys(&["bash", "pipelines"]), keys(&[])));
+        toggle_exclusive(&mut active, &mut auto, "generate");
+        assert_eq!((active, auto), (keys(&["bash", "generate"]), keys(&[])));
     }
 
     #[test]
     fn chat_tool_lists_pool_with_summaries_and_enum() {
-        let p = pool(&[], &keys(&["notes", "pipelines"]));
+        let p = pool(&[], &keys(&["notes", "generate"]));
         let t = chat_tool(&p);
         assert_eq!(t.function.name, "autotools");
         let desc = t.function.description.unwrap();
         assert!(desc.contains(&format!("- notes — {}", Tool::by_key("notes").unwrap().summary)), "{desc}");
-        assert!(desc.contains("- pipelines — "), "{desc}");
+        assert!(desc.contains("- generate — "), "{desc}");
         // Самих схем в описании нет — ради этого пул и нужен.
         assert!(!desc.contains("\"properties\""), "{desc}");
         let params = t.function.parameters.unwrap();
-        assert_eq!(params["properties"]["id"]["enum"], serde_json::json!(["notes", "pipelines"]));
-        assert_eq!(params["properties"]["ids"]["items"]["enum"], serde_json::json!(["notes", "pipelines"]));
+        assert_eq!(params["properties"]["id"]["enum"], serde_json::json!(["notes", "generate"]));
+        assert_eq!(params["properties"]["ids"]["items"]["enum"], serde_json::json!(["notes", "generate"]));
     }
 
     #[test]

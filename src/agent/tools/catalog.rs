@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_BOLT, MI_EDIT_NOTE, MI_HANDYMAN, MI_HELP_OUTLINE, MI_MEMORY,
+    MI_AUTO_AWESOME, MI_BOLT, MI_EDIT_NOTE, MI_HANDYMAN, MI_HELP_OUTLINE, MI_MEMORY,
     MI_PSYCHOLOGY, MI_SEARCH, MI_TERMINAL, MI_TRAVEL_EXPLORE, MI_VISIBILITY,
 };
 
@@ -16,11 +16,28 @@ pub const KEY_WEB: &str = "web";
 pub const KEY_AUTOSKILL: &str = "autoskill";
 pub const KEY_SUBAGENT: &str = "subagent";
 pub const KEY_SYSTEM: &str = "system";
+/// Графы редактора нод: исполнитель ещё есть, но модели инструмент больше
+/// не предлагается (в каталоге его нет) — на его месте [`KEY_GENERATE`].
 pub const KEY_PIPELINES: &str = "pipelines";
+pub const KEY_GENERATE: &str = "generate";
 pub const KEY_NOTES: &str = "notes";
 pub const KEY_WIZARD: &str = "wizard";
 pub const KEY_VIEW_MEDIA: &str = "view_media";
 pub const KEY_AUTOTOOLS: &str = "autotools";
+
+/// Ключи прежних инструментов в списках настроек (конфиг, настройки чата):
+/// `pipelines` → `generate`. Каталог `pipelines` не знает — без замены у
+/// чата, где были включены графы, пропала бы и генерация.
+pub fn migrate_tool_keys(list: &mut Vec<String>) -> bool {
+    let Some(pos) = list.iter().position(|k| k == KEY_PIPELINES) else {
+        return false;
+    };
+    list.retain(|k| k != KEY_PIPELINES);
+    if !list.iter().any(|k| k == KEY_GENERATE) {
+        list.insert(pos.min(list.len()), KEY_GENERATE.to_string());
+    }
+    true
+}
 
 /// Строит полный список известных инструментов. Вызывается один раз
 /// (кэш в `Tool::all()` через `OnceLock`).
@@ -191,133 +208,102 @@ pub(super) fn build_all() -> Vec<Tool> {
             }),
         },
         Tool {
-            key: KEY_PIPELINES,
-            label: "pipelines",
-            icon: MI_ACCOUNT_TREE,
-            summary: "any audio, music, voice or video work: generate, extract stems, TTS, transcribe, edit.",
-            description: "Node-based media pipelines in the editor's service tab — \
-                one per chat, the user can open it from the chat and watch. \
-                THE way to do audio/music/voice/video work on this machine — \
-                use it instead of looking for external tools (demucs, spleeter, \
-                ffmpeg filters, pip packages). Built-in templates: music from \
-                text (ACE-Step Text→Music), vocal / stem extraction from a song \
-                (ACE-Step Extract: one stem per run — track_idx on the Generate \
-                node picks it: vocals, backing_vocals, drums, bass, guitar, \
-                keyboard, …; tags = the stem name; for vocals put the song's \
-                lyrics into the lyrics node — without them the voice comes out \
-                wordless, so transcribe with ASR first if the text is unknown; \
-                there is no \"everything but the vocals\" stem), cover in a new style (ACE-Step Cover), regenerate a \
-                region (Repaint), extend a track (Extend), morph toward a new \
-                prompt (Edit), variation (Retake); speech: TTS and voice clone \
-                (VoxCPM, OmniVoice, VibeVoice dialogue/podcast), ASR \
-                (GigaAM), mixing/effects/recording; images and MiniMax-H3 run as stages \
-                in the neural service (flow_* nodes, parameters in fields: set_state=[{node, \
-                fields: {name: value}}]; flow_image_model.model / flow_h3_model.model = a \
-                service model id from action=list): one chain for FLUX.1, FLUX.2, \
-                Qwen-Image Edit / 2511, Qwen-Image 2.1 and SDXL — Image Model → Prompt \
-                Encoder → (References: Image → flow_image_refs.images, chained via refs → \
-                Prompt Encoder.refs + Sampler.refs) → Empty Latent or Image to Latent \
-                (img2img) → Sampler → Image Decoder (builtin-flux-*, builtin-flux2-*, \
-                builtin-qwen-image-*, builtin-qwen-image21-* — Qwen-Image 2.1 refers to \
-                references as <image1>, <image2>…, builtin-sdxl-*; prompt format comes \
-                with open); a generated frame straight into video (builtin-ltx-flux-keyframe, \
-                builtin-h3-flux-keyframe: Image Decoder.image → LTX Frame / H3 \
-                Encoder.first_frame); LTX-2.3 video with audio, also as service stages: LTX Model \
-                (fields.lora: union / motion / lipdub or a file) → LTX Encoder (+ LTX NAG) → \
-                LTX Stage1 (LTX Frame: frame 0 = first frame, >0 = keyframe) → LTX Upscale ×2 → \
-                LTX Stage2, or LTX Retake / IC-LoRA (control none/canny/depth) / LipDub / \
-                Audio to Video → LTX Video/Audio Decoder → Mux (builtin-ltx-*); \
-                MiniMax-H3 video with native audio — H3 Model → H3 Video Size → H3 Encoder \
-                (first_frame/last_frame from flow_file.path, or refs from a flow_list whose \
-                fields.items = file paths, one per line — images, videos, audio the user \
-                attached; template builtin-h3-ref2va) → H3 Sampler → H3 Video/Audio \
-                Decoder → Mux; open/apply answer with the <Picture/Video/Audio N> tags \
-                and the prompt format — follow it). \
-                Typical workflow: 1) action=list — templates (built-in and \
-                custom) and chat attachments; 2) action=open with \
-                template=<id> — load a template; 3) action=nodes with \
-                filter=<kind> — the exact node schema (ports + example \
-                state JSON); 4) action=apply — fill it in: \
-                set_state=[{node,state}] sets prompts/parameters/paths, \
-                connect/disconnect edit links, graph (mode=replace|merge) \
-                replaces/extends the whole graph with a Template JSON; \
-                5) action=run — start the run (before a heavy run check \
-                system status; free_vram=true unloads the chat LLM for the \
-                duration of the run and reloads it after). \
-                In state and fields strings the attachment:<name|sha|last> reference \
-                works — it substitutes the path of a chat attachment (e.g. a \
-                ref image in flow_file.path feeding LTX Frame). action=graph — a snapshot \
-                of the graph; action=save_template with name — save the \
-                graph as a custom template for the user.",
+            key: KEY_GENERATE,
+            label: "generate",
+            icon: MI_AUTO_AWESOME,
+            summary: "generate an image, video, music or speech (TTS, voice clone) with the local neural service.",
+            description: "Generate media with the local neural service (synaptixd): \
+                kind=image (text-to-image, edit by reference images, img2img), \
+                kind=video (text/image-to-video, with sound where the model can), \
+                kind=music (song or instrumental from style tags + lyrics), \
+                kind=speech (TTS: text → voice; voice clone from a sample). \
+                THE way to make pictures, video, music and voice on this machine — \
+                don't look for external tools. Write the prompt yourself: detailed, \
+                in English for image/video/music unless the user wants otherwise; \
+                for speech prompt is the exact text to speak. model — a service \
+                model id; omit it to use the default model of that kind. \
+                list_models=true (with or without kind) lists installed models and \
+                defaults — call it when the user asks for a specific model. \
+                Input files (init_image, refs, first_frame, last_frame, audio, \
+                voice_sample) take a chat attachment as attachment:<name|sha|last> \
+                or an absolute file path. The call blocks until the file is ready \
+                (images ~10–60 s, video and music minutes); the user sees live \
+                progress, and the result is attached to the chat automatically — \
+                don't describe it as a link, just say it's done.",
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "action": {
+                    "kind": {
                         "type": "string",
-                        "enum": ["list", "nodes", "open", "graph", "apply", "save_template", "run"],
-                        "description": "What to do (see the tool description)."
+                        "enum": ["image", "video", "music", "speech"],
+                        "description": "What to generate."
                     },
-                    "template": {
+                    "prompt": {
                         "type": "string",
-                        "description": "action=open: template id from action=list."
+                        "description": "image/video: scene description; music: style tags \
+                            (genre, instruments, mood, tempo); speech: the text to speak."
                     },
-                    "filter": {
+                    "model": {
                         "type": "string",
-                        "description": "action=nodes: a substring matched against kind/name/category. \
-                            Without filter — a compact list of all node kinds."
+                        "description": "Service model id (see list_models). Omit for the default model of this kind."
                     },
-                    "graph": {
-                        "type": "object",
-                        "description": "action=apply: Template JSON {nodes:[{id?,kind,pos?,state?,enabled?}], \
-                            connections:[{from_node,from_port,to_node,to_port}]}. \
-                            id and pos can be omitted — they'll be assigned automatically."
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["replace", "merge"],
-                        "description": "action=apply with graph: replace — replace the graph (default), \
-                            merge — append to the existing one (node ids get reassigned)."
-                    },
-                    "set_state": {
-                        "type": "array",
-                        "items": { "type": "object" },
-                        "description": "action=apply: [{node:<id>, state:{kind,data}}] — \
-                            several nodes in one call, not one apply per node. \
-                            See the state JSON in action=nodes (example with defaults) \
-                            or action=graph (current values). data is a patch: only the \
-                            listed fields change, the rest of the node's state is kept."
-                    },
-                    "connect": {
-                        "type": "array",
-                        "items": { "type": "object" },
-                        "description": "action=apply: [{from_node,from_port,to_node,to_port}] — add links."
-                    },
-                    "disconnect": {
-                        "type": "array",
-                        "items": { "type": "object" },
-                        "description": "action=apply: [{from_node,from_port,to_node,to_port}] — remove links."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "action=save_template: name of the new custom template."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "action=save_template: template description (optional)."
-                    },
-                    "free_vram": {
+                    "list_models": {
                         "type": "boolean",
-                        "description": "action=run: unload the chat LLM for the duration of the run \
-                            (needed for heavy pipelines — LTX/H3 won't fit alongside the LLM on 24 GB) \
-                            and reload it afterward."
+                        "description": "true — only list installed models of this kind (or of all kinds) and the defaults; nothing is generated."
                     },
-                    "run_id": {
+                    "negative": {
                         "type": "string",
-                        "description": "action=run: run label; when re-running \
-                            the same graph, pass a NEW value (e.g. run-2)."
+                        "description": "image/video: what to avoid (models with negative prompt support)."
+                    },
+                    "width": { "type": "integer", "description": "image/video: width in pixels. Default — the model's." },
+                    "height": { "type": "integer", "description": "image/video: height in pixels. Default — the model's." },
+                    "seconds": {
+                        "type": "number",
+                        "description": "video/music: duration in seconds. Default — the model's."
+                    },
+                    "steps": { "type": "integer", "description": "Sampling steps. Default — the model's." },
+                    "guidance": { "type": "number", "description": "CFG / guidance scale. Default — the model's." },
+                    "seed": { "type": "integer", "description": "Seed for a reproducible result; omit for random." },
+                    "init_image": {
+                        "type": "string",
+                        "description": "image: source picture for img2img (attachment:<ref> or a path); with strength."
+                    },
+                    "strength": {
+                        "type": "number",
+                        "description": "image img2img / video restyle: how much to change the source, 0..1."
+                    },
+                    "refs": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "image: reference images for editing models (Qwen-Image Edit, FLUX.2, Qwen-Image 2.1 — \
+                            refer to them in the prompt as image 1, image 2…); video (MiniMax-H3 ref2va): \
+                            reference images/videos/audio, up to 12. attachment:<ref> or paths."
+                    },
+                    "first_frame": { "type": "string", "description": "video: first frame image (image-to-video)." },
+                    "last_frame": { "type": "string", "description": "video: last frame image." },
+                    "audio": { "type": "string", "description": "video (LTX): soundtrack to lip-sync / drive the video." },
+                    "two_stage": { "type": "boolean", "description": "video (LTX): second stage with ×2 upscaler — sharper, slower." },
+                    "lyrics": {
+                        "type": "string",
+                        "description": "music: song lyrics with section tags ([verse], [chorus]…); omit or \"[instrumental]\" for instrumental."
+                    },
+                    "voice": {
+                        "type": "string",
+                        "description": "speech: voice description (e.g. \"calm female voice\", \"male, low\") or a model's preset voice name."
+                    },
+                    "speaker": { "type": "string", "description": "speech: a preset character/speaker name of the model." },
+                    "language": { "type": "string", "description": "speech: language code (ru, en, …). Default — detected/model's." },
+                    "speed": { "type": "number", "description": "speech: speaking rate, 1.0 = normal." },
+                    "voice_sample": {
+                        "type": "string",
+                        "description": "speech: a recording to clone the voice from (attachment:<ref> or a path)."
+                    },
+                    "voice_sample_text": {
+                        "type": "string",
+                        "description": "speech: transcript of voice_sample (needed by some models, e.g. F5-TTS)."
                     }
                 },
-                "required": ["action"],
+                "required": ["kind", "prompt"],
                 "additionalProperties": false
             }),
         },
@@ -334,7 +320,8 @@ pub(super) fn build_all() -> Vec<Tool> {
                 once with all=true). CALL status before starting a heavy \
                 pipeline, to decide whether there's enough VRAM and what to \
                 unload. The chat LLM (the one you're running on) is not \
-                unloaded by this tool — use free_vram on pipelines action=run.",
+                unloaded by this tool — the neural service shares the GPU with \
+                media generation (generate) by itself.",
             schema: json!({
                 "type": "object",
                 "properties": {

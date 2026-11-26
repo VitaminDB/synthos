@@ -55,7 +55,7 @@ pub fn install(ctx: &AppCtx) {
     syn_notes::config::set_loader(|| state(&AppConfig::load()));
     syn_notes::rail::set_host(syn_notes::rail::RailHost { navigate: crate::rail::navigate, rename_key: crate::rail::rename_key });
     syn_notes::attach::set_finder(|r| {
-        let a = crate::agent::tools::pipelines::find_attachment(r)?;
+        let a = crate::agent::tools::generate::find_attachment(r)?;
         Some(syn_notes::attach::Attachment { sha256: a.sha256, ext: a.ext, original_name: a.original_name })
     });
     syn_notes::components::panel_header::set_center_widget(|| Box::new(crate::search::trigger::view()));

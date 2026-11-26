@@ -33,6 +33,10 @@
 //!
 //! Подтверждения инструментов выключены (`tools.allow_all`): раннер
 //! проверяет модель, а не диалоги.
+//!
+//! Режим без модели — прямой вызов инструмента `generate` тем же путём,
+//! что в цикле чата (ход генерации, файл, CAS-вложение):
+//! `agent_smoke --generate '{"kind":"image","prompt":"…"}'`.
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -413,9 +417,61 @@ fn run() -> std::result::Result<(), String> {
     }
 }
 
+/// `--generate <json>`: инструмент `generate` без LLM — запрос к службе,
+/// файл, вложение. Печатает ход, итог и вложения; код выхода — по ошибке.
+fn run_generate(args_json: &str) -> std::result::Result<(), String> {
+    let (_theme, app_ctx) = synthos::build_context();
+    synthos::i18n::install(app_ctx.general);
+    provide_context(app_ctx);
+    provide_context(SynChatCtx::new());
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let progress: synthos::agent::tools::generate::Progress =
+        std::sync::Arc::new(|text: &str| eprint!("{text}"));
+    let cancel = synthos::agent::tools::generate::Cancel::default();
+    let args = args_json.to_string();
+    let job = rt.spawn(async move {
+        synthos::agent::tools::generate::run_chat(&args, Some(progress), cancel).await
+    });
+    // Вложения чата читаются на main thread — его колбэки выкачиваем здесь.
+    while !job.is_finished() {
+        drain();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = rt.block_on(job).map_err(|e| e.to_string())?;
+    println!("generate: error={}\n{}", out.error, out.content);
+    for a in &out.attachments {
+        println!(
+            "attachment: {} · {} · {}×{} · {} байт · {}",
+            a.original_name,
+            a.mime,
+            a.width,
+            a.height,
+            a.size_bytes,
+            synthos::syn_chat::attach::blobs::source_path(a).display()
+        );
+    }
+    if out.error {
+        Err("генерация не удалась".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn main() {
     syngui::signal::init_main_thread();
     synthos::logging::init();
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--generate") {
+        let json = args.get(2).cloned().unwrap_or_default();
+        if let Err(e) = run_generate(&json) {
+            eprintln!("agent_smoke FAILED: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     eprintln!("agent_smoke: движок {:?}", synthos::engine::ensure());
     if let Err(e) = run() {
         eprintln!("agent_smoke FAILED: {e}");

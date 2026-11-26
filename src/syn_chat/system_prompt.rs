@@ -174,13 +174,14 @@ pub fn build(env: &PromptEnv) -> String {
 
 /// Инструменты со своим блоком правил — в порядке, в каком блоки идут в
 /// промпте.
-const RULED_TOOLS: [&str; 3] = ["pipelines", "wizard", "notes"];
+const RULED_TOOLS: [&str; 3] = ["generate", "wizard", "notes"];
 
 /// Блок правил инструмента: в системный промпт — когда он активен, в ответ
 /// `autotools` — когда модель подгружает его из пула. Текст начинается с
 /// перевода строки: так он ложится в промпт следом за общими правилами.
 pub fn tool_rules(key: &str) -> Option<&'static str> {
     Some(match key {
+        "generate" => GENERATE_RULES,
         "pipelines" => PIPELINES_RULES,
         "wizard" => WIZARD_RULES,
         "notes" => NOTES_RULES,
@@ -201,6 +202,29 @@ fn autotools_rules(pool: &[String]) -> String {
         pool.join(", ")
     )
 }
+
+const GENERATE_RULES: &str =
+    "\nGeneration (`generate`) — pictures, video, music and speech \
+     through the local neural service:\n\
+     - Any request to draw, edit a picture, make a video, a song or \
+     music, or voice a text — call generate right away. Don't search \
+     the disk or the web for external tools (ffmpeg, pip, diffusers) \
+     unless the user asks for them.\n\
+     - Compose the prompt yourself: a detailed description of the \
+     subject, style, lighting and composition; for music — style tags \
+     in prompt and the lyrics in lyrics; for speech — the exact text.\n\
+     - Leave model empty unless the user names one; for a named or \
+     unfamiliar model call generate with list_models=true first.\n\
+     - Chat attachments as inputs: attachment:<name|sha|last> in \
+     init_image / refs (editing by reference) / first_frame / \
+     voice_sample.\n\
+     - The call blocks until the file is ready (video and music can \
+     take minutes — that's normal, the user sees progress). The file \
+     is attached to the chat automatically: say briefly what you made, \
+     don't paste paths as links. On an error, read it — fix the \
+     parameter or the model it names instead of repeating the call.\n\
+     - Once you've announced a generation, do it in this same turn: a \
+     text reply ends the turn.\n";
 
 const PIPELINES_RULES: &str =
     "\nPipelines (`pipelines`) — image/video/music/speech generation \
@@ -510,15 +534,17 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_rules_only_with_pipelines_tool() {
+    fn generate_rules_only_with_generate_tool() {
         let s = build(&env());
-        assert!(!s.contains("Pipelines"));
+        assert!(!s.contains("Generation (`generate`)"));
         let mut e = env();
-        e.tools.push("pipelines".to_string());
+        e.tools.push("generate".to_string());
         let s = build(&e);
-        assert!(s.contains("Pipelines"));
-        assert!(s.contains("free_vram"));
+        assert!(s.contains("Generation (`generate`)"));
         assert!(s.contains("attachment:"));
+        assert!(s.contains("list_models"));
+        // Графы агенту больше не предлагаются: правил pipelines в промпте нет.
+        assert!(!s.contains("Pipelines (`pipelines`)"));
     }
 
     /// Пул `autotools`: в строке инструментов — сам `autotools`, в правилах —
@@ -527,12 +553,12 @@ mod tests {
     #[test]
     fn pool_is_named_but_its_rules_stay_out() {
         let mut e = env();
-        e.pool = vec!["notes".to_string(), "pipelines".to_string()];
+        e.pool = vec!["notes".to_string(), "generate".to_string()];
         let s = build(&e);
         assert!(s.contains("available tools: bash, web, autotools"), "{s}");
-        assert!(s.contains("tools you can load on demand: notes, pipelines"), "{s}");
+        assert!(s.contains("tools you can load on demand: notes, generate"), "{s}");
         assert!(!s.contains("Notes (`notes`)"), "{s}");
-        assert!(!s.contains("Pipelines (`pipelines`)"), "{s}");
+        assert!(!s.contains("Generation (`generate`)"), "{s}");
         assert!(!build(&env()).contains("autotools"));
     }
 

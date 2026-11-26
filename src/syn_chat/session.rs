@@ -1944,13 +1944,48 @@ async fn run_agent_loop(
             // эмбеддинги входят в промпт следующего хода — поэтому исполняет
             // цикл, а не `tools::execute` (у того нет ни модели, ни медиа).
             let mut viewed: Option<ViewedMedia> = None;
-            let outcome = if tools::executor::canonical_tool_name(&tool_name(chat_call))
-                == KEY_VIEW_MEDIA
-            {
+            // Файлы `generate` — вложения ленты под результатом.
+            let mut generated: Vec<MsgAttachment> = Vec::new();
+            let canonical = tools::executor::canonical_tool_name(&tool_name(chat_call)).to_string();
+            let outcome = if canonical == KEY_VIEW_MEDIA {
                 let v = view_media_call(chat_call, &caps).await;
                 let outcome = v.outcome.clone();
                 viewed = Some(v);
                 outcome
+            } else if canonical == tools::catalog::KEY_GENERATE {
+                // ── generate: запрос к службе нейросетей. Ход генерации —
+                // живой панелью карточки, abort хода рвёт соединение со
+                // службой (она прерывает работу). Видеопамять между моделью
+                // чата и генератором делит служба — выгружать LLM не нужно.
+                let live = ToolLive::start(&chat_id, chat_call.id.clone());
+                let tap = live.tap.clone();
+                let progress: tools::generate::Progress =
+                    Arc::new(move |text: &str| tap(synassist::tools::bash::Stream::Stdout, text));
+                let cancel = tools::generate::Cancel::default();
+                let args = tools::executor::coerce_args(
+                    &canonical,
+                    &tools::executor::normalize_args(
+                        chat_call.function.arguments.as_deref().unwrap_or(""),
+                    ),
+                );
+                let res = tokio::select! {
+                    r = tools::generate::run_chat(&args, Some(progress), cancel.clone()) => r,
+                    _ = wait_abort(&abort, abort_snapshot) => {
+                        cancel.cancel();
+                        drop(live);
+                        cancel_unanswered(&chat_id, &chat_calls[ci..]);
+                        return Ok(());
+                    }
+                };
+                drop(live);
+                generated = res.attachments;
+                tools::ToolOutcome {
+                    tool_call_id: chat_call.id.clone(),
+                    name: canonical.clone(),
+                    content: res.content,
+                    error: res.error,
+                    invalid_args: false,
+                }
             } else {
                 // Предел времени вызова — карточке на обратный отсчёт;
                 // гасится, как бы вызов ни кончился (guard).
@@ -2042,7 +2077,7 @@ async fn run_agent_loop(
                     chat_call,
                     content,
                     outcome.error,
-                    Vec::new(),
+                    generated,
                     note.clone(),
                 ),
             }

@@ -144,14 +144,14 @@ fn find_with(kind: ModelKind, cfg: &KbConfig, dirs: &[PathBuf], service: &[Servi
             }
         }
     }
-    // Библиотека службы: модель того же вида и архитектуры BGE.
-    let mut of_kind: Vec<&PathBuf> = service
-        .iter()
-        .filter(|(k, arch, p)| *k == kind.service_kind() && arch.replace('_', "-").eq_ignore_ascii_case(ARCH) && is_model(p))
-        .map(|(_, _, p)| p)
-        .collect();
-    of_kind.sort();
-    of_kind.first().map(|p| found((*p).clone(), FoundBy::Discovery))
+    // Библиотека службы: модель того же вида — сначала с известным именем
+    // (`bge-m3` в любой папке библиотеки), затем архитектуры BGE.
+    let mut of_kind: Vec<&(synaptixd::ModelKind, String, PathBuf)> =
+        service.iter().filter(|(k, _, p)| *k == kind.service_kind() && is_model(p)).collect();
+    of_kind.sort_by(|a, b| a.2.cmp(&b.2));
+    let by_name = of_kind.iter().find(|(_, _, p)| p.file_stem().and_then(|s| s.to_str()) == Some(kind.stem()));
+    let by_arch = || of_kind.iter().find(|(_, arch, _)| arch.replace('_', "-").eq_ignore_ascii_case(ARCH));
+    by_name.or_else(by_arch).map(|(_, _, p)| found(p.clone(), FoundBy::Discovery))
 }
 
 /// Файл-бандл либо каталог-снапшот с `config.json`.
@@ -247,8 +247,11 @@ mod tests {
         for p in [&emb, &rer, &other] {
             write_bundle(p);
         }
+        let named = dir.join("sub/bge-m3.syn");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        write_bundle(&named);
         let service = vec![
-            // Эмбеддер чужой архитектуры BGE-стек не загрузит — не берём.
+            // Эмбеддер чужой архитектуры (другое пространство векторов) — не берём.
             (synaptixd::ModelKind::Embed, "qwen3".to_string(), other.clone()),
             (synaptixd::ModelKind::Embed, "xlm-roberta".to_string(), emb.clone()),
             (synaptixd::ModelKind::Rerank, "xlm_roberta".to_string(), rer.clone()),
@@ -256,6 +259,10 @@ mod tests {
         let c = cfg("", "");
         assert_eq!(find_with(ModelKind::Embedder, &c, &[], &service).unwrap().path, emb);
         assert_eq!(find_with(ModelKind::Reranker, &c, &[], &service).unwrap().path, rer);
+        // Известное имя в любой папке библиотеки — раньше архитектуры.
+        let mut with_named = service.clone();
+        with_named.push((synaptixd::ModelKind::Embed, "bge_m3".to_string(), named.clone()));
+        assert_eq!(find_with(ModelKind::Embedder, &c, &[], &with_named).unwrap().path, named);
     }
 
     #[test]

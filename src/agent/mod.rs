@@ -12,13 +12,11 @@
 //! - [`registry`] — CRUD над списком чатов (create/select/delete), снимок
 //!                  для автосейва;
 //! - [`session`]  — отправка сообщения + async-драйвер SSE-стрима;
-//! - [`think_parser`] — стейт-машина выделения `<think>...</think>` блоков
-//!                  из стрим-content reasoning-моделей;
+//! - [`think_parser`] — чистка блоков `<think>…</think>` в готовом тексте;
 //! - [`time`]     — минимальные хелперы времени без `chrono`;
 //! - [`tools`]    — агентские инструменты (bash, web_read) + executor.
 
 pub mod audio;
-pub mod json_repair;
 pub mod schema;
 pub mod state;
 pub mod storage;

@@ -55,7 +55,6 @@ pub fn run(shot: &Shot) -> std::result::Result<(u32, u32), String> {
             );
             provide_context(chat);
             provide_context(crate::syn_chat::SynModelRegistry::new());
-            provide_context(crate::pages::training::TrainingCtx::new());
             crate::models::install();
             crate::search::provide();
             crate::rail::navigate(&route);

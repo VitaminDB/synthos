@@ -21,7 +21,6 @@ pub const ROUTES: &[&str] = &[
     "syn_chat",
     "music",
     "code",
-    "training",
     "settings",
 ];
 
@@ -405,8 +404,8 @@ pub struct AppCtx {
     pub kb_url_dialog: RwSignal<Option<String>>,
     /// Настройки раздела «Общие».
     pub general: GeneralCtx,
-    /// Пресеты ASR-моделей. Каждый — конфиг для локального
-    /// [`synaptix::facade::asr::Transcriber`] (Whisper / GigaAM / …).
+    /// Пресеты ASR-моделей. Каждый — конфиг для
+    /// распознавания речи в службе synaptixd (Whisper / GigaAM / …).
     pub audio_models: RwSignal<Vec<AudioModelConfig>>,
     /// Имя выбранной ASR-модели (стабильный id).
     pub selected_audio_model: RwSignal<Option<String>>,

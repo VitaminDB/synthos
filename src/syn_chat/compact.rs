@@ -591,10 +591,9 @@ async fn run_compaction_scoped(
 
     // 3. Токены summary — честно через токенизатор, fallback на chars/4.
     let tokens_after = model
-        .tokenizer
-        .encode(&summary)
-        .map(|ids| ids.len() as i64)
-        .unwrap_or_else(|_| (summary.chars().count() as i64 / 4).max(1));
+        .count_tokens(&summary)
+        .map(|n| n as i64)
+        .unwrap_or_else(|| (summary.chars().count() as i64 / 4).max(1));
 
     // 4. На main: применяем компактификацию атомарно. Диапазон пересчитываем
     //    по актуальной ленте — пользователь мог успеть дописать сообщение.

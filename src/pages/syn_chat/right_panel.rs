@@ -106,11 +106,10 @@ fn lora_body() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'stati
     || {
         use crate::syn_chat::chat_settings::ChatLora;
         let ctx = use_context::<SynChatCtx>();
-        let training = use_context::<crate::pages::training::TrainingCtx>();
         let Some(model) = chat_service_model() else {
             return DecoratedBox::new().child(Text::new(tr!("chat.right.lora.no_model")).max_lines(3).class("sampling-hint")).class("lora-chat-body");
         };
-        let all = training.loras.get();
+        let all = use_context::<SynModelRegistry>().loras.get();
         let mine: Vec<_> = all.iter().filter(|l| l.base.as_deref() == Some(model.id.as_str())).cloned().collect();
         let own = ctx.loras.get();
         let mut col = Column::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
@@ -119,7 +118,7 @@ fn lora_body() -> impl Fn() -> StyledWidget<DecoratedBox> + Send + Sync + 'stati
             col = col.child(
                 Button::new(tr!("chat.right.lora.open_training"))
                     .icon(MI_MODEL_TRAINING)
-                    .on_click(|| crate::rail::navigate("training"))
+                    .on_click(|| crate::components::nav_rail::launch_models_app(Some("training")))
                     .class("right-reset-btn"),
             );
             return DecoratedBox::new().child(col).class("lora-chat-body");
@@ -476,7 +475,7 @@ pub fn sampling_card() -> impl Widget {
 /// Комбобокс пресетов модели. В режиме `default` выбирает, какой пресет
 /// работает (пресет режима размышлений заодно переключает и их); в `custom`
 /// — заливает значения пресета в слайдеры как отправную точку.
-fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::SamplingProfile>) -> Box<dyn Widget> {
+fn preset_row(p: &SamplingParams, profile: Option<&crate::syn_chat::params::SamplingProfile>) -> Box<dyn Widget> {
     let Some(profile) = profile else {
         return Box::new(Text::new(tr!("chat.right.sampling.preset.no_model")).class("sampling-hint"));
     };
@@ -485,14 +484,14 @@ fn preset_row(p: &SamplingParams, profile: Option<&synaptix::facade::llm::Sampli
         // В «Своих» пресет — отправная точка. Имя держим, только пока
         // слайдеры с ним совпадают: сдвинутый слайдер — уже не этот пресет.
         let still_same = profile.preset(&p.preset).filter(|x| p.with_preset(x) == *p);
-        (tr!("chat.right.sampling.preset.apply_label"), still_same.map(|x| x.id))
+        (tr!("chat.right.sampling.preset.apply_label"), still_same.map(|x| x.id.as_str()))
     } else {
-        (tr!("chat.right.sampling.preset.label"), profile.pick(&p.preset, p.enable_thinking).map(|x| x.id))
+        (tr!("chat.right.sampling.preset.label"), profile.pick(&p.preset, p.enable_thinking).map(|x| x.id.as_str()))
     };
     let items: Vec<DropdownItem> = profile
         .presets
         .iter()
-        .map(|x| DropdownItem::new(x.id, preset_label(x.id)))
+        .map(|x| DropdownItem::new(x.id.clone(), preset_label(&x.id)))
         .collect();
     let presets = profile.presets.clone();
     let picker = Dropdown::with_items(items)
@@ -690,14 +689,15 @@ pub fn thinking_card() -> impl Widget {
         let levels = use_context::<SynModelRegistry>()
             .sampling
             .get()
-            .and_then(|prof| prof.reasoning.clone());
+            .filter(|prof| !prof.reasoning_levels.is_empty());
         if let (true, Some(levels)) = (on, levels) {
+            let default = levels.reasoning_default.clone().or_else(|| levels.reasoning_levels.last().cloned()).unwrap_or_default();
             let mut items = vec![DropdownItem::new(
                 "",
-                tr!("chat.right.thinking.level.model_default", level = level_label(&levels.default)),
+                tr!("chat.right.thinking.level.model_default", level = level_label(&default)),
             )];
-            items.extend(levels.levels.iter().map(|l| DropdownItem::new(l.clone(), level_label(l))));
-            let selected = levels.resolve(p.effort()).unwrap_or_default().to_string();
+            items.extend(levels.reasoning_levels.iter().map(|l| DropdownItem::new(l.clone(), level_label(l))));
+            let selected = levels.resolve_reasoning(p.effort()).unwrap_or_default().to_string();
             let picker = Dropdown::with_items(items)
                 .selected(selected)
                 .leading_icon(MI_PSYCHOLOGY)

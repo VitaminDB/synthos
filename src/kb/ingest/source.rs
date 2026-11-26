@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use synaptix_rag::doc::SourceKind;
+use crate::kb::doc::SourceKind;
 
 #[derive(Debug, Clone)]
 pub enum DocSource {

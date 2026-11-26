@@ -1,12 +1,14 @@
 //! Параметры sampling для Syn-чата.
 //!
 //! Сериализуется в [`AppConfig::syn_chat_defaults`] и в `StoredChat.syn_params`
-//! (per-chat override). На каждом turn конвертируется в [`GenerationOptions`]
-//! фасада `synaptix::facade::llm`.
+//! (per-chat override). На каждом ходу уходит службе параметрами запроса
+//! (`syn_chat::daemon::params`).
 
-use std::sync::atomic::{AtomicU64, Ordering};
+pub use synaptixd::SamplingPreset;
 
-use synaptix::facade::llm::{GenerationOptions, SamplingPreset, SamplingProfile};
+/// Что модель умеет в сэмплинге: пресеты и уровни размышлений — сведения
+/// службы о языковой модели.
+pub type SamplingProfile = synaptixd::LlmInfo;
 use serde::{Deserialize, Serialize};
 
 /// Откуда берутся параметры сэмплинга хода.
@@ -89,27 +91,6 @@ impl Default for SamplingParams {
     }
 }
 
-/// Счётчик вызовов — подмешивается к времени, чтобы два `to_options` в одну
-/// наносекунду не получили одинаковый seed.
-static SEED_TICK: AtomicU64 = AtomicU64::new(0);
-
-/// Seed «из энтропии ОС» для `seed = -1`. Раньше эта ветка отдавала
-/// константу 0: sampler получал один и тот же PRNG на каждом ходу, и при
-/// почти не менявшемся промпте agent-loop воспроизводил ровно тот же ответ —
-/// прямой вклад в зацикливание на одном и том же tool-вызове.
-fn entropy_seed() -> u64 {
-    let nanos = crate::agent::time::unix_nanos() as u64;
-    let tick = SEED_TICK.fetch_add(1, Ordering::Relaxed);
-    // splitmix64-финализатор: соседние наносекунды дают несоседние seed'ы.
-    let mut x = nanos ^ tick.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^= x >> 31;
-    x
-}
-
 impl SamplingParams {
     /// Потолок ответа по умолчанию до 07.09.2026 — см.
     /// [`crate::config::AppConfig::migrate_sampling_defaults`].
@@ -185,37 +166,15 @@ impl SamplingParams {
         let e = self.reasoning_effort.trim();
         (!e.is_empty()).then_some(e)
     }
-
-    pub fn to_options(&self) -> GenerationOptions {
-        let seed = if self.seed < 0 {
-            entropy_seed()
-        } else {
-            self.seed as u64
-        };
-        GenerationOptions {
-            max_new_tokens: self.max_new_tokens as usize,
-            max_seq_len: self.max_seq_len as usize,
-            temperature: self.temperature,
-            top_k: self.top_k as usize,
-            top_p: self.top_p,
-            min_p: self.min_p,
-            seed,
-            repeat_penalty: self.repeat_penalty,
-            repeat_last_n: self.repeat_last_n as usize,
-            presence_penalty: self.presence_penalty,
-            frequency_penalty: self.frequency_penalty,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synaptix::facade::llm::{ReasoningLevels, ReasoningVar};
 
     fn qwen38_profile() -> SamplingProfile {
-        let preset = |id, thinking, temperature, top_p, presence_penalty| SamplingPreset {
-            id,
+        let preset = |id: &str, thinking, temperature, top_p, presence_penalty| SamplingPreset {
+            id: id.into(),
             thinking: Some(thinking),
             temperature,
             top_p,
@@ -229,42 +188,10 @@ mod tests {
                 preset("thinking", true, 1.0, 0.95, 0.0),
                 preset("instruct", false, 0.7, 0.8, 1.5),
             ],
-            reasoning: Some(ReasoningLevels {
-                var: ReasoningVar::Effort,
-                levels: vec!["low".into(), "medium".into(), "xhigh".into()],
-                default: "xhigh".into(),
-                instruct_default: None,
-            }),
-        }
-    }
-
-    #[test]
-    fn negative_seed_varies_between_turns() {
-        let p = SamplingParams { seed: -1, ..Default::default() };
-        let a = p.to_options().seed;
-        let b = p.to_options().seed;
-        assert_ne!(a, b, "seed=-1 обязан быть разным на каждом ходу");
-    }
-
-    #[test]
-    fn explicit_seed_is_reproducible() {
-        let p = SamplingParams { seed: 42, ..Default::default() };
-        assert_eq!(p.to_options().seed, 42);
-        assert_eq!(p.to_options().seed, 42);
-    }
-
-    #[test]
-    fn penalties_reach_generation_options() {
-        let p = SamplingParams {
-            repeat_last_n: 64,
-            presence_penalty: 0.5,
-            frequency_penalty: 0.25,
+            reasoning_levels: vec!["low".into(), "medium".into(), "xhigh".into()],
+            reasoning_default: Some("xhigh".into()),
             ..Default::default()
-        };
-        let o = p.to_options();
-        assert_eq!(o.repeat_last_n, 64);
-        assert_eq!(o.presence_penalty, 0.5);
-        assert_eq!(o.frequency_penalty, 0.25);
+        }
     }
 
     #[test]

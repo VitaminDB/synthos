@@ -25,6 +25,7 @@
 pub mod augment;
 pub mod collection;
 pub mod ctx;
+pub mod doc;
 pub mod ingest;
 pub mod loader;
 pub mod models;

@@ -16,7 +16,7 @@ use syngui::prelude::*;
 pub use crate::agent::state::{
     AttachmentKind, ChatMeta, ChatMsg, ChatMsgKind, ChatMsgRole, MsgAttachment,
 };
-pub use crate::agent::think_parser::{ThinkParser, ThinkSplit};
+pub use crate::agent::think_parser::strip_thinking;
 
 use crate::config::SynChatCardsConfig;
 use crate::syn_chat::chat_settings::TurnSettings;

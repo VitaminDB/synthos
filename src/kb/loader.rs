@@ -19,8 +19,7 @@ use syngui::async_runtime::{run_on_main_thread, spawn};
 use syngui::prelude::use_context;
 use syngui::tr;
 use syngui::widgets::feedback::NotificationCtx;
-use synaptix::facade::embedding::Embedder;
-use synaptix::facade::rerank::Reranker;
+use crate::kb::service::{Embedder, Reranker};
 
 use crate::config::KbConfig;
 use crate::context::AppCtx;

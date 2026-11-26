@@ -32,16 +32,14 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::prelude::*;
-use synaptix::facade::llm::{
-    Message,
-};
+use crate::syn_chat::message::Message;
 
 use crate::agent::schema::{ChatToolCall, ChatToolCallFunction};
 use crate::agent::tools::catalog::KEY_VIEW_MEDIA;
 use crate::agent::tools::{self, Tool, ToolDecision};
 use crate::context::AppCtx;
 use crate::syn_chat::attach::prompt::{self as attach_prompt, MediaCaps};
-use crate::syn_chat::channel_parser::{self, ChannelIds};
+use crate::syn_chat::channel_parser;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
 use crate::syn_chat::state::{
@@ -905,7 +903,7 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
         max_turns,
         turn.chat.system_prompt.clone(),
     ));
-    let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let channel = model.channel;
     let history: Vec<HistoryItem> = build_history(&ctx, &system_prompt, channel);
     let caps = snapshot_media_caps(&app_ctx, &model, params.max_seq_len);
     let tool_schemas: Vec<serde_json::Value> = collect_active_tool_schemas(&app_ctx, &turn.chat);
@@ -1059,25 +1057,20 @@ pub fn schedule_tokenize() {
     }
 
     let ctx_clone = ctx.clone();
-    let tok = model.clone();
+    let tok = model.token_counter();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));
         if ctx_clone.input_tok_gen.load(Ordering::Relaxed) != gen {
             return; // устарел
         }
-        match tok.tokenizer.encode(&text) {
-            Ok(ids) => {
-                let count = ids.len();
-                let ctx2 = ctx_clone.clone();
-                run_on_main_thread(move || {
-                    if ctx2.input_tok_gen.load(Ordering::Relaxed) == gen {
-                        ctx2.input_tokens.set_always(count);
-                    }
-                });
-            }
-            Err(e) => {
-                eprintln!("[syn_chat] tokenize error: {e:#}");
-            }
+        // Токены считает служба токенизатором модели.
+        if let Some(count) = tok.count(&text) {
+            let ctx2 = ctx_clone.clone();
+            run_on_main_thread(move || {
+                if ctx2.input_tok_gen.load(Ordering::Relaxed) == gen {
+                    ctx2.input_tokens.set_always(count);
+                }
+            });
         }
     });
 }
@@ -1268,7 +1261,7 @@ async fn rebuild_history(
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<HistoryItem>>();
     let ctx_main = ctx.clone();
     let sp = system_prompt.to_string();
-    let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let channel = model.channel;
     let chat_id = chat_id.clone();
     run_on_main_thread(move || {
         // История собирается из открытой ленты — только если это чат хода.
@@ -1541,7 +1534,7 @@ async fn run_agent_loop(
         loop_retried = false;
         let turn_decode_s = gen.decode_ms as f64 / 1000.0;
         let tokens_this_turn = gen.tokens as u32;
-        let channel_mode = ChannelIds::detect(&model.tokenizer).is_some();
+        let channel_mode = model.channel;
         // Имя приводим к ключу каталога сразу: дальше оно идёт и в историю, и
         // в guard, и в политику подтверждений, и в UI.
         let raw_calls: Vec<RawToolCall> = gen
@@ -3010,66 +3003,6 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(declared_tool_labels(&keys), ["bash", "notes"]);
-    }
-
-    /// Сквозной рендер шаблона Gemma-4 с настоящими схемами инструментов и
-    /// историей «вызов → результат»: объявления в системном ходе, вызов в
-    /// нотации `call:notes{…}` со строками в `<|"|>`, ответ инструмента в
-    /// `<|tool_response>`. Нужен бандл — запускать вручную:
-    /// `cargo test --release --lib gemma4_template_round_trip -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn gemma4_template_round_trip() {
-        use synaptix_tokenizer::templates::chat_template::RenderOptions;
-        use synaptix_tokenizer::{ChatTemplate, Message as TokMessage, MessageRole};
-        use synaptix_tokenizer::{ToolCall as TokToolCall, ToolCallFunction as TokToolCallFunction};
-
-        let bundle = std::path::Path::new("/home/master/Storage/Нейросети/Модели/gemma-4-26b-a4b-it.syn");
-        let Some(src) = synaptix::facade::arch::read_model_file(bundle, "chat_template.jinja") else {
-            eprintln!("нет бандла {} — пропуск", bundle.display());
-            return;
-        };
-        let tmpl = ChatTemplate::from_source(String::from_utf8(src).unwrap());
-        let tools: Vec<serde_json::Value> = ["notes", "bash"]
-            .iter()
-            .map(|k| serde_json::to_value(Tool::by_key(k).unwrap().to_chat_tool()).unwrap())
-            .collect();
-        let args = r#"{"action":"read","page":"Моя Жизнь","blocks":true,"limit":3}"#;
-        let msgs = vec![
-            TokMessage::system("Ты ассистент."),
-            TokMessage::user("прочитай все заметки"),
-            TokMessage::assistant_with_reasoning(
-                "",
-                None,
-                vec![TokToolCall {
-                    id: None,
-                    call_type: "function".into(),
-                    function: TokToolCallFunction { name: "notes".into(), arguments: args.into() },
-                }],
-            ),
-            TokMessage {
-                role: MessageRole::Tool,
-                content: "# Моя Жизнь\n- пункт".into(),
-                name: Some("notes".into()),
-                tool_call_id: None,
-                tool_calls: Vec::new(),
-                reasoning_content: None,
-            },
-        ];
-        let opts = RenderOptions::new()
-            .with_generation_prompt(true)
-            .with_var("enable_thinking", serde_json::Value::Bool(false))
-            .with_var("tools", serde_json::Value::Array(tools));
-        let out = tmpl.render(&msgs, &opts).expect("render");
-        eprintln!("{out}");
-        assert!(out.contains("<|tool>declaration:notes{"), "объявление notes");
-        assert!(out.contains("<|tool>declaration:bash{"), "объявление bash");
-        assert!(
-            out.contains("<|tool_call>call:notes{action:<|\"|>read<|\"|>,blocks:true,limit:3,page:<|\"|>Моя Жизнь<|\"|>}<tool_call|>"),
-            "вызов в нотации Gemma: {out}"
-        );
-        assert!(out.contains("<|tool_response>response:notes{value:<|\"|># Моя Жизнь\n- пункт<|\"|>}<tool_response|>"), "ответ инструмента");
-        assert!(out.ends_with("<tool_response|>"), "после результата модель продолжает ход без заголовка: {out:?}");
     }
 
     fn queued(id: u64, chat: &str) -> QueuedMsg {

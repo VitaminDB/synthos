@@ -14,8 +14,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use synaptix::facade::embedding::Embedder;
-use synaptix::facade::rerank::Reranker;
+use crate::kb::service::{Embedder, Reranker};
 use syngui::prelude::{use_signal, RwSignal};
 
 use super::collection::CollectionRegistry;

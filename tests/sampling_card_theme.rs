@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use synaptix::facade::llm::{ReasoningLevels, ReasoningVar, SamplingPreset, SamplingProfile};
+use synthos::syn_chat::params::{SamplingPreset, SamplingProfile};
 use syngui::core::Color;
 use syngui::prelude::*;
 use syngui::testing::*;
@@ -37,8 +37,8 @@ fn luma(c: Color) -> f32 {
 
 /// Профиль Qwen3.8: два пресета и три уровня размышлений.
 fn qwen38_profile() -> SamplingProfile {
-    let preset = |id, thinking, temperature, top_p, presence_penalty| SamplingPreset {
-        id,
+    let preset = |id: &str, thinking, temperature, top_p, presence_penalty| SamplingPreset {
+        id: id.into(),
         thinking: Some(thinking),
         temperature,
         top_p,
@@ -52,11 +52,9 @@ fn qwen38_profile() -> SamplingProfile {
             preset("thinking", true, 1.0, 0.95, 0.0),
             preset("instruct", false, 0.7, 0.8, 1.5),
         ],
-        reasoning: Some(ReasoningLevels {
-            var: ReasoningVar::Effort,
-            levels: vec!["low".into(), "medium".into(), "xhigh".into()],
-            default: "xhigh".into(),
-        }),
+        reasoning_levels: vec!["low".into(), "medium".into(), "xhigh".into()],
+        reasoning_default: Some("xhigh".into()),
+        ..Default::default()
     }
 }
 

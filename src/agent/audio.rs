@@ -1,6 +1,5 @@
 //! Подсистема голосового ввода: запись с микрофона через
-//! [`syngui::audio::RecordingSession`] + локальная транскрипция через
-//! [`synaptix::facade::asr::Transcriber`] (synaptix, без llama-server).
+//! [`syngui::audio::RecordingSession`] + распознавание в службе synaptixd.
 //!
 //! ## UI-flow
 //!
@@ -111,7 +110,7 @@ impl AudioCtx {
         let session = RecordingSession::new(RecordingOptions {
             decode_on_stop: false,
             // open_stream_on_start: true — задел под streaming-ASR, который
-            // в следующей итерации (см. synaptix::facade::asr::stream) будет подписываться
+            // в следующей итерации (см. agent::streaming_asr) будет подписываться
             // на тот же поток PCM без дополнительной перезаписи.
             open_stream_on_start: true,
             ..Default::default()

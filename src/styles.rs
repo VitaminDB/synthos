@@ -75,7 +75,6 @@ const STYLES: &str = concat!(
         "\n",
         include_str!("../styles/components/settings_kb.mss"),
         "\n",
-        include_str!("../styles/components/training.mss"),
         "\n",
         include_str!("../styles/components/tool_messages.mss"),
         "\n",

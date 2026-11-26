@@ -152,8 +152,8 @@ async fn snapshot_from_main() -> Result<AugmentSnapshot, AugmentError> {
 /// дальше (поведение симметрично `chat::tools::kb_search`).
 fn merge_hits_across_collections(
     kb_dir: &std::path::Path,
-    embedder: &dyn synaptix::facade::embedding::Embedder,
-    reranker: Option<&(dyn synaptix::facade::rerank::Reranker + Send + Sync)>,
+    embedder: &dyn crate::kb::service::Embedder,
+    reranker: Option<&(dyn crate::kb::service::Reranker + Send + Sync)>,
     collections: &[(String, String)],
     query: &str,
     per_collection_k: usize,

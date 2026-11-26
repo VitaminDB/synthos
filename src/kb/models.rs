@@ -10,19 +10,18 @@
 //!    тот же путь с дописанным `.syn` — старый дефолт был каталогом
 //!    `~/models/bge-m3`, а упакованная модель лежит рядом как `bge-m3.syn`;
 //! 2. известные имена в каталогах поиска (`bge-m3.syn`, каталог `bge-m3`);
-//! 3. любой `.syn` с подходящими `purpose` и `arch` в метаданных — бандл
-//!    могли переименовать.
+//! 3. модель того же вида (эмбеддер, реранкер) архитектуры XLM-RoBERTa из
+//!    библиотеки службы synaptixd — бандл могли переименовать или положить в
+//!    другую библиотеку.
 //!
-//! Шаг 3 открывает каждый бандл каталога (~10 мс на файл), поэтому весь
-//! поиск зовут с рабочего потока, а не из отрисовки.
+//! Поиск читает диск и спрашивает службу, поэтому его зовут с рабочего
+//! потока, а не из отрисовки.
 
 use std::path::{Path, PathBuf};
 
-use synaptix_bundle::Bundle;
-
 use crate::config::KbConfig;
 
-/// Архитектура, которую умеет нативный BGE-стек synaptix.
+/// Архитектура моделей BGE (эмбеддер и реранкер базы знаний).
 const ARCH: &str = "xlm-roberta";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,11 +47,11 @@ impl ModelKind {
         }
     }
 
-    /// Значения `BundleMeta.purpose`, под которыми пакуют такую модель.
-    fn purposes(self) -> &'static [&'static str] {
+    /// Вид модели в библиотеке службы.
+    fn service_kind(self) -> synaptixd::ModelKind {
         match self {
-            Self::Embedder => &["embed", "embedding", "embedder"],
-            Self::Reranker => &["reranker", "rerank"],
+            Self::Embedder => synaptixd::ModelKind::Embed,
+            Self::Reranker => synaptixd::ModelKind::Rerank,
         }
     }
 
@@ -97,18 +96,36 @@ impl ModelPaths {
     }
 }
 
+/// Модель библиотеки службы: (вид, архитектура, файл).
+pub type ServiceModel = (synaptixd::ModelKind, String, PathBuf);
+
+/// Модели базы знаний в библиотеке службы (пусто — служба не отвечает).
+fn service_models() -> Vec<ServiceModel> {
+    let Ok(list) = synaptixd::Client::connect().and_then(|mut c| c.list()) else { return Vec::new() };
+    list.into_iter()
+        .filter(|m| matches!(m.kind, synaptixd::ModelKind::Embed | synaptixd::ModelKind::Rerank) && !m.path.is_empty())
+        .map(|m| (m.kind, m.arch, PathBuf::from(m.path)))
+        .collect()
+}
+
 /// Найти обе модели. `dirs` — каталоги поиска по убыванию приоритета
-/// (первым — `models_dir`). Читает диск: звать с рабочего потока.
+/// (первым — `models_dir`). Читает диск и спрашивает службу: звать с
+/// рабочего потока.
 pub fn discover(cfg: &KbConfig, dirs: &[PathBuf]) -> ModelPaths {
+    let service = service_models();
     ModelPaths {
-        embedder: find(ModelKind::Embedder, cfg, dirs),
-        reranker: find(ModelKind::Reranker, cfg, dirs),
+        embedder: find_with(ModelKind::Embedder, cfg, dirs, &service),
+        reranker: find_with(ModelKind::Reranker, cfg, dirs, &service),
         searched: dirs.to_vec(),
     }
 }
 
 /// Найти одну модель; порядок — в шапке модуля.
 pub fn find(kind: ModelKind, cfg: &KbConfig, dirs: &[PathBuf]) -> Option<FoundModel> {
+    find_with(kind, cfg, dirs, &service_models())
+}
+
+fn find_with(kind: ModelKind, cfg: &KbConfig, dirs: &[PathBuf], service: &[ServiceModel]) -> Option<FoundModel> {
     let configured = kind.configured(cfg).trim();
     if !configured.is_empty() {
         let raw = expand_home(configured);
@@ -127,27 +144,14 @@ pub fn find(kind: ModelKind, cfg: &KbConfig, dirs: &[PathBuf]) -> Option<FoundMo
             }
         }
     }
-    dirs.iter()
-        .find_map(|dir| find_by_meta(kind, dir))
-        .map(|p| found(p, FoundBy::Discovery))
-}
-
-/// Перебор бандлов каталога по метаданным — имя файла не важно.
-fn find_by_meta(kind: ModelKind, dir: &Path) -> Option<PathBuf> {
-    let mut bundles: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("syn") && p.is_file())
+    // Библиотека службы: модель того же вида и архитектуры BGE.
+    let mut of_kind: Vec<&PathBuf> = service
+        .iter()
+        .filter(|(k, arch, p)| *k == kind.service_kind() && arch.replace('_', "-").eq_ignore_ascii_case(ARCH) && is_model(p))
+        .map(|(_, _, p)| p)
         .collect();
-    // Порядок read_dir не определён — сортируем, чтобы выбор был стабильным.
-    bundles.sort();
-    bundles.into_iter().find(|path| {
-        Bundle::open(path).is_ok_and(|b| {
-            let meta = b.meta();
-            meta.arch == ARCH && kind.purposes().contains(&meta.purpose.as_str())
-        })
-    })
+    of_kind.sort();
+    of_kind.first().map(|p| found((*p).clone(), FoundBy::Discovery))
 }
 
 /// Файл-бандл либо каталог-снапшот с `config.json`.
@@ -177,22 +181,9 @@ fn expand_home(raw: &str) -> PathBuf {
     }
 }
 
-/// `tokenizer.json` модели — чанкеру нужен тот же словарь, что у эмбеддера.
-pub fn read_tokenizer_json(model: &Path) -> Result<Vec<u8>, String> {
-    if model.is_dir() {
-        return std::fs::read(model.join("tokenizer.json")).map_err(|e| e.to_string());
-    }
-    let bundle = Bundle::open(model).map_err(|e| e.to_string())?;
-    bundle
-        .read_file("tokenizer.json")
-        .map(|c| c.into_owned())
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synaptix_bundle::{BundleBuilder, FileTag};
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -207,14 +198,8 @@ mod tests {
         dir
     }
 
-    fn write_bundle(path: &Path, purpose: &str, arch: &str) {
-        BundleBuilder::new("test", "1")
-            .arch(arch)
-            .purpose(purpose)
-            .add_file_bytes("tokenizer.json", b"{}".to_vec(), FileTag::Inference)
-            .unwrap()
-            .write(path)
-            .unwrap();
+    fn write_bundle(path: &Path) {
+        std::fs::write(path, b"syn-test").unwrap();
     }
 
     fn cfg(embedder: &str, reranker: &str) -> KbConfig {
@@ -228,7 +213,7 @@ mod tests {
     #[test]
     fn stale_config_path_falls_back_to_models_dir() {
         let dir = temp_dir("stale");
-        write_bundle(&dir.join("bge-m3.syn"), "embed", ARCH);
+        write_bundle(&dir.join("bge-m3.syn"));
         let found = find(
             ModelKind::Embedder,
             &cfg("/nonexistent/models/bge-m3", ""),
@@ -243,7 +228,7 @@ mod tests {
     #[test]
     fn configured_dir_path_resolves_to_sibling_bundle() {
         let dir = temp_dir("sibling");
-        write_bundle(&dir.join("bge-m3.syn"), "embed", ARCH);
+        write_bundle(&dir.join("bge-m3.syn"));
         let configured = dir.join("bge-m3");
         let found = find(
             ModelKind::Embedder,
@@ -256,33 +241,28 @@ mod tests {
     }
 
     #[test]
-    fn renamed_bundle_found_by_meta_and_kinds_not_mixed() {
+    fn renamed_bundle_found_in_service_and_kinds_not_mixed() {
         let dir = temp_dir("meta");
-        write_bundle(&dir.join("a-my-embedder.syn"), "embed", ARCH);
-        write_bundle(&dir.join("b-my-reranker.syn"), "reranker", ARCH);
-        // Эмбеддер чужой архитектуры BGE-стек не загрузит — не берём.
-        write_bundle(&dir.join("0-qwen3-embedding.syn"), "embed", "qwen3");
-        let paths = discover(&cfg("", ""), std::slice::from_ref(&dir));
-        assert_eq!(paths.embedder.unwrap().path, dir.join("a-my-embedder.syn"));
-        assert_eq!(paths.reranker.unwrap().path, dir.join("b-my-reranker.syn"));
+        let (emb, rer, other) = (dir.join("a-my-embedder.syn"), dir.join("b-my-reranker.syn"), dir.join("0-qwen3-embedding.syn"));
+        for p in [&emb, &rer, &other] {
+            write_bundle(p);
+        }
+        let service = vec![
+            // Эмбеддер чужой архитектуры BGE-стек не загрузит — не берём.
+            (synaptixd::ModelKind::Embed, "qwen3".to_string(), other.clone()),
+            (synaptixd::ModelKind::Embed, "xlm-roberta".to_string(), emb.clone()),
+            (synaptixd::ModelKind::Rerank, "xlm_roberta".to_string(), rer.clone()),
+        ];
+        let c = cfg("", "");
+        assert_eq!(find_with(ModelKind::Embedder, &c, &[], &service).unwrap().path, emb);
+        assert_eq!(find_with(ModelKind::Reranker, &c, &[], &service).unwrap().path, rer);
     }
 
     #[test]
     fn nothing_found_reports_searched_dirs() {
         let dir = temp_dir("empty");
-        let paths = discover(&cfg("", ""), std::slice::from_ref(&dir));
-        assert!(paths.embedder.is_none() && paths.reranker.is_none());
-        assert_eq!(paths.searched, vec![dir]);
-    }
-
-    #[test]
-    fn tokenizer_json_read_from_bundle_and_dir() {
-        let dir = temp_dir("tok");
-        write_bundle(&dir.join("bge-m3.syn"), "embed", ARCH);
-        assert_eq!(read_tokenizer_json(&dir.join("bge-m3.syn")).unwrap(), b"{}");
-        let snap = dir.join("snap");
-        std::fs::create_dir_all(&snap).unwrap();
-        std::fs::write(snap.join("tokenizer.json"), b"[]").unwrap();
-        assert_eq!(read_tokenizer_json(&snap).unwrap(), b"[]");
+        let c = cfg("", "");
+        assert!(find_with(ModelKind::Embedder, &c, std::slice::from_ref(&dir), &[]).is_none());
+        assert!(find_with(ModelKind::Reranker, &c, std::slice::from_ref(&dir), &[]).is_none());
     }
 }

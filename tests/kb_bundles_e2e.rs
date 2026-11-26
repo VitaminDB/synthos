@@ -6,8 +6,9 @@
 //! `~/models/bge-m3` (каталога нет), бандлы лежали в каталоге из «AI модели»,
 //! а загрузчик требовал каталог-снапшот и говорил «скачай BGE-M3».
 //!
-//! Бандлы — в `KB_MODELS_DIR` (по умолчанию `~/Storage/Нейросети/Модели`); нет файлов —
-//! тест пропускается. Считает на CPU (~10 с).
+//! Бандлы — в `KB_MODELS_DIR` (по умолчанию `~/Storage/syn_models`); нет файлов
+//! или не запущена служба synaptixd — тест пропускается. Эмбеддинги, реранк и
+//! границы токенов считает служба.
 //!
 //! ```text
 //! cargo test --features testing --release --test kb_bundles_e2e -- --nocapture
@@ -19,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use synaptix_rag::doc::ChunkConfig;
+use synthos::kb::doc::ChunkConfig;
 use synthos::config::KbConfig;
 use synthos::kb::ingest::pipeline::{self, IngestJob};
 use synthos::kb::ingest::source::DocSource;
@@ -41,8 +42,11 @@ async fn stale_config_path_bundles_load_index_and_search() {
         eprintln!("skip: нет бандлов в {}", dir.display());
         return;
     }
+    if synaptixd::Client::connect().is_err() {
+        eprintln!("skip: служба synaptixd не запущена");
+        return;
+    }
     syngui::signal::allow_signal_reads_on_this_thread();
-    synaptix_kernels_cpu::ensure_registered();
 
     let work = std::env::temp_dir().join(format!("synthos-kb-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
@@ -81,10 +85,9 @@ async fn stale_config_path_bundles_load_index_and_search() {
     let reranker = loader::reranker_ready(&kb, &plan).await.expect("реранкер из бандла");
     assert!(reranker.is_some());
 
-    // Токенайзер чанкера — из того же бандла.
+    // Границы токенов чанкеру — от службы, по словарю того же эмбеддера.
     let model = models::find(ModelKind::Embedder, &plan.cfg, &plan.dirs).unwrap();
-    let tokenizer =
-        tokenizers::Tokenizer::from_bytes(models::read_tokenizer_json(&model.path).unwrap()).unwrap();
+    let tokenizer = synthos::kb::service::ServiceTokenizer::new(&model.path);
 
     let mut registry = synthos::kb::CollectionRegistry::new(work.join("kb"));
     let meta = registry.create("e2e".into(), "bge-m3".into(), 1024, 512, 64).unwrap();

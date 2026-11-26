@@ -3,7 +3,7 @@
 //! Связывает реактивный [`KbCtx`] с pipeline'ом из `kb::ingest`:
 //! - Берёт эмбеддер через `loader::embedder_ready` — не загружен, значит
 //!   грузится здесь же; пользователь не обязан помнить про кнопку.
-//! - Читает tokenizer.json модели (из бандла или каталога), открывает
+//! - Берёт границы токенов у службы (токенизатор эмбеддера), открывает
 //!   [`Store`] коллекции.
 //! - Спавнит async pipeline через `tokio::task::spawn_blocking` и
 //!   публикует прогресс в `KbCtx.ingest_progress` через `run_on_main_thread`.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use syngui::async_runtime::{run_on_main_thread, spawn};
 use syngui::widgets::feedback::NotificationCtx;
 use syngui::{tr, trn};
-use synaptix_rag::doc::ChunkConfig;
+use crate::kb::doc::ChunkConfig;
 
 use crate::kb::ctx::KbCtx;
 use crate::kb::ingest::pipeline::{self, IngestJob, IngestOutcome, IngestProgress, IngestStage};
@@ -96,19 +96,19 @@ pub fn start(
         };
         let embedding_dim = embedder.dim();
 
-        // Tokenizer нужен chunker'у — тот же tokenizer.json, что у эмбеддера.
+        // Нарезке нужны границы токенов того же словаря, что у эмбеддера:
+        // их считает служба по токенизатору модели.
         let plan_tok = plan.clone();
         let tokenizer = tokio::task::spawn_blocking(move || {
-            let found = models::find(ModelKind::Embedder, &plan_tok.cfg, &plan_tok.dirs)
-                .ok_or_else(|| "model file disappeared".to_string())?;
-            let bytes = models::read_tokenizer_json(&found.path)?;
-            tokenizers::Tokenizer::from_bytes(&bytes).map_err(|e| e.to_string())
+            models::find(ModelKind::Embedder, &plan_tok.cfg, &plan_tok.dirs)
+                .map(|found| crate::kb::service::ServiceTokenizer::new(&found.path))
+                .ok_or_else(|| "model file disappeared".to_string())
         })
         .await
         .map_err(|e| e.to_string())
         .and_then(|r| r);
-        let tokenizer = match tokenizer {
-            Ok(t) => t,
+        let tokenizer: Box<dyn crate::kb::doc::TokenSpans + Send> = match tokenizer {
+            Ok(t) => Box::new(t),
             Err(e) => return fail(tr!("kb.runner.tokenizer_error", error = e)),
         };
 

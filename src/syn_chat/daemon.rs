@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use synaptix::facade::llm::Message;
+use crate::syn_chat::message::Message;
 
 use crate::syn_chat::params::SamplingParams;
 

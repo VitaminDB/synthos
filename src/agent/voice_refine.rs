@@ -12,12 +12,12 @@
 use syngui::tr;
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
-use synaptix::facade::llm::Message;
+use crate::syn_chat::message::Message;
 
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::params::SamplingParams;
-use crate::syn_chat::state::{SynChatCtx, ThinkParser};
+use crate::syn_chat::state::{strip_thinking, SynChatCtx};
 
 /// Низкая температура для детерминированной корректуры. На выходе нужна
 /// аккуратная редакция, а не «креатив».
@@ -121,7 +121,5 @@ fn run_refine(model: &LoadedSynModel, system: &str, user: &str) -> anyhow::Resul
     })?;
     // enable_thinking=false, но защитно вырезаем `<think>…</think>`, если
     // шаблон всё же их выдал.
-    let mut tp = ThinkParser::new();
-    let split = tp.feed(&g.text);
-    Ok(split.body.trim().to_string())
+    Ok(strip_thinking(&g.text))
 }

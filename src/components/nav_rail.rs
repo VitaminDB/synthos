@@ -9,9 +9,6 @@
 //! │ AB │  скроллятся, если не влезают
 //! │ ─  │
 //! │ +  │  меню: Редактор кода · Терминал · Чат · Группа · Разделитель
-//! │    │
-//! │ ▣  │  «Модели» — программа synshell (Hugging Face и пакеты .syn)
-//! │ ⚗  │  Обучение (+ бейдж задач)
 //! │────│
 //! │ 文 │  язык интерфейса
 //! │────│
@@ -60,19 +57,9 @@ struct Item {
     tooltip_key: &'static str,
 }
 
-const FOOTER_UTILITY: &[Item] = &[
-    // Не маршрут: запуск программы «Модели» synshell (`syn-models`).
-    Item { icon: MI_INVENTORY_2,    route: MODELS_APP,      tooltip_key: "nav.models" },
-    Item { icon: MI_MODEL_TRAINING, route: "training",      tooltip_key: "nav.training" },
-];
-
 const FOOTER_SETTINGS: &[Item] = &[
     Item { icon: MI_SETTINGS,       route: "settings",      tooltip_key: "nav.settings" },
 ];
-
-/// Псевдо-маршрут пункта «Модели»: Hugging Face и пакеты .syn переехали в
-/// отдельную программу synshell, пункт её запускает.
-const MODELS_APP: &str = "@syn-models";
 
 /// `drag_type` перетаскивания плиток — свой, чтобы DropArea рейла не
 /// реагировала на drop'ы из других мест (вкладки открытых файлов).
@@ -101,16 +88,15 @@ fn top_cluster() -> impl Widget {
     }
 }
 
-/// Футер снизу вверх: настройки — разделитель — язык — разделитель —
-/// утилиты («Модели», обучение). Аватара пользователя нет.
+/// Футер снизу вверх: настройки — разделитель — язык. Аватара пользователя
+/// нет. «Модели» (Hugging Face, пакеты .syn, обучение) — отдельная программа
+/// synshell: её открывают из настроек, поиска и карточки адаптеров чата.
 fn bottom_cluster() -> impl Widget {
     mgui! {
         Column::new()
             .gap(8.0)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .class("nav-rail-footer") => [
-                DecoratedBox::new().class("nav-rail-divider"),
-                rail_column(FOOTER_UTILITY),
                 DecoratedBox::new().class("nav-rail-divider"),
                 language_button(),
                 DecoratedBox::new().class("nav-rail-divider"),
@@ -157,28 +143,14 @@ fn rail_column(items: &'static [Item]) -> impl Widget {
         .cross_axis_alignment(CrossAxisAlignment::Center);
     for it in items {
         let item = *it;
-        if item.route == MODELS_APP {
-            col = col.child(move || models_app_item(item));
-        } else if item.route == "training" {
-            col = col.child(move || training_rail_item(item));
-        } else {
-            col = col.child(move || rail_item(item));
-        }
+        col = col.child(move || rail_item(item));
     }
     col
 }
 
-/// Пункт «Модели»: запускает программу synshell `syn-models` (Hugging Face,
-/// пакеты .syn). Нет программы — уведомление, а не тихий отказ.
-fn models_app_item(it: Item) -> impl Widget {
-    ToolButton::new(it.icon)
-        .tooltip(tr!(it.tooltip_key))
-        .on_click(|| launch_models_app(None))
-        .class("nav-rail-item")
-}
-
 /// Запустить «Модели» synshell; `page` — раздел (`huggingface`, `library`,
-/// `settings`), с которого открыть окно.
+/// `settings`, `training`), с которого открыть окно. Нет программы —
+/// уведомление, а не тихий отказ.
 pub fn launch_models_app(page: Option<&str>) {
     let mut cmd = std::process::Command::new("syn-models");
     if let Some(page) = page {
@@ -192,24 +164,6 @@ pub fn launch_models_app(page: Option<&str>) {
     {
         use_context::<AppCtx>().notifications.error(tr!("nav.models.missing", error = e.to_string()));
     }
-}
-
-/// Пункт «Обучение»: бейдж — число идущих и ждущих задач в службе.
-fn training_rail_item(it: Item) -> impl Widget {
-    let app = use_context::<AppCtx>();
-    let is_selected = app.current_route.get() == it.route;
-    let class = if is_selected { "nav-rail-item selected" } else { "nav-rail-item" };
-    let route = it.route;
-    let btn = ToolButton::new(it.icon)
-        .tooltip(tr!(it.tooltip_key))
-        .on_click(move || rail::navigate(route))
-        .class(class);
-    let count = use_context::<crate::pages::training::TrainingCtx>().active_jobs();
-    let mut stack = Stack::new().child(btn);
-    if count > 0 {
-        stack = stack.child(Positioned::new(Badge::new(count.to_string()).small()).at(22.0, -2.0));
-    }
-    stack
 }
 
 fn rail_item(it: Item) -> impl Widget {

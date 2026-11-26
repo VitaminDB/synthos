@@ -281,7 +281,7 @@ fn fit_document(text: &str, budget: &DocBudget, path: &str) -> String {
 /// Парсинг документа: markdown/html/pdf разбираются синаптиксовым
 /// doc-парсером, всё остальное читается как UTF-8-текст.
 fn read_document(path: &Path) -> Result<String, String> {
-    use synaptix_rag::doc::{parse, SourceKind};
+    use crate::kb::doc::{parse, SourceKind};
     let bytes = std::fs::read(path).map_err(|e| format!("чтение: {e}"))?;
     match SourceKind::from_path(path) {
         Some(kind) => parse(&bytes, kind).map(|d| d.plain_text),

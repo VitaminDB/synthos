@@ -32,16 +32,16 @@ use std::time::{Duration, Instant};
 
 use syngui::async_runtime::run_on_main_thread;
 use syngui::context_provider::use_context;
-use synaptix::facade::llm::Message;
+use crate::syn_chat::message::Message;
 
 use crate::agent::schema::{ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::context::AppCtx;
 use crate::syn_chat::model_registry::{LoadedSynModel, SynModelRegistry};
 use crate::syn_chat::chat_settings::ChatSettings;
 use crate::syn_chat::params::SamplingParams;
-use crate::syn_chat::channel_parser::{self, ChannelIds};
+use crate::syn_chat::channel_parser;
 use crate::syn_chat::session::assistant_turn_message;
-use crate::syn_chat::state::{SynChatCtx, ThinkParser};
+use crate::syn_chat::state::SynChatCtx;
 use crate::syn_chat::telemetry::{self, RunKind, RunState};
 use crate::syn_chat::tool_parser::RawToolCall;
 
@@ -604,7 +604,7 @@ fn generate_subagent_turn(
     let (run_id, gen_before) = run;
     // Ход в службе. Своя KV-сессия субагента (ключ — его id): кэш чата
     // родителя в это время лежит в RAM службы и вернётся следующим ходом.
-    let channel = ChannelIds::detect(&model.tokenizer).is_some();
+    let channel = model.channel;
     let call = crate::syn_chat::daemon::params(params, Some(&format!("subagent/{id}")));
     let stop: Arc<dyn Fn() -> bool + Send + Sync> = {
         let abort = abort.clone();
@@ -696,9 +696,7 @@ fn push_live_stats(
 /// Вырезает `<think>…</think>` из финального текста — родителю уходит только
 /// чистый ответ.
 fn strip_thinking(raw: &str) -> String {
-    let mut tp = ThinkParser::new();
-    let split = tp.feed(raw);
-    split.body.trim().to_string()
+    crate::syn_chat::state::strip_thinking(raw)
 }
 
 /// Поллер «дождаться abort» — оборачивается в `tokio::select!`, чтобы прервать

@@ -53,7 +53,7 @@ pub const USAGE: &str = "\
                                             (ключ, pid, подключена ли вкладка, папка, заголовок)
   synthos --screenshot <png> [--page <страница>[/<раздел>]] [--size ШxВ] [--scale N]
                                             снимок окна в PNG без показа окна: страница
-                                            syn_chat (по умолчанию) | code | training |
+                                            syn_chat (по умолчанию) | code |
                                             settings[/general|themes|skills|audio_models|
                                             ai_models|knowledge_base|archive|about]
   synthos --help | --version

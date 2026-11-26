@@ -1,21 +1,21 @@
 //! Модель чата — языковая модель службы synaptixd: веса, KV-кэш и
-//! генерация живут там (`syn_chat::daemon`). Здесь — открытая служба
-//! (соединение держит модель загруженной), токенизатор и шаблон бандла для
-//! подсчёта токенов и сборки истории, сведения о модели.
+//! генерация живут там (`syn_chat::daemon`), токены считает её токенизатор.
+//! Здесь — открытая служба (соединение держит модель загруженной) и сведения
+//! о модели.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use syngui::core::sync::Mutex;
+use std::sync::Mutex;
 use syngui::prelude::*;
-use synaptix::facade::llm::{LlmTokenizer, SamplingProfile};
+use crate::syn_chat::params::SamplingProfile;
 
 pub struct LoadedSynModel {
     /// Id модели в библиотеке службы.
     pub id: String,
-    /// Под `Arc`, чтобы счётчики токенов (`tools::budget::model_counter`)
-    /// держали только токенизатор.
-    pub tokenizer: Arc<LlmTokenizer>,
+    /// Канальный формат реплик (Muse Glimmer): история ассистента
+    /// пересобирается ATEM-блоком (`channel_parser`).
+    pub channel: bool,
     pub path: PathBuf,
     /// Модель принимает картинки и видео (у службы есть башня зрения).
     pub supports_media: bool,
@@ -27,6 +27,45 @@ pub struct LoadedSynModel {
     /// Соединение, открывшее модель: пока оно живо, служба держит её
     /// загруженной (закрылось — модель выгружается по простою).
     _hold: Mutex<synaptixd::Client>,
+}
+
+impl LoadedSynModel {
+    /// Счётчик токенов текста токенизатором модели в службе. Своё
+    /// соединение, не открывшее модель: счётчик живёт в бюджете хода и не
+    /// должен держать отпущенную модель загруженной.
+    pub fn token_counter(&self) -> TokenCounter {
+        TokenCounter { model: self.id.clone(), client: Arc::new(Mutex::new(None)) }
+    }
+
+    /// Токенов в тексте (`None` — служба не ответила).
+    pub fn count_tokens(&self, text: &str) -> Option<usize> {
+        self.token_counter().count(text)
+    }
+}
+
+/// Подсчёт токенов в службе; соединение открывается при первом подсчёте.
+#[derive(Clone)]
+pub struct TokenCounter {
+    model: String,
+    client: Arc<Mutex<Option<synaptixd::Client>>>,
+}
+
+impl TokenCounter {
+    pub fn count(&self, text: &str) -> Option<usize> {
+        let mut guard = self.client.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = synaptixd::Client::connect().ok();
+        }
+        let r = guard.as_mut()?.count_tokens(&self.model, &[text.to_string()]);
+        match r {
+            Ok(v) => v.first().copied(),
+            Err(e) => {
+                log::warn!("[syn_chat] подсчёт токенов в службе: {e}");
+                *guard = None;
+                None
+            }
+        }
+    }
 }
 
 /// Языковая модель из библиотеки службы — пункт списка выбора модели.
@@ -85,12 +124,16 @@ impl ServiceLlm {
 
 /// Список языковых моделей службы и модель по умолчанию; обновляется по
 /// событиям службы (подписка), без службы — повтор раз в 5 с.
-fn watch_service(models: RwSignal<Vec<ServiceLlm>>, default_id: RwSignal<Option<String>>, online: RwSignal<bool>) {
+fn watch_service(models: RwSignal<Vec<ServiceLlm>>, default_id: RwSignal<Option<String>>, loras: RwSignal<Vec<synaptixd::LoraEntry>>, online: RwSignal<bool>) {
     let fetch = move || -> synaptixd::Result<()> {
         let mut c = synaptixd::Client::connect()?;
         let list: Vec<ServiceLlm> = c.list()?.iter().filter_map(ServiceLlm::from_entry).collect();
         let def = c.defaults().ok().and_then(|d| d.into_iter().find(|d| d.kind == synaptixd::ModelKind::Llm)).and_then(|d| d.resolved.or(d.model));
+        let adapters = c.loras().unwrap_or_default();
         syngui::async_runtime::run_on_main_thread(move || {
+            if loras.get_untracked() != adapters {
+                loras.set(adapters);
+            }
             if models.get_untracked() != list {
                 models.set(list);
             }
@@ -107,7 +150,7 @@ fn watch_service(models: RwSignal<Vec<ServiceLlm>>, default_id: RwSignal<Option<
                 syngui::async_runtime::run_on_main_thread(move || online.set(true));
                 let sub = synaptixd::Client::connect().and_then(|c| {
                     c.subscribe(|ev| {
-                        if matches!(ev, synaptixd::Event::ModelsChanged | synaptixd::Event::ModelState { .. }) {
+                        if matches!(ev, synaptixd::Event::ModelsChanged | synaptixd::Event::ModelState { .. } | synaptixd::Event::LorasChanged) {
                             let _ = fetch();
                         }
                         true
@@ -140,6 +183,8 @@ pub struct SynModelRegistry {
     pub models: RwSignal<Vec<ServiceLlm>>,
     /// Модель чата по умолчанию в службе.
     pub default_id: RwSignal<Option<String>>,
+    /// Адаптеры LoRA библиотек службы (обучает их программа «Модели»).
+    pub loras: RwSignal<Vec<synaptixd::LoraEntry>>,
     /// Служба отвечает.
     pub online: RwSignal<bool>,
 }
@@ -157,15 +202,16 @@ impl SynModelRegistry {
             .filter(|p| p.exists());
         let sampling = use_signal(None);
         if let Some(path) = last.clone() {
-            // Открыть бандл — это прочитать его каталог чанков; на старте
-            // приложения это не повод ждать.
+            // Сведения служба отдаёт и о невыгруженной модели (по её файлам),
+            // но это запрос — на старте приложения не повод ждать.
             std::thread::spawn(move || {
-                let profile = synaptix::facade::llm::sampling_profile(&path);
-                sampling.set(Some(Arc::new(profile)));
+                if let Some(profile) = service_info(&path) {
+                    sampling.set(Some(Arc::new(profile)));
+                }
             });
         }
-        let (models, default_id, online) = (use_signal(Vec::new()), use_signal(None), use_signal(false));
-        watch_service(models, default_id, online);
+        let (models, default_id, loras, online) = (use_signal(Vec::new()), use_signal(None), use_signal(Vec::new()), use_signal(false));
+        watch_service(models, default_id, loras, online);
         Self {
             current: use_signal(None),
             loading: use_signal(false),
@@ -174,6 +220,7 @@ impl SynModelRegistry {
             sampling,
             models,
             default_id,
+            loras,
             online,
         }
     }
@@ -243,17 +290,26 @@ fn open_in_service(path: &std::path::Path) -> std::result::Result<LoadedSynModel
     let opened = c.open(&file).map_err(svc)?;
     let id = opened.entry.id.clone();
     let info = c.llm_info(&id).map_err(svc)?;
-    let tokenizer = synaptix::facade::llm::load_llm_tokenizer(path).map_err(|e| format!("токенизатор {}: {e}", path.display()))?;
-    let sampling = synaptix::facade::llm::sampling_profile(path);
+    // Канальная модель — все служебные токены формата в её словаре по одному.
+    let marks: Vec<String> = crate::syn_chat::channel_parser::CHANNEL_TOKENS.iter().map(|t| t.to_string()).collect();
+    let channel = c.count_tokens(&id, &marks).map(|n| n.iter().all(|&n| n == 1)).unwrap_or(false);
     Ok(LoadedSynModel {
         id,
-        tokenizer: Arc::new(tokenizer),
+        channel,
         path: path.to_path_buf(),
         supports_media: info.media,
-        sampling,
         window: info.window,
+        sampling: info,
         _hold: Mutex::new(c),
     })
+}
+
+/// Пресеты сэмплинга и уровни размышлений модели по её файлу — из службы,
+/// без загрузки модели.
+fn service_info(path: &std::path::Path) -> Option<SamplingProfile> {
+    let mut c = synaptixd::Client::connect().ok()?;
+    let id = c.list().ok()?.into_iter().find(|m| std::path::Path::new(&m.path) == path).map(|m| m.id)?;
+    c.llm_info(&id).ok()
 }
 
 impl Default for SynModelRegistry {

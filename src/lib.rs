@@ -55,29 +55,12 @@ pub fn run_desktop() {
         "Synthos starting"
     );
 
-    // Регистрация backend'ов synaptix (CPU + CUDA) в глобальном registry.
-    // Это две вставки в диспетчерскую таблицу — CUDA-контекст не
-    // создаётся, `CudaBackend` unit-структура, — поэтому делать её на
-    // старте дёшево и безопасно.
-    //
-    // Раньше регистрация висела на каждом потребителе отдельно
-    // (`ensure_kernels_registered` в нодах LTX/H3/LLM/VoxCPM/ASR), и путь,
-    // который её не звал, падал на первом же `cast`: глобальный голосовой
-    // FAB грузил ASR через `agent::audio::load_selected_model` и получал
-    // «backend not registered for device Cpu — did you call
-    // synaptix::init()?». Одна регистрация на процесс убирает весь класс
-    // таких промахов; локальные вызовы идемпотентны и остаются как есть.
-    if let Err(e) = synaptix::init() {
-        tracing::error!(error = %e, "synaptix::init: регистрация backend'ов не удалась");
-    }
-
     // Регистрация sqlite-vec auto-extension: применяется глобально ко
     // всем последующим Connection'ам в процессе. Без feature
     // `kb-sqlite-vec` — no-op, KB остаётся на full-scan.
     kb::init_sqlite_vec();
 
-    // Движок нейросетей: системная служба synaptixd, если запущена, иначе
-    // тот же сервер внутри процесса — synthos работает и без службы.
+    // Движок нейросетей — системная служба synaptixd.
     engine::ensure();
 
     let (theme_mss, ctx) = build_context();
@@ -135,7 +118,6 @@ pub fn run_desktop() {
             pages::code_editor::terminal_activity::start_sampler(code_ctx);
             provide_context(syn_chat::SynChatCtx::new());
             provide_context(syn_chat::SynModelRegistry::new());
-            provide_context(pages::training::TrainingCtx::new());
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             // Сигнал версии реестра моделей: заводится с main-thread'а,
@@ -186,7 +168,6 @@ fn android_main(app: syngui::app::AndroidApp) {
             pages::code_editor::terminal_activity::start_sampler(code_ctx);
             provide_context(syn_chat::SynChatCtx::new());
             provide_context(syn_chat::SynModelRegistry::new());
-            provide_context(pages::training::TrainingCtx::new());
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
             // Сигнал версии реестра моделей: заводится с main-thread'а,
@@ -834,7 +815,6 @@ fn build_app() -> impl Widget {
     let routes = RouterView::new(top_router)
         .route("syn_chat", || Box::new(pages::syn_chat::view()))
         .route("code", || Box::new(pages::code_editor::view()))
-        .route("training", || Box::new(pages::training::view()))
         .route("settings", || Box::new(pages::settings::view()));
 
     // Padding и rounded окна управляются MSS-pseudo `:window-maximized`

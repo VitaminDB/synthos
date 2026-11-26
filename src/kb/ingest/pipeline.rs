@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use syngui::tr;
-use synaptix_rag::doc::{chunk, parse, ChunkConfig, SourceKind};
-use synaptix::facade::embedding::Embedder;
+use crate::kb::doc::{chunk, parse, ChunkConfig, SourceKind, TokenSpans};
+use crate::kb::service::Embedder;
 
 use super::source::DocSource;
 use crate::kb::store::{ChunkRow, DocumentRow, Store};
@@ -95,7 +95,7 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
     store: &mut Store,
     embedder: &dyn Embedder,
     chunk_cfg: &ChunkConfig,
-    tokenizer: &tokenizers::Tokenizer,
+    tokenizer: &dyn TokenSpans,
     embedding_dim: usize,
     mut report: F,
     fetch_url: Option<&dyn Fn(&str) -> Result<(String, String), String>>,
@@ -147,7 +147,7 @@ pub fn run_blocking<F: FnMut(IngestProgress)>(
                 // ai/kb feature всегда тянет doc-processing-folder, поэтому
                 // здесь нет cfg-gate. Если в будущем synthos соберут без kb —
                 // эта строчка не скомпилируется, что и нужно.
-                use synaptix_rag::doc::ignore::{walk, WalkConfig};
+                use crate::kb::doc::ignore::{walk, WalkConfig};
                 let mut cfg = WalkConfig::new(root);
                 cfg.extra_excludes = extra_excludes.clone();
                 for f in walk(&cfg) {
@@ -227,7 +227,7 @@ fn ingest_one(
     store: &mut Store,
     embedder: &dyn Embedder,
     chunk_cfg: &ChunkConfig,
-    tokenizer: &tokenizers::Tokenizer,
+    tokenizer: &dyn TokenSpans,
     embedding_dim: usize,
     fetch_url: Option<&dyn Fn(&str) -> Result<(String, String), String>>,
     mut stage: impl FnMut(IngestStage),
@@ -348,7 +348,7 @@ pub async fn run<F>(
     store: Store,
     embedder: Arc<dyn Embedder + Send + Sync>,
     chunk_cfg: ChunkConfig,
-    tokenizer: tokenizers::Tokenizer,
+    tokenizer: Box<dyn TokenSpans + Send>,
     embedding_dim: usize,
     on_progress: F,
     fetch_url: Option<Arc<dyn Fn(&str) -> Result<(String, String), String> + Send + Sync>>,
@@ -363,7 +363,7 @@ where
             &mut store,
             embedder.as_ref(),
             &chunk_cfg,
-            &tokenizer,
+            tokenizer.as_ref(),
             embedding_dim,
             on_progress,
             fetch_url.as_deref().map(|f| f as _),
@@ -413,7 +413,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod tests {
     use std::sync::atomic::AtomicBool;
 
-    use synaptix::facade::embedding::EmbeddingResult;
+    use crate::kb::service::EmbeddingResult;
 
     use super::*;
     use crate::kb::collection::CollectionMeta;
@@ -445,7 +445,7 @@ mod tests {
                     for (i, x) in v.iter_mut().enumerate() {
                         *x = ((seed + i as f32) % 7.0) / 7.0;
                     }
-                    let n = synaptix::facade::embedding::l2_norm(&v).max(1e-12);
+                    let n = crate::kb::service::l2_norm(&v).max(1e-12);
                     for x in v.iter_mut() {
                         *x /= n;
                     }
@@ -455,20 +455,28 @@ mod tests {
         }
     }
 
-    /// Пословный токенайзер: чанкеру нужны только offset'ы токенов.
-    fn tokenizer() -> tokenizers::Tokenizer {
-        const JSON: &str = r#"{
-            "version": "1.0",
-            "truncation": null,
-            "padding": null,
-            "added_tokens": [],
-            "normalizer": null,
-            "pre_tokenizer": { "type": "Whitespace" },
-            "post_processor": null,
-            "decoder": null,
-            "model": { "type": "WordLevel", "vocab": { "[UNK]": 0 }, "unk_token": "[UNK]" }
-        }"#;
-        tokenizers::Tokenizer::from_bytes(JSON.as_bytes()).unwrap()
+    /// Пословный токенайзер: чанкеру нужны только границы токенов.
+    struct Words;
+
+    impl TokenSpans for Words {
+        fn spans(&self, text: &str) -> Result<Vec<(usize, usize)>, String> {
+            let mut out = Vec::new();
+            let mut start = None;
+            for (i, c) in text.char_indices() {
+                match (c.is_whitespace(), start) {
+                    (true, Some(s)) => {
+                        out.push((s, i));
+                        start = None;
+                    }
+                    (false, None) => start = Some(i),
+                    _ => {}
+                }
+            }
+            if let Some(s) = start {
+                out.push((s, text.len()));
+            }
+            Ok(out)
+        }
     }
 
     fn store() -> Store {
@@ -509,7 +517,7 @@ mod tests {
             store,
             &StubEmbedder { fail },
             &cfg,
-            &tokenizer(),
+            &Words,
             DIM,
             |_| {},
             None,

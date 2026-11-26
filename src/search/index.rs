@@ -74,7 +74,6 @@ pub struct ModelEntry {
 const PAGES: &[(&str, &str, &str)] = &[
     ("syn_chat", "nav.syn_chat", MI_CHAT),
     ("code", "search.page.code", MI_CODE),
-    ("training", "nav.training", MI_MODEL_TRAINING),
     ("settings", "nav.settings", MI_SETTINGS),
 ];
 
@@ -104,7 +103,6 @@ fn page_keywords(route: &str) -> &'static [&'static str] {
             "editor",
             "terminal",
         ],
-        "training" => &["обучение", "дообучение", "lora", "лора", "адаптер", "датасет", "train", "finetune", "dataset"],
         "settings" => &["настройки", "параметры", "опции", "settings", "preferences"],
         _ => &[],
     }

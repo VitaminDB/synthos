@@ -2,8 +2,8 @@
 //!
 //! Эта модулька — оркестратор. Тяжёлая работа делится между:
 //! - `kb::store` (sqlite/FTS),
-//! - `synaptix_rag::doc` (parsing + chunking),
-//! - `synaptix::facade::embedding` (encode batches).
+//! - `kb::doc` (разбор и нарезка; границы токенов — от службы),
+//! - эмбеддер службы `kb::service` (векторы пачками).
 //!
 //! `IngestJob` — описание одной запущенной задачи, состоит из перечня
 //! [`source::DocSource`] и target collection_id. Прогресс публикуется

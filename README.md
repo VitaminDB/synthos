@@ -4,9 +4,9 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
 
 A local AI desktop studio written in Rust — an agentic chat client that also generates images,
-video, music and speech, a document knowledge base, a code editor with persistent terminals and
-LoRA training. Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
-engine: no Python, no torch, no cloud. It runs on any NVIDIA GPU from sm_80 (Ampere) up —
+video, music and speech, a document knowledge base and a code editor with persistent terminals.
+Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
+engine inside the system `synaptixd` service: no Python, no torch, no cloud. It runs on any NVIDIA GPU from sm_80 (Ampere) up —
 natively on Blackwell (sm_120+), through portable kernels on older cards — and loads models
 from `.syn` bundles in the precision you choose (NVFP4, MXFP8, SQ1…SQ8, dense) or chat
 models straight from GGUF. The UI is built with [syngui](https://github.com/VitaminDB/syngui).
@@ -28,15 +28,21 @@ synthos is one desktop app around a local GPU. A chat client runs 27B–125B mod
 single-file `.syn` bundles or GGUF files and drives the rest through tools: it generates
 images, video, music and speech with the `generate` tool, writes into your notes, searches
 your knowledge base, runs commands and reads the web. Next to the chat live a code editor
-with terminals that survive restarts, and LoRA training. Nothing leaves the machine.
+with terminals that survive restarts. Nothing leaves the machine.
 
 **What moved out.** synthos used to carry more modes; they now live elsewhere:
 
 - **Notes** — the separate [synshell](https://github.com/VitaminDB/synshell) app `syn-notes`.
   The agent's `notes` tool keeps working: synthos hands each call to `syn-notes` over its
   socket (starting it in the background if needed), and the edits show up in its window.
-- **Hugging Face browser and `.syn` packages** (download, pack, inspect, repack) — the synshell
-  app **Models** (`syn-models`). The rail button and **Settings → General → Models** open it.
+- **Hugging Face browser, `.syn` packages and LoRA training** (download, pack, inspect,
+  repack; datasets, training jobs, adapters) — the synshell app **Models** (`syn-models`),
+  tabs Hugging Face / Library / Settings / Training. **Settings → General → Models**, the
+  global search and the chat's LoRA card open it. Trained adapters are switched on per chat
+  in the chat's LoRA card, as before.
+- **The built-in engine** — synthos no longer links synaptix at all: chat, generation,
+  speech recognition, the knowledge base's embeddings, reranking and token boundaries are
+  requests to the `synaptixd` service (package `synaptix`). The app itself is a light client.
 - **The node editor (graphs and templates)** — retired. Generation is done by the agent with
   `generate`, straight through the `synaptixd` service; the video editor of synshell has
   its own node graphs.
@@ -47,17 +53,13 @@ with terminals that survive restarts, and LoRA training. Nothing leaves the mach
 
 ```sh
 paru -S synthos-bin      # prebuilt binary from the latest release — recommended
-paru -S synthos-git      # build from source (needs CUDA toolkit, ~2 h, ~15 GB disk)
+paru -S synthos-git      # build from source
 ```
 
-**It works right after install — no background service needed.** The synaptix engine
-(CUDA, Intel NPU, CPU) is built into synthos: chat, image/video/music generation and the
-knowledge base run inside the app itself. If the system `synaptixd`
-service is running — package `synaptix`, installed together with `synshell-ai` — synthos
-connects to it instead and shares the models already loaded there with synshell, so a model
-is not held in VRAM twice. The choice is made at start-up; to force it, set
-`SYNTHOS_ENGINE=embedded` (always the built-in engine) or `SYNTHOS_ENGINE=service` (service
-only). There is a single package; both modes are in it.
+**Neural networks run in the system `synaptixd` service** (package `synaptix`, a dependency
+of the synthos package). synthos is its client: models loaded there are shared with every
+synshell app, so a model is never held in VRAM twice. Without the service the editor,
+terminals and notes work; the chat, generation, voice input and knowledge base wait for it.
 
 **Other distributions** — download the tarball from
 [Releases](https://github.com/VitaminDB/synthos/releases) or build from source (see
@@ -231,9 +233,9 @@ draws a 1024² image in 2–3 s. Details in `docs/small_vram_7gb_2026.md`.
 
 ## Build
 
-synthos is a Cargo workspace that path-depends on its sibling repositories — syngui (UI),
-synaptix (engine) and synshell (the `synaptixd` server, the assistant crate and the notes
-protocol and helpers). Check
+synthos is a Cargo workspace that path-depends on its sibling repositories — syngui (UI)
+and synshell (the `synaptixd` client, the assistant crate and the notes protocol and
+helpers); synshell crates in turn take the `.syn` container crate from synaptix. Check
 all four out next to each other:
 
 ```
@@ -248,9 +250,8 @@ all four out next to each other:
 cargo build --release            # or --profile fast-release for iteration
 ```
 
-The build needs stable Rust 1.96 or newer (the floor set by dependencies), the CUDA
-toolkit (`nvcc` is read at build time to pin the CUDA API version; the driver itself is
-loaded dynamically at runtime) and system FFmpeg development libraries. Packages and
+The build needs stable Rust 1.96 or newer (the floor set by dependencies) and system FFmpeg
+development libraries; no CUDA toolkit — the engine lives in the service. Packages and
 releases are built with the [`syngui`](https://github.com/VitaminDB/syngui) CLI
 (`syngui package -f arch --install`, `syngui release <version> --publish`); the metadata lives
 in `[package.metadata.syngui]` in `Cargo.toml`.

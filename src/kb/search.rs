@@ -8,8 +8,7 @@
 
 use std::collections::HashMap;
 
-use synaptix::facade::embedding::Embedder;
-use synaptix::facade::rerank::Reranker;
+use crate::kb::service::{Embedder, Reranker};
 
 use super::store::{ChunkWithDoc, Store, StoreError};
 
@@ -211,7 +210,7 @@ mod tests {
         fn encode(
             &self,
             texts: &[&str],
-        ) -> synaptix::facade::embedding::EmbeddingResult<Vec<Vec<f32>>> {
+        ) -> crate::kb::service::EmbeddingResult<Vec<Vec<f32>>> {
             let mut out = Vec::with_capacity(texts.len());
             for t in texts {
                 let mut v = vec![0f32; self.dim];
@@ -223,7 +222,7 @@ mod tests {
                     let x = ((h.wrapping_add(i as u64)) % 1000) as f32 / 1000.0;
                     v[i] = x - 0.5;
                 }
-                let n = synaptix::facade::embedding::l2_norm(&v).max(1e-12);
+                let n = crate::kb::service::l2_norm(&v).max(1e-12);
                 for x in v.iter_mut() {
                     *x /= n;
                 }
@@ -309,7 +308,7 @@ mod tests {
     /// проверить, что rerank-фаза реально переупорядочивает результат
     /// относительно RRF.
     struct PrefixPRerankerStub;
-    impl synaptix::facade::rerank::Reranker for PrefixPRerankerStub {
+    impl crate::kb::service::Reranker for PrefixPRerankerStub {
         fn max_tokens(&self) -> usize {
             128
         }
@@ -318,7 +317,7 @@ mod tests {
             _query: &str,
             docs: &[&str],
             top_k: usize,
-        ) -> synaptix::facade::rerank::RerankResult<Vec<(usize, f32)>> {
+        ) -> crate::kb::service::RerankResult<Vec<(usize, f32)>> {
             let mut scored: Vec<(usize, f32)> = docs
                 .iter()
                 .enumerate()
@@ -334,7 +333,7 @@ mod tests {
         fn score_pairs(
             &self,
             pairs: &[(&str, &str)],
-        ) -> synaptix::facade::rerank::RerankResult<Vec<f32>> {
+        ) -> crate::kb::service::RerankResult<Vec<f32>> {
             Ok(pairs
                 .iter()
                 .map(|(_, d)| if d.trim_start().starts_with('p') { 0.99 } else { 0.01 })

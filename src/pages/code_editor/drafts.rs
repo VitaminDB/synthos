@@ -32,7 +32,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 pub fn drafts_dir() -> Option<PathBuf> {
-    let dir = home_dir()?.join(".config/synthos/editor_drafts");
+    let dir = crate::paths::synthos_config().join("editor_drafts");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("[code-editor] drafts: mkdir {:?}: {e}", dir);
         return None;

@@ -52,10 +52,7 @@ pub fn syn_chats_dir() -> PathBuf {
     if let Some(dir) = TEST_DIR.with(|d| d.borrow().clone()) {
         return dir;
     }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/synthos/syn_chats")
+    crate::paths::synthos_config().join("syn_chats")
 }
 
 fn chat_path(id: &str) -> PathBuf {

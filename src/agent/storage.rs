@@ -96,10 +96,7 @@ impl StoredChat {
 /// Каталог, где лежат JSON-файлы чатов. Создаётся автоматически при
 /// первом `save`.
 pub fn chats_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/synthos/chats")
+    crate::paths::synthos_config().join("chats")
 }
 
 fn chat_path(id: &str) -> PathBuf {

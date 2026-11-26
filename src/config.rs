@@ -862,10 +862,7 @@ impl Default for KbConfig {
 /// `~/.config/synthos/kb` — рядом с `blobs/`, `chats/`. Создаётся лениво
 /// при первом scan'е через `CollectionRegistry`.
 pub fn default_kb_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/synthos/kb")
+    crate::paths::synthos_config().join("kb")
 }
 
 /// Дефолт для `AppConfig.terminal_font_size`. Совпадает с дефолтом
@@ -1119,10 +1116,7 @@ pub fn now_millis() -> u64 {
 impl AppConfig {
     /// `$HOME/.config/synthos/config.json`.
     pub fn path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join(".config/synthos/config.json")
+        crate::paths::synthos_config().join("config.json")
     }
 
     /// Загружает конфиг с диска. На любую ошибку — `eprintln!` + `Default`

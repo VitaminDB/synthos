@@ -61,19 +61,18 @@ pub fn search_dirs() -> Vec<PathBuf> {
 /// имена: `hf_cache_dir`, `syn_explorer_bookmarks`). Пустой кэш — прежний
 /// каталог `~/.local/share/synthos/hf`, им же пользуются «Модели».
 pub fn models_app_dirs() -> Vec<PathBuf> {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
     let read = |p: PathBuf| -> Option<serde_json::Value> {
         serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
     };
     let models_cfg = std::env::var_os("SYN_MODELS_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config/syn-models/config.json"));
+        .unwrap_or_else(|| crate::paths::config_home().join("syn-models/config.json"));
     let v = read(models_cfg)
         .or_else(|| read(crate::config::AppConfig::path()))
         .unwrap_or_default();
     let cache = v.get("hf_cache_dir").and_then(|c| c.as_str()).unwrap_or("").trim();
     let mut out = vec![if cache.is_empty() {
-        home.join(".local/share/synthos/hf")
+        crate::paths::synthos_data().join("hf")
     } else {
         crate::paths::expand_home(cache)
     }];

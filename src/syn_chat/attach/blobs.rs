@@ -29,10 +29,7 @@ pub const THUMB_MAX_SIDE: u32 = 512;
 
 /// Корень CAS. Рядом с `chats/`, `syn_chats/`, `kb/`.
 pub fn blobs_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/synthos/blobs")
+    crate::paths::synthos_config().join("blobs")
 }
 
 pub fn derived_dir() -> PathBuf {

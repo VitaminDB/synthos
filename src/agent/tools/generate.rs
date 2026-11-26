@@ -335,8 +335,7 @@ async fn resolve_inputs(req: &mut Request) -> Result<(), String> {
 
 /// Каталог результатов: `~/.local/share/synthos/outputs/generate/`.
 pub fn outputs_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".local/share/synthos/outputs/generate")
+    crate::paths::synthos_data().join("outputs/generate")
 }
 
 fn out_path(kind: Kind) -> PathBuf {

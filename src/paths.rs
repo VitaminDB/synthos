@@ -126,3 +126,29 @@ mod tests {
         });
     }
 }
+
+fn home_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into()))
+}
+
+/// Каталог настроек пользователя: `$XDG_CONFIG_HOME`, иначе `~/.config`.
+/// Песочница synlink задаёт свой — Synthos в ней не видит живого состояния
+/// (вкладок терминалов, чатов, баз знаний).
+pub fn config_home() -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home_path().join(".config"))
+}
+
+/// Каталог данных пользователя: `$XDG_DATA_HOME`, иначе `~/.local/share`.
+pub fn data_home() -> std::path::PathBuf {
+    std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home_path().join(".local/share"))
+}
+
+/// `~/.config/synthos` (с учётом `XDG_CONFIG_HOME`).
+pub fn synthos_config() -> std::path::PathBuf {
+    config_home().join("synthos")
+}
+
+/// `~/.local/share/synthos` (с учётом `XDG_DATA_HOME`).
+pub fn synthos_data() -> std::path::PathBuf {
+    data_home().join("synthos")
+}

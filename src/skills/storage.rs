@@ -41,10 +41,7 @@ pub enum SkillError {
 
 /// `~/.config/synthos/skills/`. Создаётся лениво при первой записи.
 pub fn skills_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/synthos/skills")
+    crate::paths::synthos_config().join("skills")
 }
 
 /// Загружает все скилы из директории. Сортирует по `name` (lowercase),

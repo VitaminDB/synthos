@@ -7184,6 +7184,7 @@ dependencies = [
  "synaptix-llm-common",
  "synaptix-llm-gemma3",
  "synaptix-llm-gemma4",
+ "synaptix-llm-hy-v4-flash",
  "synaptix-llm-inkling2",
  "synaptix-llm-lfm3",
  "synaptix-llm-llama",
@@ -7286,7 +7287,7 @@ dependencies = [
 [[package]]
 name = "synaptix-autograd"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "once_cell",
  "parking_lot",
@@ -7397,6 +7398,7 @@ dependencies = [
 name = "synaptix-gen"
 version = "0.1.1"
 dependencies = [
+ "safetensors",
  "serde_json",
  "synaptix-bundle",
  "synaptix-core",
@@ -7664,6 +7666,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-llm-hy-v4-flash"
+version = "0.1.1"
+dependencies = [
+ "half",
+ "rayon",
+ "serde",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-infer",
+ "synaptix-io",
+ "synaptix-kernels-cpu",
+ "synaptix-llm-common",
+ "synaptix-nn 0.1.1",
+ "synaptix-ops 0.1.1",
+ "synaptix-tokenizer 0.1.1",
+ "synaptix-vlm-minicpm",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-llm-inkling2"
 version = "0.1.1"
 dependencies = [
@@ -7871,7 +7894,7 @@ dependencies = [
 [[package]]
 name = "synaptix-nn"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "once_cell",
  "synaptix-autograd 0.1.1 (git+https://github.com/VitaminDB/synaptix.git)",
@@ -7906,7 +7929,7 @@ dependencies = [
 [[package]]
 name = "synaptix-ops"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "half",
  "rand 0.8.7",
@@ -7962,7 +7985,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tokenizer"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -7979,7 +8002,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tts-audio8"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "serde",
  "serde_json",
@@ -7996,7 +8019,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tts-f5"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "serde",
  "serde_json",
@@ -8012,7 +8035,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tts-leokani"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "fancy-regex",
  "serde",
@@ -8049,7 +8072,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tts-silero"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "rustfft",
  "serde",
@@ -8066,7 +8089,7 @@ dependencies = [
 [[package]]
 name = "synaptix-tts-supertonic"
 version = "0.1.1"
-source = "git+https://github.com/VitaminDB/synaptix.git#3105d6ae4a9f94aa24722c3b9a5b778f7d489de9"
+source = "git+https://github.com/VitaminDB/synaptix.git#76a5cf1e3bb632d2e5dfab57d0cb22fa67504f9f"
 dependencies = [
  "serde",
  "serde_json",
@@ -8253,6 +8276,7 @@ dependencies = [
  "khronos-egl",
  "libc",
  "log",
+ "miniz_oxide",
  "mss-lang",
  "objc2 0.6.4",
  "oboe",
@@ -8273,6 +8297,7 @@ dependencies = [
  "synoptic",
  "syntect",
  "tokio",
+ "unicode-width",
  "ureq",
  "vte",
  "wasm-bindgen",

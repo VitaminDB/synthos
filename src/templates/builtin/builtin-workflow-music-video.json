@@ -1,0 +1,134 @@
+{
+  "name": "Клип под песню (LLM → Музыка → Видео)",
+  "description": "По теме и стилю: LLM сочиняет текст песни и визуальный кадр, генерируется трек и обложка, а LTX-2.3 оживляет кадр в ритм музыки.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "flow_text",
+      "pos": { "x": 40.0, "y": 80.0 },
+      "fields": {
+        "text": { "type": "Text", "value": "ночной город после дождя и тёплые огни витрин" }
+      },
+      "style": { "tint": "#10B981", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 2,
+      "kind": "flow_text",
+      "pos": { "x": 40.0, "y": 290.0 },
+      "fields": {
+        "text": { "type": "Text", "value": "indie pop, warm synth, uplifting, soft female vocal" }
+      },
+      "style": { "tint": "#10B981", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 3,
+      "kind": "flow_format",
+      "pos": { "x": 400.0, "y": 60.0 },
+      "fields": {
+        "template": {
+          "type": "Text",
+          "value": "Напиши короткий текст песни на тему «{{a}}»: один куплет и припев по 4 строки, с метками [verse] и [chorus]. Только текст песни."
+        }
+      },
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_llm",
+      "pos": { "x": 760.0, "y": 60.0 },
+      "fields": {},
+      "style": { "tint": "#6366F1", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_music",
+      "pos": { "x": 1160.0, "y": 60.0 },
+      "fields": {
+        "seconds": { "type": "Float", "value": 12.0 }
+      },
+      "style": { "tint": "#8B5CF6", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_format",
+      "pos": { "x": 400.0, "y": 380.0 },
+      "fields": {
+        "template": {
+          "type": "Text",
+          "value": "Опиши одним предложением по-английски яркий кинематографичный кадр для клипа на песню о «{{a}}» в стиле {{b}}. Только описание кадра."
+        }
+      },
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "flow_llm",
+      "pos": { "x": 760.0, "y": 380.0 },
+      "fields": {},
+      "style": { "tint": "#6366F1", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 8,
+      "kind": "flow_image",
+      "pos": { "x": 1160.0, "y": 380.0 },
+      "fields": {
+        "width": { "type": "Float", "value": 1024.0 },
+        "height": { "type": "Float", "value": 576.0 }
+      },
+      "style": { "tint": "#F59E0B", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 9,
+      "kind": "flow_video",
+      "pos": { "x": 1580.0, "y": 200.0 },
+      "fields": {
+        "model": { "type": "Text", "value": "ltx-2-3-22b-distilled-1-1" },
+        "seconds": { "type": "Float", "value": 12.0 }
+      },
+      "style": { "tint": "#EE5E48", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 10,
+      "kind": "ffmpeg_player",
+      "pos": { "x": 2000.0, "y": 200.0 },
+      "fields": {},
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    { "from_node": 1, "from_port": "text", "to_node": 3, "to_port": "a" },
+    { "from_node": 3, "from_port": "text", "to_node": 4, "to_port": "prompt" },
+    { "from_node": 2, "from_port": "text", "to_node": 5, "to_port": "prompt" },
+    { "from_node": 4, "from_port": "text", "to_node": 5, "to_port": "lyrics" },
+    { "from_node": 1, "from_port": "text", "to_node": 6, "to_port": "a" },
+    { "from_node": 2, "from_port": "text", "to_node": 6, "to_port": "b" },
+    { "from_node": 6, "from_port": "text", "to_node": 7, "to_port": "prompt" },
+    { "from_node": 7, "from_port": "text", "to_node": 8, "to_port": "prompt" },
+    { "from_node": 7, "from_port": "text", "to_node": 9, "to_port": "prompt" },
+    { "from_node": 8, "from_port": "image", "to_node": 9, "to_port": "first_frame" },
+    { "from_node": 5, "from_port": "audio", "to_node": 9, "to_port": "audio" },
+    { "from_node": 9, "from_port": "video", "to_node": 10, "to_port": "source" }
+  ],
+  "viewport": null
+}

@@ -33,6 +33,7 @@ pub const CATALOGS: [&str; 14] = [
 ];
 
 pub fn install(general: GeneralCtx) {
+    syngui::i18n::set_source_language(Lang::new("ru"));
     syngui::i18n::register_catalogs(&CATALOGS);
     // Строки режима «Заметки» — каталоги библиотеки заметок.
     syngui::i18n::register_catalogs(&syn_notes::i18n::CATALOGS);

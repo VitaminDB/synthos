@@ -1,0 +1,89 @@
+{
+  "name": "История из 2 сцен (H3, хвост → склейка)",
+  "description": "Наглядная ручная цепочка: Картинка → Видео Сцена 1 → провод Хвост (латент) → Видео Сцена 2 → Склейка (Клип 1 + Клип 2) → Видео-плеер.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "markdown_view",
+      "pos": { "x": 40.0, "y": 40.0 },
+      "fields": {},
+      "style": { "tint": "#3B82F6", "shadow": true },
+      "enabled": true,
+      "state": {
+        "kind": "MarkdownView",
+        "data": {
+          "content": "### Ручная бесшовная цепочка (MiniMax-H3)\n- **Хвост (латент)** из Сцены 1 идёт в **Хвост (продолжить)** Сцены 2 — свет, поза и звук переходят без скачка.\n- Оба ролика подключаются в **Склейку** (`Клип 1` и `Клип 2`).\n- Чтобы добавить Сцену 3: продублируйте ноду Видео, протяните `Хвост → Хвост` и подключите ролик в `Клип 3`.",
+          "width": 560.0,
+          "height": 170.0,
+          "edit_mode": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "kind": "flow_image",
+      "pos": { "x": 40.0, "y": 290.0 },
+      "fields": {
+        "prompt": { "type": "Text", "value": "orange tabby cat with white paws sitting in a cozy dusty attic next to an old brass lantern, 3D cartoon, warm golden light, film still" },
+        "width": { "type": "Float", "value": 1344.0 },
+        "height": { "type": "Float", "value": 768.0 }
+      },
+      "style": { "tint": "#F59E0B", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 3,
+      "kind": "flow_video",
+      "pos": { "x": 460.0, "y": 290.0 },
+      "fields": {
+        "prompt": { "type": "Text", "value": "orange tabby cat looks around the dim dusty attic curiously, camera slowly pushes in, soft creaking floorboards and gentle wind, quiet meow, 3D cartoon" },
+        "model": { "type": "Text", "value": "minimax-h3-fl2va" },
+        "seconds": { "type": "Float", "value": 4.0 }
+      },
+      "style": { "tint": "#EE5E48", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_video",
+      "pos": { "x": 880.0, "y": 290.0 },
+      "fields": {
+        "prompt": { "type": "Text", "value": "the orange tabby cat reaches out with its front paw to the brass lantern and turns the knob, warm golden glow illuminates dusty boxes, camera gently orbits, soft click and quiet purring, 3D cartoon" },
+        "model": { "type": "Text", "value": "minimax-h3-fl2va" },
+        "seconds": { "type": "Float", "value": 4.0 }
+      },
+      "style": { "tint": "#EE5E48", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_concat",
+      "pos": { "x": 1300.0, "y": 290.0 },
+      "fields": {},
+      "style": { "tint": "#EC4899", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "ffmpeg_player",
+      "pos": { "x": 1660.0, "y": 290.0 },
+      "fields": {},
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    { "from_node": 2, "from_port": "image", "to_node": 3, "to_port": "first_frame" },
+    { "from_node": 3, "from_port": "tail", "to_node": 4, "to_port": "context" },
+    { "from_node": 3, "from_port": "video", "to_node": 5, "to_port": "in1" },
+    { "from_node": 4, "from_port": "video", "to_node": 5, "to_port": "in2" },
+    { "from_node": 5, "from_port": "file", "to_node": 6, "to_port": "source" }
+  ],
+  "viewport": null
+}

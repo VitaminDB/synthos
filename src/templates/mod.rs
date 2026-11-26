@@ -33,6 +33,8 @@ pub fn list_all() -> Vec<Template> {
 /// секции «Свои» — она не входит в этот enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TemplateCategory {
+    /// Готовые сквозные сценарии и монтаж (`builtin-workflow-*`).
+    Workflows,
     /// LTX-2.3 / MiniMax-H3 — генерация видео (`builtin-ltx-*`, `builtin-h3-*`).
     Video,
     /// FLUX.1 / FLUX.2 / Qwen-Image / SDXL — картинки (`builtin-flux-*`,
@@ -52,7 +54,8 @@ pub enum TemplateCategory {
 
 impl TemplateCategory {
     /// Все категории в порядке отображения в боковой панели окна.
-    pub const ORDER: [TemplateCategory; 6] = [
+    pub const ORDER: [TemplateCategory; 7] = [
+        TemplateCategory::Workflows,
         TemplateCategory::Video,
         TemplateCategory::Image,
         TemplateCategory::Music,
@@ -64,7 +67,9 @@ impl TemplateCategory {
     /// Категория builtin-шаблона по префиксу его `id`.
     pub fn for_template(t: &Template) -> Self {
         let id = t.id.as_str();
-        if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
+        if id.starts_with("builtin-workflow-") {
+            TemplateCategory::Workflows
+        } else if id.starts_with("builtin-ltx-") || id.starts_with("builtin-h3-") {
             TemplateCategory::Video
         } else if id.starts_with("builtin-flux-")
             || id.starts_with("builtin-flux2-")
@@ -92,6 +97,7 @@ impl TemplateCategory {
     /// Стабильный ключ для каталога строк.
     pub fn key(self) -> &'static str {
         match self {
+            TemplateCategory::Workflows => "workflows",
             TemplateCategory::Video => "video",
             TemplateCategory::Image => "image",
             TemplateCategory::Music => "music",
@@ -104,6 +110,7 @@ impl TemplateCategory {
     /// Material-иконка раздела (см. [`crate::icons`]).
     pub fn icon(self) -> &'static str {
         match self {
+            TemplateCategory::Workflows => crate::icons::MI_AUTO_AWESOME,
             TemplateCategory::Video => crate::icons::MI_MOVIE,
             TemplateCategory::Image => crate::icons::MI_IMAGE_ICON,
             TemplateCategory::Music => crate::icons::MI_LIBRARY_MUSIC,

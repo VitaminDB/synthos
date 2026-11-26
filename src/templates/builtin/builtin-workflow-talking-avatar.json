@@ -1,0 +1,95 @@
+{
+  "name": "Говорящий аватар с фото (H3 Ref2VA)",
+  "description": "Персонаж с выбранного фото произносит ваш текст с синхронными губами: озвучка → референсы (фото + речь) → MiniMax-H3 Ref2VA → чистый звук → Плеер.",
+  "kind": "full",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "markdown_view",
+      "pos": { "x": 40.0, "y": 40.0 },
+      "fields": {},
+      "style": { "tint": "#3B82F6", "shadow": true },
+      "enabled": true,
+      "state": {
+        "kind": "MarkdownView",
+        "data": {
+          "content": "### Говорящий аватар\n1. Укажите портретное фото в ноде **Файл**.\n2. Напишите реплику в ноде **Речь** (можно подключить образец голоса для клона).\n3. **Наложение звука** заменит сгенерированный звук ролика на чистую студийную озвучку.",
+          "width": 520.0,
+          "height": 165.0,
+          "edit_mode": false
+        }
+      }
+    },
+    {
+      "id": 2,
+      "kind": "flow_file",
+      "pos": { "x": 40.0, "y": 285.0 },
+      "fields": { "path": { "type": "Text", "value": "" } },
+      "style": { "tint": "#10B981", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 3,
+      "kind": "flow_speak",
+      "pos": { "x": 40.0, "y": 455.0 },
+      "fields": {
+        "text": { "type": "Text", "value": "Привет! Это пример говорящего аватара в Synthos." },
+        "voice": { "type": "Text", "value": "warm natural voice" }
+      },
+      "style": { "tint": "#8B5CF6", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 4,
+      "kind": "flow_list",
+      "pos": { "x": 440.0, "y": 230.0 },
+      "fields": {},
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 5,
+      "kind": "flow_video",
+      "pos": { "x": 800.0, "y": 230.0 },
+      "fields": {
+        "prompt": { "type": "Text", "value": "the character from the reference image talks naturally to the camera saying the words from the reference audio, clear lip sync, subtle expressions, same outfit and lighting" },
+        "model": { "type": "Text", "value": "minimax-h3-ref2va" }
+      },
+      "style": { "tint": "#EE5E48", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 6,
+      "kind": "flow_mux",
+      "pos": { "x": 1220.0, "y": 270.0 },
+      "fields": {
+        "mode": { "type": "Choice", "value": 0 }
+      },
+      "style": { "tint": "#EC4899", "shadow": true },
+      "enabled": true,
+      "state": null
+    },
+    {
+      "id": 7,
+      "kind": "ffmpeg_player",
+      "pos": { "x": 1580.0, "y": 270.0 },
+      "fields": {},
+      "style": { "tint": null, "shadow": true },
+      "enabled": true,
+      "state": null
+    }
+  ],
+  "connections": [
+    { "from_node": 2, "from_port": "file", "to_node": 4, "to_port": "in1" },
+    { "from_node": 3, "from_port": "audio", "to_node": 4, "to_port": "in2" },
+    { "from_node": 4, "from_port": "list", "to_node": 5, "to_port": "refs" },
+    { "from_node": 5, "from_port": "video", "to_node": 6, "to_port": "video" },
+    { "from_node": 3, "from_port": "audio", "to_node": 6, "to_port": "audio" },
+    { "from_node": 6, "from_port": "video", "to_node": 7, "to_port": "source" }
+  ],
+  "viewport": null
+}

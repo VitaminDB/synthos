@@ -14,6 +14,11 @@ use crate::pages::node_editor::types::NodeKind;
 /// SDXL, MiniMax-H3, LTX-2.3, ACE-Step, YuE2) — JSON: переведены из прежних родных нод
 /// [`super::native`].
 const STAGE_TEMPLATES: &[(&str, &str)] = &[
+    ("builtin-workflow-h3-chain-2scenes", include_str!("builtin/builtin-workflow-h3-chain-2scenes.json")),
+    ("builtin-workflow-story-film", include_str!("builtin/builtin-workflow-story-film.json")),
+    ("builtin-workflow-montage-music", include_str!("builtin/builtin-workflow-montage-music.json")),
+    ("builtin-workflow-music-video", include_str!("builtin/builtin-workflow-music-video.json")),
+    ("builtin-workflow-talking-avatar", include_str!("builtin/builtin-workflow-talking-avatar.json")),
     ("builtin-voice-clone-voxcpm", include_str!("builtin/builtin-voice-clone-voxcpm.json")),
     ("builtin-voice-clone-omnivoice", include_str!("builtin/builtin-voice-clone-omnivoice.json")),
     ("builtin-vibevoice-dialogue", include_str!("builtin/builtin-vibevoice-dialogue.json")),
@@ -39,6 +44,7 @@ const STAGE_TEMPLATES: &[(&str, &str)] = &[
     ("builtin-h3-first-frame", include_str!("builtin/builtin-h3-first-frame.json")),
     ("builtin-h3-first-last", include_str!("builtin/builtin-h3-first-last.json")),
     ("builtin-h3-flux-keyframe", include_str!("builtin/builtin-h3-flux-keyframe.json")),
+    ("builtin-h3-latent-chain", include_str!("builtin/builtin-h3-latent-chain.json")),
     ("builtin-h3-ref2va", include_str!("builtin/builtin-h3-ref2va.json")),
     ("builtin-h3-text-to-video", include_str!("builtin/builtin-h3-text-to-video.json")),
     ("builtin-h3-turbo", include_str!("builtin/builtin-h3-turbo.json")),
@@ -46,6 +52,7 @@ const STAGE_TEMPLATES: &[(&str, &str)] = &[
     ("builtin-ltx-flux-keyframe", include_str!("builtin/builtin-ltx-flux-keyframe.json")),
     ("builtin-ltx-ic-lora", include_str!("builtin/builtin-ltx-ic-lora.json")),
     ("builtin-ltx-image-to-video", include_str!("builtin/builtin-ltx-image-to-video.json")),
+    ("builtin-ltx-latent-chain", include_str!("builtin/builtin-ltx-latent-chain.json")),
     ("builtin-ltx-lipdub", include_str!("builtin/builtin-ltx-lipdub.json")),
     ("builtin-ltx-retake", include_str!("builtin/builtin-ltx-retake.json")),
     ("builtin-ltx-text-to-video", include_str!("builtin/builtin-ltx-text-to-video.json")),
@@ -70,6 +77,11 @@ fn stage(id: &str) -> Template {
 
 pub fn all() -> Vec<Template> {
     vec![
+        stage("builtin-workflow-h3-chain-2scenes"),
+        stage("builtin-workflow-story-film"),
+        stage("builtin-workflow-montage-music"),
+        stage("builtin-workflow-music-video"),
+        stage("builtin-workflow-talking-avatar"),
         empty_template(),
         simple_add_template(),
         audio_playback_template(),
@@ -93,11 +105,13 @@ pub fn all() -> Vec<Template> {
         stage("builtin-yue2-song"),
         stage("builtin-yue2-edit-score"),
         stage("builtin-yue2-cover"),
+        stage("builtin-h3-latent-chain"),
         stage("builtin-h3-text-to-video"),
         stage("builtin-h3-turbo"),
         stage("builtin-h3-first-frame"),
         stage("builtin-h3-first-last"),
         stage("builtin-h3-ref2va"),
+        stage("builtin-ltx-latent-chain"),
         stage("builtin-ltx-text-to-video"),
         stage("builtin-ltx-image-to-video"),
         stage("builtin-ltx-retake"),
@@ -652,6 +666,7 @@ mod tests {
         use crate::templates::TemplateCategory as C;
         let expected = |id: &str| -> Option<C> {
             let rules: &[(&str, C)] = &[
+                ("builtin-workflow-", C::Workflows),
                 ("builtin-ltx-", C::Video),
                 ("builtin-h3-", C::Video),
                 ("builtin-flux-", C::Image),
@@ -678,6 +693,42 @@ mod tests {
         }
         for cat in C::ORDER {
             assert!(all.iter().any(|t| C::for_template(t) == cat), "раздел {cat:?} пуст");
+        }
+    }
+
+    #[test]
+    fn builtin_templates_ports_and_fields_resolve() {
+        use syn_node_editor::convert::{resolve_field_name, resolve_port_name};
+        use syn_node_editor::types::PortSide;
+        for t in all() {
+            for n in &t.nodes {
+                for f in n.fields.keys() {
+                    assert!(
+                        resolve_field_name(n.kind, f).is_some(),
+                        "{}: неизвестное поле {:?}.{f}",
+                        t.id,
+                        n.kind
+                    );
+                }
+            }
+            for c in &t.connections {
+                let from_kind = t.kind_of(c.from_node);
+                let to_kind = t.kind_of(c.to_node);
+                assert!(
+                    resolve_port_name(from_kind, PortSide::Output, &c.from_port).is_some(),
+                    "{}: неизвестный выход {:?}.{}",
+                    t.id,
+                    from_kind,
+                    c.from_port
+                );
+                assert!(
+                    resolve_port_name(to_kind, PortSide::Input, &c.to_port).is_some(),
+                    "{}: неизвестный вход {:?}.{}",
+                    t.id,
+                    to_kind,
+                    c.to_port
+                );
+            }
         }
     }
 }

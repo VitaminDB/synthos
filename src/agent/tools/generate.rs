@@ -257,11 +257,6 @@ pub fn chat_attachments() -> Vec<MsgAttachment> {
         .unwrap_or_default()
 }
 
-/// [`find_attachment_in`] по вложениям чата текущего хода (main thread).
-pub fn find_attachment(r: &str) -> Option<MsgAttachment> {
-    find_attachment_in(&chat_attachments(), r)
-}
-
 async fn chat_attachments_async() -> Vec<MsgAttachment> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     run_on_main_thread(move || {

@@ -1,5 +1,7 @@
 # synthos: эффект-ноды Gain/Filter/Reverb + SaveToFile (2026-05-10)
 
+> **Устарело (26.11.2026).** Редактор узлов (графы, шаблоны, инструмент агента `pipelines`) убран из synthos: генерацию делает агент инструментом `generate` напрямую через службу synaptixd. Документ сохранён как история.
+
 Расширение свежего streaming-фундамента (`AudioStream` + trait-`NodeExecutor`,
 см. [audio_streaming_2026.md](./audio_streaming_2026.md)) четырьмя новыми
 NodeKind'ами:

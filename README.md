@@ -3,15 +3,15 @@
 [![Licence: GPL-3.0 or commercial](https://img.shields.io/badge/licence-GPL--3.0%20%7C%20commercial-blue)](#licence)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-informational)](#requirements)
 
-A local AI desktop studio written in Rust — an agentic chat client, a block-based notes workspace,
-a node editor for generating video, music and speech, a code editor and a document knowledge
-base. Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
+A local AI desktop studio written in Rust — an agentic chat client that also generates images,
+video, music and speech, a document knowledge base, a code editor with persistent terminals and
+LoRA training. Everything runs on-device on the native [synaptix](https://github.com/VitaminDB/synaptix)
 engine: no Python, no torch, no cloud. It runs on any NVIDIA GPU from sm_80 (Ampere) up —
 natively on Blackwell (sm_120+), through portable kernels on older cards — and loads models
 from `.syn` bundles in the precision you choose (NVFP4, MXFP8, SQ1…SQ8, dense) or chat
 models straight from GGUF. The UI is built with [syngui](https://github.com/VitaminDB/syngui).
 
-![synthos: a notes workspace built by the agent, with the chat torn off into a floating window](docs/screenshots/notes-dashboard-floating-chat.png)
+![synthos: the chat with its tools, the autotools pool and skills](docs/screenshots/chat-tools-autotools-skills.png)
 
 ## Status
 
@@ -25,13 +25,21 @@ details are more useful to me right now than stars — there is an
 ## What it is
 
 synthos is one desktop app around a local GPU. A chat client runs 27B–125B models from
-single-file `.syn` bundles or GGUF files and drives the rest of the app through tools; a notes mode holds
-your documents, kanban boards, mind maps and calendar in a single project file; a node editor
-wires generative models into runnable graphs — prompt → image, image + instruction →
-edited image, text or image → video with sound, lyrics → music, script → multi-voice
-dialogue, audio → transcript. The agent can build and run those
-graphs itself, write into your notes, search your knowledge base and read the web. Nothing
-leaves the machine.
+single-file `.syn` bundles or GGUF files and drives the rest through tools: it generates
+images, video, music and speech with the `generate` tool, writes into your notes, searches
+your knowledge base, runs commands and reads the web. Next to the chat live a code editor
+with terminals that survive restarts, and LoRA training. Nothing leaves the machine.
+
+**What moved out.** synthos used to carry more modes; they now live elsewhere:
+
+- **Notes** — the separate [synshell](https://github.com/VitaminDB/synshell) app `syn-notes`.
+  The agent's `notes` tool keeps working: synthos hands each call to `syn-notes` over its
+  socket (starting it in the background if needed), and the edits show up in its window.
+- **Hugging Face browser and `.syn` packages** (download, pack, inspect, repack) — the synshell
+  app **Models** (`syn-models`). The rail button and **Settings → General → Models** open it.
+- **The node editor (graphs and templates)** — retired. Generation is done by the agent with
+  `generate`, straight through the `synaptixd` service; the video editor of synshell has
+  its own node graphs.
 
 ## Install
 
@@ -43,8 +51,8 @@ paru -S synthos-git      # build from source (needs CUDA toolkit, ~2 h, ~15 GB d
 ```
 
 **It works right after install — no background service needed.** The synaptix engine
-(CUDA, Intel NPU, CPU) is built into synthos: chat, the node editor, image/video/music
-generation and the knowledge base run inside the app itself. If the system `synaptixd`
+(CUDA, Intel NPU, CPU) is built into synthos: chat, image/video/music generation and the
+knowledge base run inside the app itself. If the system `synaptixd`
 service is running — package `synaptix`, installed together with `synshell-ai` — synthos
 connects to it instead and shares the models already loaded there with synshell, so a model
 is not held in VRAM twice. The choice is made at start-up; to force it, set
@@ -63,10 +71,10 @@ straight from `.gguf`), see [the next section](#models-pack-them-into-syn-first)
 
 **synthos loads models from `.syn` bundles.** A model downloaded from Hugging Face as a
 folder of safetensors shards with `config.json` and tokenizer files has to be packed into a
-single `.syn` file before the chat, the node editor or the agent can use it. It is a
+single `.syn` file before the chat or the agent can use it. It is a
 one-time step per model. The one exception is **GGUF**: a llama.cpp `.gguf` chat model
 (Llama, Qwen2/Qwen3 dense and MoE, the Qwen3.6/3.8 hybrids, Gemma-3, Gemma-4) opens
-directly in the chat model picker and in **Syn Checkpoint**, with its ggml quantization
+directly in the chat model picker, with its ggml quantization
 executed as is — packing it into `.syn` is optional.
 
 Why one file: the bundle is read zero-copy through mmap, carries the config, tokenizer and
@@ -76,29 +84,15 @@ card), ggml blocks kept byte for byte from a GGUF, or dense BF16/F16 — mixed p
 The file on disk is exactly what gets loaded, with nothing to resolve at runtime; a quantized
 bundle can also be transcoded on load into the format that suits the card.
 
-| | |
-|---|---|
-| ![Build a .syn — the model is recognised by itself; pick where to save and, optionally, a quantization](docs/screenshots/pack-build-syn.png) | ![Customize… — components, auxiliary files, and precision per layer group](docs/screenshots/pack-wizard-layers.png) |
-| **Build a .syn** — the model is recognised by itself; pick where to save and, optionally, a quantization | **Customize…** — components, auxiliary files, and precision per layer group |
-
-**In the app:**
-
-1. Put the downloaded model folder into your models directory (default `~/Storage/Нейросети/Модели`,
-   set in **Settings → AI models → Models directory**) or any other folder.
-2. Open **Syn packages** in the left rail and add that folder to **Bookmarks**. Models that are
-   not packed yet appear under **Can be packed**.
-3. Click the model. **Build a .syn** detects the architecture, components and auxiliary files
-   by itself — choose where to save, optionally pick a quantization, and press **Build**.
-4. **Customize…** opens the full wizard: which components and auxiliary files go in, and the
-   precision of each layer group (MLP, embeddings, attention).
-
-**Other routes:**
-
-- **GGUF** — load it directly, or let the Hugging Face browser convert a downloaded GGUF to
-  `.syn` (ggml blocks are copied without re-quantizing); the `mmproj` vision projector is
-  picked up automatically.
-- **CLI** — `synaptix convert <source> <model.syn>` from
-  [synaptix](https://github.com/VitaminDB/synaptix) does the same from a terminal.
+**How:** download and pack models in the synshell app **Models** (`syn-models`): its
+Hugging Face browser fetches a model, and its package library builds a `.syn` (architecture,
+components and auxiliary files are detected by themselves; quantization and per-layer-group
+precision are optional), inspects and repacks bundles, and converts a GGUF without
+re-quantizing. From a terminal, `synaptix convert <source> <model.syn>` from
+[synaptix](https://github.com/VitaminDB/synaptix) does the same. Put the result into your
+models directory (default `~/Storage/syn_models`, set in **Settings → AI models → Models
+directory**) — the chat, the knowledge base and the global search find bundles there and in
+the Models app's package bookmarks.
 
 **Before you press Build:**
 
@@ -125,13 +119,12 @@ bundle can also be transcoded on load into the format that suits the card.
   card), Gemma-3, Gemma-4 26B A4B, Muse Glimmer 30B and Llama. Vision towers where the model
   has one — images and video go straight into the prompt.
 - **Attachments** — images and video to the vision tower, documents inlined, audio
-  transcribed on device; results of a pipeline run play right in the thread, in the same
-  video player the node editor and the viewer use (audio-clocked, ±1 s jumps, seek on a
-  paused frame).
+  transcribed on device; generated pictures, video and audio play right in the thread, in
+  the same video player the viewer uses (audio-clocked, ±1 s jumps, seek on a paused frame).
 - **Agent tools** — web search and read, knowledge-base retrieval, system status (VRAM / RAM,
-  loaded models), **pipelines** (discover, build, edit and run node graphs from the chat,
-  unloading itself for the run if VRAM is short), **notes** (full read/write access to pages,
-  blocks, boards and the calendar), `view_media` (look at a file with the model's own vision),
+  loaded models), **generate** (images, video, music and speech through the `synaptixd`
+  service — see below), **notes** (full read/write access to pages, blocks, boards and the
+  calendar of the synshell `syn-notes` app), `view_media` (look at a file with the model's own vision),
   a `wizard` that asks you a multiple-choice question mid-turn, subagents, user-defined
   skills, and voice input. Tool schemas are not all declared up front: with **autotools** the
   model pulls the schema it needs on demand, which keeps the prefix-KV intact.
@@ -143,8 +136,6 @@ bundle can also be transcoded on load into the format that suits the card.
   your own), reasoning depth, a collapsible card for each side panel, and a chat can be torn
   off into a floating window.
 
-![The agent runs a MiniMax-H3 video pipeline, hits a latent-shape error and fixes the resolution itself](docs/screenshots/agent-pipeline-self-correct.png)
-
 <details>
 <summary>More chat screenshots</summary>
 
@@ -152,98 +143,24 @@ bundle can also be transcoded on load into the format that suits the card.
 |---|---|
 | ![Tools, the autotools pool and skills — toggled per chat](docs/screenshots/chat-tools-autotools-skills.png) | ![Details: tok/s, prefill time, and how much of the prompt came from the prefix-KV cache](docs/screenshots/chat-details.png) |
 | Tools, the autotools pool and skills — toggled per chat | Details: tok/s, prefill time, and how much of the prompt came from the prefix-KV cache |
-| ![Model card and sampling — per-model presets or your own](docs/screenshots/chat-sampling.png) | ![A floating chat over notes, with a message queued mid-turn](docs/screenshots/chat-floating-queue.png) |
-| Model card and sampling — per-model presets or your own | A floating chat over notes, with a message queued mid-turn |
-| ![The agent checks VRAM, frees it and starts a video run](docs/screenshots/agent-pipeline-run.png) |  |
-| The agent checks VRAM, frees it and starts a video run |  |
+| ![Model card and sampling — per-model presets or your own](docs/screenshots/chat-sampling.png) | ![A floating chat, with a message queued mid-turn](docs/screenshots/chat-floating-queue.png) |
+| Model card and sampling — per-model presets or your own | A floating chat, with a message queued mid-turn |
 
 </details>
 
-### Notes
+### Generation from the chat
 
-![Kanban boards with labels, priorities and checklists — a card mid-drag](docs/screenshots/notes-kanban-drag.png)
+The agent's `generate` tool sends a request straight to the `synaptixd` service; the service
+shares VRAM between the chat model and the generator, so nothing has to be unloaded by hand.
+The result lands in the thread as an attachment.
 
-- **A project is one `.syn` bundle** — pages, attachments, boards and calendars live in a
-  single file you can copy or back up.
-- **Block editor** — WYSIWYG over Markdown: headings, lists, checklists, toggles, tables,
-  syntax-highlighted code, callouts, media with players, and charts (line, bar, pie, radar,
-  gauge). Slash menu, inline toolbar, undo/redo, multi-block selection.
-- **Flow or canvas** — a page is a document or a free layout: drag blocks anywhere, snap to a
-  5 px grid, pin width and height, draw shapes, arrows and Bézier curves between them, drop
-  images and SVG.
-- **Objects** — kanban boards (labels, priority, due date, checklists, per-column timers that
-  archive or escalate stale cards), Gantt charts, mind maps and a calendar with month, week,
-  day and agenda views, recurring events and reminders. Any of them can be embedded into a
-  page with `![[kanban:id]]`.
-- **Wiring** — `[[links]]` with autocomplete, a backlink index, a force-directed graph view,
-  global search across pages, and attachments stored content-addressed.
-- **Life management** — tasks, a project journal, repeating items, reminders that fire while
-  the app runs, and an archive. The agent drives all of it through the `notes` tool.
-
-<details>
-<summary>More notes screenshots</summary>
-
-| | |
-|---|---|
-| ![Mind map](docs/screenshots/notes-mindmap.png) | ![Gantt chart](docs/screenshots/notes-gantt.png) |
-| Mind map | Gantt chart |
-| ![Calendar, month view — events, board deadlines and Gantt bars](docs/screenshots/notes-calendar-month.png) | ![Calendar, week view](docs/screenshots/notes-calendar-week.png) |
-| Calendar, month view — events, board deadlines and Gantt bars | Calendar, week view |
-| ![Charts: line, bar, pie, radar](docs/screenshots/notes-charts.png) | ![Tables and a chart on one page](docs/screenshots/notes-tables-chart.png) |
-| Charts: line, bar, pie, radar | Tables and a chart on one page |
-| ![Toggles, and page properties: grid, snap, background](docs/screenshots/notes-toggles-page-props.png) |  |
-| Toggles, and page properties: grid, snap, background |  |
-
-</details>
-
-### Node studio
-
-![The node editor: the Neuro node menu, a running graph and the models-in-memory panel](docs/screenshots/nodes-menu-models.png)
-
-- **Images** — FLUX.1 (dev), FLUX.2 (dev 32B, klein 4B/9B, klein base) with img2img and
-  up to ten references, Qwen-Image 2.1 (one model for text-to-image, editing by up to ten
-  references and transparent RGBA output), Qwen-Image-Edit and Edit-2509/2511 (edit one
-  picture, or compose up to four — "put the fox from the second picture on the rock from
-  the first"), and SDXL for text-to-image and image-to-image. Weights run as NVFP4, MXFP8 or dense; the picture
-  a graph produces can be fed straight into a video model as its first frame.
-- **Video** — LTX-2.3: text-to-video, image-to-video, audio-to-video, IC-LoRA control from
-  depth (Depth Anything V2) or canny edges, lip-dub and retake, two-stage sampling with a
-  spatial upscaler. MiniMax-H3: text, first-frame or first+last-frame → video with
-  synchronized stereo audio, plus Ref2VA — an ordered list of up to twelve image, video
-  and audio references the model keeps identity and voice from; a 6-step turbo preset.
-- **Music** — YuE2: style and lyrics become an editable melody-and-chord score in ABC,
-  then a full song with vocals and accompaniment in 48 kHz stereo; the score comes out of
-  the graph as text, so you can read it, change the harmony and render again, and the
-  acoustic latents can be re-decoded with another decoder without generating twice.
-  Covers start from a recording: SheetSage2 transcribes its melody into the same ABC
-  dialect (vocal and instrumental lines, chords optional), and YuE2 sings it in a new
-  style with new lyrics.
-  ACE-Step: generate, cover, edit, extend, extract, repaint, retake, with a per-stage
-  progress readout.
-- **Speech** — VoxCPM2 and OmniVoice text-to-speech with zero-shot voice cloning (the
-  reference is transcribed automatically); VibeVoice for long-form multi-speaker dialogue
-  from a `Speaker N:` script with up to four reference voices.
-- **Transcription and diarization** — GigaAM ASR, Sortformer speaker diarization.
-- **LLM** — a text-generation node inside the graph (e.g. the built-in "podcast from a topic"
-  template: LLM → VibeVoice).
-- **Audio** — recorder, file and FFmpeg players, mixer with dynamic inputs, 6/10/20/30-band
-  equalizers, filter, gain, reverb, save-to-file; PCM streams between nodes.
-- **Editor** — checkpoint nodes (ComfyUI-style) with a "keep in memory" switch per model
-  family, built-in templates for every family (FLUX / FLUX.2 text-to-image, edit and
-  multi-reference, Qwen-Image 2.1 text-to-image, edit, multi-reference, transparent RGBA
-  and LLM prompt rewrite, Qwen-Image edit and multi-image edit, SDXL text-to-image and
-  image-to-image, LTX and H3 video, music, podcast) plus your own, multi-tab graphs, run/pause/stop, per-node and
-  per-run timers, a panel of loaded models, workspace autosave, Markdown annotation nodes.
-
-<details>
-<summary>More node editor screenshots</summary>
-
-| | |
-|---|---|
-| ![ACE-Step text → music graph with checkpoint, generator and player](docs/screenshots/nodes-acestep.png) |  |
-| ACE-Step text → music graph with checkpoint, generator and player |  |
-
-</details>
+- **Images** — FLUX.1 (dev), FLUX.2 (dev 32B, klein 4B/9B, klein base), Qwen-Image 2.1
+  (text-to-image, editing by up to ten references, transparent RGBA), Qwen-Image-Edit and
+  Edit-2509/2511, SDXL.
+- **Video** — LTX-2.3 and MiniMax-H3: text, first frame (or first + last) → video with sound.
+- **Music** — YuE2 and ACE-Step.
+- **Speech** — VoxCPM2 and OmniVoice with zero-shot voice cloning, VibeVoice for multi-speaker
+  dialogue.
 
 ### Code editor
 
@@ -271,16 +188,10 @@ bundle can also be transcoded on load into the format that suits the card.
 
 ### Models
 
-- A Hugging Face browser for fetching models; GGUF files load as they are or convert in-app
-  to `.syn`;
-  downloads run in a dock at the bottom of the window (list or icon view, per-file progress,
-  a progress chip in the title bar) and survive navigating away.
 - A model catalogue in Settings — one `.syn` file per model, read zero-copy via mmap, with
   "optimal" and "custom" profiles per model.
-- **Syn packages** — pack models into `.syn` (see
-  [above](#models-pack-them-into-syn-first)), inspect, edit and re-pack bundles, with
-  quantization applied at packing time (NVFP4, MXFP8, SQ8…SQ2, per layer group) and an
-  optional transcode of an already quantized bundle on load.
+- Downloading from Hugging Face and packing, inspecting and repacking `.syn` bundles — in the
+  synshell app **Models** (`syn-models`), started from the rail.
 
 ### Desktop
 
@@ -321,7 +232,8 @@ draws a 1024² image in 2–3 s. Details in `docs/small_vram_7gb_2026.md`.
 ## Build
 
 synthos is a Cargo workspace that path-depends on its sibling repositories — syngui (UI),
-synaptix (engine) and synshell (the `synaptixd` server, assistant and notes crates). Check
+synaptix (engine) and synshell (the `synaptixd` server, the assistant crate and the notes
+protocol and helpers). Check
 all four out next to each other:
 
 ```
@@ -350,7 +262,7 @@ in `[package.metadata.syngui]` in `Cargo.toml`.
 - GPU (optional, strongly recommended): NVIDIA driver + CUDA runtime, loaded at runtime. The
   kernels are JIT-compiled for the card: any sm_80+ GPU (Ampere, Ada, Hopper) is supported
   through portable kernels, while Blackwell (sm_120+) keeps native NVFP4 / MXFP8 tensor-core
-  paths. 7 GB of VRAM is enough to run everything, 24 GB to run it quickly. Without a GPU the node engine falls back
+  paths. 7 GB of VRAM is enough to run everything, 24 GB to run it quickly. Without a GPU the engine falls back
   to CPU for smoke tests and debugging.
 - A Windows build is planned — the app currently depends on Linux-only components.
 
@@ -386,15 +298,15 @@ The bundle is mmapped zero-copy and carries the config, tokenizer and chat templ
 next to the weights, so what is on disk is exactly what gets loaded — nothing is
 resolved at runtime. It also holds quantized weights and multi-part models (a video
 model with its text encoder, a music model with its LM) as one file. GGUF chat models
-load directly, and the Hugging Face browser can convert a GGUF to `.syn`, `mmproj`
+load directly, and the synshell Models app can convert a GGUF to `.syn`, `mmproj`
 included.
 
 **Why not just use llama.cpp / ComfyUI / LM Studio?**
 For chat alone, use llama.cpp — it is more portable and far better tested. For
 diffusion workflows, ComfyUI has an ecosystem this will never match. synthos exists
 because I wanted one process where the same allocator and the same VRAM budget serve
-an LLM, a diffusion model and TTS at once, with an agent that can unload itself to
-run a video pipeline and load back afterwards. That is hard to build on top of
+an LLM, a diffusion model and TTS at once, with an agent that generates video and music
+from the chat while the service keeps the VRAM budget. That is hard to build on top of
 several separate tools, so the engine is written from scratch.
 
 **Why Linux and NVIDIA only?**

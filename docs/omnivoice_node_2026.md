@@ -1,5 +1,7 @@
 # OmniVoice TTS-нода в node-editor (synthos, 2026-05-12)
 
+> **Устарело (26.11.2026).** Редактор узлов (графы, шаблоны, инструмент агента `pipelines`) убран из synthos: генерацию делает агент инструментом `generate` напрямую через службу synaptixd. Документ сохранён как история.
+
 `NodeKind::OmniVoice` — TTS-нода на базе движка **OmniVoice** (Qwen3-1B LM +
 Higgs-Audio codec + discrete mask-diffusion). Text → Audio с автоматическим
 выбором режима (Auto / Design / Clone) и поддержкой zero-shot voice cloning.

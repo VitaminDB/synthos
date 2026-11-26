@@ -1,7 +1,6 @@
 pub mod collapsible_card;
 pub mod drag_handle;
 pub mod event_hook;
-pub mod graph_close_dialog;
 pub mod nav_rail;
 pub mod panel_header;
 pub mod workspace_frame;
@@ -13,4 +12,3 @@ pub mod tool_confirm;
 pub mod voice_fab;
 pub mod notification;
 pub mod quit_dialog;
-pub mod template_picker;

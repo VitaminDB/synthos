@@ -16,9 +16,6 @@ pub const KEY_WEB: &str = "web";
 pub const KEY_AUTOSKILL: &str = "autoskill";
 pub const KEY_SUBAGENT: &str = "subagent";
 pub const KEY_SYSTEM: &str = "system";
-/// Графы редактора нод: исполнитель ещё есть, но модели инструмент больше
-/// не предлагается (в каталоге его нет) — на его месте [`KEY_GENERATE`].
-pub const KEY_PIPELINES: &str = "pipelines";
 pub const KEY_GENERATE: &str = "generate";
 pub const KEY_NOTES: &str = "notes";
 pub const KEY_WIZARD: &str = "wizard";
@@ -26,13 +23,14 @@ pub const KEY_VIEW_MEDIA: &str = "view_media";
 pub const KEY_AUTOTOOLS: &str = "autotools";
 
 /// Ключи прежних инструментов в списках настроек (конфиг, настройки чата):
-/// `pipelines` → `generate`. Каталог `pipelines` не знает — без замены у
+/// `pipelines` (графы редактора нод, убраны) → `generate`. Без замены у
 /// чата, где были включены графы, пропала бы и генерация.
 pub fn migrate_tool_keys(list: &mut Vec<String>) -> bool {
-    let Some(pos) = list.iter().position(|k| k == KEY_PIPELINES) else {
+    const LEGACY_PIPELINES: &str = "pipelines";
+    let Some(pos) = list.iter().position(|k| k == LEGACY_PIPELINES) else {
         return false;
     };
-    list.retain(|k| k != KEY_PIPELINES);
+    list.retain(|k| k != LEGACY_PIPELINES);
     if !list.iter().any(|k| k == KEY_GENERATE) {
         list.insert(pos.min(list.len()), KEY_GENERATE.to_string());
     }

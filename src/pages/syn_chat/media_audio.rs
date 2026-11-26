@@ -86,7 +86,7 @@ pub fn ensure_decoded(a: &MsgAttachment, signals: AudioSignals, player: &PlayerS
     let path = blobs::source_path(a);
     let sha = a.sha256.clone();
     std::thread::spawn(move || {
-        let decoded = crate::pages::node_editor::nodes::decode::decode_file(&path);
+        let decoded = syn_notes::audio_decode::decode_file(&path);
         syngui::async_runtime::run_on_main_thread(move || {
             // Пока декодировали, пользователь мог перелистнуть дальше.
             if signals.key.get_untracked() != sha {

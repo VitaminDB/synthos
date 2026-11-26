@@ -158,7 +158,7 @@ pub struct SynChatCtx {
     /// Живой вывод идущего вызова `bash` — только для карточки вызова, в
     /// модель не уходит (см. [`crate::syn_chat::tool_live`]).
     pub tool_live: RwSignal<Option<crate::syn_chat::tool_live::LiveOutput>>,
-    pub tool_timer: crate::pages::node_editor::timing::Stopwatch,
+    pub tool_timer: crate::syn_chat::stopwatch::Stopwatch,
     /// Последняя ошибка для UI.
     pub error: RwSignal<Option<String>>,
     /// Монотонный счётчик прерываний; worker сравнивает со snapshot'ом.
@@ -404,7 +404,7 @@ impl SynChatCtx {
             tool_limit: use_signal(None),
             tool_running: use_signal(None),
             tool_live: use_signal(None),
-            tool_timer: crate::pages::node_editor::timing::Stopwatch::new(),
+            tool_timer: crate::syn_chat::stopwatch::Stopwatch::new(),
             error: use_signal(None),
             abort: Arc::new(AtomicU64::new(0)),
             params: use_signal(SamplingParams::default()),

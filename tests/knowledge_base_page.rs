@@ -15,7 +15,6 @@ use syngui::prelude::*;
 use syngui::testing::{click_at, TestHarness};
 use syngui::widget::ElementId;
 
-use synthos::config::AppConfig;
 use synthos::context::AppCtx;
 use synthos::kb::ctx::ModelState;
 use synthos::kb::ingest::pipeline::{IngestProgress, IngestStage};
@@ -87,8 +86,6 @@ fn knowledge_base_page_sections_states_and_actions() {
 
     let (_theme, ctx) = synthos::build_context();
     provide_context(ctx.clone());
-    provide_context(synthos::pages::huggingface::HuggingFaceCtx::new(&AppConfig::default()));
-    provide_context(synthos::pages::syn_explorer::SynExplorerCtx::new(&AppConfig::default()));
     let kb = use_context::<AppCtx>().kb;
 
     // ── Пусто: приглашение с кнопкой, она создаёт и открывает коллекцию ──

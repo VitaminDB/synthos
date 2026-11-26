@@ -22,14 +22,10 @@ use syngui::widgets::{AnimatedSize, AnimationAxis, MultilineTextEdit, Padding, R
 use crate::agent::tools::Tool;
 use crate::context::AppCtx;
 use crate::icons::{
-    MI_ACCOUNT_TREE, MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
+    MI_AUTORENEW, MI_CHECK, MI_CLOSE, MI_CONTENT_COPY, MI_DELETE, MI_EDIT,
     MI_EDIT_NOTE, MI_EXPAND_LESS, MI_EXPAND_MORE, MI_HOURGLASS_TOP, MI_PSYCHOLOGY, MI_REPORT,
     MI_TERMINAL, MI_TIMER,
 };
-use crate::pages::notes::NotesCtx;
-use crate::pages::node_editor::run_controls;
-use crate::pages::node_editor::tabs::{EditorWorkspace, RunState};
-use crate::pages::node_editor::timing;
 use crate::syn_chat::session;
 use crate::syn_chat::state::{ChatMsg, ChatMsgKind, ChatMsgRole, QueuedMsg, SynChatCtx};
 
@@ -1031,12 +1027,7 @@ fn tool_countdown() -> Box<dyn Widget> {
                 }),
         )]
     });
-    Box::new(
-        Row::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![Box::new(text) as Box<dyn Widget>, timing::ticker(chat.tool_timer)]),
-    )
+    Box::new(text)
 }
 
 /// Тело карточки, живущее под chevron'ом: пусто пока свёрнуто, содержимое
@@ -1093,17 +1084,8 @@ fn tool_call_row(msg: &ChatMsg, msg_idx: usize, tool_name: &str, is_typing: bool
         )
     };
 
-    let mut meta_children: Vec<Box<dyn Widget>> =
+    let meta_children: Vec<Box<dyn Widget>> =
         vec![Box::new(author_row) as Box<dyn Widget>, card_with_actions];
-    // Живой статус прогона — под последним tool-call `pipelines`: пока
-    // результат не пришёл, вызов остаётся хвостом ленты.
-    if tool_name == "pipelines" {
-        let chat = use_context::<SynChatCtx>();
-        let is_tail = chat.messages.with_untracked(Vec::len).saturating_sub(1) == msg_idx;
-        if is_tail {
-            meta_children.push(pipeline_live_card());
-        }
-    }
 
     let meta = Column::new()
         .gap(4.0)
@@ -1221,14 +1203,11 @@ pub(super) fn tool_result_card_only(
         vec![Box::new(header), body_wrap(display_body)]
     };
 
-    // Медиа-результаты пайплайна (mp4/wav из save-нод) — плитками ВНЕ
+    // Медиа-результаты инструмента (картинка, ролик, звук `generate`) — плитками ВНЕ
     // collapsible: результат видно сразу, полноэкранный просмотр работает
     // тем же media_viewer'ом, что и у пользовательских вложений.
     if !msg.attachments.is_empty() {
         card_children.push(super::attachments::bubble_grid(&msg.attachments));
-    }
-    if tool_name == "pipelines" {
-        card_children.push(Box::new(open_graph_link()));
     }
     if tool_name == "notes" {
         card_children.push(Box::new(open_notes_link(&msg.body)));
@@ -1260,58 +1239,32 @@ fn attachments_only_row(msg: &ChatMsg) -> impl Widget {
     }
 }
 
-/// Ссылка «Открыть граф» — раскрывает служебную вкладку агента текущего
-/// чата и переключает роут на нодовый редактор.
-fn open_graph_link() -> impl Widget {
-    let link = mgui! {
-        Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Icon::new(MI_ACCOUNT_TREE).class("pipeline-link-icon"),
-            Text::new(tr!("chat.msg.pipeline.open_graph")).class("pipeline-link-text"),
-        ]
-    };
-    GestureDetector::new()
-        .on_click(|| {
-            let chat = use_context::<SynChatCtx>();
-            let Some(chat_id) = chat.active_chat_id.get_untracked() else {
-                return;
-            };
-            let ws = use_context::<EditorWorkspace>();
-            let Some(tab) = ws.agent_tab_for_chat(&chat_id) else {
-                return;
-            };
-            ws.reveal(tab);
-            let app = use_context::<AppCtx>();
-            if let Ok(mut r) = app.router.lock() {
-                r.navigate("nodes");
-            }
-            app.current_route.set("nodes".to_string());
-        })
-        .child(DecoratedBox::new().class("pipeline-link").child(link))
-}
-
 /// Ссылка «Открыть в заметках» под результатом tool `notes`: страница —
 /// из строки `page: <id>` результата (её печатает сам инструмент), без
-/// неё — просто режим заметок. Плитка проекта на рейле открывается, если
-/// была закрыта.
+/// неё — просто окно заметок. Заметки — программа syn-notes: показ уходит
+/// ей по сокету (не запущена — поднимается).
 fn open_notes_link(body: &str) -> impl Widget {
     let page_id = notes_page_id(body);
     let link = mgui! {
         Row::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-            Icon::new(MI_EDIT_NOTE).class("pipeline-link-icon"),
-            Text::new(tr!("chat.msg.notes.open_page")).class("pipeline-link-text"),
+            Icon::new(MI_EDIT_NOTE).class("tool-link-icon"),
+            Text::new(tr!("chat.msg.notes.open_page")).class("tool-link-text"),
         ]
     };
     GestureDetector::new()
         .on_click(move || {
-            let notes = use_context::<NotesCtx>();
-            // Страница могла остаться в другом открытом проекте — агент
-            // создавал её до смены плитки.
-            if let Some(id) = &page_id {
-                notes.open_page_anywhere(id);
-            }
-            crate::rail::navigate("notes");
+            let page_id = page_id.clone();
+            // Сокет блокирующий, а хозяин может ещё подниматься — не на
+            // главном потоке.
+            std::thread::spawn(move || {
+                if let Err(e) = crate::agent::tools::notes::open_in_notes(page_id.as_deref()) {
+                    syngui::async_runtime::run_on_main_thread(move || {
+                        use_context::<AppCtx>().notifications.error(e);
+                    });
+                }
+            });
         })
-        .child(DecoratedBox::new().class("pipeline-link").child(link))
+        .child(DecoratedBox::new().class("tool-link").child(link))
 }
 
 /// Первый `page: <12 hex>` в тексте результата инструмента `notes`.
@@ -1326,72 +1279,6 @@ pub(crate) fn notes_page_id(body: &str) -> Option<String> {
         rest = tail;
     }
     None
-}
-
-/// Живая карточка прогона пайплайна — рендерится под tool-call `pipelines`,
-/// пока секвенсер работает: «нод 2/5 · LTX Sampler Stage1 43% · 3:12»,
-/// ссылка на граф и отмена (abort хода → cancel-флаги нод). Сам ticker
-/// держим здесь же: бейдж нодовой страницы не смонтирован, пока открыт чат,
-/// и без него elapsed бы замирал.
-fn pipeline_live_card() -> Box<dyn Widget> {
-    let status = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        let ws = use_context::<EditorWorkspace>();
-        if ws.run_state.get() != RunState::Running {
-            return vec![];
-        }
-        let done = ws.run_done.get();
-        let total = ws.run_total.get();
-        let elapsed = ws
-            .run_timer
-            .display_ms()
-            .map(timing::fmt_elapsed)
-            .unwrap_or_default();
-        let active = run_controls::active_nodes_status();
-        let active_txt = active
-            .iter()
-            .map(|(title, pct)| match pct {
-                Some(p) if *p > 0.0 => format!("{title} {:.0}%", (p * 100.0).min(100.0)),
-                _ => title.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut line = tr!("chat.msg.pipeline.progress", done = done, total = total);
-        if !active_txt.is_empty() {
-            line.push_str(&format!(" · {active_txt}"));
-        }
-        if !elapsed.is_empty() {
-            line.push_str(&format!(" · {elapsed}"));
-        }
-
-        let cancel = GestureDetector::new()
-            .on_click(session::abort_current)
-            .child(
-                DecoratedBox::new()
-                    .class("pipeline-live-cancel")
-                    .child(Text::new(tr!("chat.msg.pipeline.cancel")).class("pipeline-live-cancel-text")),
-            );
-
-        vec![Box::new(
-            DecoratedBox::new().class("pipeline-live-card").child(mgui! {
-                Row::new().gap(10.0).cross_axis_alignment(CrossAxisAlignment::Center) => [
-                    Icon::new(MI_AUTORENEW).class("pipeline-live-spinner"),
-                    Text::new(line).class("pipeline-live-text"),
-                    open_graph_link(),
-                    cancel,
-                ]
-            }),
-        )]
-    });
-    let ws = use_context::<EditorWorkspace>();
-    Box::new(
-        Column::new()
-            .gap(0.0)
-            .cross_axis_alignment(CrossAxisAlignment::Start)
-            .children(vec![
-                Box::new(status) as Box<dyn Widget>,
-                timing::ticker(ws.run_timer),
-            ]),
-    )
 }
 
 /// Кликабельная строка «Показать всё / Свернуть» под усечённым результатом.

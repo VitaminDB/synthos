@@ -7102,27 +7102,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "syn-node-editor"
-version = "0.2.0"
-dependencies = [
- "hound",
- "rfd",
- "serde",
- "serde_json",
- "symphonia",
- "synaptix-audio",
- "synaptix-core",
- "synaptix-flow",
- "synaptix-io",
- "synaptix-kernels-cpu",
- "synaptixd",
- "syngui",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "syn-notes"
 version = "0.2.0"
 dependencies = [
@@ -8138,6 +8117,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "synaptix-vfx"
+version = "0.1.1"
+dependencies = [
+ "cudarc",
+ "half",
+ "memmap2",
+ "safetensors",
+ "serde_json",
+ "synaptix-bundle",
+ "synaptix-core",
+ "synaptix-kernels-cuda",
+ "synaptix-ops 0.1.1",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synaptix-video-ltx23"
 version = "0.1.1"
 dependencies = [
@@ -8229,6 +8224,7 @@ dependencies = [
  "synaptix-tts-supertonic",
  "synaptix-tts-vibevoice",
  "synaptix-tts-voxcpm",
+ "synaptix-vfx",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
@@ -8406,7 +8402,6 @@ dependencies = [
  "reqwest",
  "rfd",
  "rusqlite",
- "safetensors",
  "scraper",
  "serde",
  "serde_json",
@@ -8414,16 +8409,11 @@ dependencies = [
  "sqlite-vec",
  "symphonia",
  "syn-assist",
- "syn-node-editor",
  "syn-notes",
  "syn-notes-proto",
  "synaptix",
- "synaptix-audio",
  "synaptix-bundle",
  "synaptix-core",
- "synaptix-flow",
- "synaptix-gguf",
- "synaptix-io",
  "synaptix-kernels-cpu",
  "synaptix-rag",
  "synaptix-tokenizer 0.1.1",
@@ -10746,10 +10736,6 @@ dependencies = [
  "syn 2.0.119",
  "winnow 1.0.4",
 ]
-
-[[patch.unused]]
-name = "synaptix-vfx"
-version = "0.1.1"
 
 [[patch.unused]]
 name = "mss-analysis"

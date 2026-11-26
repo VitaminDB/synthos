@@ -15,7 +15,6 @@ license = "GPL-3.0-only"
 [workspace.dependencies]
 anyhow = "1.0"
 toml = "0.8"
-safetensors = "0.7"
 tokenizers = "0.23.1"
 hound = "3.5"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "wav", "pcm", "isomp4", "aac", "vorbis", "ogg"] }
@@ -28,7 +27,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Local AI desktop studio — node-based video/audio/music/image generation and chat on the native synaptix engine"
+description = "Local AI desktop studio — agentic chat, knowledge base, code editor and LoRA training on the native synaptix engine"
 repository = "https://github.com/VitaminDB/synthos"
 readme = "README.md"
 
@@ -40,7 +39,7 @@ name = "synthos"
 path = "src/main.rs"
 
 [features]
-default = ["desktop", "nvml", "kb-sqlite-vec", "gguf", "engine", "cuda", "npu"]
+default = ["desktop", "nvml", "kb-sqlite-vec", "engine", "cuda", "npu"]
 # Встроенный движок: без запущенной службы synaptixd synthos поднимает тот же
 # сервер (`synaptixd::server`) у себя в процессе — см. src/engine.rs.
 engine = ["synaptixd/daemon"]
@@ -55,7 +54,6 @@ testing = ["syngui/testing"]
 # собранным, но `try_new_nvml()` вернёт None → панель скрывается.
 nvml = ["dep:nvml-wrapper"]
 
-gguf = ["dep:synaptix-gguf"]
 # sqlite-vec (vec0 virtual table) — KNN-индекс при коллекциях >100k чанков.
 # Подключается через `kb::store::init_sqlite_vec()` (one-shot, регистрирует
 # auto-extension). Без фичи KB продолжает работать на full-scan-cosine.
@@ -85,7 +83,7 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     "markdown-syntax",
     "image",
     "image-network",
-    # Цветные эмодзи — иконки страниц заметок.
+    # Цветные эмодзи — панель эмодзи в чате.
     "color-emoji",
     "svg",
     "clipboard",
@@ -96,8 +94,6 @@ syngui = { path = "../syngui/syngui", default-features = false, features = [
     # (`synthos --open-terminal …`).
     "single-instance",
     "code-editor-all",
-    # WYSIWYG-редактор блочных документов — режим «Заметки».
-    "document-editor",
     "i18n",
 ] }
 
@@ -132,29 +128,21 @@ rfd = { version = "0.15", default-features = false, features = [
 
 synaptix-core = { path = "../synaptix/crates/synaptix-core" }
 synassist = { package = "syn-assist", path = "../synshell/crates/syn-assist" }
-# Заметки: режим «Заметки» и инструмент notes — библиотека syn-notes
-# (тот же код, что в приложении заметок synshell).
+# Заметки ведёт программа syn-notes (synshell): инструмент `notes` говорит с
+# ней по сокету (syn-notes-proto). Из библиотеки syn-notes берутся только
+# общие части: бюджет ответа инструментов, набор эмодзи панели чата и сбор
+# ссылок заметок на вложения (чтобы чистка вложений их не удалила).
 syn-notes = { path = "../synshell/crates/syn-notes" }
 syn-notes-proto = { path = "../synshell/crates/syn-notes-proto" }
-synaptix-flow = { path = "../synshell/crates/synaptix-flow" }
-# Редактор узлов — общий с видеоредактором synshell (холст, ноды, провода,
-# сохранение графа, прогон); страница, шаблоны и панель моделей — здесь.
-syn-node-editor = { path = "../synshell/crates/syn-node-editor" }
-# Движок нейросетей: клиент (чат, генерация, графы ядра) и — с фичей `engine` —
+# Движок нейросетей: клиент (чат, генерация) и — с фичей `engine` —
 # сам сервер, если системная служба synaptixd не запущена (src/engine.rs).
 synaptixd = { path = "../synshell/crates/synaptixd", default-features = false }
 synaptix-kernels-cpu = { path = "../synaptix/crates/synaptix-kernels-cpu" }
-# synaptix-io (feature image) — load_image/resize_bilinear для LTX Image ноды
-# (image→video conditioning), canny_rgb для IC-LoRA control.
-synaptix-io = { path = "../synaptix/crates/synaptix-io", default-features = false, features = ["image"] }
-# synaptix-audio — sinc-ресемплинг в Mixer-ноде (несовпадающие частоты входов).
-synaptix-audio = { path = "../synaptix/crates/synaptix-audio", default-features = false }
 # tokenizer — ChatTemplate/SpecialTokens.
 synaptix-tokenizer = { path = "../synaptix/crates/synaptix-tokenizer" }
-# sha256/blake3 — контрольные суммы чанков, доступные в режиме эксперта
-# на странице пакетов (`with_sha256`/`with_blake3` без фич паникуют).
+# .syn-бандлы моделей базы знаний (эмбеддер, реранкер). sha256/blake3 —
+# проверка контрольных сумм чанков (`with_sha256`/`with_blake3` без фич паникуют).
 synaptix-bundle = { path = "../synaptix/crates/synaptix-bundle", features = ["sha256", "blake3"] }
-synaptix-gguf = { path = "../synaptix/crates/synaptix-gguf", optional = true }
 
 # Фасад synaptix без движка (фича `engine` выключена): токенизатор и шаблон
 # чата, разбор ответа, профиль сэмплинга, интерфейсы — модели исполняет служба.
@@ -162,10 +150,6 @@ synaptix = { path = "../synaptix/crates/synaptix", default-features = false }
 # synaptix-rag — doc-парсинг (md/html/pdf) + chunking + gitignore-walk для KB
 # (модуль `doc`). sqlite-vec не включаем: индекс KB на собственном synthos-стеке.
 synaptix-rag = { path = "../synaptix/crates/synaptix-rag", default-features = false }
-
-# safetensors — для парсинга `silence_latent.safetensors` из ACE-Step .syn
-# bundle (lazy mmap через bundle.read_file). См. shared.rs::load_silence_from_bundle.
-safetensors.workspace = true
 
 # HTTP-клиент к llama-server (llama::api)
 reqwest = { version = "0.12", default-features = false, features = [
@@ -279,7 +263,7 @@ log = "0.4"
 # Значок — data/icons/synthos.svg, ярлык — data/synthos.desktop.
 [package.metadata.syngui]
 name = "Synthos"
-description_en = "Local AI desktop studio: agentic chat, notes workspace, node editor for image/video/music/speech, code editor — native synaptix engine on any NVIDIA sm_80+ GPU, .syn and GGUF models"
+description_en = "Local AI desktop studio: agentic chat that generates images, video, music and speech, knowledge base, code editor with terminals, LoRA training — native synaptix engine on any NVIDIA sm_80+ GPU"
 docs = ["README.md", "LICENSE", "LICENSE-COMMERCIAL.md", "LICENSE-EXCEPTION.md"]
 
 [package.metadata.syngui.linux]

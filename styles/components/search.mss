@@ -249,7 +249,6 @@
 .search-row-icon-model    { color: var(--presence-online); }
 .search-row-icon-skill    { color: var(--presence-instagram); }
 .search-row-icon-tool     { color: var(--presence-messenger); }
-.search-row-icon-template { color: var(--text); }
 .search-row-icon-more     { color: var(--primary); }
 
 /* ───────────────────────── Пустая выдача ───────────────────────── */

@@ -5,8 +5,8 @@
 //! synthos --open-terminal <папка> [--cmd <команда>] [--title <заголовок>]
 //!                                             вкладка терминала в проекте папки
 //! synthos --list-terminals                  терминалы хранителя
-//! synthos --screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]
-//!                                             снимок редактора нод без окна
+//! synthos --screenshot <png> [--page <страница>[/<раздел>]] [--size ШxВ] [--scale N]
+//!                                             снимок окна без окна (чат, код, обучение, настройки)
 //! synthos --help | --version
 //! synthos --pty-holder <сокет>                служебное: хранитель терминалов
 //! ```
@@ -31,7 +31,7 @@ pub struct Cli {
     pub pty_holder: Option<PathBuf>,
     pub list_terminals: bool,
     pub open_terminals: Vec<OpenTerminal>,
-    /// `--screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]`.
+    /// `--screenshot <png> [--page <страница>[/<раздел>]] [--size ШxВ] [--scale N]`.
     pub screenshot: Option<crate::shot::Shot>,
 }
 
@@ -51,8 +51,11 @@ pub const USAGE: &str = "\
                                             --cmd набирается в оболочке вкладки
   synthos --list-terminals                  терминалы, которые держит хранитель
                                             (ключ, pid, подключена ли вкладка, папка, заголовок)
-  synthos --screenshot <png> [--template <id>|demo|workspace[:N]] [--size ШxВ] [--scale N]
-                                            снимок редактора нод без окна
+  synthos --screenshot <png> [--page <страница>[/<раздел>]] [--size ШxВ] [--scale N]
+                                            снимок окна в PNG без показа окна: страница
+                                            syn_chat (по умолчанию) | code | training |
+                                            settings[/general|themes|skills|audio_models|
+                                            ai_models|knowledge_base|archive|about]
   synthos --help | --version
 
 Если synthos уже запущен, аргументы передаются ему, второе окно не открывается.";
@@ -98,18 +101,18 @@ pub fn parse(args: &[String]) -> std::result::Result<Cli, String> {
             "--screenshot" => {
                 cli.screenshot = Some(crate::shot::Shot {
                     out: take(&mut it)?,
-                    template: "demo".into(),
+                    page: "syn_chat".into(),
                     size: (1600, 1000),
                     scale: 1.0,
                 })
             }
-            "--template" | "--size" | "--scale" => {
+            "--page" | "--size" | "--scale" => {
                 let v = take(&mut it)?;
                 let Some(s) = cli.screenshot.as_mut() else {
                     return Err(format!("{flag} — только после --screenshot <png>"));
                 };
                 match flag {
-                    "--template" => s.template = v,
+                    "--page" => s.page = v,
                     "--size" => {
                         let (w, h) = v.split_once('x').ok_or_else(|| format!("--size: ШxВ, а не {v}"))?;
                         s.size = (w.parse().map_err(|_| format!("--size: {v}"))?, h.parse().map_err(|_| format!("--size: {v}"))?);

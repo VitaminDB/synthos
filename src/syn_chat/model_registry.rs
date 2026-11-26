@@ -180,36 +180,11 @@ impl SynModelRegistry {
 
     /// Открыть модель в службе (её профиль — в настройках модели службы).
     pub fn load(&self, path: PathBuf) {
-        self.load_inner(path, None);
-    }
-
-    /// Как [`Self::load`], но по завершении (успех или ошибка) сигналит в
-    /// `notify`. Нужен агентскому `pipelines run` с free_vram: worker-поток
-    /// после прогона синхронно ждёт, пока модель реально встанет обратно.
-    pub fn load_with_notify(
-        &self,
-        path: PathBuf,
-        notify: tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>,
-    ) {
-        self.load_inner(path, Some(notify));
-    }
-
-    fn load_inner(
-        &self,
-        path: PathBuf,
-        notify: Option<tokio::sync::oneshot::Sender<std::result::Result<Arc<LoadedSynModel>, String>>>,
-    ) {
         if self.loading.get_untracked() {
-            if let Some(tx) = notify {
-                let _ = tx.send(Err(tr!("chat.model_registry.error.load_in_progress")));
-            }
             return;
         }
         if let Some(loaded) = self.current.get_untracked() {
             if loaded.path == path {
-                if let Some(tx) = notify {
-                    let _ = tx.send(Ok(loaded));
-                }
                 return;
             }
         }
@@ -236,18 +211,11 @@ impl SynModelRegistry {
                     }
                     registry.last_path.set_always(Some(path.clone()));
                     registry.sampling.set(Some(Arc::new(loaded.sampling.clone())));
-                    let loaded = Arc::new(loaded);
-                    registry.current.set_always(Some(loaded.clone()));
-                    if let Some(tx) = notify {
-                        let _ = tx.send(Ok(loaded));
-                    }
+                    registry.current.set_always(Some(Arc::new(loaded)));
                 }
                 Err(e) => {
                     log::error!("[syn_chat] модель {}: {e}", path.display());
-                    registry.error.set(Some(e.clone()));
-                    if let Some(tx) = notify {
-                        let _ = tx.send(Err(e));
-                    }
+                    registry.error.set(Some(e));
                 }
             }
             registry.loading.set(false);

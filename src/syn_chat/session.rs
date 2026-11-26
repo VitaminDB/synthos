@@ -976,9 +976,8 @@ fn start_agent_thread(model: Arc<LoadedSynModel>, ctx: SynChatCtx) {
             // KV-слота отпущен, VRAM свободна под summary-запрос.
             //
             // Модель берём из реестра ЗАДНИМ ЧИСЛОМ, а не клоном до цикла:
-            // upfront-клон жил бы весь ход и не давал `pipelines run` с
-            // free_vram реально освободить веса. После free_vram-прогона
-            // здесь уже лежит перезагруженная модель.
+            // upfront-клон жил бы весь ход и держал веса, даже если модель
+            // успели выгрузить или заменить.
             if r.is_ok()
                 && autocompact_enabled
                 && abort_for_compact.load(Ordering::Relaxed) == abort_snapshot
@@ -1283,7 +1282,7 @@ async fn rebuild_history(
 }
 
 async fn run_agent_loop(
-    mut model: Arc<LoadedSynModel>,
+    model: Arc<LoadedSynModel>,
     mut items: Vec<HistoryItem>,
     caps: MediaCaps,
     tool_schemas: Vec<serde_json::Value>,
@@ -1883,63 +1882,6 @@ async fn run_agent_loop(
                 ToolDecision::Allow => {}
             }
 
-            // ── pipelines action=run — особый путь: прогон завязан на
-            // жизненный цикл LLM (free_vram выгружает её и грузит обратно),
-            // поэтому исполняется обёрткой цикла, а не tools::execute.
-            if let Some(req) = crate::syn_chat::pipeline_run::parse_run_call(chat_call) {
-                let res = run_pipeline_tool(
-                    req,
-                    model,
-                    &abort,
-                    abort_snapshot,
-                )
-                .await;
-                let turns_left = max_turns.saturating_sub(turn + 1);
-                let note = if turns_left > 0 && turns_left <= system_prompt::BUDGET_NOTE_FROM {
-                    system_prompt::budget_note(turns_left)
-                } else {
-                    String::new()
-                };
-                // В ленту — та же копия, что уйдёт в историю (см. ниже,
-                // `fit_for_prompt`).
-                let res = PipelineToolResult {
-                    content: fit_for_prompt(&res.content, &tool_name(chat_call)),
-                    ..res
-                };
-                push_tool_result_with(
-                    &chat_id,
-                    chat_call,
-                    res.content.clone(),
-                    res.error,
-                    res.attachments,
-                    note.clone(),
-                );
-                if res.aborted {
-                    cancel_unanswered(&chat_id, &chat_calls[ci + 1..]);
-                    return Ok(());
-                }
-                match res.model {
-                    Some(m) => model = m,
-                    None => {
-                        // Результаты прогона уже в ленте — падаем с внятной
-                        // ошибкой хода, чат остаётся без модели не молча.
-                        let reason = res
-                            .reload_error
-                            .unwrap_or_else(|| tr!("chat.session.error.unknown"));
-                        anyhow::bail!(tr!("chat.session.error.reload_failed", reason = reason));
-                    }
-                }
-                note_outcome(&mut call_outcomes, &key, &res.content);
-                if masked != key {
-                    note_outcome(&mut numeric_outcomes, &masked, &res.content);
-                }
-                tools::budget::spend(&res.content);
-                let mut for_history = res.content;
-                for_history.push_str(&note);
-                history.push(Message::tool_named(tool_name(chat_call), for_history));
-                continue;
-            }
-
             // ── view_media: файл кодирует vision-башня этой же модели, и его
             // эмбеддинги входят в промпт следующего хода — поэтому исполняет
             // цикл, а не `tools::execute` (у того нет ни модели, ни медиа).
@@ -2506,163 +2448,13 @@ fn tool_name(call: &ChatToolCall) -> String {
     call.function.name.clone().unwrap_or_default()
 }
 
-/// Итог [`run_pipeline_tool`]. `model: None` — free_vram-прогон прошёл, но
-/// LLM не перезагрузилась (подробность в `reload_error`); ход должен
-/// завершиться ошибкой ПОСЛЕ пуша результатов прогона в ленту.
-struct PipelineToolResult {
-    model: Option<Arc<LoadedSynModel>>,
-    content: String,
-    error: bool,
-    attachments: Vec<crate::agent::state::MsgAttachment>,
-    reload_error: Option<String>,
-    aborted: bool,
-}
-
-/// `pipelines action=run` — обёртка уровня agent-loop.
-///
-/// Принимает `model` ПО ЗНАЧЕНИЮ: при `free_vram` цикл отдаёт своё
-/// владение, функция дропает последнюю strong-ссылку (плюс KV-слот — своим
-/// guard'ом, т.к. `drop_kv_session()` из `unload()` при занятом мьютексе
-/// лишь отложил бы дроп до конца хода) и после прогона возвращает свежую
-/// модель из `load_with_notify`.
-async fn run_pipeline_tool(
-    req: crate::syn_chat::pipeline_run::RunRequest,
-    model: Arc<LoadedSynModel>,
-    abort: &Arc<AtomicU64>,
-    abort_snapshot: u64,
-) -> PipelineToolResult {
-    use crate::syn_chat::pipeline_run as pr;
-
-    let fail = |model: Option<Arc<LoadedSynModel>>, msg: String| PipelineToolResult {
-        model,
-        content: msg,
-        error: true,
-        attachments: Vec::new(),
-        reload_error: None,
-        aborted: false,
-    };
-
-    // 1. Валидация графа и автозаполнение путей save-нод — ДО выгрузки LLM:
-    //    если запускать нечего, гонять модель туда-обратно незачем.
-    let prepared = match pr::prepare(&req.run_label).await {
-        Ok(p) => p,
-        Err(e) => return fail(Some(model), e),
-    };
-
-    // 2. Видеопамять под прогон освобождает служба: модель чата живёт там
-    //    же и уступает карту стадиям графа, а после возвращается сама.
-    let model_opt = Some(model);
-    let model_path: Option<std::path::PathBuf> = None;
-    if req.free_vram {
-        log::info!("[syn_chat] pipelines run: free_vram — карту делит служба");
-    }
-
-    // 3. Старт прогона.
-    let started = pr::start().await;
-    let (outcome_rx, started_n) = match started {
-        Ok(v) => v,
-        Err(e) => {
-            let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
-            let mut r = fail(model, tr!("chat.session.pipeline.start_failed", error = e));
-            r.reload_error = reload_error;
-            return r;
-        }
-    };
-    log::info!(
-        "[syn_chat] pipelines run «{}»: стартовало корней {}, save-нод {}",
-        req.run_label,
-        started_n,
-        prepared.planned.len()
-    );
-
-    // 4. Ожидание итога. Abort хода отменяет прогон (cancel-флаги нод).
-    let mut aborted = false;
-    let outcome = tokio::select! {
-        o = outcome_rx => o.ok(),
-        _ = wait_abort(abort, abort_snapshot) => {
-            pr::cancel_current().await;
-            aborted = true;
-            None
-        }
-    };
-
-    // 5. Артефакты: файлы save-нод → CAS-вложения (worker-поток, диск).
-    let (mut attachments, mut artifact_lines) = pr::collect_artifacts(&prepared.planned);
-    // 5b. Ноды-просмотрщики (Видео-плеер, Аудио-плеер) держат результат в
-    //     памяти: без save-ноды в чат не приходило ничего, хотя результат
-    //     посчитан. Материализуем и прикладываем — но не дублируем то, что
-    //     уже пришло файлом.
-    let (viewer_atts, viewer_lines) =
-        pr::collect_viewer_outputs(&req.run_label, &attachments).await;
-    attachments.extend(viewer_atts);
-    artifact_lines.extend(viewer_lines);
-
-    // 6. Вернуть LLM (и после abort тоже — чат не должен молча остаться
-    //    без модели). Перед этим освобождаем VRAM от нодовых моделей
-    //    прогона: LTX/H3 держат веса и пулы активаций, и на 24 ГБ LLM
-    //    возвращалась в остаток — первый же forward падал с
-    //    «alloc_zeros(...) after trim+retries: OOM».
-    // Видеопамятью между моделями прогона и чата распоряжается служба.
-    let was_freed = model_path.is_some();
-    let (model, reload_error) = reload_if_needed(model_opt, model_path).await;
-    let llm_note = if was_freed {
-        Some(match (&model, &reload_error) {
-            (Some(_), _) => tr!("chat.session.pipeline.llm_reloaded"),
-            (None, Some(e)) => tr!("chat.session.pipeline.llm_reload_failed", error = e),
-            (None, None) => tr!("chat.session.pipeline.llm_reload_failed_unknown"),
-        })
-    } else {
-        None
-    };
-
-    let (content, error) =
-        pr::format_envelope(
-            outcome.as_ref(),
-            &artifact_lines,
-            llm_note.as_deref(),
-            aborted,
-            &prepared.warnings,
-        );
-    PipelineToolResult {
-        model,
-        content,
-        error,
-        attachments,
-        reload_error,
-        aborted,
-    }
-}
-
-/// Вернуть модель после free_vram-прогона. `existing` = Some — выгрузки не
-/// было (free_vram=false), возвращаем как есть.
-async fn reload_if_needed(
-    existing: Option<Arc<LoadedSynModel>>,
-    path: Option<std::path::PathBuf>,
-) -> (Option<Arc<LoadedSynModel>>, Option<String>) {
-    if existing.is_some() {
-        return (existing, None);
-    }
-    let Some(path) = path else {
-        return (None, Some(tr!("chat.session.error.model_path_unknown")));
-    };
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    run_on_main_thread(move || {
-        use_context::<SynModelRegistry>().load_with_notify(path, tx);
-    });
-    match rx.await {
-        Ok(Ok(m)) => (Some(m), None),
-        Ok(Err(e)) => (None, Some(e)),
-        Err(e) => (None, Some(e.to_string())),
-    }
-}
-
 /// Пушит tool_result-бабл в ленту.
 fn push_tool_result(ctx: &Option<String>, call: &ChatToolCall, content: String, error: bool) {
     push_tool_result_with(ctx, call, content, error, Vec::new(), String::new());
 }
 
-/// Как [`push_tool_result`], но с медиа-вложениями (результаты пайплайна:
-/// mp4/wav из save-нод). В промпт они не попадают — отдельное сообщение
+/// Как [`push_tool_result`], но с медиа-вложениями (файлы `generate`:
+/// картинка, ролик, звук). В промпт они не попадают — отдельное сообщение
 /// ленты `build_history` пропускает — а в ленте рендерятся плитками с
 /// полноэкранным просмотрщиком.
 ///
@@ -2695,7 +2487,7 @@ fn push_tool_result_with(
 }
 
 /// Результат `view_media`: файлы лежат на самой карточке инструмента, а не
-/// отдельным сообщением, как у пайплайна, — это часть результата, из которой
+/// отдельным сообщением, как у `generate`, — это часть результата, из которой
 /// `build_history` пересобирает промпт на следующем сообщении.
 fn push_tool_result_viewed(
     chat_id: &Option<String>,

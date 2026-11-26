@@ -3,7 +3,7 @@
 //! Делится надвое. Всё, что живёт в сигналах (чаты, скилы, инструменты,
 //! страницы, команды), собирается на main-thread в [`build_items`] — это
 //! дёшево и пересобирается эффектом при любом изменении. Всё, что лежит на
-//! диске (тела сообщений, `.syn`-пакеты, шаблоны графов), читает [`scan_disk`]
+//! диске (тела сообщений, `.syn`-пакеты), читает [`scan_disk`]
 //! в фоновой задаче: пути для него снимает [`scan_dirs`], потому что
 //! сигналы доступны только на main-thread'е.
 
@@ -20,7 +20,6 @@ use crate::skills::Skill;
 use crate::syn_chat::attach::format_size;
 use crate::syn_chat::state::{ChatMsgKind, ChatMsgRole};
 use crate::syn_chat::SynChatCtx;
-use crate::templates::{self, TemplateCategory};
 
 use super::model::{SearchAction, SearchCommand, SearchItem, SearchKind};
 
@@ -38,7 +37,7 @@ const MAX_MODELS: usize = 500;
 pub struct ScanDirs {
     pub chats_dir: PathBuf,
     /// Каталоги, где ищутся `.syn`-пакеты: общий каталог моделей плюс
-    /// закладки SynExplorer.
+    /// закладки пакетов программы «Модели».
     pub model_dirs: Vec<PathBuf>,
 }
 
@@ -48,7 +47,6 @@ pub struct ScanDirs {
 pub struct ScanData {
     pub messages: Vec<MessageEntry>,
     pub models: Vec<ModelEntry>,
-    pub templates: Vec<TemplateEntry>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -71,25 +69,11 @@ pub struct ModelEntry {
     pub bytes: u64,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct TemplateEntry {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    /// Ключ раздела builtin-шаблона; пусто у пользовательских.
-    pub category_key: String,
-    pub builtin: bool,
-}
-
 /// Маршруты верхнего уровня в порядке показа. `music` из `context::ROUTES`
 /// сюда не входит — страницы за ним пока нет.
 const PAGES: &[(&str, &str, &str)] = &[
     ("syn_chat", "nav.syn_chat", MI_CHAT),
-    ("nodes", "nav.nodes", MI_HUB),
-    ("notes", "notes.title", MI_EDIT_NOTE),
     ("code", "search.page.code", MI_CODE),
-    ("syn_explorer", "nav.syn_explorer", MI_INVENTORY_2),
-    ("huggingface", "nav.huggingface", MI_CLOUD_DOWNLOAD),
     ("training", "nav.training", MI_MODEL_TRAINING),
     ("settings", "nav.settings", MI_SETTINGS),
 ];
@@ -110,18 +94,6 @@ const SETTINGS: &[(&str, &str)] = &[
 fn page_keywords(route: &str) -> &'static [&'static str] {
     match route {
         "syn_chat" => &["чат", "чаты", "переписка", "диалог", "сообщения", "chat", "messages"],
-        "notes" => &["заметки", "заметка", "vault", "wiki", "страницы", "notes", "markdown"],
-        "nodes" => &[
-            "ноды",
-            "нодовый редактор",
-            "граф",
-            "пайплайн",
-            "видео",
-            "музыка",
-            "nodes",
-            "graph",
-            "pipeline",
-        ],
         "code" => &[
             "редактор кода",
             "код",
@@ -132,16 +104,6 @@ fn page_keywords(route: &str) -> &'static [&'static str] {
             "editor",
             "terminal",
         ],
-        "syn_explorer" => &[
-            "syn",
-            "пакеты",
-            "бандлы",
-            "модели",
-            "explorer",
-            "bundles",
-            "packages",
-        ],
-        "huggingface" => &["hf", "загрузки", "скачать", "hub", "download", "huggingface"],
         "training" => &["обучение", "дообучение", "lora", "лора", "адаптер", "датасет", "train", "finetune", "dataset"],
         "settings" => &["настройки", "параметры", "опции", "settings", "preferences"],
         _ => &[],
@@ -228,22 +190,28 @@ const COMMANDS: &[CommandSpec] = &[
         keywords: &["выгрузить", "освободить vram", "unload model"],
     },
     CommandSpec {
-        command: SearchCommand::NewNodeTab,
-        key: "search.cmd.new_node_tab",
-        icon: MI_HUB,
-        keywords: &["новый граф", "вкладка нод", "new graph"],
-    },
-    CommandSpec {
-        command: SearchCommand::TemplatePicker,
-        key: "search.cmd.templates",
-        icon: MI_ACCOUNT_TREE,
-        keywords: &["шаблоны", "пресеты", "templates"],
-    },
-    CommandSpec {
         command: SearchCommand::NewCodeSession,
         key: "search.cmd.new_code_session",
         icon: MI_NOTE_ADD,
         keywords: &["новая сессия", "открыть папку", "new session"],
+    },
+    CommandSpec {
+        command: SearchCommand::ModelsApp,
+        key: "search.cmd.models_app",
+        icon: MI_INVENTORY_2,
+        keywords: &[
+            "модели",
+            "hugging face",
+            "huggingface",
+            "hf",
+            "скачать модель",
+            "пакеты",
+            "бандлы",
+            "syn",
+            "models",
+            "download",
+            "bundles",
+        ],
     },
     CommandSpec {
         command: SearchCommand::VoicePanel,
@@ -303,8 +271,7 @@ const COMMANDS: &[CommandSpec] = &[
 pub fn scan_dirs() -> ScanDirs {
     let app = use_context::<AppCtx>();
     let mut model_dirs = vec![crate::config::resolve_models_dir(&app.models_dir.get_untracked())];
-    let explorer = use_context::<crate::pages::syn_explorer::SynExplorerCtx>();
-    for dir in explorer.bookmarks.get_untracked() {
+    for dir in crate::kb::loader::models_app_dirs().into_iter().skip(1) {
         if !model_dirs.contains(&dir) {
             model_dirs.push(dir);
         }
@@ -320,7 +287,6 @@ pub fn scan_disk(dirs: &ScanDirs) -> ScanData {
     ScanData {
         messages: scan_messages(&dirs.chats_dir),
         models: scan_models(&dirs.model_dirs),
-        templates: scan_templates(),
     }
 }
 
@@ -419,23 +385,6 @@ fn scan_models(dirs: &[PathBuf]) -> Vec<ModelEntry> {
     out
 }
 
-fn scan_templates() -> Vec<TemplateEntry> {
-    templates::list_all()
-        .into_iter()
-        .map(|t| TemplateEntry {
-            category_key: if t.builtin {
-                TemplateCategory::for_template(&t).key().to_string()
-            } else {
-                String::new()
-            },
-            id: t.id,
-            name: t.name,
-            description: t.description,
-            builtin: t.builtin,
-        })
-        .collect()
-}
-
 fn truncate(s: &str, max: usize) -> String {
     let mut out = String::with_capacity(max.min(s.len()));
     for (i, c) in s.chars().enumerate() {
@@ -460,40 +409,7 @@ pub fn build_items(scan: &ScanData) -> Vec<SearchItem> {
     push_models(&mut items, scan);
     push_skills(&mut items);
     push_tools(&mut items);
-    push_templates(&mut items, scan);
-    push_notes(&mut items);
     items
-}
-
-/// Страницы проекта заметок: название + путь в дереве, действие —
-/// активировать страницу.
-fn push_notes(items: &mut Vec<SearchItem>) {
-    let notes = use_context::<crate::pages::notes::NotesCtx>();
-    let tree = notes.tree.get();
-    for node in tree.all() {
-        let path = tree
-            .path_of(&node.id)
-            .into_iter()
-            .map(|(_, t)| t)
-            .collect::<Vec<_>>()
-            .join(" / ");
-        let icon = match node.icon.as_deref() {
-            Some(i) if crate::pages::notes::icon_picker::is_material_glyph(i) => {
-                Box::leak(i.to_string().into_boxed_str()) as &'static str
-            }
-            _ => MI_EDIT_NOTE,
-        };
-        items.push(
-            SearchItem::new(
-                format!("note:{}", node.id),
-                SearchKind::Note,
-                node.title.clone(),
-                SearchAction::Note(node.id.clone()),
-            )
-            .subtitle(path)
-            .icon(icon),
-        );
-    }
 }
 
 fn push_pages(items: &mut Vec<SearchItem>) {
@@ -652,38 +568,6 @@ fn push_tools(items: &mut Vec<SearchItem>) {
             .icon(tool.icon)
             .keyword(tool.key)
             .secondary(SearchAction::ToggleTool(tool.key.to_string())),
-        );
-    }
-}
-
-fn push_templates(items: &mut Vec<SearchItem>, scan: &ScanData) {
-    let custom_hint = tr!("search.template.custom");
-    for t in &scan.templates {
-        let hint = if t.builtin && !t.category_key.is_empty() {
-            tr!(&format!("template.category.{}", t.category_key))
-        } else {
-            custom_hint.clone()
-        };
-        let (name, description) = if t.builtin {
-            (
-                syngui::i18n::try_tr(&format!("template.{}.name", t.id))
-                    .unwrap_or_else(|| t.name.clone()),
-                syngui::i18n::try_tr(&format!("template.{}.desc", t.id))
-                    .unwrap_or_else(|| t.description.clone()),
-            )
-        } else {
-            (t.name.clone(), t.description.clone())
-        };
-        items.push(
-            SearchItem::new(
-                format!("template:{}", t.id),
-                SearchKind::Template,
-                name,
-                SearchAction::Template(t.id.clone()),
-            )
-            .subtitle(description)
-            .hint(hint)
-            .icon(MI_ACCOUNT_TREE),
         );
     }
 }

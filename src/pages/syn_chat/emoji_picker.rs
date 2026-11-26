@@ -1,5 +1,6 @@
 //! Панель эмодзи над кнопкой-смайликом в панели ввода чата: ряд недавних
-//! и группы из общего набора заметок (`notes::icon_picker::EMOJI_GROUPS`).
+//! и группы из общего набора библиотеки заметок synshell
+//! (`syn_notes::notes::icon_picker::EMOJI_GROUPS`, подписи — её каталоги).
 //! Клик кладёт эмодзи в очередь вставки поля ввода
 //! (`SynChatCtx::input_insert` → `MultilineTextEdit::insert_queue`) — оно
 //! встаёт в позицию каретки, не в конец; панель остаётся открытой для
@@ -12,7 +13,7 @@ use syngui::prelude::*;
 use syngui::widgets::{GestureDetector, PopupAnchor, PopupPanel, Reactive};
 
 use crate::context::AppCtx;
-use crate::pages::notes::icon_picker::{icon_cell, EMOJI_GROUPS};
+use syn_notes::notes::icon_picker::EMOJI_GROUPS;
 use crate::syn_chat::state::SynChatCtx;
 
 const PANEL_W: f32 = 348.0;
@@ -55,27 +56,26 @@ pub fn view() -> impl Widget {
             }
             vec![Box::new(panel())]
         }))
-        .class("notes-icon-picker chat-emoji-picker")
+        .class("chat-emoji-picker")
 }
 
 fn panel() -> impl Widget {
     let recent = use_context::<AppCtx>().chat_recent_emoji.get();
     let mut col = Column::new().gap(6.0).cross_axis_alignment(CrossAxisAlignment::Stretch);
     if !recent.is_empty() {
-        col = col.child(Text::new(tr!("chat.input.emoji.recent")).class("notes-icon-section"));
+        col = col.child(Text::new(tr!("chat.input.emoji.recent")).class("chat-emoji-section"));
         col = col.child(grid(recent));
     }
     for (key, list) in EMOJI_GROUPS {
-        col = col.child(Text::new(tr!(key)).class("notes-icon-section"));
+        col = col.child(Text::new(tr!(key)).class("chat-emoji-section"));
         col = col.child(grid(list.iter().map(|s| s.to_string()).collect()));
     }
     let body = Stack::new()
         .clip(false)
-        .children(vec![Box::new(DecoratedBox::new().class("notes-icon-grid").child(col)) as Box<dyn Widget>]);
+        .children(vec![Box::new(DecoratedBox::new().class("chat-emoji-grid").child(col)) as Box<dyn Widget>]);
     Column::new()
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .class("notes-icon-picker-body")
-        .child(
+                .child(
             DecoratedBox::new()
                 .style("height", syngui::mss::StyleValue::px(PANEL_H - 16.0))
                 .child(ScrollView::new().vertical().child(body)),
@@ -99,6 +99,14 @@ fn grid(glyphs: Vec<String>) -> Column {
         col = col.child(row);
     }
     col
+}
+
+/// Ячейка сетки: эмодзи по центру и с обрезкой по ячейке — атлас рисует
+/// эмодзи по кодпоинтам, без шейпера, и широкий глиф наезжал бы на соседние.
+fn icon_cell(glyph: &str) -> impl Widget {
+    DecoratedBox::new().class("chat-emoji-cell").child(Stack::new().clip(true).children(vec![Box::new(
+        Center::new().child(Text::new(glyph.to_string()).class("chat-emoji-glyph")),
+    ) as Box<dyn Widget>]))
 }
 
 #[cfg(test)]

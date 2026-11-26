@@ -2,16 +2,11 @@
 //! compile time. Keeps one component = one file and lets variables from
 //! `base/variables.mss` resolve in every other block.
 
-/// Вся таблица: свои стили, стили редактора узлов (`syn_node_editor::STYLES`)
-/// на прежнем месте каскада, затем остальные свои.
 pub fn styles() -> &'static str {
-    static ALL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    ALL.get_or_init(|| [HEAD, syn_node_editor::STYLES, TAIL].concat())
+    STYLES
 }
 
-/// До стилей редактора узлов.
-const HEAD: &str = {
-    concat!(
+const STYLES: &str = concat!(
         include_str!("../styles/base/variables.mss"),
         "\n",
         include_str!("../styles/base/reset.mss"),
@@ -28,7 +23,6 @@ const HEAD: &str = {
         "\n",
         include_str!("../styles/components/nav_rail.mss"),
         "\n",
-        "\n",
         include_str!("../styles/components/conversation_item.mss"),
         "\n",
         include_str!("../styles/components/chat_list.mss"),
@@ -36,9 +30,11 @@ const HEAD: &str = {
         include_str!("../styles/components/search.mss"),
         "\n",
         include_str!("../styles/components/panel_header.mss"),
+        "\n",
         include_str!("../styles/components/workspace_frame.mss"),
         "\n",
         include_str!("../styles/components/message_area.mss"),
+        "\n",
         include_str!("../styles/components/chat_float_window.mss"),
         "\n",
         include_str!("../styles/components/message_bubble.mss"),
@@ -78,9 +74,11 @@ const HEAD: &str = {
         include_str!("../styles/components/settings_audio_models.mss"),
         "\n",
         include_str!("../styles/components/settings_kb.mss"),
+        "\n",
         include_str!("../styles/components/training.mss"),
         "\n",
         include_str!("../styles/components/tool_messages.mss"),
+        "\n",
         include_str!("../styles/components/wizard_panel.mss"),
         "\n",
         include_str!("../styles/components/tool_group.mss"),
@@ -93,35 +91,9 @@ const HEAD: &str = {
         "\n",
         include_str!("../styles/components/terminal_tabs.mss"),
         "\n",
-    )
-};
-
-/// После стилей редактора узлов.
-const TAIL: &str = {
-    concat!(
-        "\n",
-        include_str!("../styles/components/node_editor_models_panel.mss"),
-        "\n",
-        include_str!("../styles/components/template_picker.mss"),
-        "\n",
-        include_str!("../styles/components/syn_explorer.mss"),
-        "\n",
         include_str!("../styles/components/syn_chat.mss"),
         "\n",
-        include_str!("../../synshell/crates/syn-notes/styles/notes.mss"),
-        "\n",
-        include_str!("../styles/layout/huggingface.mss"),
-        "\n",
-        include_str!("../styles/components/hf_header.mss"),
-        "\n",
-        include_str!("../styles/components/hf_list.mss"),
-        "\n",
-        include_str!("../styles/components/hf_detail.mss"),
-        include_str!("../styles/components/hf_dock.mss"),
-        "\n",
-        include_str!("../styles/components/hf_dialog.mss"),
-    )
-};
+);
 
 #[cfg(test)]
 mod tests {

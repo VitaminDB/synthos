@@ -182,7 +182,6 @@ const RULED_TOOLS: [&str; 3] = ["generate", "wizard", "notes"];
 pub fn tool_rules(key: &str) -> Option<&'static str> {
     Some(match key {
         "generate" => GENERATE_RULES,
-        "pipelines" => PIPELINES_RULES,
         "wizard" => WIZARD_RULES,
         "notes" => NOTES_RULES,
         _ => return None,
@@ -225,49 +224,6 @@ const GENERATE_RULES: &str =
      parameter or the model it names instead of repeating the call.\n\
      - Once you've announced a generation, do it in this same turn: a \
      text reply ends the turn.\n";
-
-const PIPELINES_RULES: &str =
-    "\nPipelines (`pipelines`) — image/video/music/speech generation \
-     in the node editor:\n\
-     - Any image/audio/music/voice/video task (draw or edit a \
-     picture, extract vocals or other stems from a song, cover, \
-     extend or edit a track, music from text, TTS, voice clone, \
-     transcription, video) — do it with \
-     pipelines right away: start with list and pick the template. \
-     Don't search the disk or the web for external tools \
-     (demucs, spleeter, ffmpeg, pip) unless the user asks for them.\n\
-     - Order: list → open (template) → nodes with filter (the \
-     exact schema of the nodes you need) → apply (prompts, \
-     parameters, ref inputs) → run. Compose the \
-     scenario/prompt yourself and put it in the nodes' state.\n\
-     - nodes: in filter list the nodes themselves (space-\
-     separated), not field names — fields are visible in the \
-     state example. A filter miss returns a list of node \
-     kinds: take names from there rather than guessing.\n\
-     - Before a heavy run (LTX, MiniMax-H3, FLUX), check `system \
-     status`: if the pipeline's models don't fit alongside \
-     you — run with free_vram=true (you'll be unloaded for the \
-     duration of the run and restored; this doesn't harm the \
-     history).\n\
-     - run blocks the turn until it finishes and can take tens \
-     of minutes — that's normal, the user sees a live status. \
-     Results (images/video/audio) are attached to the message \
-     automatically.\n\
-     - Don't make up model paths: the directory inventory \
-     (main dir and HF cache) is in pipelines list — the \
-     \"Models in directory\" sections; fill empty checkpoint \
-     model_path values via apply set_state before run. \
-     LLM/TTS/ASR/diarization nodes have no model fields of \
-     their own — wire a SynCheckpoint into their `model` input. \
-     Numeric `*_idx` state fields (quant, device, aspect) are \
-     decoded in action=nodes under the state example.\n\
-     - Re-running the same graph — with a new run_id.\n\
-     - Once you've announced an action, do it in this same \
-     turn: a text reply ends the turn, and \"I'll run it now\" \
-     without calling run means the run never happened.\n\
-     - Wire ref images from the chat via the \
-     attachment:<name|sha|last> reference in state paths (list \
-     — in pipelines list).\n";
 
 const WIZARD_RULES: &str =
     "\nWizard (`wizard`) — a question panel for the user: \

@@ -14,8 +14,8 @@
 //! отправки.
 //!
 //! В версию входит всё, от чего зависит вид строки, включая то, что её
-//! сборщик читает без подписки: `pipeline_tail` и `wizard_answered`
-//! выводятся из длины ленты. Сами флаги, а не длина: иначе каждое новое
+//! сборщик читает без подписки: `wizard_answered` выводится из длины
+//! ленты. Сами флаги, а не длина: иначе каждое новое
 //! сообщение обесценивало бы все строки разом.
 
 use std::collections::{HashMap, HashSet};
@@ -63,8 +63,6 @@ pub struct MessageRow {
     pub highlighted: bool,
     /// Открыта правка сообщения на месте.
     pub editing: bool,
-    /// Карточка `pipelines` — хвост ленты: под ней живой статус прогона.
-    pub pipeline_tail: bool,
     /// Панель визарда уже отвечена (разговор ушёл дальше).
     pub wizard_answered: bool,
 }
@@ -236,8 +234,7 @@ pub fn build(msgs: &[ChatMsg], queued: &[QueuedMsg], ui: &LaneUi) -> Vec<LaneRow
                     && msg.role == ChatMsgRole::Assistant
                     && msg.body.is_empty();
                 // Флаги из длины ленты ставим только тем карточкам, которые
-                // их читают: живой прогон — под хвостовым вызовом
-                // `pipelines`, панель визарда — пока разговор не ушёл
+                // их читают: панель визарда — пока разговор не ушёл
                 // дальше. Иначе каждое новое сообщение меняло бы версию
                 // всех строк и мемоизация не работала бы.
                 let tool = match &msg.kind {
@@ -250,7 +247,6 @@ pub fn build(msgs: &[ChatMsg], queued: &[QueuedMsg], ui: &LaneUi) -> Vec<LaneRow
                     is_typing,
                     highlighted: ui.highlight == Some(idx),
                     editing: ui.editing == Some(idx),
-                    pipeline_tail: tool == "pipelines" && idx + 1 == msgs.len(),
                     wizard_answered: tool == "wizard" && msgs.len() > idx + 2,
                 };
                 let mut h = hasher();
@@ -323,7 +319,6 @@ impl MessageRow {
         self.is_typing.hash(h);
         self.highlighted.hash(h);
         self.editing.hash(h);
-        self.pipeline_tail.hash(h);
         self.wizard_answered.hash(h);
     }
 }
@@ -505,29 +500,10 @@ mod tests {
         assert_ne!(before[last].version, after[last].version);
     }
 
-    /// Но «хвостовые» флаги обязаны обновляться: у карточки pipelines под
-    /// хвостом рисуется живой прогон, у визарда — панель ответа.
+    /// Но «хвостовые» флаги обязаны обновляться: у визарда — панель ответа.
     #[test]
     fn tail_flags_follow_the_end_of_the_feed() {
         let maps = Maps::default();
-        let mut msgs = vec![ChatMsg::user("вопрос"), call("pipelines")];
-        let before = build(&msgs, &[], &ui("full", &maps));
-        let tail = match &before.last().unwrap().kind {
-            LaneKind::Message(m) => m.clone(),
-            other => panic!("ожидалось сообщение, получено {other:?}"),
-        };
-        assert!(tail.pipeline_tail);
-        assert!(!tail.wizard_answered);
-
-        msgs.push(result("pipelines", false));
-        let after = build(&msgs, &[], &ui("full", &maps));
-        let same_row = after.iter().find(|r| r.key == before.last().unwrap().key).unwrap();
-        match &same_row.kind {
-            LaneKind::Message(m) => assert!(!m.pipeline_tail, "карточка перестала быть хвостом"),
-            other => panic!("ожидалось сообщение, получено {other:?}"),
-        }
-        assert_ne!(same_row.version, before.last().unwrap().version);
-
         // Визард: пока за результатом вызова ничего нет — ответа не было.
         let mut msgs = vec![ChatMsg::user("вопрос"), call("wizard"), result("wizard", false)];
         let asked = build(&msgs, &[], &ui("full", &maps));

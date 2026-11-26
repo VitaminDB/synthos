@@ -21,10 +21,6 @@ pub const ROUTES: &[&str] = &[
     "syn_chat",
     "music",
     "code",
-    "nodes",
-    "notes",
-    "syn_explorer",
-    "huggingface",
     "training",
     "settings",
 ];
@@ -209,9 +205,6 @@ pub const SYN_RIGHT_PANEL_DETAILS: usize = 1;
 pub struct PanelsCtx {
     pub syn_chat: (RwSignal<bool>, RwSignal<bool>),
     pub code: (RwSignal<bool>, RwSignal<bool>),
-    pub notes: (RwSignal<bool>, RwSignal<bool>),
-    pub syn_explorer: (RwSignal<bool>, RwSignal<bool>),
-    pub huggingface: (RwSignal<bool>, RwSignal<bool>),
     pub settings: (RwSignal<bool>, RwSignal<bool>),
 }
 
@@ -220,15 +213,6 @@ impl PanelsCtx {
         Self {
             syn_chat: (use_signal(cfg.syn_chat_left), use_signal(cfg.syn_chat_right)),
             code: (use_signal(cfg.code_left), use_signal(cfg.code_right)),
-            notes: (use_signal(cfg.notes_left), use_signal(cfg.notes_right)),
-            syn_explorer: (
-                use_signal(cfg.syn_explorer_left),
-                use_signal(cfg.syn_explorer_right),
-            ),
-            huggingface: (
-                use_signal(cfg.huggingface_left),
-                use_signal(cfg.huggingface_right),
-            ),
             settings: (use_signal(cfg.settings_left), use_signal(cfg.settings_right)),
         }
     }
@@ -240,12 +224,6 @@ impl PanelsCtx {
             syn_chat_right: self.syn_chat.1.get(),
             code_left: self.code.0.get(),
             code_right: self.code.1.get(),
-            notes_left: self.notes.0.get(),
-            notes_right: self.notes.1.get(),
-            syn_explorer_left: self.syn_explorer.0.get(),
-            syn_explorer_right: self.syn_explorer.1.get(),
-            huggingface_left: self.huggingface.0.get(),
-            huggingface_right: self.huggingface.1.get(),
             settings_left: self.settings.0.get(),
             settings_right: self.settings.1.get(),
         }
@@ -476,9 +454,8 @@ pub struct AppCtx {
     /// `AppConfig.syn_chat_max_image_tokens`, применяется к следующей
     /// отправке — перезагрузка модели не нужна.
     pub syn_chat_max_image_tokens: RwSignal<usize>,
-    /// Каталог моделей всех пайплайнов (.syn/LoRA/HF-каталоги). Сохраняется
-    /// в `AppConfig.models_dir`; читают агентский `pipelines list` и
-    /// настройки. Резолв `~` — `config::resolve_models_dir`.
+    /// Каталог моделей (.syn/LoRA/HF-каталоги). Сохраняется в
+    /// `AppConfig.models_dir`; читают база знаний, поиск и настройки. Резолв `~` — `config::resolve_models_dir`.
     pub models_dir: RwSignal<String>,
     /// Видимость левой/правой панели по страницам (тогглы в общей шапке).
     /// Persist: `AppConfig.panels`.
@@ -496,12 +473,7 @@ pub struct AppCtx {
     /// Недавние эмодзи панели ввода чата, свежие первыми. Persist:
     /// `AppConfig.chat_recent_emoji`.
     pub chat_recent_emoji: RwSignal<Vec<String>>,
-    /// Разделители страниц HuggingFace и настроек (persist в `AppConfig`).
-    pub hf_left_split_ratio: RwSignal<f32>,
-    pub hf_right_split_ratio: RwSignal<f32>,
+    /// Разделители страницы настроек (persist в `AppConfig`).
     pub settings_left_split_ratio: RwSignal<f32>,
     pub settings_right_split_ratio: RwSignal<f32>,
-    /// Разделители страницы «Заметки» (persist в `AppConfig.notes_*`).
-    pub notes_left_split_ratio: RwSignal<f32>,
-    pub notes_right_split_ratio: RwSignal<f32>,
 }

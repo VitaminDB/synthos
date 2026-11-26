@@ -1,10 +1,8 @@
-//! Что происходит по Enter: переходы между страницами, открытие чатов и
-//! пакетов, тумблеры оформления.
+//! Что происходит по Enter: переходы между страницами, открытие чатов,
+//! запуск «Моделей», тумблеры оформления.
 //!
 //! Все функции зовутся с main-thread'а — из обработчика клавиш панели или
 //! из клика по строке.
-
-use std::path::PathBuf;
 
 use syngui::prelude::*;
 
@@ -31,11 +29,6 @@ pub fn run(search: &SearchCtx, item: &SearchItem, secondary: bool) {
     tracing::debug!(title = %item.title, ?action, "поиск: переход");
     match action {
         SearchAction::Page(route) => navigate(route),
-        SearchAction::Note(id) => {
-            let notes = use_context::<crate::pages::notes::NotesCtx>();
-            notes.activate(&id);
-            navigate("notes");
-        }
         SearchAction::Settings(section) => open_settings(section),
         SearchAction::Chat(id) => open_chat(&id, None),
         SearchAction::Message { chat_id, index } => open_chat(&chat_id, Some(index)),
@@ -51,8 +44,7 @@ pub fn run(search: &SearchCtx, item: &SearchItem, secondary: bool) {
             navigate("syn_chat");
         }
         SearchAction::ToggleTool(key) => toggle_tool(&key),
-        SearchAction::Template(id) => open_template(&id),
-        SearchAction::Model(path) => open_bundle(path),
+        SearchAction::Model(_) => crate::components::nav_rail::launch_models_app(Some("library")),
         SearchAction::LoadModelFile(path) => load_model(path),
         SearchAction::Command(command) => run_command(command),
     }
@@ -100,22 +92,7 @@ fn toggle_tool(key: &str) {
     use_context::<AppCtx>().tools.toggle_active(key);
 }
 
-fn open_template(id: &str) {
-    let Some(template) = crate::templates::list_all().into_iter().find(|t| t.id == id) else {
-        return;
-    };
-    let ws = use_context::<crate::pages::node_editor::tabs::EditorWorkspace>();
-    ws.open_template(&template);
-    navigate("nodes");
-}
-
-fn open_bundle(path: PathBuf) {
-    let ctx = use_context::<crate::pages::syn_explorer::SynExplorerCtx>();
-    crate::pages::syn_explorer::actions::open_bundle(ctx, path);
-    navigate("syn_explorer");
-}
-
-fn load_model(path: PathBuf) {
+fn load_model(path: std::path::PathBuf) {
     let reg = use_context::<SynModelRegistry>();
     if reg.loading.get_untracked() {
         return;
@@ -170,21 +147,12 @@ fn run_command(command: SearchCommand) {
             }
             use_context::<SynModelRegistry>().unload();
         }
-        SearchCommand::NewNodeTab => {
-            let ws = use_context::<crate::pages::node_editor::tabs::EditorWorkspace>();
-            ws.new_untitled();
-            navigate("nodes");
-        }
-        SearchCommand::TemplatePicker => {
-            let ws = use_context::<crate::pages::node_editor::tabs::EditorWorkspace>();
-            ws.template_picker_open.set(true);
-            navigate("nodes");
-        }
         SearchCommand::NewCodeSession => {
             let code = use_context::<crate::pages::code_editor::state::CodeEditorCtx>();
             code.create_empty();
             navigate("code");
         }
+        SearchCommand::ModelsApp => crate::components::nav_rail::launch_models_app(None),
         SearchCommand::VoicePanel => crate::components::voice_fab::fab_button::open_panel_and_record(),
         SearchCommand::DarkTheme => apply_base_theme(true),
         SearchCommand::LightTheme => apply_base_theme(false),

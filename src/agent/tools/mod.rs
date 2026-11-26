@@ -41,7 +41,6 @@ pub mod executor;
 pub mod generate;
 pub mod kb_search;
 pub mod notes;
-pub mod pipelines;
 pub mod subagent;
 pub mod system;
 pub mod view_media;

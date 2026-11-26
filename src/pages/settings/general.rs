@@ -14,7 +14,6 @@ use crate::agent::tools::Tool;
 use crate::config::{TOOL_APPROVAL_ALWAYS, TOOL_APPROVAL_ASK, TOOL_APPROVAL_DEFAULT};
 use crate::context::AppCtx;
 use crate::icons::*;
-use crate::pages::huggingface::HuggingFaceCtx;
 
 pub fn view() -> impl Widget {
     let ctx = use_context::<AppCtx>();
@@ -89,32 +88,14 @@ pub fn view() -> impl Widget {
                                 ]),
                         ]),
 
-                        section(tr!("settings.general.section.huggingface"), {
-                            let hf = use_context::<HuggingFaceCtx>();
-                            vec![
-                                text_row(MI_LOCK, tr!("settings.general.hf_token"),
-                                    tr!("settings.general.hf_token.desc"),
-                                    hf.token),
-                                folder_row(MI_FOLDER, tr!("settings.general.hf_cache_dir"),
-                                    tr!("settings.general.hf_cache_dir.desc"),
-                                    hf.cache_dir),
-                                turns_row(MI_CLOUD_DOWNLOAD, tr!("settings.general.hf_concurrent"),
-                                    tr!("settings.general.hf_concurrent.desc"),
-                                    hf.concurrent_limit, 1, 8),
-                                turns_row(MI_TUNE, tr!("settings.general.hf_segments"),
-                                    tr!("settings.general.hf_segments.desc"),
-                                    hf.segments_per_file, 1, 16),
-                                turns_row(MI_SPEED, tr!("settings.general.hf_speed_limit"),
-                                    tr!("settings.general.hf_speed_limit.desc"),
-                                    hf.speed_limit_mbps, 0, 2000),
-                                switch_row(MI_FILTER_ALT, tr!("settings.general.hf_skip_formats"),
-                                    tr!("settings.general.hf_skip_formats.desc"),
-                                    hf.skip_unwanted_formats),
-                                switch_row(MI_FOLDER_ZIP, tr!("settings.general.hf_gguf"),
-                                    tr!("settings.general.hf_gguf.desc"),
-                                    hf.gguf_support),
-                            ]
-                        }),
+                        // Hugging Face и пакеты .syn — в программе «Модели» synshell.
+                        section(tr!("settings.general.section.models_app"), vec![
+                            row_frame(MI_INVENTORY_2, tr!("settings.general.models_app"),
+                                tr!("settings.general.models_app.desc"),
+                                Box::new(Button::new(tr!("settings.general.models_app.open"))
+                                    .leading_icon(MI_OPEN_IN_NEW)
+                                    .on_click(|| crate::components::nav_rail::launch_models_app(Some("settings"))))),
+                        ]),
 
                         section(tr!("settings.general.section.tool_permissions"), {
                             // Глобальный режим + per-tool override на каждый
@@ -219,47 +200,6 @@ fn dropdown_row(
             .selected(initial)
             .on_change(move |s| value.set(s.to_string()))
             .class("settings-row-dropdown"),
-    );
-    row_frame(icon, title, desc, control)
-}
-
-/// Строка с текстовым полем + кнопкой «обзор» выбора папки
-/// (`pick_folder`) — для каталогов вроде HF-кэша.
-fn folder_row(
-    icon: &'static str,
-    title: impl Into<String>,
-    desc: impl Into<String>,
-    value: RwSignal<String>,
-) -> Box<dyn Widget> {
-    // Поле перестраивается только по выбору через «обзор»: при наборе
-    // текста сигнал меняет само поле, и пересборка на каждую клавишу не нужна.
-    let picked = use_signal(0u64);
-    let field = Reactive::new(move || -> Vec<Box<dyn Widget>> {
-        picked.get();
-        vec![Box::new(
-            TextField::with_text(value.get_untracked())
-                .placeholder("~/.local/share/synthos/hf")
-                .on_change(move |s| value.set(s.to_string())),
-        )]
-    });
-
-    let browse = ToolButton::new(MI_FOLDER_OPEN)
-        .on_click(move || {
-            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                value.set(path.display().to_string());
-                picked.update(|n| *n += 1);
-            }
-        })
-        .class("models-path-browse");
-
-    let control: Box<dyn Widget> = Box::new(
-        Row::new()
-            .gap(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .children(vec![
-                Box::new(field) as Box<dyn Widget>,
-                Box::new(browse) as Box<dyn Widget>,
-            ]),
     );
     row_frame(icon, title, desc, control)
 }

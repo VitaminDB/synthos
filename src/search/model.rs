@@ -19,21 +19,17 @@ pub enum SearchKind {
     Model,
     Skill,
     Tool,
-    Template,
-    Note,
 }
 
 impl SearchKind {
-    pub const ALL: [SearchKind; 9] = [
+    pub const ALL: [SearchKind; 7] = [
         SearchKind::Chat,
         SearchKind::Message,
         SearchKind::Page,
         SearchKind::Command,
-        SearchKind::Note,
         SearchKind::Model,
         SearchKind::Skill,
         SearchKind::Tool,
-        SearchKind::Template,
     ];
 
     pub fn label_key(self) -> &'static str {
@@ -45,8 +41,6 @@ impl SearchKind {
             SearchKind::Model => "search.group.models",
             SearchKind::Skill => "search.group.skills",
             SearchKind::Tool => "search.group.tools",
-            SearchKind::Template => "search.group.templates",
-            SearchKind::Note => "search.group.notes",
         }
     }
 
@@ -64,12 +58,10 @@ impl SearchKind {
             SearchKind::Chat => "search-icon-box search-icon-box-chat",
             SearchKind::Message => "search-icon-box search-icon-box-message",
             SearchKind::Page => "search-icon-box search-icon-box-page",
-            SearchKind::Note => "search-icon-box search-icon-box-page",
             SearchKind::Command => "search-icon-box search-icon-box-command",
             SearchKind::Model => "search-icon-box search-icon-box-model",
             SearchKind::Skill => "search-icon-box search-icon-box-skill",
             SearchKind::Tool => "search-icon-box search-icon-box-tool",
-            SearchKind::Template => "search-icon-box search-icon-box-template",
         }
     }
 
@@ -79,12 +71,10 @@ impl SearchKind {
             SearchKind::Chat => "search-row-icon search-row-icon-chat",
             SearchKind::Message => "search-row-icon search-row-icon-message",
             SearchKind::Page => "search-row-icon search-row-icon-page",
-            SearchKind::Note => "search-row-icon search-row-icon-page",
             SearchKind::Command => "search-row-icon search-row-icon-command",
             SearchKind::Model => "search-row-icon search-row-icon-model",
             SearchKind::Skill => "search-row-icon search-row-icon-skill",
             SearchKind::Tool => "search-row-icon search-row-icon-tool",
-            SearchKind::Template => "search-row-icon search-row-icon-template",
         }
     }
 }
@@ -99,9 +89,9 @@ pub enum SearchCommand {
     DeleteChat,
     LoadModel,
     UnloadModel,
-    NewNodeTab,
-    TemplatePicker,
     NewCodeSession,
+    /// Запустить «Модели» synshell (Hugging Face, пакеты .syn).
+    ModelsApp,
     VoicePanel,
     DarkTheme,
     LightTheme,
@@ -115,8 +105,6 @@ pub enum SearchCommand {
 pub enum SearchAction {
     /// Маршрут верхнего уровня (`context::ROUTES`).
     Page(&'static str),
-    /// Открыть страницу заметок по vault-относительному пути.
-    Note(String),
     /// Подраздел настроек (`context::SETTINGS_ROUTES`).
     Settings(&'static str),
     /// Открыть чат по id.
@@ -129,9 +117,7 @@ pub enum SearchAction {
     Tool(String),
     /// Включить/выключить инструмент, не уходя из поиска.
     ToggleTool(String),
-    /// Открыть шаблон графа новой вкладкой node-редактора.
-    Template(String),
-    /// Открыть `.syn` пакет в SynExplorer.
+    /// `.syn` пакет: открыть библиотеку пакетов в «Моделях» synshell.
     Model(PathBuf),
     /// Поднять `.syn` бандл как модель чата.
     LoadModelFile(PathBuf),

@@ -244,12 +244,8 @@ fn run() -> std::result::Result<(), String> {
     provide_context(chat.clone());
     let registry = SynModelRegistry::new();
     provide_context(registry);
-    // Контексты страниц: инструмент `notes` работает с деревом заметок, а
-    // `pipelines` — с рабочим столом графов. Без них вызов инструмента valит
-    // весь процесс на `use_context`.
-    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&synthos::notes_host::state(&cfg)));
-    synthos::pages::node_editor::install_host();
-    provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
+    // Инструмент `notes` говорит с программой syn-notes по её сокету,
+    // `generate` — со службой synaptixd: контексты страниц им не нужны.
 
     // Модель грузит служба со своим профилем.
     let t_load = Instant::now();

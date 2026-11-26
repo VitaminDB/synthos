@@ -1,16 +1,10 @@
-//! Превью кадров из памяти в нодах (LTX/H3 VAE Decode, сохранение H3,
-//! видеоплеер на выходе пайплайна): общий плеер приложения в компактном
-//! режиме поверх `FramesSource`.
+//! Превью кадров из памяти: общий плеер приложения в компактном режиме
+//! поверх `FramesSource`.
 //!
 //! Зачем тест: раньше превью было голым `FramesView` (клик — play/pause, без
 //! перемотки и времени). Теперь там панель плеера: в 360×202 должны влезть
 //! время и пять кнопок транспорта без наложений, пробел и ⏵ запускают часы
-//! кадров, ±1 с двигает позицию, а ▶ ноды находит тот же источник
-//! (`FramesSource::find`), что показывает кадр.
-//!
-//! Второй тест — нода «Видеоплеер» с кадрами на входе: плеер на весь холст
-//! 640×480, заглушка без файла, ▶ ноды (`on_run`) — пауза/старт того же
-//! источника.
+//! кадров, ±1 с двигает позицию.
 //!
 //! Кадры синтетические (48 × 32×18 при 24 fps = 2 с), звука нет.
 //! `cargo test --features testing --test frames_preview_player`.
@@ -149,76 +143,4 @@ fn node_preview_fits_and_plays() {
         "+1 с: {before} → {after}"
     );
     assert!(src.is_paused(), "шаг не снимает паузу");
-}
-
-#[test]
-fn ffmpeg_player_node_uses_shared_player() {
-    use syngui::prelude::*;
-    use synthos::pages::node_editor::nodes::ffmpeg_player;
-    use synthos::pages::node_editor::registry;
-    use synthos::pages::node_editor::timing::Stopwatch;
-    use synthos::pages::node_editor::types::{
-        LtxFrames, NodeId, NodeInstance, NodeKind, NodeRuntime, NodeStyle,
-    };
-
-    let kind = NodeKind::FfmpegPlayer;
-    let node = NodeInstance {
-        id: NodeId(1),
-        kind,
-        pos: use_signal(Point::new(0.0, 0.0)),
-        bounds: use_signal(Rect::zero()),
-        fields: registry::default_fields(kind),
-        runtime: registry::default_runtime(kind),
-        style: use_signal(NodeStyle::default()),
-        enabled: use_signal(true),
-        timing: Stopwatch::new(),
-    };
-
-    let mut h = TestHarness::new(ffmpeg_player::body(&node));
-    let engine = h.apply_mss(synthos::styles::styles());
-    settle(&mut h, &engine);
-    // Ни файла, ни кадров — заглушка без плеера.
-    assert!(h.find_by_class("vp").is_empty());
-    assert_eq!(h.find_by_class("ffmpeg-player-canvas-empty").len(), 1);
-
-    // Кадры на входе `frames` — плеер на весь холст ноды.
-    let frames = frames();
-    if let NodeRuntime::FfmpegPlayer {
-        frames_in,
-        preview_version,
-        ..
-    } = &*node.runtime.lock().unwrap()
-    {
-        *frames_in.lock().unwrap() = Some(Arc::new(LtxFrames {
-            frames: frames.clone(),
-            width: 32,
-            height: 18,
-            fps: 24.0,
-        }));
-        preview_version.set(preview_version.get_untracked().wrapping_add(1));
-    } else {
-        panic!("runtime видеоплеера");
-    }
-    settle(&mut h, &engine);
-    let host = one(&h, "ffmpeg-player-canvas-host");
-    let canvas = one(&h, "vp-canvas");
-    assert!(
-        (canvas.size.width - host.size.width).abs() < 0.5
-            && (canvas.size.height - host.size.height).abs() < 0.5,
-        "плеер {canvas:?} на весь холст {host:?}"
-    );
-    assert_eq!(
-        h.find_by_class("vp-controls").len(),
-        1,
-        "полная панель в 640 px"
-    );
-
-    // ▶ ноды управляет тем же источником, что и кнопки на кадре.
-    let src = FramesSource::find(&frames).expect("источник кадров ноды");
-    assert!(src.is_paused());
-    let ctx = synthos::pages::node_editor::state::NodeEditorCtx::new();
-    ffmpeg_player::on_run(&node, &ctx);
-    assert!(!src.is_paused(), "▶ ноды запускает");
-    ffmpeg_player::on_run(&node, &ctx);
-    assert!(src.is_paused(), "второй ▶ ставит паузу");
 }

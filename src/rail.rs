@@ -1,9 +1,8 @@
 //! Единый список плиток нав-рейла.
 //!
-//! Раньше рейл показывал только code-сессии, а графы нодового редактора
-//! жили во вкладках на своей странице, чаты — в колонке слева от ленты.
-//! Теперь всё это — плитки одного списка: code-сессия (папка), граф
-//! (хаб), чат (аватар) и разделитель, добавленный пользователем через «+».
+//! Раньше рейл показывал только code-сессии, а чаты жили в колонке слева
+//! от ленты. Теперь всё это — плитки одного списка: code-сессия (папка),
+//! чат (аватар) и разделитель, добавленный пользователем через «+».
 //! Порядок — по времени появления (`created_at`), вперемешку по типам:
 //! новое встаёт в конец, как вкладка в браузере. Перетаскиванием плитки
 //! можно переставить (`move_before` / `move_to_end`) — тогда порядок
@@ -17,11 +16,9 @@
 //! «В группу». Порядок плиток группы — её список ключей `members`.
 //!
 //! Источники данных остаются на своих местах (`CodeEditorCtx`,
-//! `EditorWorkspace`, `SynChatCtx`, `AppCtx.rail_separators`) — модуль лишь
+//! `SynChatCtx`, `AppCtx.rail_separators`) — модуль лишь
 //! собирает их в один отсортированный список и знает, что значит «открыть»
 //! и «закрыть» плитку каждого типа.
-
-use std::path::PathBuf;
 
 use syngui::prelude::*;
 
@@ -29,18 +26,13 @@ use crate::agent::state::ChatMeta;
 use crate::config::RailGroupConfig;
 use crate::context::{AppCtx, RailGroupEdit};
 use crate::pages::code_editor::state::{CodeEditorCtx, CodeSession};
-use crate::pages::node_editor::tabs::{EditorWorkspace, OpenTab};
-use crate::pages::notes::NotesCtx;
 use crate::syn_chat::{registry, SynChatCtx};
 
 /// Одна плитка рейла.
 #[derive(Clone)]
 pub enum RailEntry {
     Code(CodeSession),
-    Graph(OpenTab),
     Chat(ChatMeta),
-    /// Открытый проект «Заметок» — плитка на каждый файл `.syn`.
-    Notes { path: PathBuf, opened_at: u64 },
     /// Тонкая линия между плитками; число — штамп создания (он же ключ
     /// для удаления).
     Separator(u64),
@@ -56,9 +48,7 @@ impl RailEntry {
     pub fn key(&self) -> String {
         match self {
             RailEntry::Code(s) => format!("code:{}", s.created_at),
-            RailEntry::Graph(t) => format!("graph:{}", t.id.0),
             RailEntry::Chat(m) => format!("chat:{}", m.id),
-            RailEntry::Notes { path, .. } => notes_key(path),
             RailEntry::Separator(ts) => format!("sep:{ts}"),
             RailEntry::Group { group, .. } => group_key(group.id),
         }
@@ -73,10 +63,8 @@ impl RailEntry {
     fn created_at(&self) -> u64 {
         match self {
             RailEntry::Code(s) => s.created_at,
-            RailEntry::Graph(t) => t.created_at.get_untracked(),
             // Чаты хранят секунды.
             RailEntry::Chat(m) => m.created_at.saturating_mul(1000),
-            RailEntry::Notes { opened_at, .. } => *opened_at,
             RailEntry::Separator(ts) => *ts,
             RailEntry::Group { group, .. } => group.id,
         }
@@ -87,17 +75,10 @@ impl RailEntry {
         match self {
             RailEntry::Separator(ts) => (0, ts.to_string()),
             RailEntry::Code(s) => (1, format!("{:020}", s.id)),
-            RailEntry::Graph(t) => (2, format!("{:020}", t.id.0)),
             RailEntry::Chat(m) => (3, m.id.clone()),
-            RailEntry::Notes { path, .. } => (4, path.display().to_string()),
             RailEntry::Group { group, .. } => (5, format!("{:020}", group.id)),
         }
     }
-}
-
-/// Ключ плитки проекта заметок.
-pub fn notes_key(path: &std::path::Path) -> String {
-    format!("notes:{}", path.display())
 }
 
 /// Ключ плитки группы.
@@ -155,9 +136,7 @@ pub fn group_icon(name: &str) -> &'static str {
 fn raw_entries() -> Vec<RailEntry> {
     let app = use_context::<AppCtx>();
     let code = use_context::<CodeEditorCtx>();
-    let ws = use_context::<EditorWorkspace>();
     let chat = use_context::<SynChatCtx>();
-    let notes = use_context::<NotesCtx>();
     let _ = code.session_gen.get();
 
     let mut out: Vec<RailEntry> = Vec::new();
@@ -165,27 +144,11 @@ fn raw_entries() -> Vec<RailEntry> {
         let _ = s.root_folder.get();
         out.push(RailEntry::Code(s));
     }
-    for t in ws.tabs.get() {
-        // Скрытые агентские графы в рейл не попадают, пока чат их не
-        // раскроет; `.get()` — чтобы reveal перерисовал список.
-        if t.hidden.get() {
-            continue;
-        }
-        let _ = t.created_at.get();
-        let _ = t.title.get();
-        let _ = t.dirty.get();
-        out.push(RailEntry::Graph(t));
-    }
     for m in chat.chats.get() {
         if m.archived {
             continue;
         }
         out.push(RailEntry::Chat(m));
-    }
-    // Подпись плитки — имя файла; `.get()` перерисует при открытии,
-    // закрытии и «Сохранить как».
-    for p in notes.projects.get() {
-        out.push(RailEntry::Notes { path: p.path, opened_at: p.opened_at });
     }
     for ts in app.rail_separators.get() {
         out.push(RailEntry::Separator(ts));
@@ -230,15 +193,9 @@ pub fn entries() -> Vec<RailEntry> {
     // неизвестные (новые плитки) — следом, по времени создания.
     let order = app.rail_order.get();
     if !order.is_empty() {
-        // Ключ `notes` — плитка времён одного проекта: её место в ручном
-        // порядке достаётся первому проекту.
-        let first_notes = out.iter().find(|e| matches!(e, RailEntry::Notes { .. })).map(RailEntry::key);
         let rank = |e: &RailEntry| {
             let k = e.key();
-            order
-                .iter()
-                .position(|o| *o == k || (o == "notes" && first_notes.as_deref() == Some(k.as_str())))
-                .unwrap_or(usize::MAX)
+            order.iter().position(|o| *o == k).unwrap_or(usize::MAX)
         };
         out.sort_by_key(rank);
     }
@@ -342,31 +299,15 @@ pub fn ungroup(id: u64) {
 }
 
 /// Удалить группу вместе с плитками: проекты и терминалы закрываются,
-/// чаты уходят в архив (подтверждение одно — на всю группу), заметки
-/// дописывают автосейв. Граф с несохранёнными правками не закрывается
-/// молча: он выпадает в рейл на место группы, его закрывают отдельно.
+/// чаты уходят в архив (подтверждение одно — на всю группу).
 pub fn delete_group(id: u64) {
     let Some(RailEntry::Group { members, .. }) = find_entry(&group_key(id)) else { return };
     for m in &members {
         match m {
             RailEntry::Code(s) => use_context::<CodeEditorCtx>().close(s.id),
-            RailEntry::Graph(t) => {
-                if !t.dirty.get_untracked() {
-                    use_context::<EditorWorkspace>().close(t.id);
-                }
-            }
             RailEntry::Chat(c) => registry::archive(&c.id),
-            RailEntry::Notes { path, .. } => {
-                if let Err(e) = use_context::<NotesCtx>().close_project(path) {
-                    crate::pages::notes::project_ui::report_error(&e);
-                }
-            }
             RailEntry::Separator(_) | RailEntry::Group { .. } => {}
         }
-    }
-    let notes = use_context::<NotesCtx>();
-    if !notes.has_project() && use_context::<AppCtx>().current_route.get_untracked() == "notes" {
-        navigate("syn_chat");
     }
     ungroup(id);
 }
@@ -420,10 +361,6 @@ pub fn open(entry: &RailEntry) {
             }
             navigate("code");
         }
-        RailEntry::Graph(t) => {
-            use_context::<EditorWorkspace>().activate(t.id);
-            navigate("nodes");
-        }
         RailEntry::Chat(m) => {
             let chat = use_context::<SynChatCtx>();
             if chat.active_chat_id.get_untracked().as_deref() != Some(m.id.as_str()) {
@@ -439,38 +376,19 @@ pub fn open(entry: &RailEntry) {
             }
             navigate("syn_chat");
         }
-        RailEntry::Notes { path, .. } => {
-            let notes = use_context::<NotesCtx>();
-            notes.switch_project(path);
-            navigate("notes");
-        }
         // Группу открывает рейл: панели нужны границы плитки.
         RailEntry::Separator(_) | RailEntry::Group { .. } => {}
     }
 }
 
 /// «Закрыть» из контекстного меню плитки. Code-сессия закрывается сразу;
-/// граф с несохранёнными изменениями — через диалог
-/// (`components::graph_close_dialog`); чат — через подтверждение архива
+/// чат — через подтверждение архива
 /// (`pages::syn_chat::archive_dialog`); разделитель просто удаляется.
 pub fn request_close(entry: &RailEntry) {
     match entry {
         RailEntry::Code(s) => use_context::<CodeEditorCtx>().close(s.id),
-        RailEntry::Graph(t) => use_context::<EditorWorkspace>().request_close(t.id),
         RailEntry::Chat(m) => {
             use_context::<SynChatCtx>().pending_archive.set(Some(m.clone()));
-        }
-        // Хвост автосейва дописывается, плитка уходит; последний проект
-        // закрыт — со страницы заметок уходим.
-        RailEntry::Notes { path, .. } => {
-            let notes = use_context::<NotesCtx>();
-            if let Err(e) = notes.close_project(path) {
-                crate::pages::notes::project_ui::report_error(&e);
-                return;
-            }
-            if !notes.has_project() && use_context::<AppCtx>().current_route.get_untracked() == "notes" {
-                navigate("syn_chat");
-            }
         }
         RailEntry::Separator(ts) => remove_separator(*ts),
         RailEntry::Group { group, .. } => ungroup(group.id),
@@ -485,17 +403,11 @@ pub fn is_active(entry: &RailEntry) -> bool {
         RailEntry::Code(s) => {
             route == "code" && use_context::<CodeEditorCtx>().active_id.get() == Some(s.id)
         }
-        RailEntry::Graph(t) => {
-            route == "nodes" && use_context::<EditorWorkspace>().active.get() == Some(t.id)
-        }
         RailEntry::Chat(m) => {
             let chat = use_context::<SynChatCtx>();
             let same = chat.active_chat_id.get().as_deref() == Some(m.id.as_str());
             // В плавающем окне чат «открыт» с любой страницы.
             same && (chat.chat_detached.get() || route == "syn_chat")
-        }
-        RailEntry::Notes { path, .. } => {
-            route == "notes" && use_context::<NotesCtx>().project_path.get() == *path
         }
         RailEntry::Separator(_) => false,
         // Группа активна, когда открыта одна из её плиток.
@@ -522,41 +434,10 @@ pub fn new_terminal() {
     navigate("code");
 }
 
-/// Новый граф: открыть окно шаблонов. Плитка появится после выбора
-/// (`EditorWorkspace::open_template`), закрытие окна без выбора ничего не
-/// создаёт.
-pub fn new_graph() {
-    use_context::<EditorWorkspace>().template_picker_open.set(true);
-}
-
 /// Новый чат: создать, активировать, показать страницу чата.
 pub fn new_chat() {
     registry::create_new();
     navigate("syn_chat");
-}
-
-/// Плитка сменила ключ («Сохранить как» перевело проект на другой файл):
-/// ручной порядок рейла сохраняет её место.
-pub fn rename_key(old: &str, new: &str) {
-    let app = use_context::<AppCtx>();
-    if app.rail_groups.get_untracked().iter().any(|g| g.members.iter().any(|k| k == old)) {
-        app.rail_groups.update(|groups| {
-            for k in groups.iter_mut().flat_map(|g| g.members.iter_mut()) {
-                if k == old {
-                    *k = new.to_string();
-                }
-            }
-        });
-    }
-    if app.rail_order.get_untracked().iter().any(|k| k == old) {
-        app.rail_order.update(|v| {
-            for k in v.iter_mut() {
-                if k == old {
-                    *k = new.to_string();
-                }
-            }
-        });
-    }
 }
 
 /// Разделитель со штампом «сейчас» — встаёт после последней плитки.

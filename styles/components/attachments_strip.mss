@@ -214,6 +214,31 @@ ToolButton.input-attach:hover {
 /* Смайлик рядом со скрепкой — тот же вид (`ToolButton.input-attach`). */
 .chat-emoji-picker {
     background-color: var(--bg-panel);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 12px;
+    padding: 8px;
+}
+.chat-emoji-grid {
+    padding: 2px;
+}
+.chat-emoji-section {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 6px 2px 2px 2px;
+}
+.chat-emoji-cell {
+    width: 34px;
+    height: 32px;
+    border-radius: 6px;
+}
+.chat-emoji-cell:hover {
+    background-color: var(--surface-hover);
+}
+.chat-emoji-glyph {
+    font-size: 18px;
+    color: var(--text);
 }
 
 /* Подпись под полосой: количество файлов, суммарный вес и оценка того,

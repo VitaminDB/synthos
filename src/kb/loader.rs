@@ -43,24 +43,45 @@ pub fn plan() -> LoadPlan {
     }
 }
 
-/// Где ищем модели: каталог из «AI модели», затем кэш HuggingFace и
-/// закладки проводника бандлов. Только с главного потока.
+/// Где ищем модели: каталог из «AI модели», затем кэш Hugging Face и
+/// закладки пакетов программы «Модели» synshell. Только с главного потока.
 pub fn search_dirs() -> Vec<PathBuf> {
     let app = use_context::<AppCtx>();
     let mut dirs = vec![crate::config::resolve_models_dir(&app.models_dir.get_untracked())];
-    let hf = use_context::<crate::pages::huggingface::HuggingFaceCtx>();
-    let mut extra = vec![crate::config::resolve_hf_cache_dir(&hf.cache_dir.get_untracked())];
-    extra.extend(
-        use_context::<crate::pages::syn_explorer::SynExplorerCtx>()
-            .bookmarks
-            .get_untracked(),
-    );
-    for dir in extra {
+    for dir in models_app_dirs() {
         if !dirs.contains(&dir) {
             dirs.push(dir);
         }
     }
     dirs
+}
+
+/// Кэш Hugging Face и закладки пакетов из настроек программы «Модели»
+/// (`~/.config/syn-models/config.json`). Пока «Модели» ни разу не
+/// запускались, настройки ещё лежат прежними полями конфига synthos (те же
+/// имена: `hf_cache_dir`, `syn_explorer_bookmarks`). Пустой кэш — прежний
+/// каталог `~/.local/share/synthos/hf`, им же пользуются «Модели».
+pub fn models_app_dirs() -> Vec<PathBuf> {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
+    let read = |p: PathBuf| -> Option<serde_json::Value> {
+        serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+    };
+    let models_cfg = std::env::var_os("SYN_MODELS_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config/syn-models/config.json"));
+    let v = read(models_cfg)
+        .or_else(|| read(crate::config::AppConfig::path()))
+        .unwrap_or_default();
+    let cache = v.get("hf_cache_dir").and_then(|c| c.as_str()).unwrap_or("").trim();
+    let mut out = vec![if cache.is_empty() {
+        home.join(".local/share/synthos/hf")
+    } else {
+        crate::paths::expand_home(cache)
+    }];
+    if let Some(list) = v.get("syn_explorer_bookmarks").and_then(|b| b.as_array()) {
+        out.extend(list.iter().filter_map(|b| b.as_str()).map(PathBuf::from));
+    }
+    out
 }
 
 /// Перечитать, где лежат модели (открытие страницы, смена каталога, ручной

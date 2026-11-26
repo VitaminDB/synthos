@@ -22,12 +22,7 @@ fn main() {
     syngui::i18n::set_language(syngui::i18n::Lang::new(&std::env::var("SHOT_LANG").unwrap_or_else(|_| "ru".into())));
     let (theme, ctx) = synthos::build_context();
     provide_context(ctx);
-    let cfg = synthos::config::AppConfig::load();
-    provide_context(synthos::pages::node_editor::tabs::EditorWorkspace::new_or_restore());
-    provide_context(synthos::pages::syn_explorer::SynExplorerCtx::new(&cfg));
     provide_context(synthos::syn_chat::SynChatCtx::new());
-    provide_context(synthos::pages::notes::NotesCtx::new_or_restore(&synthos::notes_host::state(&cfg)));
-    provide_context(synthos::pages::huggingface::HuggingFaceCtx::new(&cfg));
     provide_context(synthos::syn_chat::SynModelRegistry::new());
     let training = TrainingCtx::new();
     provide_context(training);

@@ -5,13 +5,13 @@
 //! │ S  │  логотип
 //! │────│
 //! │ ▤  │  плитки рабочих пространств (`crate::rail::entries`):
-//! │ ⬡  │  code-сессия / граф нод / чат / разделитель — в порядке создания,
+//! │ ⬡  │  code-сессия / терминал / чат / разделитель — в порядке создания,
 //! │ AB │  скроллятся, если не влезают
 //! │ ─  │
-//! │ +  │  меню: Редактор кода · Терминал · Нодовый редактор · Чат · Разделитель
+//! │ +  │  меню: Редактор кода · Терминал · Чат · Группа · Разделитель
 //! │    │
-//! │ ▣  │  Syn-пакеты
-//! │ ☁  │  HuggingFace (+ бейдж активных загрузок)
+//! │ ▣  │  «Модели» — программа synshell (Hugging Face и пакеты .syn)
+//! │ ⚗  │  Обучение (+ бейдж задач)
 //! │────│
 //! │ 文 │  язык интерфейса
 //! │────│
@@ -19,8 +19,8 @@
 //! └────┘
 //! ```
 //!
-//! Верхних иконок-разделов «Чат» и «Ноды» больше нет: к чату и графу
-//! ведут их плитки, а новые создаются через «+». Клик по плитке —
+//! Верхней иконки-раздела «Чат» нет: к чату ведёт его плитка, а новые
+//! создаются через «+». Клик по плитке —
 //! `rail::open`, «Закрыть» в контекстном меню — `rail::request_close`.
 //! Плитки (и разделители) перетаскиваются: `Draggable` с ключом плитки в
 //! payload, `DropArea` на каждой плитке (`rail::move_before`) и на «+»
@@ -51,9 +51,6 @@ use crate::config::RailGroupConfig;
 use crate::context::{AppCtx, RailGroupEdit};
 use crate::icons::*;
 use crate::pages::code_editor::state::CodeSession;
-use crate::pages::huggingface::state::DlStatus;
-use crate::pages::huggingface::HuggingFaceCtx;
-use crate::pages::node_editor::tabs::OpenTab;
 use crate::rail::{self, RailEntry};
 
 #[derive(Clone, Copy)]
@@ -64,14 +61,18 @@ struct Item {
 }
 
 const FOOTER_UTILITY: &[Item] = &[
-    Item { icon: MI_INVENTORY_2,    route: "syn_explorer",  tooltip_key: "nav.syn_explorer" },
-    Item { icon: MI_CLOUD_DOWNLOAD, route: "huggingface",   tooltip_key: "nav.huggingface" },
+    // Не маршрут: запуск программы «Модели» synshell (`syn-models`).
+    Item { icon: MI_INVENTORY_2,    route: MODELS_APP,      tooltip_key: "nav.models" },
     Item { icon: MI_MODEL_TRAINING, route: "training",      tooltip_key: "nav.training" },
 ];
 
 const FOOTER_SETTINGS: &[Item] = &[
     Item { icon: MI_SETTINGS,       route: "settings",      tooltip_key: "nav.settings" },
 ];
+
+/// Псевдо-маршрут пункта «Модели»: Hugging Face и пакеты .syn переехали в
+/// отдельную программу synshell, пункт её запускает.
+const MODELS_APP: &str = "@syn-models";
 
 /// `drag_type` перетаскивания плиток — свой, чтобы DropArea рейла не
 /// реагировала на drop'ы из других мест (вкладки открытых файлов).
@@ -101,7 +102,7 @@ fn top_cluster() -> impl Widget {
 }
 
 /// Футер снизу вверх: настройки — разделитель — язык — разделитель —
-/// утилиты (Syn-пакеты, HuggingFace). Аватара пользователя нет.
+/// утилиты («Модели», обучение). Аватара пользователя нет.
 fn bottom_cluster() -> impl Widget {
     mgui! {
         Column::new()
@@ -156,8 +157,8 @@ fn rail_column(items: &'static [Item]) -> impl Widget {
         .cross_axis_alignment(CrossAxisAlignment::Center);
     for it in items {
         let item = *it;
-        if item.route == "huggingface" {
-            col = col.child(move || hf_rail_item(item));
+        if item.route == MODELS_APP {
+            col = col.child(move || models_app_item(item));
         } else if item.route == "training" {
             col = col.child(move || training_rail_item(item));
         } else {
@@ -167,33 +168,30 @@ fn rail_column(items: &'static [Item]) -> impl Widget {
     col
 }
 
-/// Пункт нав-рейла HuggingFace со счётчиком-бейджем активных + ожидающих
-/// загрузок. Бейдж показывается только при count > 0; реактивен на `downloads`
-/// (через `.get()`), поэтому счётчик обновляется на лету.
-fn hf_rail_item(it: Item) -> impl Widget {
-    let app = use_context::<AppCtx>();
-    let is_selected = app.current_route.get() == it.route;
-    let class = if is_selected { "nav-rail-item selected" } else { "nav-rail-item" };
-
-    let route = it.route;
-    let btn = ToolButton::new(it.icon)
+/// Пункт «Модели»: запускает программу synshell `syn-models` (Hugging Face,
+/// пакеты .syn). Нет программы — уведомление, а не тихий отказ.
+fn models_app_item(it: Item) -> impl Widget {
+    ToolButton::new(it.icon)
         .tooltip(tr!(it.tooltip_key))
-        .on_click(move || rail::navigate(route))
-        .class(class);
+        .on_click(|| launch_models_app(None))
+        .class("nav-rail-item")
+}
 
-    let hf = use_context::<HuggingFaceCtx>();
-    let count = hf
-        .downloads
-        .get()
-        .values()
-        .filter(|d| matches!(d.status, DlStatus::Active | DlStatus::Pending))
-        .count();
-
-    let mut stack = Stack::new().child(btn);
-    if count > 0 {
-        stack = stack.child(Positioned::new(Badge::new(count.to_string()).small()).at(22.0, -2.0));
+/// Запустить «Модели» synshell; `page` — раздел (`huggingface`, `library`,
+/// `settings`), с которого открыть окно.
+pub fn launch_models_app(page: Option<&str>) {
+    let mut cmd = std::process::Command::new("syn-models");
+    if let Some(page) = page {
+        cmd.args(["--page", page]);
     }
-    stack
+    if let Err(e) = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        use_context::<AppCtx>().notifications.error(tr!("nav.models.missing", error = e.to_string()));
+    }
 }
 
 /// Пункт «Обучение»: бейдж — число идущих и ждущих задач в службе.
@@ -254,7 +252,7 @@ fn workspaces_segment() -> impl Widget {
         .child(ScrollView::new().vertical().class("nav-rail-scroll").child(list))
 }
 
-/// Плитка обычной записи (сессия, граф, чат, заметки) — в рейле или в
+/// Плитка обычной записи (сессия, терминал, чат) — в рейле или в
 /// панели группы (`in_flyout`).
 fn entry_tile(entry: &RailEntry, code_idx: &mut usize, in_flyout: bool) -> Box<dyn Widget> {
     let active = rail::is_active(entry);
@@ -267,9 +265,7 @@ fn entry_tile(entry: &RailEntry, code_idx: &mut usize, in_flyout: bool) -> Box<d
             }
             Box::new(code_tile(*s, *code_idx, t, entry.clone()))
         }
-        RailEntry::Graph(tab) => Box::new(graph_tile(*tab, t, entry.clone())),
         RailEntry::Chat(m) => Box::new(chat_tile(m.id.clone(), m.title.clone(), t, entry.clone())),
-        RailEntry::Notes { path, .. } => Box::new(note_tile(path, t, entry.clone())),
         RailEntry::Separator(_) | RailEntry::Group { .. } => Box::new(DecoratedBox::new()),
     }
 }
@@ -367,18 +363,12 @@ fn draggable_tile(tile: impl Widget + 'static, label: String, entry: RailEntry) 
                 .on_drop(move |data| rail::move_before(&data.payload, &drop_key))
                 .child(tile),
         );
-    // Проект заметок — это файл: плитку можно переименовать.
-    let mut items = Vec::new();
-    if matches!(entry, RailEntry::Notes { .. }) {
-        items.push(MenuItem::new("rename", tr!("notes.project.rename")).icon(MI_DRIVE_FILE_RENAME_OUTLINE));
-    }
-    items.extend(group_menu_items(&entry));
+    let mut items = group_menu_items(&entry);
     items.push(MenuItem::new("close", tr!("app.close")).icon(MI_CLOSE));
     ContextMenu::new()
         .items(items)
         .on_select(move |action| match (action, &entry_close) {
             ("close", _) => rail::request_close(&entry_close),
-            ("rename", RailEntry::Notes { path, .. }) => crate::pages::notes::project_ui::request_rename(path),
             ("leave_group", e) => rail::remove_from_group(&e.key()),
             ("new_group", e) => rail::edit_group(RailGroupEdit { id: None, seed: Some(e.key()) }),
             (a, e) => {
@@ -407,7 +397,7 @@ fn code_tile(session: CodeSession, idx: usize, t: TileOpts, entry: RailEntry) ->
         .press_passthrough()
         .class(t.class("nav-rail-item"));
 
-    // Бейдж количества открытых терминалов сессии — по образцу hf_rail_item.
+    // Бейдж количества открытых терминалов сессии.
     // Цвет по занятости (busy_count пишет семплер terminal_activity;
     // занят = вывод обновлялся в последние секунды): все заняты — зелёный,
     // все простаивают — красный, смешанно — оранжевый.
@@ -466,29 +456,6 @@ pub fn group_term_dots(tones: &[&'static str]) -> Positioned {
     Positioned::new(DecoratedBox::new().class("nav-rail-group-dots").child(row)).at(42.0 - width, -3.0)
 }
 
-fn graph_tile(tab: OpenTab, t: TileOpts, entry: RailEntry) -> impl Widget {
-    // Иконка по происхождению графа: агентский (раскрыт из чата),
-    // из шаблона или Untitled.
-    let icon = if tab.agent_chat.get_untracked().is_some() {
-        MI_PSYCHOLOGY
-    } else if tab.source.get_untracked().is_some() {
-        MI_HUB
-    } else {
-        MI_TUNE
-    };
-    let title = tab.title.get_untracked();
-    let label = if tab.dirty.get_untracked() {
-        format!("• {title}")
-    } else {
-        title.clone()
-    };
-    let btn = ToolButton::new(icon)
-        .tooltip(title)
-        .press_passthrough()
-        .class(t.class("nav-rail-item"));
-    tile_with_label(btn, label, t, entry)
-}
-
 fn chat_tile(id: String, title: String, t: TileOpts, entry: RailEntry) -> impl Widget {
     let shown = display_title(&title);
     let avatar = Avatar::new()
@@ -512,19 +479,6 @@ fn chat_tile(id: String, title: String, t: TileOpts, entry: RailEntry) -> impl W
         shown.clone()
     };
     tile_with_label(Tooltip::new(stack, tooltip), shown, t, entry)
-}
-
-/// Плитка проекта заметок: иконка режима в скруглённой рамке, подпись —
-/// имя файла, подсказка — полный путь (два проекта с одним именем в разных
-/// папках различимы).
-fn note_tile(path: &std::path::Path, t: TileOpts, entry: RailEntry) -> impl Widget {
-    let title = crate::pages::notes::project::project_title(path);
-    let hint = path.display().to_string();
-    let icon = MI_EDIT_NOTE;
-    let body = DecoratedBox::new()
-        .class(t.class("nav-rail-item nav-rail-note-tile"))
-        .child(Center::new().child(Icon::new(icon).class("nav-rail-note-icon")));
-    tile_with_label(Tooltip::new(body, hint), title, t, entry)
 }
 
 /// Разделитель: тонкая линия в широкой невидимой зоне — чтобы по ней можно
@@ -572,11 +526,7 @@ fn add_button() -> impl Widget {
         .items(vec![
             MenuItem::new("code", tr!("nav.add.code")).icon(MI_CODE),
             MenuItem::new("terminal", tr!("nav.add.terminal")).icon(MI_TERMINAL),
-            MenuItem::new("nodes", tr!("nav.add.nodes")).icon(MI_HUB),
             MenuItem::new("chat", tr!("nav.add.chat")).icon(MI_CHAT),
-            MenuItem::new("note", tr!("nav.add.note"))
-                .icon(MI_EDIT_NOTE)
-                .children(crate::pages::notes::project_ui::add_menu_items()),
             MenuItem::separator(),
             MenuItem::new("group", tr!("nav.add.group")).icon(GROUP_DEFAULT_ICON),
             MenuItem::new("separator", tr!("nav.add.separator")).icon(MI_HORIZONTAL_RULE),
@@ -586,9 +536,7 @@ fn add_button() -> impl Widget {
         .on_select(|id| match id {
             "code" => rail::new_code_session(),
             "terminal" => rail::new_terminal(),
-            "nodes" => rail::new_graph(),
             "chat" => rail::new_chat(),
-            id if crate::pages::notes::project_ui::handle_menu(id) => {}
             "separator" => rail::add_separator(),
             "group" => rail::edit_group(RailGroupEdit { id: None, seed: None }),
             _ => {}

@@ -8,9 +8,7 @@
 pub const MI_NOTIFICATIONS: &str       = "\u{E7F4}";
 pub const MI_ARTICLE: &str             = "\u{EF42}";
 pub const MI_ASPECT_RATIO: &str        = "\u{E85B}";
-pub const MI_REMOVE_CIRCLE_OUTLINE: &str = "\u{E15D}";
 pub const MI_WB_SHADE: &str            = "\u{E43E}";
-pub const MI_APPS: &str                = "\u{E5C3}";
 pub const MI_CONTACTS: &str            = "\u{E0BA}";
 pub const MI_BAR_CHART: &str           = "\u{E26B}";
 pub const MI_SETTINGS: &str            = "\u{E8B8}";
@@ -69,10 +67,6 @@ pub const MI_KEYBOARD_COMMAND_KEY: &str = "\u{EAE7}";
 pub const MI_KEYBOARD_RETURN: &str     = "\u{E166}";
 /// «arrow_upward» / «arrow_downward» — стрелки навигации по выдаче поиска.
 pub const MI_ARROW_UPWARD: &str        = "\u{E5D8}";
-/// «arrow_forward» — стрелка «стало» в парах «до → после» (размер после
-/// квантования). Символ U+2192 брать нельзя: его нет в шрифте интерфейса,
-/// и вместо стрелки выходит пробел.
-pub const MI_ARROW_FORWARD: &str       = "\u{E5C8}";
 pub const MI_ARROW_DOWNWARD: &str      = "\u{E5DB}";
 /// «search_off» — пустая выдача поиска.
 pub const MI_SEARCH_OFF: &str          = "\u{EA76}";
@@ -103,13 +97,11 @@ pub const MI_FOLDER_OPEN: &str         = "\u{E2C8}";
 pub const MI_IMAGE_ICON: &str          = "\u{E3F4}";
 pub const MI_DELETE: &str              = "\u{E872}";
 pub const MI_ADD: &str                 = "\u{E145}";
-pub const MI_ADD_CIRCLE: &str          = "\u{E147}";
 pub const MI_INFO: &str                = "\u{E88E}";
 
 pub const MI_CHAT: &str                = "\u{E0B7}";
 pub const MI_RECORD_VOICE_OVER: &str   = "\u{E63C}";
 pub const MI_DOWNLOAD: &str            = "\u{F090}";
-pub const MI_CLOUD_DOWNLOAD: &str      = "\u{E2C0}";
 pub const MI_FAVORITE: &str            = "\u{E87D}";
 pub const MI_TRENDING_UP: &str         = "\u{E8E5}";
 pub const MI_VERIFIED_USER: &str       = "\u{E8E8}";
@@ -133,8 +125,6 @@ pub const MI_DEVELOPER_BOARD: &str     = "\u{E30D}";
 pub const MI_STORAGE: &str             = "\u{E1DB}";
 // monitor_heart (U+F154) в шрифте отсутствует; константа нигде не
 // использовалась — удалена, чтобы не всплыла пустым глифом позже.
-pub const MI_GRAPHIC_EQ: &str          = "\u{E1B8}";
-pub const MI_FILTER_ALT: &str          = "\u{EF4F}"; // filter_alt
 pub const MI_BLUR_ON: &str              = "\u{E3A5}"; // blur_on (для Reverb)
 pub const MI_HOURGLASS_TOP: &str       = "\u{EF53}";
 pub const MI_WARNING_AMBER: &str       = "\u{F083}";
@@ -177,22 +167,14 @@ pub const MI_TOKEN: &str               = "\u{EA25}";
 /// Material Symbols «inventory_2» — иконка nav-rail страницы SynExplorer
 /// (склад моделей-пакетов `.syn`).
 pub const MI_INVENTORY_2: &str         = "\u{E1A1}";
-/// Preview-таб «Содержимое пакета». Задуманный «deployed_code» (U+F510)
-/// в MaterialIcons-Regular.ttf отсутствует, поэтому здесь «token» —
-/// четыре квадрата, читается как «составные части пакета».
-pub const MI_DEPLOYED_CODE: &str       = "\u{E9B0}";
 /// «folder_zip» — карточка `.syn` пакета в списке.
 pub const MI_FOLDER_ZIP: &str          = "\u{EB2C}";
 /// «book» — преамбула / overview таб.
 pub const MI_BOOK: &str                = "\u{E865}";
-/// «list_alt» — files таб.
-pub const MI_LIST_ALT: &str            = "\u{E0EE}";
 /// «edit» — metadata таб.
 pub const MI_EDIT: &str                = "\u{E3C9}";
 /// «visibility» — preview таб.
 pub const MI_VISIBILITY: &str          = "\u{E8F4}";
-/// «bookmark_add» — кнопка «добавить закладку».
-pub const MI_BOOKMARK_ADD: &str        = "\u{E598}";
 /// «refresh» / «autorenew» — alias для reload-кнопки (MI_AUTORENEW уже есть).
 
 // --- Voice FAB / Voice History
@@ -208,9 +190,6 @@ pub const MI_SCHOOL: &str              = "\u{E80C}";
 pub const MI_ADD_NOTES: &str           = "\u{E89C}";
 
 // --- Music / Audio
-/// Material Symbols «library_music» — иконка категории Audio в node-editor
-/// и кнопок-«в библиотеку» в смежных нодах.
-pub const MI_LIBRARY_MUSIC: &str       = "\u{E030}";
 /// Material `merge_type` — несколько потоков сходятся в один. Используется
 /// в node-editor'е иконкой подменю «Аудио микшеры».
 pub const MI_MERGE_TYPE: &str          = "\u{E252}";
@@ -218,8 +197,6 @@ pub const MI_MERGE_TYPE: &str          = "\u{E252}";
 // --- Node editor
 /// «hub» — иконка nav-rail для редактора нод (центральная точка с ответвлениями).
 pub const MI_HUB: &str                 = "\u{E9F4}";
-/// «account_tree» — альтернативная иконка для узлового представления.
-pub const MI_ACCOUNT_TREE: &str        = "\u{E97A}";
 /// «schema» — интеллект-карта.
 pub const MI_SCHEMA: &str              = "\u{E4FD}";
 /// «subdirectory_arrow_right» — соседний узел карты.
@@ -280,8 +257,6 @@ pub const MI_CHECK_BOX: &str           = "\u{E834}";
 pub const MI_CHECK_BOX_OUTLINE_BLANK: &str = "\u{E835}";
 /// «horizontal_rule» — пункт «Разделитель» в меню «+» рейла.
 pub const MI_HORIZONTAL_RULE: &str     = "\u{F108}";
-/// «dashboard_customize» — открыть окно шаблонов из шапки нод.
-pub const MI_DASHBOARD_CUSTOMIZE: &str = "\u{E99B}";
 /// «inbox» — раздел «Архив» в настройках; «unarchive» — вернуть чат;
 /// «delete_forever» — удалить насовсем; «delete_sweep» — очистить архив.
 pub const MI_INBOX: &str               = "\u{E156}";
@@ -307,9 +282,6 @@ pub const MI_REDO: &str                = "\u{E15A}"; // кривая со стр
 pub const MI_UNDO: &str                = "\u{E166}";
 pub const MI_SWAP_CALLS: &str          = "\u{E15D}"; // двусторонняя кривая
 pub const MI_INSERT_EMOTICON: &str     = "\u{E24E}"; // смайлик — панель эмодзи в чате
-pub const MI_VIEW_LIST: &str           = "\u{E8EF}";
-pub const MI_GRID_VIEW: &str           = "\u{E9B0}";
-pub const MI_IMAGE: &str               = "\u{E3F4}";
 
 // --- Просмотрщик картинок (`pages::syn_chat::image_stage`)
 pub const MI_ROTATE_LEFT: &str         = "\u{E419}";

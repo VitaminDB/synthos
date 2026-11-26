@@ -3,8 +3,7 @@
 //! Guard стоит в `AppBuilder::on_close_request` (см. `lib.rs`): системный
 //! запрос закрытия (✕ в шапке, Alt+F4, «Выход» из трея) сперва зовёт
 //! [`allow_close`]. Если в приложении что-то живо — работающая команда в
-//! терминале, ход агента, несохранённый файл или граф, идущая загрузка —
-//! guard возвращает `false` и взводит [`QuitCtx::open`]; окно остаётся, а
+//! терминале, ход агента, несохранённый файл — guard возвращает `false` и взводит [`QuitCtx::open`]; окно остаётся, а
 //! этот Portal показывает список причин.
 //!
 //! «Выйти» ставит [`QuitCtx::force`] и просит закрытие ещё раз — второй
@@ -18,8 +17,6 @@ use syngui::widgets::overlay::{PortalAnchor, WindowControl};
 
 use crate::icons::*;
 use crate::pages::code_editor::state::{self, CodeEditorCtx};
-use crate::pages::huggingface::state::{DlStatus, HuggingFaceCtx};
-use crate::pages::node_editor::tabs::EditorWorkspace;
 use crate::syn_chat::state::SynChatCtx;
 
 /// Состояние диалога. Провайдится один раз на старте (`lib.rs`).
@@ -56,13 +53,7 @@ pub fn allow_close() -> bool {
         flush_pending_writes();
         return true;
     }
-    let mut reasons = pending_work();
-    // Заметки дописываются до решения: если запись не прошла (файл пропал,
-    // диск полон), молча закрыть окно — потерять правки. Причина уходит в
-    // диалог; «Отмена» даёт сохранить проект в другое место.
-    if let Err(e) = flush_notes() {
-        reasons.push(tr!("app.quit.reason.notes_unsaved", error = e));
-    }
+    let reasons = pending_work();
     if reasons.is_empty() {
         crate::syn_chat::autosave::flush_for_exit();
         return true;
@@ -72,20 +63,9 @@ pub fn allow_close() -> bool {
     false
 }
 
-/// Дописать на диск то, что ждало автосейва по дебаунсу (выход уже
-/// подтверждён — ошибка заметок только в лог).
+/// Дописать на диск то, что ждало автосейва по дебаунсу.
 fn flush_pending_writes() {
-    if let Err(e) = flush_notes() {
-        log::error!("notes: при выходе проект не записан: {e}");
-    }
     crate::syn_chat::autosave::flush_for_exit();
-}
-
-/// Дописать очередь заметок. Ошибка — правки остаются в очереди.
-fn flush_notes() -> std::result::Result<(), String> {
-    let notes = use_context::<crate::pages::notes::NotesCtx>();
-    crate::pages::notes::autosave::enqueue_dirty(notes);
-    crate::pages::notes::autosave::flush_all()
 }
 
 /// Причины, по которым закрытие стоит подтвердить. Пустой список — можно
@@ -123,26 +103,6 @@ fn pending_work() -> Vec<String> {
 
     if use_context::<SynChatCtx>().pending.get_untracked() {
         out.push(tr!("app.quit.reason.agent"));
-    }
-
-    let dirty_graphs = use_context::<EditorWorkspace>()
-        .tabs
-        .get_untracked()
-        .iter()
-        .filter(|t| t.dirty.get_untracked())
-        .count();
-    if dirty_graphs > 0 {
-        out.push(trn!("app.quit.reason.graphs", dirty_graphs));
-    }
-
-    let downloads = use_context::<HuggingFaceCtx>()
-        .downloads
-        .get_untracked()
-        .values()
-        .filter(|d| matches!(d.status, DlStatus::Active | DlStatus::Pending))
-        .count();
-    if downloads > 0 {
-        out.push(trn!("app.quit.reason.downloads", downloads));
     }
 
     out

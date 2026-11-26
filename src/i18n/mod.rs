@@ -11,7 +11,6 @@ use syngui::widgets::overlay::menu::MenuItem;
 use crate::agent::tools::Tool;
 use crate::context::GeneralCtx;
 use crate::icons::MI_CHECK;
-use crate::templates::{Template, TemplateCategory};
 
 pub const AUTO: &str = "auto";
 
@@ -35,12 +34,9 @@ pub const CATALOGS: [&str; 14] = [
 pub fn install(general: GeneralCtx) {
     syngui::i18n::set_source_language(Lang::new("ru"));
     syngui::i18n::register_catalogs(&CATALOGS);
-    // Строки режима «Заметки» — каталоги библиотеки заметок.
+    // Подписи групп панели эмодзи чата — каталоги библиотеки заметок
+    // (`syn_notes::notes::icon_picker::EMOJI_GROUPS`).
     syngui::i18n::register_catalogs(&syn_notes::i18n::CATALOGS);
-    // Подписи нод ядра synaptix-flow (исходные строки — русские).
-    syngui::i18n::register_catalogs(&synaptix_flow::CATALOGS);
-    // Редактор узлов (общий крейт synshell).
-    syngui::i18n::register_catalogs(&syn_node_editor::i18n::CATALOGS);
     create_effect(move || {
         let raw = general.language.get();
         syngui::i18n::set_language(resolve(&raw));
@@ -89,33 +85,6 @@ pub fn language_menu_items(current: &str) -> Vec<MenuItem> {
         items.push(mark(MenuItem::new(id.clone(), l.name), &id));
     }
     items
-}
-
-// Подписи нод и разделов палитры — у общего редактора узлов.
-pub use syn_node_editor::i18n::{node_category_label, node_kind_key, node_subcategory_label, node_title};
-
-pub fn template_category_label(category: TemplateCategory) -> String {
-    tr!(&format!("template.category.{}", category.key()))
-}
-
-/// Имя встроенного шаблона: `template.<id>.name`, иначе как в `builtin.rs`;
-/// пользовательские шаблоны показываются как названы.
-pub fn template_name(template: &Template) -> String {
-    if template.builtin {
-        syngui::i18n::try_tr(&format!("template.{}.name", template.id))
-            .unwrap_or_else(|| template.name.clone())
-    } else {
-        template.name.clone()
-    }
-}
-
-pub fn template_description(template: &Template) -> String {
-    if template.builtin {
-        syngui::i18n::try_tr(&format!("template.{}.desc", template.id))
-            .unwrap_or_else(|| template.description.clone())
-    } else {
-        template.description.clone()
-    }
 }
 
 /// Подпись инструмента агента: `tool.<key>.label`, иначе литерал из дескриптора.

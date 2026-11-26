@@ -27,7 +27,6 @@ pub mod logging;
 pub mod metrics;
 pub mod migrate;
 pub mod models;
-pub mod notes_host;
 pub mod pages;
 pub mod paths;
 pub mod rail;
@@ -36,7 +35,6 @@ pub mod shot;
 pub mod skills;
 pub mod styles;
 pub mod syn_chat;
-pub mod templates;
 
 use components::titlebar;
 use config::AppConfig;
@@ -82,7 +80,6 @@ pub fn run_desktop() {
     // тот же сервер внутри процесса — synthos работает и без службы.
     engine::ensure();
 
-    pages::node_editor::install_host();
     let (theme_mss, ctx) = build_context();
     i18n::install(ctx.general);
 
@@ -106,8 +103,8 @@ pub fn run_desktop() {
         .with_backdrop(ctx.appearance.backdrop)
         .with_window_state(ctx.appearance.window_state)
         // Закрытие окна сначала спрашивает приложение: живая команда в
-        // терминале, ход агента, несохранённый файл или граф, идущая
-        // загрузка — повод показать диалог вместо молчаливого выхода
+        // терминале, ход агента, несохранённый файл — повод показать
+        // диалог вместо молчаливого выхода
         // (см. `components::quit_dialog`).
         .on_close_request(components::quit_dialog::allow_close)
         // Второй запуск не открывает второе окно: поднимает это и передаёт
@@ -136,36 +133,11 @@ pub fn run_desktop() {
             // Семплер занятости терминалов — для бейджей на плитках сессий
             // в нав-рейле (см. pages::code_editor::terminal_activity).
             pages::code_editor::terminal_activity::start_sampler(code_ctx);
-            provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
-            provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
-            notes_host::install(&ctx);
-            provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
             provide_context(pages::training::TrainingCtx::new());
-            let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
-            provide_context(hf_ctx);
-            // Восстановление прерванной очереди HF-загрузок с прошлого
-            // запуска: Pending/Active → Pending, Done остаётся Done.
-            // try_drain_queue запускает первые `concurrent_limit` файлов.
-            let persisted = pages::huggingface::persist::load();
-            pages::huggingface::download::resume_persisted(
-                hf_ctx,
-                ctx.notifications.clone(),
-                persisted,
-            );
-            pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
-            pages::node_editor::persist::install_workspace_autosave();
-            pages::notes::autosave::install_notes_autosave();
-            pages::notes::reminders::install_reminders();
-            pages::notes::right_panel::install_props_panel_memory();
-            pages::notes::projects::install_busy_retry();
-            // Watcher sequencer'а нодового редактора ставится здесь, а не в
-            // `run_controls::view`: страница пересобирается роутером, и
-            // effect, заведённый внутри неё, умирал вместе с прогоном.
-            pages::node_editor::run_controls::install_run_watcher();
             // Сигнал версии реестра моделей: заводится с main-thread'а,
             // дальше его дёргают загрузчики из воркеров.
             models::install();
@@ -190,7 +162,6 @@ fn android_main(app: syngui::app::AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info),
     );
 
-    pages::node_editor::install_host();
     let (theme_mss, ctx) = build_context();
 
     App::new()
@@ -213,36 +184,11 @@ fn android_main(app: syngui::app::AndroidApp) {
             // Семплер занятости терминалов — для бейджей на плитках сессий
             // в нав-рейле (см. pages::code_editor::terminal_activity).
             pages::code_editor::terminal_activity::start_sampler(code_ctx);
-            provide_context(pages::node_editor::tabs::EditorWorkspace::new_or_restore());
-            provide_context(pages::syn_explorer::SynExplorerCtx::new(&AppConfig::load()));
             provide_context(syn_chat::SynChatCtx::new());
-            notes_host::install(&ctx);
-            provide_context(pages::notes::NotesCtx::new_or_restore(&notes_host::state(&AppConfig::load())));
             provide_context(syn_chat::SynModelRegistry::new());
             provide_context(pages::training::TrainingCtx::new());
-            let hf_ctx = pages::huggingface::HuggingFaceCtx::new(&AppConfig::load());
-            provide_context(hf_ctx);
-            // Восстановление прерванной очереди HF-загрузок с прошлого
-            // запуска: Pending/Active → Pending, Done остаётся Done.
-            // try_drain_queue запускает первые `concurrent_limit` файлов.
-            let persisted = pages::huggingface::persist::load();
-            pages::huggingface::download::resume_persisted(
-                hf_ctx,
-                ctx.notifications.clone(),
-                persisted,
-            );
-            pages::huggingface::persist::install_autosave(hf_ctx);
             install_config_autosave(&ctx);
             install_syn_chat_autosave();
-            pages::node_editor::persist::install_workspace_autosave();
-            pages::notes::autosave::install_notes_autosave();
-            pages::notes::reminders::install_reminders();
-            pages::notes::right_panel::install_props_panel_memory();
-            pages::notes::projects::install_busy_retry();
-            // Watcher sequencer'а нодового редактора ставится здесь, а не в
-            // `run_controls::view`: страница пересобирается роутером, и
-            // effect, заведённый внутри неё, умирал вместе с прогоном.
-            pages::node_editor::run_controls::install_run_watcher();
             // Сигнал версии реестра моделей: заводится с main-thread'а,
             // дальше его дёргают загрузчики из воркеров.
             models::install();
@@ -266,7 +212,7 @@ fn android_main(app: syngui::app::AndroidApp) {
 /// запуск всегда открывал страницу чата: у кого в рейле только code-сессии,
 /// тот получал пустое «Select or create a chat» вместо своего проекта.
 /// Активные сущности внутри страниц восстанавливают свои владельцы
-/// (`active_code_session` в конфиге, `active` в workspace.json), здесь —
+/// (`active_code_session` в конфиге), здесь —
 /// только страница и активный чат.
 ///
 /// Вызывается после `registry::load_all()`: список чатов уже загружен, и
@@ -509,12 +455,8 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         delete: use_signal(None),
     };
     let chat_recent_emoji = use_signal(saved.chat_recent_emoji.clone());
-    let hf_left_split_ratio = use_signal(saved.hf_left_split_ratio);
-    let hf_right_split_ratio = use_signal(saved.hf_right_split_ratio);
     let settings_left_split_ratio = use_signal(saved.settings_left_split_ratio);
     let settings_right_split_ratio = use_signal(saved.settings_right_split_ratio);
-    let notes_left_split_ratio = use_signal(saved.notes_left_split_ratio);
-    let notes_right_split_ratio = use_signal(saved.notes_right_split_ratio);
 
     let ctx = AppCtx {
         theme_key,
@@ -551,12 +493,8 @@ pub fn build_context() -> (RwSignal<String>, AppCtx) {
         rail_groups,
         rail_flyout,
         chat_recent_emoji,
-        hf_left_split_ratio,
-        hf_right_split_ratio,
         settings_left_split_ratio,
         settings_right_split_ratio,
-        notes_left_split_ratio,
-        notes_right_split_ratio,
     };
 
     // Реактивные MSS-переменные шрифтов поверх палитры темы:
@@ -651,16 +589,9 @@ fn install_config_autosave(ctx: &AppCtx) {
     let rail_order = ctx.rail_order;
     let rail_groups = ctx.rail_groups;
     let chat_recent_emoji = ctx.chat_recent_emoji;
-    let hf_left_split = ctx.hf_left_split_ratio;
-    let hf_right_split = ctx.hf_right_split_ratio;
     let settings_left_split = ctx.settings_left_split_ratio;
     let settings_right_split = ctx.settings_right_split_ratio;
-    let notes_left_split = ctx.notes_left_split_ratio;
-    let notes_right_split = ctx.notes_right_split_ratio;
-    let notes_ctx = use_context::<pages::notes::NotesCtx>();
     let code = use_context::<pages::code_editor::state::CodeEditorCtx>();
-    let syn = use_context::<pages::syn_explorer::state::SynExplorerCtx>();
-    let hf = use_context::<pages::huggingface::HuggingFaceCtx>();
     let syn_chat_ctx = use_context::<syn_chat::SynChatCtx>();
     let syn_chat_left_split = syn_chat_ctx.left_split_ratio;
     let syn_chat_right_split = syn_chat_ctx.right_split_ratio;
@@ -671,7 +602,6 @@ fn install_config_autosave(ctx: &AppCtx) {
     let chat_window_size = syn_chat_ctx.chat_window_size;
 
     create_effect(move || {
-        let notes_state = notes_ctx.persist();
         let sessions = code.sessions.get();
         let active_id = code.active_id.get();
         let sessions_cfg: Vec<config::CodeSessionConfig> = sessions
@@ -789,7 +719,7 @@ fn install_config_autosave(ctx: &AppCtx) {
             code_sessions: sessions_cfg,
             active_code_session: active_idx,
             // Что показывать на следующем старте: страница + активный чат
-            // (у code/graph свои поля — active_code_session и workspace.json).
+            // (у code своё поле — active_code_session).
             last_route: Some(current_route.get()),
             last_chat_id: active_chat_id.get(),
             // Legacy-поле зачищаем явно: миграция один раз произошла в
@@ -807,31 +737,9 @@ fn install_config_autosave(ctx: &AppCtx) {
                 auto_augment_default: kb_auto_augment.get(),
                 ..AppConfig::load().kb
             },
-            // SynExplorer: закладки + layout-разделители.
-            // `.get()` подписывают effect, drag дивайдера / add bookmark →
-            // autosave перезаписывает config.json.
-            syn_explorer_bookmarks: syn
-                .bookmarks
-                .get()
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect(),
-            syn_explorer_left_split_ratio: syn.left_split_ratio.get(),
-            syn_explorer_right_split_ratio: syn.right_split_ratio.get(),
-            syn_explorer_expert: syn.wizard.expert.get(),
-            hf_cache_dir: hf.cache_dir.get(),
-            hf_concurrent_downloads: hf.concurrent_limit.get(),
-            hf_segments_per_file: hf.segments_per_file.get(),
-            hf_speed_limit_mbps: hf.speed_limit_mbps.get(),
-            hf_skip_unwanted_formats: hf.skip_unwanted_formats.get(),
-            hf_gguf_support: hf.gguf_support.get(),
             // Место голосовой FAB-кнопки; умолчание не пишем — `None` = угол.
             voice_fab_margin: Some(voice_fab_margin.get())
                 .filter(|m| *m != components::voice_fab::fab_button::FAB_DEFAULT_MARGIN),
-            hf_files_view: hf.files_view_mode.get().as_config().to_string(),
-            hf_dock_expanded: hf.dock_expanded.get(),
-
-            hf_token: hf.token.get(),
             syn_chat_max_image_tokens: syn_chat_max_image_tokens.get(),
             models_dir: models_dir_sig.get(),
             // Layout-разделители страницы Syn-чата. `.get()` подписывает
@@ -853,18 +761,8 @@ fn install_config_autosave(ctx: &AppCtx) {
             },
             // Свёрнутые карточки боковых панелей чата остаются свёрнутыми.
             syn_chat_cards: chat_cards.to_config(),
-            hf_left_split_ratio: hf_left_split.get(),
-            hf_right_split_ratio: hf_right_split.get(),
             settings_left_split_ratio: settings_left_split.get(),
             settings_right_split_ratio: settings_right_split.get(),
-            notes_left_split_ratio: notes_left_split.get(),
-            notes_right_split_ratio: notes_right_split.get(),
-            // Открытые проекты заметок (плитки, активная страница и
-            // раскрытые узлы каждого) и недавние: `.get()` внутри `persist`
-            // подписывают effect на их смену.
-            notes_projects: Some(notes_host::projects(notes_state.projects)),
-            notes_active_project: notes_state.active_project,
-            notes_recent: notes_state.recent,
             panels: panels.to_config(),
             rail_separators: rail_separators.get(),
             rail_order: rail_order.get(),
@@ -879,20 +777,6 @@ fn install_config_autosave(ctx: &AppCtx) {
             ..AppConfig::load()
         };
         cfg.save();
-    });
-
-    // Sync HF-токен (Settings → HuggingFace) → api-слой (Authorization: Bearer).
-    // Применяется к следующему HF-запросу без перезапуска. Стартовая установка —
-    // в `HuggingFaceCtx::new`; этот эффект ловит правки поля в Settings.
-    create_effect(move || {
-        let t = hf.token.get();
-        pages::huggingface::api::set_token(&t);
-    });
-    // Sync лимита скорости (тулбар / Settings) → глобальный token-bucket.
-    // 0 МБ/с = без лимита. Применяется к активным загрузкам на лету.
-    create_effect(move || {
-        let mbps = hf.speed_limit_mbps.get();
-        pages::huggingface::rate::set_limit_bps((mbps as u64) * 1024 * 1024);
     });
 }
 
@@ -910,20 +794,6 @@ fn install_syn_chat_autosave() {
     syn_chat::autosave::install(&ctx);
 }
 
-/// Effect автосохранения сессии node-editor'а на диск.
-///
-/// Подписывается на `EditorWorkspace.tabs` / `active` +
-/// все per-tab сигналы (через `persist::subscribe_tab_signals`). На любое
-/// изменение пересобирает `WorkspaceState` через `templates::convert::snapshot`
-/// для каждой вкладки и атомарно пишет `~/.config/synthos/workspace.json`.
-///
-/// Тяжёлые объекты (Transcriber/Pipeline/AudioPlayer/threads) сериализации
-/// не подлежат — после restore они пересоздаются дефолтно (см.
-/// `apply_to_ctx`), модели грузятся лениво на первый Play.
-///
-/// Fingerprint используется для skip-if-unchanged: вариант RwSignal'а,
-/// который выглядит «изменённым», но даёт идентичный JSON, не вызывает
-/// disk-write (пример — set с тем же значением через mouse-jitter в pan).
 /// Effect, отвечающий за авто-старт записи после загрузки ASR-модели.
 ///
 /// Когда пользователь кликает FAB при выгруженной модели, `voice_start()`
@@ -964,10 +834,6 @@ fn build_app() -> impl Widget {
     let routes = RouterView::new(top_router)
         .route("syn_chat", || Box::new(pages::syn_chat::view()))
         .route("code", || Box::new(pages::code_editor::view()))
-        .route("nodes", || Box::new(pages::node_editor::view()))
-        .route("notes", || Box::new(pages::notes::view()))
-        .route("syn_explorer", || Box::new(pages::syn_explorer::view()))
-        .route("huggingface", || Box::new(pages::huggingface::view()))
         .route("training", || Box::new(pages::training::view()))
         .route("settings", || Box::new(pages::settings::view()));
 
@@ -981,7 +847,7 @@ fn build_app() -> impl Widget {
     // просто включить `voice_fab::view()` в общий Stack-уровень.
     let notification_view = components::notification::view(ctx.notifications.clone());
     // Файлы, которые при старте не разобрались и отложены в сторону
-    // (`fsutil::quarantine`: конфиг, графы нод), — иначе пользователь увидел
+    // (`fsutil::quarantine`: конфиг), — иначе пользователь увидел
     // бы только «пропавшие» данные без объяснения.
     fn notify_quarantined(file: &std::path::Path, backup: &std::path::Path) {
         use_context::<AppCtx>().notifications.error(syngui::tr!(
@@ -993,14 +859,14 @@ fn build_app() -> impl Widget {
     for (file, backup) in fsutil::take_quarantined() {
         notify_quarantined(&file, &backup);
     }
-    // Всё, что отложится позже (проект заметок, открытый после старта), —
-    // сразу тостом; вызов может прийти из фонового потока.
+    // Всё, что отложится позже, — сразу тостом; вызов может прийти из
+    // фонового потока.
     fsutil::set_notifier(|file, backup| {
         syngui::async_runtime::run_on_main_thread(move || notify_quarantined(&file, &backup));
     });
     // Оболочка обёрнута хоткей-скоупом поиска: Ctrl+K / Ctrl+F работают на
     // любой странице, а сама панель живёт отдельным overlay-слоем.
-    let shell = search::hotkey_scope(pages::notes::project_ui::hotkey_scope(mgui! {
+    let shell = search::hotkey_scope(mgui! {
         DecoratedBox::new().class("window-backdrop") => [
             DecoratedBox::new().clip(true).class("shell") => [
                 Column::new().gap(0.0).cross_axis_alignment(CrossAxisAlignment::Stretch) => [
@@ -1019,16 +885,13 @@ fn build_app() -> impl Widget {
                 ]
             ]
         ]
-    }));
+    });
     // Диалоги закрытия плиток рейла живут здесь, а не на страницах:
     // «Закрыть» в контекстном меню плитки доступно с любого маршрута.
     mgui! {
         Stack::new().clip(false) => [
             shell,
-            components::template_picker::view(),
-            components::graph_close_dialog::view(),
             components::quit_dialog::view(),
-            pages::notes::project_ui::rename_dialog(),
             components::nav_rail::group_flyout(),
             components::nav_rail::group_dialog(),
             components::nav_rail::delete_group_dialog(),

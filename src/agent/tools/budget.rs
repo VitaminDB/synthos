@@ -13,9 +13,8 @@ use crate::syn_chat::model_registry::LoadedSynModel;
 /// где токенизатор не смог, сойдёт оценка по символам.
 ///
 /// Держит только токенизатор, не модель: счётчик живёт в бюджете хода и в
-/// `MediaCaps` весь agent-loop, и клон `Arc<LoadedSynModel>` не давал
-/// `pipelines run` с `free_vram` освободить веса — ACE-Step и LTX грузились
-/// рядом с чат-LLM и падали в OOM.
+/// `MediaCaps` весь agent-loop, и клон `Arc<LoadedSynModel>` держал бы веса
+/// модели до конца хода, даже отпущенной.
 pub fn model_counter(model: &Arc<LoadedSynModel>) -> Counter {
     let tokenizer = Arc::clone(&model.tokenizer);
     Arc::new(move |s: &str| tokenizer.encode(s).map(|ids| ids.len()).unwrap_or_else(|_| estimate(s)))

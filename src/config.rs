@@ -658,67 +658,10 @@ pub struct AppConfig {
     /// Knowledge base / RAG настройки.
     #[serde(default)]
     pub kb: KbConfig,
-    /// Закладки папок страницы SynExplorer. Список абсолютных путей; пользователь
-    /// добавляет через `+` в левой панели (rfd::pick_folder). Сканирование
-    /// каждой закладки даёт список `.syn` пакетов внутри.
-    #[serde(default)]
-    pub syn_explorer_bookmarks: Vec<String>,
-    /// Положение левого разделителя страницы SynExplorer (список закладок ↔
-    /// центр). Persist'ится при drag через [`SplitView::ratio_signal`].
-    #[serde(default = "default_syn_explorer_left_split_ratio")]
-    pub syn_explorer_left_split_ratio: f32,
-    /// Положение правого разделителя (центр ↔ TreeView содержимого).
-    #[serde(default = "default_syn_explorer_right_split_ratio")]
-    pub syn_explorer_right_split_ratio: f32,
-    /// Режим эксперта на странице пакетов: показывать префиксы тензоров,
-    /// пофайловый состав, точность по группам слоёв и контрольные суммы.
-    /// Липкий — включивший его один раз не должен включать снова.
-    #[serde(default)]
-    pub syn_explorer_expert: bool,
-    /// Каталог-кэш для скачанных моделей со страницы HuggingFace.
-    /// Пусто = `~/.local/share/synthos/hf` (см. [`resolve_hf_cache_dir`]).
-    /// Спрашивается у пользователя при первом скачивании.
-    #[serde(default)]
-    pub hf_cache_dir: String,
-    /// Лимит одновременно скачивающихся файлов на странице HuggingFace.
-    /// Остальные ожидают своей очереди в `Pending`-статусе. Дефолт 3 —
-    /// разумный баланс между throughput'ом и нагрузкой на сеть/диск.
-    #[serde(default = "default_hf_concurrent_downloads")]
-    pub hf_concurrent_downloads: u32,
-    /// Кол-во HTTP-Range сегментов на один файл при сегментированной
-    /// загрузке. >1 — файл качается параллельно несколькими соединениями,
-    /// что заметно ускоряет крупные шарды на широких каналах. Минимум 1
-    /// (=single-stream), максимум 16. Дефолт 4.
-    #[serde(default = "default_hf_segments_per_file")]
-    pub hf_segments_per_file: u32,
-    /// Глобальный лимит скорости скачивания в МБ/с. `0` — без лимита (дефолт).
-    /// Делится между всеми активными загрузками и их HTTP-Range-сегментами.
-    #[serde(default = "default_hf_speed_limit_mbps")]
-    pub hf_speed_limit_mbps: u32,
-    /// «Скачать всё» пропускает тяжёлые/несовместимые форматы (onnx /
-    /// openvino / fp32 / `.bin`). Дефолт — включено: эти форматы synthos не
-    /// запускает, и тянуть их вместе с safetensors/gguf — лишний трафик.
-    /// Кнопка «Скачать» на отдельном файле фильтр игнорирует.
-    #[serde(default = "default_hf_skip_unwanted_formats")]
-    pub hf_skip_unwanted_formats: bool,
-    #[serde(default = "default_hf_gguf_support")]
-    pub hf_gguf_support: bool,
     /// Куда пользователь перетащил голосовую FAB-кнопку: отступы от
     /// правого-нижнего угла окна `(справа, снизу)`. `None` — место по умолчанию.
     #[serde(default)]
     pub voice_fab_margin: Option<(f32, f32)>,
-    /// Вид панели файлов на странице HuggingFace: `list` или `icons`.
-    #[serde(default = "default_hf_files_view")]
-    pub hf_files_view: String,
-    /// Нижняя панель загрузок развёрнута (очередь и настройки видны).
-    #[serde(default)]
-    pub hf_dock_expanded: bool,
-    /// Токен доступа HuggingFace (`hf_...`). Нужен для gated/private моделей
-    /// (FLUX.1-dev, Llama и др.) и снимает rate-limit анонимных запросов.
-    /// Создаётся на https://huggingface.co/settings/tokens (роль `read`).
-    /// Пусто = анонимный доступ (только публичные модели).
-    #[serde(default)]
-    pub hf_token: String,
     /// Дефолтные параметры sampling для новых Syn-чатов. Каждый чат может
     /// переопределить их через `StoredChat.syn_params`.
     #[serde(default)]
@@ -733,11 +676,9 @@ pub struct AppConfig {
     /// «Недавнее» при пустом запросе.
     #[serde(default)]
     pub search_recent: Vec<String>,
-    /// Каталог моделей для ВСЕХ пайплайнов: .syn-бандлы, LoRA/.safetensors,
-    /// HF-каталоги. Агентский инструмент `pipelines` (action=list)
-    /// перечисляет его содержимое, чтобы модель могла проставить пути в
-    /// чекпойнт-ноды без поиска по диску. По умолчанию —
-    /// `~/Storage/Нейросети/Модели` (см. [`default_models_dir`]).
+    /// Каталог моделей: .syn-бандлы, LoRA/.safetensors, HF-каталоги. Отсюда
+    /// берут модели база знаний и поиск. По умолчанию — `~/Storage/syn_models`
+    /// (см. [`default_models_dir`]).
     #[serde(default = "default_models_dir")]
     pub models_dir: String,
     /// Положение левого разделителя страницы Syn-чата (список чатов ↔ центр).
@@ -760,49 +701,11 @@ pub struct AppConfig {
     /// Какие карточки боковых панелей чата раскрыты.
     #[serde(default)]
     pub syn_chat_cards: SynChatCardsConfig,
-    /// Разделители страницы HuggingFace: список моделей ↔ README ↔ файлы.
-    #[serde(default = "default_hf_left_split_ratio")]
-    pub hf_left_split_ratio: f32,
-    #[serde(default = "default_hf_right_split_ratio")]
-    pub hf_right_split_ratio: f32,
     /// Разделители страницы настроек: разделы ↔ контент ↔ правая панель.
     #[serde(default = "default_settings_left_split_ratio")]
     pub settings_left_split_ratio: f32,
     #[serde(default = "default_settings_right_split_ratio")]
     pub settings_right_split_ratio: f32,
-    /// Разделители страницы «Заметки»: дерево vault ↔ редактор ↔ панель.
-    #[serde(default = "default_notes_left_split_ratio")]
-    pub notes_left_split_ratio: f32,
-    #[serde(default = "default_notes_right_split_ratio")]
-    pub notes_right_split_ratio: f32,
-    /// Папка vault'а первой волны — источник разовой миграции в проект.
-    #[serde(default)]
-    pub notes_vault_path: String,
-    /// Файл проекта заметок (`.syn`) времён одного проекта. Пусто — дефолт
-    /// `~/Documents/SynthOS Notes.syn` (см. `pages::notes::project`). Теперь
-    /// только источник миграции в `notes_projects`.
-    #[serde(default)]
-    pub notes_project_path: String,
-    /// Активная страница (id), раскрытые узлы дерева и плитка рейла
-    /// (штамп открытия; None — плитка закрыта) — тоже времён одного
-    /// проекта, читаются только миграцией.
-    #[serde(default)]
-    pub notes_active: Option<String>,
-    #[serde(default)]
-    pub notes_expanded: Vec<String>,
-    #[serde(default)]
-    pub notes_tile_opened_at: Option<u64>,
-    /// Открытые проекты заметок — по плитке рейла на каждый. `None` —
-    /// конфиг ещё не видел нескольких проектов: список собирается из полей
-    /// выше (см. `pages::notes::projects::restore`).
-    #[serde(default)]
-    pub notes_projects: Option<Vec<NotesProjectConfig>>,
-    /// Проект, который показан на странице заметок (путь файла).
-    #[serde(default)]
-    pub notes_active_project: String,
-    /// Недавние проекты, свежие первыми.
-    #[serde(default)]
-    pub notes_recent: Vec<String>,
     /// Видимость левой/правой панели по страницам — тогглы в общей шапке.
     #[serde(default)]
     pub panels: PanelsConfig,
@@ -849,6 +752,13 @@ pub struct AppConfig {
     /// Default = `true`.
     #[serde(default = "default_true")]
     pub syn_chat_prefix_kv: bool,
+    /// Поля, которых эта версия не знает, — переписываются в файл как есть.
+    /// Здесь остаются настройки ушедших из synthos разделов (`hf_*`,
+    /// `syn_explorer_*` — их при первом запуске переносит программа «Модели»
+    /// synshell; `notes_*` — прежнее состояние заметок, теперь их ведёт
+    /// syn-notes): synthos их не читает, но и не стирает чужие данные.
+    #[serde(flatten)]
+    pub legacy: serde_json::Map<String, serde_json::Value>,
 }
 
 fn default_true() -> bool { true }
@@ -986,18 +896,6 @@ pub fn default_code_editor_right_split_ratio() -> f32 {
     0.84
 }
 
-/// Дефолт для левого разделителя `SynExplorer` (список закладок/пакетов ↔
-/// центр). При ширине окна 1600px даёт ~300px на левую панель.
-pub fn default_syn_explorer_left_split_ratio() -> f32 {
-    0.19
-}
-
-/// Дефолт для правого разделителя `SynExplorer` (центр ↔ TreeView пакета).
-/// При ширине окна 1600px даёт ~280px на правую панель.
-pub fn default_syn_explorer_right_split_ratio() -> f32 {
-    0.78
-}
-
 /// Дефолт для `AppConfig.code_editor_font_size` — 13px (совпадает с прежним
 /// хардкодом в `.code-editor-mle`, чтобы старые конфиги выглядели как раньше).
 pub fn default_code_editor_font_size() -> f32 {
@@ -1081,20 +979,7 @@ impl Default for AppConfig {
             code_editor_font_family: String::new(),
             code_editor_font_size: default_code_editor_font_size(),
             kb: KbConfig::default(),
-            syn_explorer_bookmarks: Vec::new(),
-            syn_explorer_left_split_ratio: default_syn_explorer_left_split_ratio(),
-            syn_explorer_expert: false,
-            syn_explorer_right_split_ratio: default_syn_explorer_right_split_ratio(),
-            hf_cache_dir: String::new(),
-            hf_concurrent_downloads: default_hf_concurrent_downloads(),
-            hf_segments_per_file: default_hf_segments_per_file(),
-            hf_speed_limit_mbps: default_hf_speed_limit_mbps(),
-            hf_skip_unwanted_formats: default_hf_skip_unwanted_formats(),
-            hf_gguf_support: default_hf_gguf_support(),
             voice_fab_margin: None,
-            hf_files_view: default_hf_files_view(),
-            hf_dock_expanded: false,
-            hf_token: String::new(),
             syn_chat_defaults: SamplingParams::default(),
             last_syn_model: None,
             search_recent: Vec::new(),
@@ -1105,21 +990,9 @@ impl Default for AppConfig {
             syn_chat_window_pos: None,
             syn_chat_window_size: None,
             syn_chat_cards: SynChatCardsConfig::default(),
-            hf_left_split_ratio: default_hf_left_split_ratio(),
-            hf_right_split_ratio: default_hf_right_split_ratio(),
             settings_left_split_ratio: default_settings_left_split_ratio(),
             settings_right_split_ratio: default_settings_right_split_ratio(),
             panels: PanelsConfig::default(),
-            notes_left_split_ratio: default_notes_left_split_ratio(),
-            notes_right_split_ratio: default_notes_right_split_ratio(),
-            notes_vault_path: String::new(),
-            notes_project_path: String::new(),
-            notes_active: None,
-            notes_expanded: Vec::new(),
-            notes_tile_opened_at: None,
-            notes_projects: None,
-            notes_active_project: String::new(),
-            notes_recent: Vec::new(),
             rail_separators: Vec::new(),
             rail_order: Vec::new(),
             rail_groups: Vec::new(),
@@ -1128,16 +1001,10 @@ impl Default for AppConfig {
             syn_chat_max_image_tokens: default_syn_chat_max_image_tokens(),
             syn_chat_prefix_kv: default_true(),
             models_dir: default_models_dir(),
+            legacy: serde_json::Map::new(),
         }
     }
 }
-
-fn default_hf_concurrent_downloads() -> u32 { 3 }
-fn default_hf_segments_per_file() -> u32 { 4 }
-fn default_hf_speed_limit_mbps() -> u32 { 0 }
-fn default_hf_skip_unwanted_formats() -> bool { true }
-fn default_hf_gguf_support() -> bool { false }
-fn default_hf_files_view() -> String { "list".to_string() }
 
 /// Дефолт потолка vision-токенов на картинку — см. `syn_chat_max_image_tokens`.
 pub fn default_syn_chat_max_image_tokens() -> usize {
@@ -1154,24 +1021,6 @@ pub fn default_syn_chat_right_split_ratio() -> f32 {
     0.80
 }
 
-/// HuggingFace: список моделей слева ~26% ширины.
-pub fn default_hf_left_split_ratio() -> f32 {
-    0.26
-}
-
-pub fn default_notes_left_split_ratio() -> f32 {
-    0.22
-}
-
-pub fn default_notes_right_split_ratio() -> f32 {
-    0.78
-}
-
-/// HuggingFace: панель файлов справа ~30% ширины.
-pub fn default_hf_right_split_ratio() -> f32 {
-    0.70
-}
-
 /// Настройки: колонка разделов ~19% (≈300px при 1600px).
 pub fn default_settings_left_split_ratio() -> f32 {
     0.19
@@ -1180,18 +1029,6 @@ pub fn default_settings_left_split_ratio() -> f32 {
 /// Настройки: правая панель ~24% (≈360px при 1600px).
 pub fn default_settings_right_split_ratio() -> f32 {
     0.76
-}
-
-/// Открытый проект заметок: файл, плитка рейла и где в нём остановились.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct NotesProjectConfig {
-    pub path: String,
-    /// Штамп появления плитки в рейле (unix-миллисекунды).
-    pub opened_at: u64,
-    /// Активная страница (id) и раскрытые узлы дерева.
-    pub active_page: Option<String>,
-    pub expanded: Vec<String>,
 }
 
 /// Видимость боковых панелей по страницам. Каждая страница трёхпанельного
@@ -1209,18 +1046,6 @@ pub struct PanelsConfig {
     #[serde(default = "default_true")]
     pub code_right: bool,
     #[serde(default = "default_true")]
-    pub notes_left: bool,
-    #[serde(default = "default_true")]
-    pub notes_right: bool,
-    #[serde(default = "default_true")]
-    pub syn_explorer_left: bool,
-    #[serde(default = "default_true")]
-    pub syn_explorer_right: bool,
-    #[serde(default = "default_true")]
-    pub huggingface_left: bool,
-    #[serde(default = "default_true")]
-    pub huggingface_right: bool,
-    #[serde(default = "default_true")]
     pub settings_left: bool,
     #[serde(default = "default_true")]
     pub settings_right: bool,
@@ -1233,12 +1058,6 @@ impl Default for PanelsConfig {
             syn_chat_right: true,
             code_left: true,
             code_right: true,
-            notes_left: true,
-            notes_right: true,
-            syn_explorer_left: true,
-            syn_explorer_right: true,
-            huggingface_left: true,
-            huggingface_right: true,
             settings_left: true,
             settings_right: true,
         }
@@ -1295,19 +1114,6 @@ pub fn now_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// Резолвит пользовательский путь кэша HF-моделей. Пустая строка — дефолт
-/// `~/.local/share/synthos/hf` (XDG_DATA_HOME-конвенция). Сама папка
-/// создаётся лениво в [`crate::pages::huggingface::download::start_download`].
-pub fn resolve_hf_cache_dir(stored: &str) -> PathBuf {
-    if !stored.trim().is_empty() {
-        return crate::paths::expand_home(stored);
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".local/share/synthos/hf")
 }
 
 impl AppConfig {
@@ -1532,6 +1338,26 @@ mod tests {
         cfg.syn_chat_defaults.max_new_tokens = SamplingParams::LEGACY_MAX_NEW_TOKENS;
         cfg.migrate_sampling_defaults();
         assert_eq!(cfg.syn_chat_defaults.max_new_tokens, SamplingParams::LEGACY_MAX_NEW_TOKENS);
+    }
+
+    /// Конфиг прежних версий с полями ушедших разделов (Hugging Face, пакеты,
+    /// заметки) грузится, а сохранение переписывает эти поля как есть: их
+    /// при первом запуске забирает программа «Модели» synshell.
+    #[test]
+    fn legacy_fields_load_and_survive_save() {
+        let old = r#"{"theme":"x","hf_token":"hf_abc","hf_cache_dir":"/m/hf",
+            "syn_explorer_bookmarks":["/m/syn"],"notes_recent":["/n.syn"],
+            "panels":{"notes_left":false,"huggingface_right":false,"code_left":false}}"#;
+        let cfg: AppConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(cfg.theme, "x");
+        assert!(!cfg.panels.code_left);
+        let saved: serde_json::Value = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(saved["hf_token"], "hf_abc");
+        assert_eq!(saved["hf_cache_dir"], "/m/hf");
+        assert_eq!(saved["syn_explorer_bookmarks"][0], "/m/syn");
+        assert_eq!(saved["notes_recent"][0], "/n.syn");
+        // Поля структуры не дублируются в хвосте.
+        assert!(!cfg.legacy.contains_key("theme"));
     }
 
     /// Старый конфиг со своим списком инструментов получает `notes` один

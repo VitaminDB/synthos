@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::agent::schema::ChatToolCall;
 
 use super::catalog::{
-    KEY_AUTOSKILL, KEY_AUTOTOOLS, KEY_BASH, KEY_KB_SEARCH, KEY_NOTES, KEY_PIPELINES, KEY_SUBAGENT,
+    KEY_AUTOSKILL, KEY_AUTOTOOLS, KEY_BASH, KEY_KB_SEARCH, KEY_NOTES, KEY_SUBAGENT,
     KEY_SYSTEM, KEY_WEB,
 };
 
@@ -114,8 +114,8 @@ pub enum ToolError {
 /// времени вызова, который выставляет модель. У `wizard` поле с тем же
 /// именем значит другое (когда свернуть вопрос), `autoskill`/`autotools`
 /// мгновенны, `view_media` исполняет цикл чата.
-pub(crate) const TIMEOUT_TOOLS: [&str; 7] =
-    [KEY_BASH, KEY_WEB, KEY_KB_SEARCH, KEY_PIPELINES, KEY_SUBAGENT, KEY_SYSTEM, KEY_NOTES];
+pub(crate) const TIMEOUT_TOOLS: [&str; 6] =
+    [KEY_BASH, KEY_WEB, KEY_KB_SEARCH, KEY_SUBAGENT, KEY_SYSTEM, KEY_NOTES];
 
 /// Предел по умолчанию, когда модель `timeout_sec` не задала. Только у
 /// `bash`: команда, ждущая ввода или держащая pipe фоновым потомком,
@@ -208,7 +208,7 @@ pub use synassist::tools::args::coerce_to_schema;
 
 /// Все ключи каталога — для канонизации имени вызова и для подсказки в
 /// тексте ошибки о неизвестном инструменте.
-pub(crate) const TOOL_KEYS: [&str; 12] = [
+pub(crate) const TOOL_KEYS: [&str; 11] = [
     KEY_BASH,
     KEY_KB_SEARCH,
     KEY_WEB,
@@ -216,7 +216,6 @@ pub(crate) const TOOL_KEYS: [&str; 12] = [
     KEY_AUTOTOOLS,
     KEY_SUBAGENT,
     KEY_SYSTEM,
-    KEY_PIPELINES,
     super::catalog::KEY_GENERATE,
     KEY_NOTES,
     super::catalog::KEY_WIZARD,
@@ -282,7 +281,6 @@ async fn run_tool(name: &str, args: &str, tap: Option<synassist::tools::bash::Ta
         KEY_AUTOTOOLS => super::autotools::run(args).await,
         KEY_SUBAGENT => super::subagent::run(args).await,
         KEY_SYSTEM => super::system::run(args).await,
-        KEY_PIPELINES => super::pipelines::run(args).await,
         // Основной чат исполняет его сам (`syn_chat::session`): ход и вложения.
         super::catalog::KEY_GENERATE => super::generate::run(args).await,
         KEY_NOTES => super::notes::run(args).await,

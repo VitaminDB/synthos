@@ -27,7 +27,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use syngui::async_runtime::run_on_main_thread;
+use syngui::async_runtime::run_on_main_thread_wake_only;
 
 use super::state::{CodeEditorCtx, SessionId};
 
@@ -57,7 +57,7 @@ pub fn start_sampler(ctx: CodeEditorCtx) {
     thread::Builder::new()
         .name("synthos-term-activity".into())
         .spawn(move || loop {
-            run_on_main_thread(move || sample_tick(ctx));
+            run_on_main_thread_wake_only(move || sample_tick(ctx));
             thread::sleep(SAMPLE_INTERVAL);
         })
         .expect("не удалось создать поток synthos-term-activity");

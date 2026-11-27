@@ -508,9 +508,10 @@ fn dispatch_loop(session: CodeSession, rx: mpsc::Receiver<()>, root: PathBuf) {
         );
         let map = compute(&root);
         let arc = Arc::new(map);
-        // RwSignal'ы thread-local — мутируем строго на main.
+        // RwSignal'ы thread-local — мутируем строго на main (wake_only: если
+        // карта не изменилась, `RwSignal::set` не будит подписчиков и кадр не рисуется).
         let session_id = session.id;
-        syngui::async_runtime::run_on_main_thread(move || {
+        syngui::async_runtime::run_on_main_thread_wake_only(move || {
             session.git_status.set(arc);
             debug!(target: "code-editor.git_status", session_id, "git_status applied to main");
         });

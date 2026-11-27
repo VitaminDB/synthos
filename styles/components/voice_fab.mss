@@ -14,7 +14,6 @@
     transition: opacity 320ms var(--ease-standard),
                 transform 320ms var(--ease-standard),
                 background-color 200ms var(--ease-standard);
-    animation: voice-fab-idle-pulse 3.0s ease-in-out infinite;
 }
 
 .fab-voice-corner:hover {
@@ -24,7 +23,6 @@
 
 .fab-voice-corner.recording {
     background-color: var(--error);
-    animation: none;
 }
 
 /* Когда панель открыта — сжимаемся и таем. Центральная FAB-кнопка появляется
@@ -32,12 +30,6 @@
 .fab-voice-corner.opening {
     opacity: 0;
     transform: scale(0.0);
-    animation: none;
-}
-
-@keyframes voice-fab-idle-pulse {
-    0%, 100% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28); }
-    50%      { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.40); }
 }
 
 /* ─── Центральная FAB (96×96 внутри voice-overlay-card) ─── */

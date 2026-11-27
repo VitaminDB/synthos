@@ -313,6 +313,18 @@ fn translate(res: notify::Result<notify::Event>, root: &Path) -> Vec<FsEvent> {
         .map(|c| c.as_os_str().to_string_lossy() == ".git")
         .unwrap_or(false);
     if is_git_meta {
+        // notify-rs на Linux вешает маску с IN_OPEN (`EventKind::Access`):
+        // чтение `.git/HEAD` и `.git/index` самим `gix::Repository::status()`
+        // иначе замыкало бы бесконечный цикл GitMetaChanged → git_status →
+        // IN_OPEN → GitMetaChanged на всех открытых репозиториях.
+        if !matches!(
+            ev.kind,
+            EventKind::Create(_)
+                | EventKind::Remove(_)
+                | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_) | ModifyKind::Any)
+        ) {
+            return Vec::new();
+        }
         debug!(target: "code-editor.fs_watcher", rel = %rel.display(), "git-meta event");
         let mut out = vec![FsEvent::GitMetaChanged];
         // Новая ветка с «/» в имени создаёт каталог в refs/ — подписываем.
@@ -430,8 +442,9 @@ fn dispatch_loop(
             "batch ready, dispatch to main"
         );
 
-        // Применить на main thread — RwSignal'ы thread-local.
-        syngui::async_runtime::run_on_main_thread(move || {
+        // Применить на main thread — RwSignal'ы thread-local (wake_only: кадр
+        // запрашивается только если сигналы реально изменились).
+        syngui::async_runtime::run_on_main_thread_wake_only(move || {
             apply_batch(session, modified, structure, git_meta_dirty);
         });
     }
@@ -767,5 +780,44 @@ mod tests {
 
         std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
+    }
+
+    /// Чтение `.git/index` / `.git/HEAD` (inotify `IN_OPEN` → `EventKind::Access`)
+    /// не должно порождать `GitMetaChanged` — иначе `gix::Repository::status()`
+    /// замыкает бесконечную петлю обновлений.
+    #[test]
+    fn git_meta_ignores_access_events() {
+        use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind};
+
+        let root = PathBuf::from("/tmp/fake-repo");
+        let index = root.join(".git/index");
+
+        let open_ev = notify::Event {
+            kind: EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            paths: vec![index.clone()],
+            attrs: Default::default(),
+        };
+        assert!(translate(Ok(open_ev), &root).is_empty(), "IN_OPEN on .git/index must be ignored");
+
+        let close_ev = notify::Event {
+            kind: EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            paths: vec![index.clone()],
+            attrs: Default::default(),
+        };
+        assert!(translate(Ok(close_ev), &root).is_empty(), "IN_CLOSE_NOWRITE on .git/index must be ignored");
+
+        let write_ev = notify::Event {
+            kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            paths: vec![index.clone()],
+            attrs: Default::default(),
+        };
+        assert!(matches!(translate(Ok(write_ev), &root).as_slice(), [FsEvent::GitMetaChanged]));
+
+        let create_ev = notify::Event {
+            kind: EventKind::Create(CreateKind::File),
+            paths: vec![root.join(".git/refs/heads/new-branch")],
+            attrs: Default::default(),
+        };
+        assert!(matches!(translate(Ok(create_ev), &root).as_slice(), [FsEvent::GitMetaChanged]));
     }
 }
